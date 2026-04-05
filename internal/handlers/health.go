@@ -18,7 +18,7 @@ func (h *HealthHandler) Register(app *fiber.App) {
 }
 
 // Health godoc
-// @Summary      Health check
+// @Summary      Health check 1-2-1-2
 // @Description  Returns the health status of the service and database connectivity.
 // @Tags         system
 // @Produce      json

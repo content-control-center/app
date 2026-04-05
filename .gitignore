@@ -11,7 +11,6 @@
 web/node_modules/
 web/dist/
 !web/dist/index.html
-docs/
 
 # OS
 .DS_Store
