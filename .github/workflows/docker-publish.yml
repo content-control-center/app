@@ -28,18 +28,12 @@ jobs:
       - name: Run tests with coverage
         run: make test
 
-#      - name: Upload coverage report
-#        uses: actions/upload-artifact@v4
-#        with:
-#          name: coverage-report
-#          path: coverage.out
-#          retention-days: 1
-
-      - name: Run Codacy Coverage Reporter
-        uses: codacy/codacy-coverage-reporter-action@v1.3.0
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
         with:
-          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
-          coverage-reports: coverage.out
+          name: coverage-report
+          path: coverage.out
+          retention-days: 1
 
 #  codacy-analysis:
 #    name: Codacy static analysis
@@ -62,25 +56,25 @@ jobs:
 #          upload: true
 #          max-allowed-issues: 2147483647
 
-#  codacy-coverage:
-#    name: Codacy coverage
-#    needs: test
-#    runs-on: ubuntu-latest
-#    permissions:
-#      contents: read
-#
-#    steps:
-#      - name: Download coverage report
-#        uses: actions/download-artifact@v4
-#        with:
-#          name: coverage-report
-#          path: ${{ github.workspace }}
-#
-#      - name: Upload coverage to Codacy
-#        uses: codacy/codacy-coverage-reporter-action@v1
-#        with:
-#          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
-#          coverage-reports: ${{ github.workspace }}/coverage.out
+  codacy-coverage:
+    name: Codacy coverage
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Download coverage report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+          path: ${{ github.workspace }}
+
+      - name: Upload coverage to Codacy
+        uses: codacy/codacy-coverage-reporter-action@v1.3.0
+        with:
+          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+          coverage-reports: ${{ github.workspace }}/coverage.out
 
   build-and-push:
     name: Build and push Docker image

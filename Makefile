@@ -16,8 +16,6 @@ test: _ginkgo
 	ginkgo $(GINKGO_FLAGS) --cover --coverpkg=./... --coverprofile=coverage.out --covermode=atomic --output-dir=. ./...
 	go tool cover -func=coverage.out
 
-coverage: _ginkgo test
-
 tidy:
 	go mod tidy
 
