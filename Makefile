@@ -8,7 +8,8 @@ run: web/dist
 	go run ./cmd/server
 
 test:
-	go test ./... -v
+	go install github.com/onsi/ginkgo/v2/ginkgo
+	ginkgo ./... --github-output -r -randomize-all -randomize-suites -race -trace -procs=2 -poll-progress-after=10s -poll-progress-interval=10s
 
 tidy:
 	go mod tidy
