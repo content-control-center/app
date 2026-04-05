@@ -11,7 +11,7 @@ import (
 	fiberSwagger "github.com/swaggo/fiber-swagger"
 	"github.com/uptrace/bun"
 
-	"github.com/content-control-center/app/internal/handlers"
+	"github.com/content-control-center/app/src/handlers"
 )
 
 func New(db *bun.DB, staticFS fs.FS) *fiber.App {

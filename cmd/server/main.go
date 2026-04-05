@@ -10,9 +10,9 @@ import (
 	"log"
 
 	_ "github.com/content-control-center/app/docs"
-	"github.com/content-control-center/app/internal/config"
-	"github.com/content-control-center/app/internal/database"
-	"github.com/content-control-center/app/internal/server"
+	"github.com/content-control-center/app/src/config"
+	"github.com/content-control-center/app/src/database"
+	"github.com/content-control-center/app/src/server"
 	webstatic "github.com/content-control-center/app/web"
 )
 
