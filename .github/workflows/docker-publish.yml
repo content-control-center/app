@@ -79,21 +79,29 @@ jobs:
           cache: true
 
       - name: Generate OpenAPI spec
-        run: make openapi
+        run: |
+          go install github.com/swaggo/swag/cmd/swag@latest
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          swag init -g cmd/server/main.go -o docs --outputTypes go,json
 
-      - name: Push swagger.json to api repo
+      - name: Clone api repo
         env:
           GH_TOKEN: ${{ secrets.OPENAPI_DEPLOY_TOKEN }}
+        run: git clone "https://x-access-token:${GH_TOKEN}@github.com/content-control-center/api.git" _api_repo
+
+      - name: Copy swagger.json
+        run: cp docs/swagger.json _api_repo/swagger.json
+
+      - name: Commit and push
+        env:
           SHORT_SHA: ${{ github.sha }}
         run: |
-          git clone "https://x-access-token:${GH_TOKEN}@github.com/content-control-center/api.git" _api_repo
-          cp docs/swagger.json _api_repo/swagger.json
           cd _api_repo
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add swagger.json
           if git diff --cached --quiet; then
-            echo "swagger.json unchanged — skipping commit"
+            echo "swagger.json unchanged, skipping commit"
           else
             git commit -m "chore: update OpenAPI spec (content-control-center/app@${SHORT_SHA:0:7})"
             git push
