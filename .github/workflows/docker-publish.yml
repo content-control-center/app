@@ -71,6 +71,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: coverage-report
+          path: .
 
       - name: Upload coverage to Codacy
         uses: codacy/codacy-coverage-reporter-action@v1
@@ -120,7 +121,7 @@ jobs:
 
   publish-openapi:
     name: Publish OpenAPI spec
-    needs: build-and-push
+    needs: test
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
