@@ -32,7 +32,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
-          path: unit.coverage.out
+          path: coverage.out
           retention-days: 1
 
 #  codacy-analysis:
@@ -56,25 +56,25 @@ jobs:
 #          upload: true
 #          max-allowed-issues: 2147483647
 
-  codacy-coverage:
-    name: Codacy coverage
-    needs: test
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
-    steps:
-      - name: Download coverage report
-        uses: actions/download-artifact@v4
-        with:
-          name: coverage-report
-          path: ${{ github.workspace }}
-
-      - name: Upload coverage to Codacy
-        uses: codacy/codacy-coverage-reporter-action@v1.3.0
-        with:
-          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
-          coverage-reports: ${{ github.workspace }}/unit.coverage.out
+#  codacy-coverage:
+#    name: Codacy coverage
+#    needs: test
+#    runs-on: ubuntu-latest
+#    permissions:
+#      contents: read
+#
+#    steps:
+#      - name: Download coverage report
+#        uses: actions/download-artifact@v4
+#        with:
+#          name: coverage-report
+#          path: ${{ github.workspace }}
+#
+#      - name: Upload coverage to Codacy
+#        uses: codacy/codacy-coverage-reporter-action@v1.3.0
+#        with:
+#          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+#          coverage-reports: ${{ github.workspace }}/unit.coverage.out
 
   build-and-push:
     name: Build and push Docker image

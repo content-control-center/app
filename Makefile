@@ -13,8 +13,8 @@ _ginkgo:
 	go install github.com/onsi/ginkgo/v2/ginkgo
 
 test: _ginkgo
-	ginkgo $(GINKGO_FLAGS) --cover --coverpkg=./... --coverprofile=unit.coverage.out --covermode=atomic --output-dir=. ./...
-	go tool cover -func=unit.coverage.out
+	ginkgo $(GINKGO_FLAGS) --cover --coverpkg=./... --coverprofile=coverage.out --covermode=atomic --output-dir=. ./...
+	go tool cover -func=coverage.out
 
 tidy:
 	go mod tidy
