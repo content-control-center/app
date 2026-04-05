@@ -1,0 +1,16 @@
+# Go
+/server
+*.exe
+
+# SQLite
+*.db
+*.db-shm
+*.db-wal
+
+# Node / React
+web/node_modules/
+web/dist/
+!web/dist/index.html
+
+# OS
+.DS_Store
