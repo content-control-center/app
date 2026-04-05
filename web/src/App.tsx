@@ -12,7 +12,7 @@ function App() {
 
   return (
     <main>
-      <h1>Content Control Center application</h1>
+      <h1>Content Control Center</h1>
       <p>
         API status: <strong>{status}</strong>
       </p>
