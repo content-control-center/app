@@ -1,6 +1,7 @@
 # Go
 /server
 *.exe
+coverage.out
 
 # SQLite
 *.db

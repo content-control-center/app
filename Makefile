@@ -1,4 +1,6 @@
-.PHONY: build run test web web-dev tidy docker clean openapi
+.PHONY: build run test coverage _ginkgo web web-dev tidy docker clean openapi
+
+GINKGO_FLAGS = --github-output -r -randomize-all -randomize-suites -race -trace -procs=2 -poll-progress-after=10s -poll-progress-interval=10s
 
 # ── Go ────────────────────────────────────────────────────────────────────────
 build: web/dist
@@ -7,9 +9,15 @@ build: web/dist
 run: web/dist
 	go run ./cmd/server
 
-test:
+_ginkgo:
 	go install github.com/onsi/ginkgo/v2/ginkgo
-	ginkgo ./... --github-output -r -randomize-all -randomize-suites -race -trace -procs=2 -poll-progress-after=10s -poll-progress-interval=10s
+
+test: _ginkgo
+	ginkgo $(GINKGO_FLAGS) ./...
+
+coverage: _ginkgo
+	ginkgo $(GINKGO_FLAGS) --cover --coverprofile=coverage.out --covermode=atomic ./...
+	go tool cover -func=coverage.out
 
 tidy:
 	go mod tidy
