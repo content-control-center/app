@@ -7,7 +7,7 @@ export default defineConfig({
     proxy: {
       // Forward API calls to the Go server during development.
       "/api": {
-        target: "http://localhost:3000",
+        target: process.env.API_URL ?? "http://localhost:3000",
         changeOrigin: true,
       },
     },
