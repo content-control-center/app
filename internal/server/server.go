@@ -8,6 +8,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/filesystem"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
+	fiberSwagger "github.com/swaggo/fiber-swagger"
 	"github.com/uptrace/bun"
 
 	"github.com/content-control-center/app/internal/handlers"
@@ -23,6 +24,9 @@ func New(db *bun.DB, staticFS fs.FS) *fiber.App {
 
 	// API routes
 	handlers.NewHealthHandler(db).Register(app)
+
+	// Swagger UI — available at /swagger/index.html
+	app.Get("/swagger/*", fiberSwagger.WrapHandler)
 
 	// Serve the embedded React SPA for all non-API routes.
 	app.Use("/", filesystem.New(filesystem.Config{

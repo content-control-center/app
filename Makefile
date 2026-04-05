@@ -1,4 +1,4 @@
-.PHONY: build run test web web-dev tidy docker clean
+.PHONY: build run test web web-dev tidy docker clean openapi
 
 # ── Go ────────────────────────────────────────────────────────────────────────
 build: web/dist
@@ -13,6 +13,11 @@ test:
 
 tidy:
 	go mod tidy
+
+# ── OpenAPI ──────────────────────────────────────────────────────────────────
+openapi:
+	go install github.com/swaggo/swag/cmd/swag@latest
+	swag init -g cmd/server/main.go -o docs --outputTypes go,json
 
 # ── React ────────────────────────────────────────────────────────────────────
 web/node_modules:

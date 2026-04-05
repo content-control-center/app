@@ -18,8 +18,13 @@ func (h *HealthHandler) Register(app *fiber.App) {
 }
 
 // Health godoc
-// @Summary Health check
-// @Success 200 {object} map[string]string
+// @Summary      Health check
+// @Description  Returns the health status of the service and database connectivity.
+// @Tags         system
+// @Produce      json
+// @Success      200  {object}  map[string]string
+// @Failure      503  {object}  map[string]string
+// @Router       /api/health [get]
 func (h *HealthHandler) Health(c *fiber.Ctx) error {
 	if err := h.db.PingContext(c.Context()); err != nil {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{

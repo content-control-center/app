@@ -1,9 +1,15 @@
+// @title           Content Control Center API
+// @version         1.0
+// @description     REST API for the Content Control Center application.
+// @host            localhost:3000
+// @BasePath        /
 package main
 
 import (
 	"context"
 	"log"
 
+	_ "github.com/content-control-center/app/docs"
 	"github.com/content-control-center/app/internal/config"
 	"github.com/content-control-center/app/internal/database"
 	"github.com/content-control-center/app/internal/server"
