@@ -68,13 +68,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: coverage-report
-          path: .
+          path: ${{ github.workspace }}
 
       - name: Upload coverage to Codacy
         uses: codacy/codacy-coverage-reporter-action@v1
         with:
           project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
-          coverage-reports: coverage.out
+          coverage-reports: ${{ github.workspace }}/coverage.out
 
   build-and-push:
     name: Build and push Docker image
