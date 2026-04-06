@@ -1,6 +1,7 @@
 # Content Control Center Application
 
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/d5caed68fdc94fb49a1e52ea198d51b7)](https://app.codacy.com/gh/content-control-center/app/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
+[![Semgrep](https://github.com/content-control-center/app/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/content-control-center/app/actions/workflows/docker-publish.yml)
 
 ## Backend development
 
