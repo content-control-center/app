@@ -43,3 +43,4 @@ clean:
 	rm -f server
 	rm -f data.db data.db-shm data.db-wal
 	rm -rf web/dist web/node_modules
+	rm coverage.out
