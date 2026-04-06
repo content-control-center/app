@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"net/http/httptest"
 
 	"github.com/gofiber/fiber/v2"
@@ -38,11 +39,15 @@ var _ = Describe("UsersHandler", Ordered, func() {
 				return c.Status(code).JSON(fiber.Map{"error": err.Error()})
 			},
 		})
-		handlers.NewUsersHandler(db).Register(app)
+		auth := handlers.RequireAuth(db, testCookieName)
+		handlers.NewUsersHandler(db, auth).Register(app)
+		handlers.NewSessionsHandler(db, testCookieName).Register(app)
 	})
 
 	AfterEach(func() {
-		_, err := db.NewDelete().TableExpr("users").Where("1 = 1").Exec(context.Background())
+		_, err := db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		_, err = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -60,30 +65,38 @@ var _ = Describe("UsersHandler", Ordered, func() {
 		return &u
 	}
 
+	loginAs := func(email, password string) *http.Cookie {
+		body, _ := json.Marshal(fiber.Map{"email": email, "password": password})
+		req := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := app.Test(req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+		cookies := resp.Cookies()
+		Expect(cookies).To(HaveLen(1))
+		return cookies[0]
+	}
+
 	// ── List ─────────────────────────────────────────────────────────────────
 
 	Describe("GET /api/users", func() {
-		Context("when no users exist", func() {
-			It("returns an empty array", func() {
+		Context("when not authenticated", func() {
+			It("returns 401", func() {
 				req := httptest.NewRequest("GET", "/api/users", nil)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(resp.StatusCode).To(Equal(200))
-
-				var users []models.User
-				Expect(json.NewDecoder(resp.Body).Decode(&users)).To(Succeed())
-				Expect(users).To(BeEmpty())
+				Expect(resp.StatusCode).To(Equal(401))
 			})
 		})
 
-		Context("when users exist", func() {
-			BeforeEach(func() {
+		Context("when authenticated", func() {
+			It("returns all users", func() {
 				createUser("Alice", "alice@example.com", "password-alice")
 				createUser("Bob", "bob@example.com", "password-bob")
-			})
+				cookie := loginAs("alice@example.com", "password-alice")
 
-			It("returns all users", func() {
 				req := httptest.NewRequest("GET", "/api/users", nil)
+				req.AddCookie(cookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(200))
@@ -94,7 +107,11 @@ var _ = Describe("UsersHandler", Ordered, func() {
 			})
 
 			It("does not expose password_hash in the response", func() {
+				createUser("Alice", "alice@example.com", "password-alice")
+				cookie := loginAs("alice@example.com", "password-alice")
+
 				req := httptest.NewRequest("GET", "/api/users", nil)
+				req.AddCookie(cookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 
@@ -112,7 +129,7 @@ var _ = Describe("UsersHandler", Ordered, func() {
 
 	Describe("POST /api/users", func() {
 		Context("with valid payload", func() {
-			It("creates a user and returns 201 with a Sqid", func() {
+			It("creates a user and returns 201 with a Sqid — no auth required", func() {
 				u := createUser("Carol", "carol@example.com", "s3cur3P@ss")
 				Expect(u.ID).NotTo(BeEmpty())
 				Expect(u.Name).To(Equal("Carol"))
@@ -185,11 +202,22 @@ var _ = Describe("UsersHandler", Ordered, func() {
 	// ── Get ──────────────────────────────────────────────────────────────────
 
 	Describe("GET /api/users/:id", func() {
-		Context("when the user exists", func() {
+		Context("when not authenticated", func() {
+			It("returns 401", func() {
+				req := httptest.NewRequest("GET", "/api/users/someid", nil)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+		})
+
+		Context("when authenticated and the user exists", func() {
 			It("returns the user without password hash", func() {
 				created := createUser("Dave", "dave@example.com", "password-dave")
+				cookie := loginAs("dave@example.com", "password-dave")
 
 				req := httptest.NewRequest("GET", fmt.Sprintf("/api/users/%s", created.ID), nil)
+				req.AddCookie(cookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(200))
@@ -202,9 +230,13 @@ var _ = Describe("UsersHandler", Ordered, func() {
 			})
 		})
 
-		Context("when the user does not exist", func() {
+		Context("when authenticated and the user does not exist", func() {
 			It("returns 404", func() {
+				createUser("Dave", "dave@example.com", "password-dave")
+				cookie := loginAs("dave@example.com", "password-dave")
+
 				req := httptest.NewRequest("GET", "/api/users/doesnotexist", nil)
+				req.AddCookie(cookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(404))
@@ -215,13 +247,26 @@ var _ = Describe("UsersHandler", Ordered, func() {
 	// ── Update ───────────────────────────────────────────────────────────────
 
 	Describe("PUT /api/users/:id", func() {
-		Context("when the user exists", func() {
+		Context("when not authenticated", func() {
+			It("returns 401", func() {
+				body, _ := json.Marshal(fiber.Map{"name": "X", "email": "x@example.com"})
+				req := httptest.NewRequest("PUT", "/api/users/someid", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+		})
+
+		Context("when authenticated and the user exists", func() {
 			It("updates name and email without changing the password", func() {
 				created := createUser("Eve", "eve@example.com", "password-eve")
+				cookie := loginAs("eve@example.com", "password-eve")
 
 				body, _ := json.Marshal(fiber.Map{"name": "Eve Updated", "email": "eve2@example.com"})
 				req := httptest.NewRequest("PUT", fmt.Sprintf("/api/users/%s", created.ID), bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(cookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(200))
@@ -234,34 +279,43 @@ var _ = Describe("UsersHandler", Ordered, func() {
 
 			It("updates the password when provided", func() {
 				created := createUser("Eve2", "eve2@example.com", "old-password")
+				cookie := loginAs("eve2@example.com", "old-password")
 
 				body, _ := json.Marshal(fiber.Map{"name": "Eve2", "email": "eve2@example.com", "password": "new-password"})
 				req := httptest.NewRequest("PUT", fmt.Sprintf("/api/users/%s", created.ID), bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(cookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(200))
 			})
 		})
 
-		Context("when the user does not exist", func() {
+		Context("when authenticated and the user does not exist", func() {
 			It("returns 404", func() {
+				createUser("Frank", "frank@example.com", "password-frank")
+				cookie := loginAs("frank@example.com", "password-frank")
+
 				body, _ := json.Marshal(fiber.Map{"name": "X", "email": "x@example.com"})
 				req := httptest.NewRequest("PUT", "/api/users/doesnotexist", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(cookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(404))
 			})
 		})
 
-		Context("with invalid payload", func() {
+		Context("when authenticated with invalid payload", func() {
 			DescribeTable("returns 400",
 				func(payload fiber.Map) {
 					created := createUser("Frank", "frank@example.com", "password-frank")
+					cookie := loginAs("frank@example.com", "password-frank")
+
 					body, _ := json.Marshal(payload)
 					req := httptest.NewRequest("PUT", fmt.Sprintf("/api/users/%s", created.ID), bytes.NewReader(body))
 					req.Header.Set("Content-Type", "application/json")
+					req.AddCookie(cookie)
 					resp, err := app.Test(req)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(resp.StatusCode).To(Equal(400))
@@ -277,11 +331,22 @@ var _ = Describe("UsersHandler", Ordered, func() {
 	// ── Delete ───────────────────────────────────────────────────────────────
 
 	Describe("DELETE /api/users/:id", func() {
-		Context("when the user exists", func() {
+		Context("when not authenticated", func() {
+			It("returns 401", func() {
+				req := httptest.NewRequest("DELETE", "/api/users/someid", nil)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+		})
+
+		Context("when authenticated and the user exists", func() {
 			It("deletes the user and returns 204", func() {
 				created := createUser("Grace", "grace@example.com", "password-grace")
+				cookie := loginAs("grace@example.com", "password-grace")
 
 				req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/users/%s", created.ID), nil)
+				req.AddCookie(cookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(204))
@@ -291,20 +356,31 @@ var _ = Describe("UsersHandler", Ordered, func() {
 			})
 
 			It("returns 404 on subsequent get", func() {
-				created := createUser("Henry", "henry@example.com", "password-henry")
+				// Use a separate user for auth so the session survives the deletion
+				createUser("Auth", "auth@example.com", "password-auth")
+				cookie := loginAs("auth@example.com", "password-auth")
 
-				app.Test(httptest.NewRequest("DELETE", fmt.Sprintf("/api/users/%s", created.ID), nil)) //nolint:errcheck
+				henry := createUser("Henry", "henry@example.com", "password-henry")
 
-				req := httptest.NewRequest("GET", fmt.Sprintf("/api/users/%s", created.ID), nil)
-				resp, err := app.Test(req)
+				delReq := httptest.NewRequest("DELETE", fmt.Sprintf("/api/users/%s", henry.ID), nil)
+				delReq.AddCookie(cookie)
+				app.Test(delReq) //nolint:errcheck
+
+				getReq := httptest.NewRequest("GET", fmt.Sprintf("/api/users/%s", henry.ID), nil)
+				getReq.AddCookie(cookie)
+				resp, err := app.Test(getReq)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(404))
 			})
 		})
 
-		Context("when the user does not exist", func() {
+		Context("when authenticated and the user does not exist", func() {
 			It("returns 404", func() {
+				createUser("Iris", "iris@example.com", "password-iris")
+				cookie := loginAs("iris@example.com", "password-iris")
+
 				req := httptest.NewRequest("DELETE", "/api/users/doesnotexist", nil)
+				req.AddCookie(cookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(404))

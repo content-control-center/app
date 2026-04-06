@@ -3,6 +3,11 @@
 // @description     REST API for the Content Control Center application.
 // @host            localhost:3000
 // @BasePath        /
+//
+// @securityDefinitions.apikey  CookieAuth
+// @in                          cookie
+// @name                        c3_session
+// @description                 Session token obtained from POST /api/sessions (login).
 package main
 
 import (

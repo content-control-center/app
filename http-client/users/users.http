@@ -1,10 +1,14 @@
 @baseUrl = http://localhost:3000
 
-### List all users
+# Protected endpoints require a valid session cookie.
+# Run "Login" from sessions/sessions.http first — the HTTP client stores and
+# sends the cookie automatically on subsequent requests to the same host.
+
+### List all users  [protected]
 GET {{baseUrl}}/api/users
 Accept: application/json
 
-### Create user
+### Create user  [public]
 # @name createUser
 POST {{baseUrl}}/api/users
 Content-Type: application/json
@@ -46,11 +50,11 @@ Content-Type: application/json
   "password": "short"
 }
 
-### Get user by ID
+### Get user by ID  [protected]
 GET {{baseUrl}}/api/users/{{userId}}
 Accept: application/json
 
-### Update user (name and email only)
+### Update user (name and email only)  [protected]
 PUT {{baseUrl}}/api/users/{{userId}}
 Content-Type: application/json
 
@@ -59,7 +63,7 @@ Content-Type: application/json
   "email": "bob@marley.com"
 }
 
-### Update user (with new password)
+### Update user (with new password)  [protected]
 PUT {{baseUrl}}/api/users/{{userId}}
 Content-Type: application/json
 
@@ -69,7 +73,7 @@ Content-Type: application/json
   "password": "newP@ssw0rd"
 }
 
-### Update user — invalid email (expects 400)
+### Update user — invalid email (expects 400)  [protected]
 PUT {{baseUrl}}/api/users/{{userId}}
 Content-Type: application/json
 
@@ -78,7 +82,7 @@ Content-Type: application/json
   "email": "not-an-email"
 }
 
-### Update user — password too short (expects 400)
+### Update user — password too short (expects 400)  [protected]
 PUT {{baseUrl}}/api/users/{{userId}}
 Content-Type: application/json
 
@@ -88,5 +92,5 @@ Content-Type: application/json
   "password": "short"
 }
 
-### Delete user
+### Delete user  [protected]
 DELETE {{baseUrl}}/api/users/{{userId}}

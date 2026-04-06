@@ -96,6 +96,7 @@ func (h *SessionsHandler) Create(c *fiber.Ctx) error {
 // @Summary      Logout
 // @Description  Invalidates the current session and clears the session cookie.
 // @Tags         sessions
+// @Security     CookieAuth
 // @Success      204
 // @Failure      401  {object}  map[string]string
 // @Router       /api/sessions [delete]

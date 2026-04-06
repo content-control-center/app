@@ -24,8 +24,9 @@ func New(db *bun.DB, staticFS fs.FS, cfg *config.Config) *fiber.App {
 	app.Use(logger.New())
 
 	// API routes
+	auth := handlers.RequireAuth(db, cfg.SessionCookieName)
 	handlers.NewHealthHandler(db).Register(app)
-	handlers.NewUsersHandler(db).Register(app)
+	handlers.NewUsersHandler(db, auth).Register(app)
 	handlers.NewSessionsHandler(db, cfg.SessionCookieName).Register(app)
 
 	// Serve the embedded React SPA for all non-API routes.

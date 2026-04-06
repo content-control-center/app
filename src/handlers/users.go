@@ -12,20 +12,21 @@ import (
 )
 
 type UsersHandler struct {
-	db *bun.DB
+	db   *bun.DB
+	auth fiber.Handler
 }
 
-func NewUsersHandler(db *bun.DB) *UsersHandler {
-	return &UsersHandler{db: db}
+func NewUsersHandler(db *bun.DB, auth fiber.Handler) *UsersHandler {
+	return &UsersHandler{db: db, auth: auth}
 }
 
 func (h *UsersHandler) Register(app *fiber.App) {
 	g := app.Group("/api/users")
-	g.Get("/", h.List)
-	g.Post("/", h.Create)
-	g.Get("/:id", h.Get)
-	g.Put("/:id", h.Update)
-	g.Delete("/:id", h.Delete)
+	g.Post("/", h.Create)                     // public — registration
+	g.Get("/", h.auth, h.List)                // protected
+	g.Get("/:id", h.auth, h.Get)              // protected
+	g.Put("/:id", h.auth, h.Update)           // protected
+	g.Delete("/:id", h.auth, h.Delete)        // protected
 }
 
 type createUserRequest struct {
@@ -46,7 +47,9 @@ type updateUserRequest struct {
 // @Description  Returns all users ordered by creation date.
 // @Tags         users
 // @Produce      json
+// @Security     CookieAuth
 // @Success      200  {array}   models.User
+// @Failure      401  {object}  map[string]string
 // @Router       /api/users [get]
 func (h *UsersHandler) List(c *fiber.Ctx) error {
 	var users []models.User
@@ -58,14 +61,13 @@ func (h *UsersHandler) List(c *fiber.Ctx) error {
 
 // Create godoc
 // @Summary      Create user
-// @Description  Creates a new user and returns it with a generated Sqid.
+// @Description  Creates a new user and returns it with a generated Sqid. Does not require authentication.
 // @Tags         users
 // @Accept       json
 // @Produce      json
 // @Param        body  body      createUserRequest  true  "User payload"
 // @Success      201   {object}  models.User
 // @Failure      400   {object}  map[string]string
-// @Failure      409   {object}  map[string]string
 // @Router       /api/users [post]
 func (h *UsersHandler) Create(c *fiber.Ctx) error {
 	var req createUserRequest
@@ -104,8 +106,10 @@ func (h *UsersHandler) Create(c *fiber.Ctx) error {
 // @Description  Returns a single user by Sqid.
 // @Tags         users
 // @Produce      json
+// @Security     CookieAuth
 // @Param        id   path      string  true  "User Sqid"
 // @Success      200  {object}  models.User
+// @Failure      401  {object}  map[string]string
 // @Failure      404  {object}  map[string]string
 // @Router       /api/users/{id} [get]
 func (h *UsersHandler) Get(c *fiber.Ctx) error {
@@ -126,10 +130,12 @@ func (h *UsersHandler) Get(c *fiber.Ctx) error {
 // @Tags         users
 // @Accept       json
 // @Produce      json
+// @Security     CookieAuth
 // @Param        id    path      string             true  "User Sqid"
 // @Param        body  body      updateUserRequest  true  "User payload"
 // @Success      200   {object}  models.User
 // @Failure      400   {object}  map[string]string
+// @Failure      401   {object}  map[string]string
 // @Failure      404   {object}  map[string]string
 // @Router       /api/users/{id} [put]
 func (h *UsersHandler) Update(c *fiber.Ctx) error {
@@ -173,8 +179,10 @@ func (h *UsersHandler) Update(c *fiber.Ctx) error {
 // @Summary      Delete user
 // @Description  Deletes a user by Sqid.
 // @Tags         users
+// @Security     CookieAuth
 // @Param        id   path  string  true  "User Sqid"
 // @Success      204
+// @Failure      401  {object}  map[string]string
 // @Failure      404  {object}  map[string]string
 // @Router       /api/users/{id} [delete]
 func (h *UsersHandler) Delete(c *fiber.Ctx) error {

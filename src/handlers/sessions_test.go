@@ -16,8 +16,6 @@ import (
 	"github.com/content-control-center/app/src/models"
 )
 
-const testCookieName = "test_session"
-
 var _ = Describe("SessionsHandler", Ordered, func() {
 	var (
 		app *fiber.App
@@ -38,7 +36,7 @@ var _ = Describe("SessionsHandler", Ordered, func() {
 				return c.Status(code).JSON(fiber.Map{"error": err.Error()})
 			},
 		})
-		handlers.NewUsersHandler(db).Register(app)
+		handlers.NewUsersHandler(db, handlers.RequireAuth(db, testCookieName)).Register(app)
 		handlers.NewSessionsHandler(db, testCookieName).Register(app)
 	})
 
