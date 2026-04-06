@@ -5,18 +5,18 @@ import (
 	"errors"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/uptrace/bun"
 
 	"github.com/content-control-center/app/src/models"
+	"github.com/content-control-center/app/src/repository"
 )
 
 type SettingsHandler struct {
-	db   *bun.DB
+	repo repository.SettingRepository
 	auth fiber.Handler
 }
 
-func NewSettingsHandler(db *bun.DB, auth fiber.Handler) *SettingsHandler {
-	return &SettingsHandler{db: db, auth: auth}
+func NewSettingsHandler(repo repository.SettingRepository, auth fiber.Handler) *SettingsHandler {
+	return &SettingsHandler{repo: repo, auth: auth}
 }
 
 func (h *SettingsHandler) Register(app *fiber.App) {
@@ -41,8 +41,8 @@ type upsertSettingRequest struct {
 // @Failure      401  {object}  map[string]string
 // @Router       /api/settings [get]
 func (h *SettingsHandler) List(c *fiber.Ctx) error {
-	var settings []models.Setting
-	if err := h.db.NewSelect().Model(&settings).OrderExpr("key ASC").Scan(c.Context()); err != nil {
+	settings, err := h.repo.List(c.Context())
+	if err != nil {
 		return err
 	}
 	return c.JSON(settings)
@@ -60,8 +60,7 @@ func (h *SettingsHandler) List(c *fiber.Ctx) error {
 // @Failure      404  {object}  map[string]string
 // @Router       /api/settings/{key} [get]
 func (h *SettingsHandler) Get(c *fiber.Ctx) error {
-	setting := new(models.Setting)
-	err := h.db.NewSelect().Model(setting).Where("st.key = ?", c.Params("key")).Scan(c.Context())
+	setting, err := h.repo.GetByKey(c.Context(), c.Params("key"))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fiber.NewError(fiber.StatusNotFound, "setting not found")
@@ -97,10 +96,7 @@ func (h *SettingsHandler) Upsert(c *fiber.Ctx) error {
 		Key:   c.Params("key"),
 		Value: req.Value,
 	}
-	if _, err := h.db.NewInsert().Model(setting).
-		On("CONFLICT (key) DO UPDATE").
-		Set("value = EXCLUDED.value").
-		Exec(c.Context()); err != nil {
+	if err := h.repo.Upsert(c.Context(), setting); err != nil {
 		return err
 	}
 
@@ -118,11 +114,11 @@ func (h *SettingsHandler) Upsert(c *fiber.Ctx) error {
 // @Failure      404  {object}  map[string]string
 // @Router       /api/settings/{key} [delete]
 func (h *SettingsHandler) Delete(c *fiber.Ctx) error {
-	res, err := h.db.NewDelete().Model((*models.Setting)(nil)).Where("key = ?", c.Params("key")).Exec(c.Context())
+	deleted, err := h.repo.Delete(c.Context(), c.Params("key"))
 	if err != nil {
 		return err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if !deleted {
 		return fiber.NewError(fiber.StatusNotFound, "setting not found")
 	}
 	return c.SendStatus(fiber.StatusNoContent)

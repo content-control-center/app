@@ -6,20 +6,21 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/uptrace/bun"
 
 	"github.com/content-control-center/app/src/models"
+	"github.com/content-control-center/app/src/repository"
 )
 
 const sessionTTL = 7 * 24 * time.Hour
 
 type SessionsHandler struct {
-	db         *bun.DB
-	cookieName string
+	userRepo    repository.UserRepository
+	sessionRepo repository.SessionRepository
+	cookieName  string
 }
 
-func NewSessionsHandler(db *bun.DB, cookieName string) *SessionsHandler {
-	return &SessionsHandler{db: db, cookieName: cookieName}
+func NewSessionsHandler(userRepo repository.UserRepository, sessionRepo repository.SessionRepository, cookieName string) *SessionsHandler {
+	return &SessionsHandler{userRepo: userRepo, sessionRepo: sessionRepo, cookieName: cookieName}
 }
 
 func (h *SessionsHandler) Register(app *fiber.App) {
@@ -53,8 +54,7 @@ func (h *SessionsHandler) Create(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
 	}
 
-	user := new(models.User)
-	err := h.db.NewSelect().Model(user).Where("u.email = ?", req.Email).Scan(c.Context())
+	user, err := h.userRepo.GetByEmail(c.Context(), req.Email)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fiber.NewError(fiber.StatusUnauthorized, "invalid credentials")
@@ -77,7 +77,7 @@ func (h *SessionsHandler) Create(c *fiber.Ctx) error {
 		UserID:    user.ID,
 		ExpiresAt: time.Now().UTC().Add(sessionTTL),
 	}
-	if _, err := h.db.NewInsert().Model(session).Exec(c.Context()); err != nil {
+	if err := h.sessionRepo.Create(c.Context(), session); err != nil {
 		return err
 	}
 
@@ -106,11 +106,11 @@ func (h *SessionsHandler) Delete(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnauthorized, "no session")
 	}
 
-	res, err := h.db.NewDelete().Model((*models.Session)(nil)).Where("id = ?", token).Exec(c.Context())
+	deleted, err := h.sessionRepo.Delete(c.Context(), token)
 	if err != nil {
 		return err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if !deleted {
 		return fiber.NewError(fiber.StatusUnauthorized, "invalid session")
 	}
 

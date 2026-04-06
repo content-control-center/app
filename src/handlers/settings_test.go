@@ -14,6 +14,7 @@ import (
 
 	"github.com/content-control-center/app/src/handlers"
 	"github.com/content-control-center/app/src/models"
+	"github.com/content-control-center/app/src/repository"
 )
 
 var _ = Describe("SettingsHandler", Ordered, func() {
@@ -37,10 +38,13 @@ var _ = Describe("SettingsHandler", Ordered, func() {
 				return c.Status(code).JSON(fiber.Map{"error": err.Error()})
 			},
 		})
-		auth := handlers.RequireAuth(db, testCookieName)
-		handlers.NewUsersHandler(db, auth).Register(app)
-		handlers.NewSessionsHandler(db, testCookieName).Register(app)
-		handlers.NewSettingsHandler(db, auth).Register(app)
+		userRepo := repository.NewUserRepository(db)
+		sessionRepo := repository.NewSessionRepository(db)
+		settingRepo := repository.NewSettingRepository(db)
+		auth := handlers.RequireAuth(sessionRepo, testCookieName)
+		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
+		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName).Register(app)
+		handlers.NewSettingsHandler(settingRepo, auth).Register(app)
 
 		// Seed an auth user and log in
 		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "admin@example.com", "password": "admin-password"})

@@ -7,18 +7,19 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/uptrace/bun"
 
 	"github.com/content-control-center/app/src/models"
+	"github.com/content-control-center/app/src/repository"
 )
 
 type UsersHandler struct {
-	db   *bun.DB
-	auth fiber.Handler
+	repo        repository.UserRepository
+	settingRepo repository.SettingRepository
+	auth        fiber.Handler
 }
 
-func NewUsersHandler(db *bun.DB, auth fiber.Handler) *UsersHandler {
-	return &UsersHandler{db: db, auth: auth}
+func NewUsersHandler(repo repository.UserRepository, settingRepo repository.SettingRepository, auth fiber.Handler) *UsersHandler {
+	return &UsersHandler{repo: repo, settingRepo: settingRepo, auth: auth}
 }
 
 func (h *UsersHandler) Register(app *fiber.App) {
@@ -33,7 +34,7 @@ func (h *UsersHandler) Register(app *fiber.App) {
 // conditionalAuth requires authentication only after setup is complete.
 // This allows the first user to be created without a session during initial setup.
 func (h *UsersHandler) conditionalAuth(c *fiber.Ctx) error {
-	complete, err := setupComplete(c.Context(), h.db)
+	complete, err := setupComplete(c.Context(), h.settingRepo)
 	if err != nil {
 		return err
 	}
@@ -44,9 +45,8 @@ func (h *UsersHandler) conditionalAuth(c *fiber.Ctx) error {
 }
 
 // setupComplete returns true when the "setup_complete" setting is "true".
-func setupComplete(ctx context.Context, db *bun.DB) (bool, error) {
-	setting := new(models.Setting)
-	err := db.NewSelect().Model(setting).Where("st.key = ?", "setup_complete").Scan(ctx)
+func setupComplete(ctx context.Context, repo repository.SettingRepository) (bool, error) {
+	setting, err := repo.GetByKey(ctx, "setup_complete")
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
@@ -79,8 +79,8 @@ type updateUserRequest struct {
 // @Failure      401  {object}  map[string]string
 // @Router       /api/users [get]
 func (h *UsersHandler) List(c *fiber.Ctx) error {
-	var users []models.User
-	if err := h.db.NewSelect().Model(&users).OrderExpr("created_at ASC").Scan(c.Context()); err != nil {
+	users, err := h.repo.List(c.Context())
+	if err != nil {
 		return err
 	}
 	return c.JSON(users)
@@ -123,7 +123,7 @@ func (h *UsersHandler) Create(c *fiber.Ctx) error {
 		Email:        req.Email,
 		PasswordHash: hash,
 	}
-	if _, err := h.db.NewInsert().Model(user).Exec(c.Context()); err != nil {
+	if err := h.repo.Create(c.Context(), user); err != nil {
 		return err
 	}
 
@@ -142,8 +142,7 @@ func (h *UsersHandler) Create(c *fiber.Ctx) error {
 // @Failure      404  {object}  map[string]string
 // @Router       /api/users/{id} [get]
 func (h *UsersHandler) Get(c *fiber.Ctx) error {
-	user := new(models.User)
-	err := h.db.NewSelect().Model(user).Where("u.id = ?", c.Params("id")).Scan(c.Context())
+	user, err := h.repo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fiber.NewError(fiber.StatusNotFound, "user not found")
@@ -176,8 +175,7 @@ func (h *UsersHandler) Update(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
 	}
 
-	user := new(models.User)
-	err := h.db.NewSelect().Model(user).Where("u.id = ?", c.Params("id")).Scan(c.Context())
+	user, err := h.repo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fiber.NewError(fiber.StatusNotFound, "user not found")
@@ -197,7 +195,7 @@ func (h *UsersHandler) Update(c *fiber.Ctx) error {
 		user.PasswordHash = hash
 	}
 
-	if _, err := h.db.NewUpdate().Model(user).WherePK().Exec(c.Context()); err != nil {
+	if err := h.repo.Update(c.Context(), user); err != nil {
 		return err
 	}
 
@@ -215,11 +213,11 @@ func (h *UsersHandler) Update(c *fiber.Ctx) error {
 // @Failure      404  {object}  map[string]string
 // @Router       /api/users/{id} [delete]
 func (h *UsersHandler) Delete(c *fiber.Ctx) error {
-	res, err := h.db.NewDelete().Model((*models.User)(nil)).Where("id = ?", c.Params("id")).Exec(c.Context())
+	deleted, err := h.repo.Delete(c.Context(), c.Params("id"))
 	if err != nil {
 		return err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if !deleted {
 		return fiber.NewError(fiber.StatusNotFound, "user not found")
 	}
 	return c.SendStatus(fiber.StatusNoContent)

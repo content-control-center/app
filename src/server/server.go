@@ -13,6 +13,7 @@ import (
 
 	"github.com/content-control-center/app/src/config"
 	"github.com/content-control-center/app/src/handlers"
+	"github.com/content-control-center/app/src/repository"
 )
 
 func New(db *bun.DB, staticFS fs.FS, cfg *config.Config) *fiber.App {
@@ -24,11 +25,14 @@ func New(db *bun.DB, staticFS fs.FS, cfg *config.Config) *fiber.App {
 	app.Use(logger.New())
 
 	// API routes
-	auth := handlers.RequireAuth(db, cfg.SessionCookieName)
+	userRepo := repository.NewUserRepository(db)
+	sessionRepo := repository.NewSessionRepository(db)
+	settingRepo := repository.NewSettingRepository(db)
+	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
 	handlers.NewHealthHandler(db).Register(app)
-	handlers.NewUsersHandler(db, auth).Register(app)
-	handlers.NewSessionsHandler(db, cfg.SessionCookieName).Register(app)
-	handlers.NewSettingsHandler(db, auth).Register(app)
+	handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
+	handlers.NewSessionsHandler(userRepo, sessionRepo, cfg.SessionCookieName).Register(app)
+	handlers.NewSettingsHandler(settingRepo, auth).Register(app)
 
 	// Serve the embedded React SPA for all non-API routes.
 	app.Use("/", filesystem.New(filesystem.Config{

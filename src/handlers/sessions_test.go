@@ -14,6 +14,7 @@ import (
 
 	"github.com/content-control-center/app/src/handlers"
 	"github.com/content-control-center/app/src/models"
+	"github.com/content-control-center/app/src/repository"
 )
 
 var _ = Describe("SessionsHandler", Ordered, func() {
@@ -36,8 +37,12 @@ var _ = Describe("SessionsHandler", Ordered, func() {
 				return c.Status(code).JSON(fiber.Map{"error": err.Error()})
 			},
 		})
-		handlers.NewUsersHandler(db, handlers.RequireAuth(db, testCookieName)).Register(app)
-		handlers.NewSessionsHandler(db, testCookieName).Register(app)
+		userRepo := repository.NewUserRepository(db)
+		sessionRepo := repository.NewSessionRepository(db)
+		settingRepo := repository.NewSettingRepository(db)
+		auth := handlers.RequireAuth(sessionRepo, testCookieName)
+		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
+		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName).Register(app)
 	})
 
 	AfterEach(func() {
