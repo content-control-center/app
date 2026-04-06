@@ -45,6 +45,9 @@ var _ = Describe("SessionsHandler", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		_, err = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
+		_, err = db.NewUpdate().TableExpr("settings").Set("value = ?", "false").
+			Where("key = ?", "setup_complete").Exec(context.Background())
+		Expect(err).NotTo(HaveOccurred())
 	})
 
 	// ── helpers ──────────────────────────────────────────────────────────────

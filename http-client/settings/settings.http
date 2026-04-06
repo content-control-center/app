@@ -1,0 +1,48 @@
+@baseUrl = http://localhost:3000
+
+# All settings endpoints require authentication.
+# Run "Login" from sessions/sessions.http first.
+
+### List all settings  [protected]
+GET {{baseUrl}}/api/settings
+Accept: application/json
+
+### Get setting by key  [protected]
+GET {{baseUrl}}/api/settings/setup_complete
+Accept: application/json
+
+### Mark setup as complete  [protected]
+PUT {{baseUrl}}/api/settings/setup_complete
+Content-Type: application/json
+
+{
+  "value": "true"
+}
+
+### Mark setup as incomplete (revert)  [protected]
+PUT {{baseUrl}}/api/settings/setup_complete
+Content-Type: application/json
+
+{
+  "value": "false"
+}
+
+### Create a custom setting  [protected]
+PUT {{baseUrl}}/api/settings/custom_key
+Content-Type: application/json
+
+{
+  "value": "custom_value"
+}
+
+### Upsert — missing value (expects 400)  [protected]
+PUT {{baseUrl}}/api/settings/custom_key
+Content-Type: application/json
+
+{}
+
+### Delete a custom setting  [protected]
+DELETE {{baseUrl}}/api/settings/custom_key
+
+### Delete a non-existent setting (expects 404)  [protected]
+DELETE {{baseUrl}}/api/settings/nonexistent

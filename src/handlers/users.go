@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"time"
@@ -22,11 +23,37 @@ func NewUsersHandler(db *bun.DB, auth fiber.Handler) *UsersHandler {
 
 func (h *UsersHandler) Register(app *fiber.App) {
 	g := app.Group("/api/users")
-	g.Post("/", h.Create)                     // public — registration
-	g.Get("/", h.auth, h.List)                // protected
-	g.Get("/:id", h.auth, h.Get)              // protected
-	g.Put("/:id", h.auth, h.Update)           // protected
-	g.Delete("/:id", h.auth, h.Delete)        // protected
+	g.Post("/", h.conditionalAuth, h.Create)  // open while setup_complete=false, protected after
+	g.Get("/", h.auth, h.List)                // always protected
+	g.Get("/:id", h.auth, h.Get)              // always protected
+	g.Put("/:id", h.auth, h.Update)           // always protected
+	g.Delete("/:id", h.auth, h.Delete)        // always protected
+}
+
+// conditionalAuth requires authentication only after setup is complete.
+// This allows the first user to be created without a session during initial setup.
+func (h *UsersHandler) conditionalAuth(c *fiber.Ctx) error {
+	complete, err := setupComplete(c.Context(), h.db)
+	if err != nil {
+		return err
+	}
+	if complete {
+		return h.auth(c)
+	}
+	return c.Next()
+}
+
+// setupComplete returns true when the "setup_complete" setting is "true".
+func setupComplete(ctx context.Context, db *bun.DB) (bool, error) {
+	setting := new(models.Setting)
+	err := db.NewSelect().Model(setting).Where("st.key = ?", "setup_complete").Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return setting.Value == "true", nil
 }
 
 type createUserRequest struct {
@@ -61,13 +88,15 @@ func (h *UsersHandler) List(c *fiber.Ctx) error {
 
 // Create godoc
 // @Summary      Create user
-// @Description  Creates a new user and returns it with a generated Sqid. Does not require authentication.
+// @Description  Creates a new user. Open (no auth required) while setup_complete=false; requires authentication once setup is complete.
 // @Tags         users
 // @Accept       json
 // @Produce      json
+// @Security     CookieAuth
 // @Param        body  body      createUserRequest  true  "User payload"
 // @Success      201   {object}  models.User
 // @Failure      400   {object}  map[string]string
+// @Failure      401   {object}  map[string]string
 // @Router       /api/users [post]
 func (h *UsersHandler) Create(c *fiber.Ctx) error {
 	var req createUserRequest

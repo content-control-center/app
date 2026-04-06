@@ -42,12 +42,16 @@ var _ = Describe("UsersHandler", Ordered, func() {
 		auth := handlers.RequireAuth(db, testCookieName)
 		handlers.NewUsersHandler(db, auth).Register(app)
 		handlers.NewSessionsHandler(db, testCookieName).Register(app)
+		handlers.NewSettingsHandler(db, auth).Register(app)
 	})
 
 	AfterEach(func() {
 		_, err := db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		_, err = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		_, err = db.NewUpdate().TableExpr("settings").Set("value = ?", "false").
+			Where("key = ?", "setup_complete").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -384,6 +388,69 @@ var _ = Describe("UsersHandler", Ordered, func() {
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(404))
+			})
+		})
+	})
+
+	// ── Conditional auth on Create ────────────────────────────────────────────
+
+	Describe("POST /api/users conditional auth", func() {
+		setSetupComplete := func(value string) {
+			body, _ := json.Marshal(fiber.Map{"value": value})
+			req := httptest.NewRequest("PUT", "/api/settings/setup_complete", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+
+			// Need a valid session to update settings — create a temp user and log in
+			createUser("TempAdmin", "tempadmin@example.com", "temp-password")
+			cookie := loginAs("tempadmin@example.com", "temp-password")
+			req.AddCookie(cookie)
+
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(200))
+		}
+
+		Context("when setup_complete is false", func() {
+			It("allows user creation without authentication", func() {
+				body, _ := json.Marshal(fiber.Map{
+					"name": "New User", "email": "new@example.com", "password": "new-password",
+				})
+				req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+			})
+		})
+
+		Context("when setup_complete is true", func() {
+			BeforeEach(func() {
+				setSetupComplete("true")
+			})
+
+			It("rejects unauthenticated user creation with 401", func() {
+				body, _ := json.Marshal(fiber.Map{
+					"name": "Another User", "email": "another@example.com", "password": "another-password",
+				})
+				req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+
+			It("allows user creation with a valid session", func() {
+				cookie := loginAs("tempadmin@example.com", "temp-password")
+
+				body, _ := json.Marshal(fiber.Map{
+					"name": "Another User", "email": "another@example.com", "password": "another-password",
+				})
+				req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(cookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
 			})
 		})
 	})
