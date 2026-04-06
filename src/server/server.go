@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"io/fs"
 	"net/http"
 
@@ -8,7 +9,6 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/filesystem"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
-	fiberSwagger "github.com/swaggo/fiber-swagger"
 	"github.com/uptrace/bun"
 
 	"github.com/content-control-center/app/src/handlers"
@@ -24,9 +24,7 @@ func New(db *bun.DB, staticFS fs.FS) *fiber.App {
 
 	// API routes
 	handlers.NewHealthHandler(db).Register(app)
-
-	// Swagger UI — available at /swagger/index.html
-	app.Get("/swagger/*", fiberSwagger.WrapHandler)
+	handlers.NewUsersHandler(db).Register(app)
 
 	// Serve the embedded React SPA for all non-API routes.
 	app.Use("/", filesystem.New(filesystem.Config{
@@ -41,7 +39,7 @@ func New(db *bun.DB, staticFS fs.FS) *fiber.App {
 
 func defaultErrorHandler(c *fiber.Ctx, err error) error {
 	code := fiber.StatusInternalServerError
-	if e, ok := err.(*fiber.Error); ok {
+	if e, ok := errors.AsType[*fiber.Error](err); ok {
 		code = e.Code
 	}
 	return c.Status(code).JSON(fiber.Map{"error": err.Error()})

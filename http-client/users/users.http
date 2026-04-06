@@ -1,0 +1,33 @@
+@baseUrl = http://localhost:3000
+
+### List all users
+GET {{baseUrl}}/api/users
+Accept: application/json
+
+### Create user
+# @name createUser
+POST {{baseUrl}}/api/users
+Content-Type: application/json
+
+{
+  "name": "Bob Marley",
+  "email": "bob@marley.com"
+}
+
+> {% client.global.set("userId", response.body.id) %}
+
+### Get user by ID
+GET {{baseUrl}}/api/users/{{userId}}
+Accept: application/json
+
+### Update user
+PUT {{baseUrl}}/api/users/{{userId}}
+Content-Type: application/json
+
+{
+    "name": "Bob Marley 2",
+    "email": "bob@marley.com"
+}
+
+### Delete user
+DELETE {{baseUrl}}/api/users/{{userId}}
