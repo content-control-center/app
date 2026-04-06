@@ -11,10 +11,11 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/uptrace/bun"
 
+	"github.com/content-control-center/app/src/config"
 	"github.com/content-control-center/app/src/handlers"
 )
 
-func New(db *bun.DB, staticFS fs.FS) *fiber.App {
+func New(db *bun.DB, staticFS fs.FS, cfg *config.Config) *fiber.App {
 	app := fiber.New(fiber.Config{
 		ErrorHandler: defaultErrorHandler,
 	})
@@ -25,6 +26,7 @@ func New(db *bun.DB, staticFS fs.FS) *fiber.App {
 	// API routes
 	handlers.NewHealthHandler(db).Register(app)
 	handlers.NewUsersHandler(db).Register(app)
+	handlers.NewSessionsHandler(db, cfg.SessionCookieName).Register(app)
 
 	// Serve the embedded React SPA for all non-API routes.
 	app.Use("/", filesystem.New(filesystem.Config{

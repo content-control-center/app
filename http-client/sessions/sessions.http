@@ -1,0 +1,49 @@
+@baseUrl = http://localhost:3000
+
+### Login — valid credentials (expects 201, sets session cookie)
+# @name login
+POST {{baseUrl}}/api/sessions
+Content-Type: application/json
+
+{
+  "email": "serhii@daat.ua",
+  "password": "s3cur3P@ssw0rd"
+}
+
+### Login — wrong password (expects 401)
+POST {{baseUrl}}/api/sessions
+Content-Type: application/json
+
+{
+  "email": "serhii@daat.ua",
+  "password": "wrong-password"
+}
+
+### Login — unknown email (expects 401)
+POST {{baseUrl}}/api/sessions
+Content-Type: application/json
+
+{
+  "email": "nobody@example.com",
+  "password": "s3cur3P@ssw0rd"
+}
+
+### Login — invalid email format (expects 400)
+POST {{baseUrl}}/api/sessions
+Content-Type: application/json
+
+{
+  "email": "not-an-email",
+  "password": "s3cur3P@ssw0rd"
+}
+
+### Login — missing password (expects 400)
+POST {{baseUrl}}/api/sessions
+Content-Type: application/json
+
+{
+  "email": "serhii@daat.ua"
+}
+
+### Logout — invalidates session and clears cookie (expects 204)
+DELETE {{baseUrl}}/api/sessions

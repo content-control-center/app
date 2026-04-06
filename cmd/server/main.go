@@ -37,7 +37,7 @@ func main() {
 		log.Fatalf("load static assets: %v", err)
 	}
 
-	app := server.New(db, staticFS)
+	app := server.New(db, staticFS, cfg)
 
 	log.Printf("listening on %s", cfg.Addr)
 	if err := app.Listen(cfg.Addr); err != nil {
