@@ -29,13 +29,13 @@ func (h *UsersHandler) Register(app *fiber.App) {
 }
 
 type createUserRequest struct {
-	Name  string `json:"name"`
-	Email string `json:"email"`
+	Name  string `json:"name"  validate:"required"`
+	Email string `json:"email" validate:"required,email"`
 }
 
 type updateUserRequest struct {
-	Name  string `json:"name"`
-	Email string `json:"email"`
+	Name  string `json:"name"  validate:"required"`
+	Email string `json:"email" validate:"required,email"`
 }
 
 // List godoc
@@ -69,8 +69,8 @@ func (h *UsersHandler) Create(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
-	if req.Name == "" || req.Email == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "name and email are required")
+	if err := validate.Struct(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
 	}
 
 	id, err := models.NewID()
@@ -128,8 +128,8 @@ func (h *UsersHandler) Update(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
-	if req.Name == "" || req.Email == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "name and email are required")
+	if err := validate.Struct(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
 	}
 
 	user := new(models.User)

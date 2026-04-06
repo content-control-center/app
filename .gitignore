@@ -2,6 +2,7 @@
 /server
 *.exe
 coverage.out
+/tmp/
 
 # SQLite
 *.db

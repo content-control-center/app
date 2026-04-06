@@ -10,11 +10,28 @@ POST {{baseUrl}}/api/users
 Content-Type: application/json
 
 {
-  "name": "Bob Marley",
-  "email": "bob@marley.com"
+  "name": "Serhii Herasymov",
+  "email": "serhii@daat.ua"
 }
 
 > {% client.global.set("userId", response.body.id) %}
+
+### Create user — invalid email (expects 400)
+POST {{baseUrl}}/api/users
+Content-Type: application/json
+
+{
+  "name": "Bob Marley",
+  "email": "not-an-email"
+}
+
+### Create user — missing email (expects 400)
+POST {{baseUrl}}/api/users
+Content-Type: application/json
+
+{
+  "name": "Bob Marley"
+}
 
 ### Get user by ID
 GET {{baseUrl}}/api/users/{{userId}}
@@ -25,8 +42,17 @@ PUT {{baseUrl}}/api/users/{{userId}}
 Content-Type: application/json
 
 {
-    "name": "Bob Marley 2",
-    "email": "bob@marley.com"
+  "name": "Bob Marley 2",
+  "email": "bob@marley.com"
+}
+
+### Update user — invalid email (expects 400)
+PUT {{baseUrl}}/api/users/{{userId}}
+Content-Type: application/json
+
+{
+  "name": "Bob Marley 2",
+  "email": "not-an-email"
 }
 
 ### Delete user

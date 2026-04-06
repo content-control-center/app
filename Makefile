@@ -1,4 +1,4 @@
-.PHONY: build run test coverage _ginkgo web web-dev tidy docker clean openapi
+.PHONY: build run test coverage _ginkgo _air web web-dev tidy docker clean openapi
 
 GINKGO_FLAGS = --github-output -r -randomize-all -randomize-suites -race -trace -procs=2 -poll-progress-after=10s -poll-progress-interval=10s
 
@@ -6,8 +6,11 @@ GINKGO_FLAGS = --github-output -r -randomize-all -randomize-suites -race -trace 
 build: web/dist
 	go build -o server ./cmd/server
 
-run: web/dist
-	go run ./cmd/server
+run: web/dist _air
+	air
+
+_air:
+	go install github.com/air-verse/air@latest
 
 _ginkgo:
 	go install github.com/onsi/ginkgo/v2/ginkgo

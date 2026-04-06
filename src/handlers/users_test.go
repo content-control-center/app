@@ -107,7 +107,7 @@ var _ = Describe("UsersHandler", Ordered, func() {
 			})
 		})
 
-		Context("with missing fields", func() {
+		Context("with invalid payload", func() {
 			DescribeTable("returns 400",
 				func(payload fiber.Map) {
 					body, _ := json.Marshal(payload)
@@ -120,7 +120,23 @@ var _ = Describe("UsersHandler", Ordered, func() {
 				Entry("missing name", fiber.Map{"email": "x@example.com"}),
 				Entry("missing email", fiber.Map{"name": "X"}),
 				Entry("empty body", fiber.Map{}),
+				Entry("invalid email format", fiber.Map{"name": "X", "email": "not-an-email"}),
+				Entry("email missing domain", fiber.Map{"name": "X", "email": "user@"}),
+				Entry("email missing @", fiber.Map{"name": "X", "email": "userexample.com"}),
 			)
+
+			It("returns a descriptive error message for invalid email", func() {
+				body, _ := json.Marshal(fiber.Map{"name": "X", "email": "bad-email"})
+				req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(400))
+
+				var payload map[string]string
+				Expect(json.NewDecoder(resp.Body).Decode(&payload)).To(Succeed())
+				Expect(payload["error"]).To(ContainSubstring("email"))
+			})
 		})
 	})
 
@@ -185,17 +201,21 @@ var _ = Describe("UsersHandler", Ordered, func() {
 			})
 		})
 
-		Context("with missing fields", func() {
-			It("returns 400", func() {
-				created := createUser("Frank", "frank@example.com")
-
-				body, _ := json.Marshal(fiber.Map{"name": "Frank"})
-				req := httptest.NewRequest("PUT", fmt.Sprintf("/api/users/%s", created.ID), bytes.NewReader(body))
-				req.Header.Set("Content-Type", "application/json")
-				resp, err := app.Test(req)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(resp.StatusCode).To(Equal(400))
-			})
+		Context("with invalid payload", func() {
+			DescribeTable("returns 400",
+				func(payload fiber.Map) {
+					created := createUser("Frank", "frank@example.com")
+					body, _ := json.Marshal(payload)
+					req := httptest.NewRequest("PUT", fmt.Sprintf("/api/users/%s", created.ID), bytes.NewReader(body))
+					req.Header.Set("Content-Type", "application/json")
+					resp, err := app.Test(req)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(resp.StatusCode).To(Equal(400))
+				},
+				Entry("missing email", fiber.Map{"name": "Frank"}),
+				Entry("missing name", fiber.Map{"email": "frank@example.com"}),
+				Entry("invalid email format", fiber.Map{"name": "Frank", "email": "not-an-email"}),
+			)
 		})
 	})
 

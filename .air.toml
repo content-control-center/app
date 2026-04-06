@@ -1,0 +1,26 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd      = "GOTOOLCHAIN=go1.26.1 go build -o ./tmp/server ./cmd/server"
+  bin      = "./tmp/server"
+  delay    = 500
+  # Watch Go source and SQL migration files; ignore the React tree and test files.
+  include_ext = ["go", "sql"]
+  exclude_dir = ["tmp", "web", "docs", "http-client"]
+  exclude_regex = ["_test\\.go$"]
+  log              = "tmp/build-errors.log"
+  stop_on_error    = true
+  send_interrupt   = true
+  kill_delay       = "1s"
+
+[log]
+  time = true
+
+[color]
+  watcher = "cyan"
+  build   = "yellow"
+  runner  = "green"
+
+[screen]
+  clear_on_rebuild = true
