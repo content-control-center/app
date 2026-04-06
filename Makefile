@@ -25,7 +25,7 @@ tidy:
 # ── OpenAPI ──────────────────────────────────────────────────────────────────
 openapi:
 	go install github.com/swaggo/swag/cmd/swag@latest
-	swag init -g cmd/server/main.go -o docs --outputTypes go,json
+	swag init -g main.go -d cmd/server,src/handlers,src/models -o docs --outputTypes go,json
 
 # ── React ────────────────────────────────────────────────────────────────────
 web/node_modules:
