@@ -29,13 +29,16 @@ func (h *UsersHandler) Register(app *fiber.App) {
 }
 
 type createUserRequest struct {
-	Name  string `json:"name"  validate:"required"`
-	Email string `json:"email" validate:"required,email"`
+	Name     string `json:"name"     validate:"required"`
+	Email    string `json:"email"    validate:"required,email"`
+	Password string `json:"password" validate:"required,min=8"`
 }
 
 type updateUserRequest struct {
-	Name  string `json:"name"  validate:"required"`
-	Email string `json:"email" validate:"required,email"`
+	Name     string `json:"name"     validate:"required"`
+	Email    string `json:"email"    validate:"required,email"`
+	// Password is optional on update; when provided it must be at least 8 characters.
+	Password string `json:"password" validate:"omitempty,min=8"`
 }
 
 // List godoc
@@ -78,10 +81,16 @@ func (h *UsersHandler) Create(c *fiber.Ctx) error {
 		return err
 	}
 
+	hash, err := models.HashPassword(req.Password)
+	if err != nil {
+		return err
+	}
+
 	user := &models.User{
-		ID:    id,
-		Name:  req.Name,
-		Email: req.Email,
+		ID:           id,
+		Name:         req.Name,
+		Email:        req.Email,
+		PasswordHash: hash,
 	}
 	if _, err := h.db.NewInsert().Model(user).Exec(c.Context()); err != nil {
 		return err
@@ -144,6 +153,14 @@ func (h *UsersHandler) Update(c *fiber.Ctx) error {
 	user.Name = req.Name
 	user.Email = req.Email
 	user.UpdatedAt = time.Now().UTC()
+
+	if req.Password != "" {
+		hash, err := models.HashPassword(req.Password)
+		if err != nil {
+			return err
+		}
+		user.PasswordHash = hash
+	}
 
 	if _, err := h.db.NewUpdate().Model(user).WherePK().Exec(c.Context()); err != nil {
 		return err

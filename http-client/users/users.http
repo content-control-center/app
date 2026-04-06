@@ -11,7 +11,8 @@ Content-Type: application/json
 
 {
   "name": "Serhii Herasymov",
-  "email": "serhii@daat.ua"
+  "email": "serhii@daat.ua",
+  "password": "s3cur3P@ssw0rd"
 }
 
 > {% client.global.set("userId", response.body.id) %}
@@ -21,29 +22,51 @@ POST {{baseUrl}}/api/users
 Content-Type: application/json
 
 {
-  "name": "Bob Marley",
-  "email": "not-an-email"
+  "name": "Serhii Herasymov",
+  "email": "not-an-email",
+  "password": "s3cur3P@ssw0rd"
 }
 
-### Create user — missing email (expects 400)
+### Create user — missing password (expects 400)
 POST {{baseUrl}}/api/users
 Content-Type: application/json
 
 {
-  "name": "Bob Marley"
+  "name": "Serhii Herasymov",
+  "email": "serhii@daat.ua"
+}
+
+### Create user — password too short (expects 400)
+POST {{baseUrl}}/api/users
+Content-Type: application/json
+
+{
+  "name": "Serhii Herasymov",
+  "email": "serhii@daat.ua",
+  "password": "short"
 }
 
 ### Get user by ID
 GET {{baseUrl}}/api/users/{{userId}}
 Accept: application/json
 
-### Update user
+### Update user (name and email only)
 PUT {{baseUrl}}/api/users/{{userId}}
 Content-Type: application/json
 
 {
   "name": "Bob Marley 2",
   "email": "bob@marley.com"
+}
+
+### Update user (with new password)
+PUT {{baseUrl}}/api/users/{{userId}}
+Content-Type: application/json
+
+{
+  "name": "Bob Marley 2",
+  "email": "bob@marley.com",
+  "password": "newP@ssw0rd"
 }
 
 ### Update user — invalid email (expects 400)
@@ -53,6 +76,16 @@ Content-Type: application/json
 {
   "name": "Bob Marley 2",
   "email": "not-an-email"
+}
+
+### Update user — password too short (expects 400)
+PUT {{baseUrl}}/api/users/{{userId}}
+Content-Type: application/json
+
+{
+  "name": "Bob Marley 2",
+  "email": "bob@marley.com",
+  "password": "short"
 }
 
 ### Delete user
