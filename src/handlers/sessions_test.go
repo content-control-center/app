@@ -42,7 +42,7 @@ var _ = Describe("SessionsHandler", Ordered, func() {
 		settingRepo := repository.NewSettingRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
-		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName).Register(app)
+		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 	})
 
 	AfterEach(func() {
@@ -96,6 +96,47 @@ var _ = Describe("SessionsHandler", Ordered, func() {
 				Expect(cookies).To(HaveLen(1))
 				Expect(cookies[0].Name).To(Equal(testCookieName))
 				Expect(cookies[0].Value).To(Equal(session.ID))
+				Expect(cookies[0].HttpOnly).To(BeTrue())
+				// This suite wires the handler with secureCookie=false (dev mode),
+				// so the Secure flag must NOT be set on the cookie.
+				Expect(cookies[0].Secure).To(BeFalse())
+			})
+
+			It("sets the Secure flag when the handler is configured for production", func() {
+				secureApp := fiber.New(fiber.Config{
+					ErrorHandler: func(c *fiber.Ctx, err error) error {
+						code := fiber.StatusInternalServerError
+						if e, ok := err.(*fiber.Error); ok {
+							code = e.Code
+						}
+						return c.Status(code).JSON(fiber.Map{"error": err.Error()})
+					},
+				})
+				userRepo := repository.NewUserRepository(db)
+				sessionRepo := repository.NewSessionRepository(db)
+				settingRepo := repository.NewSettingRepository(db)
+				auth := handlers.RequireAuth(sessionRepo, testCookieName)
+				handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(secureApp)
+				handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, true).Register(secureApp)
+
+				// Seed a user via the production-wired app so we get setup_complete=false handling.
+				body, _ := json.Marshal(fiber.Map{"name": "Sec", "email": "sec@example.com", "password": "password-sec"})
+				createReq := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
+				createReq.Header.Set("Content-Type", "application/json")
+				createResp, err := secureApp.Test(createReq)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(createResp.StatusCode).To(Equal(fiber.StatusCreated))
+
+				loginBody, _ := json.Marshal(fiber.Map{"email": "sec@example.com", "password": "password-sec"})
+				loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
+				loginReq.Header.Set("Content-Type", "application/json")
+				loginResp, err := secureApp.Test(loginReq)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(loginResp.StatusCode).To(Equal(fiber.StatusCreated))
+
+				cookies := loginResp.Cookies()
+				Expect(cookies).To(HaveLen(1))
+				Expect(cookies[0].Secure).To(BeTrue())
 				Expect(cookies[0].HttpOnly).To(BeTrue())
 			})
 		})

@@ -14,13 +14,19 @@ import (
 const sessionTTL = 7 * 24 * time.Hour
 
 type SessionsHandler struct {
-	userRepo    repository.UserRepository
-	sessionRepo repository.SessionRepository
-	cookieName  string
+	userRepo     repository.UserRepository
+	sessionRepo  repository.SessionRepository
+	cookieName   string
+	secureCookie bool
 }
 
-func NewSessionsHandler(userRepo repository.UserRepository, sessionRepo repository.SessionRepository, cookieName string) *SessionsHandler {
-	return &SessionsHandler{userRepo: userRepo, sessionRepo: sessionRepo, cookieName: cookieName}
+func NewSessionsHandler(userRepo repository.UserRepository, sessionRepo repository.SessionRepository, cookieName string, secureCookie bool) *SessionsHandler {
+	return &SessionsHandler{
+		userRepo:     userRepo,
+		sessionRepo:  sessionRepo,
+		cookieName:   cookieName,
+		secureCookie: secureCookie,
+	}
 }
 
 func (h *SessionsHandler) Register(app *fiber.App) {
@@ -84,8 +90,10 @@ func (h *SessionsHandler) Create(c *fiber.Ctx) error {
 	c.Cookie(&fiber.Cookie{
 		Name:     h.cookieName,
 		Value:    token,
+		Path:     "/",
 		Expires:  session.ExpiresAt,
 		HTTPOnly: true,
+		Secure:   h.secureCookie,
 		SameSite: "Lax",
 	})
 
@@ -114,11 +122,16 @@ func (h *SessionsHandler) Delete(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnauthorized, "invalid session")
 	}
 
+	// Mirror the attributes used at login so the browser actually replaces the cookie.
 	c.Cookie(&fiber.Cookie{
-		Name:    h.cookieName,
-		Value:   "",
-		Expires: time.Unix(0, 0),
-		MaxAge:  -1,
+		Name:     h.cookieName,
+		Value:    "",
+		Path:     "/",
+		Expires:  time.Unix(0, 0),
+		MaxAge:   -1,
+		HTTPOnly: true,
+		Secure:   h.secureCookie,
+		SameSite: "Lax",
 	})
 
 	return c.SendStatus(fiber.StatusNoContent)

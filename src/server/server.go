@@ -31,7 +31,9 @@ func New(db *bun.DB, staticFS fs.FS, cfg *config.Config) *fiber.App {
 	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
 	handlers.NewHealthHandler(db).Register(app)
 	handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
-	handlers.NewSessionsHandler(userRepo, sessionRepo, cfg.SessionCookieName).Register(app)
+	// Session cookies are marked Secure in production. Debug mode is the
+	// development escape hatch so localhost over plain HTTP still works.
+	handlers.NewSessionsHandler(userRepo, sessionRepo, cfg.SessionCookieName, !cfg.Debug).Register(app)
 	handlers.NewSettingsHandler(settingRepo, auth).Register(app)
 
 	// Serve the embedded React SPA for all non-API routes.

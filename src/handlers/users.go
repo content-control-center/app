@@ -44,6 +44,20 @@ func (h *UsersHandler) conditionalAuth(c *fiber.Ctx) error {
 	return c.Next()
 }
 
+// requireSelf returns 403 unless the authenticated session belongs to the user
+// identified by the :id route parameter. The auth middleware must have already
+// stored the session in c.Locals("session").
+func requireSelf(c *fiber.Ctx) error {
+	session, ok := c.Locals("session").(*models.Session)
+	if !ok || session == nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "authentication required")
+	}
+	if session.UserID != c.Params("id") {
+		return fiber.NewError(fiber.StatusForbidden, "forbidden")
+	}
+	return nil
+}
+
 // setupComplete returns true when the "setup_complete" setting is "true".
 func setupComplete(ctx context.Context, repo repository.SettingRepository) (bool, error) {
 	setting, err := repo.GetByKey(ctx, "setup_complete")
@@ -167,6 +181,10 @@ func (h *UsersHandler) Get(c *fiber.Ctx) error {
 // @Failure      404   {object}  map[string]string
 // @Router       /api/users/{id} [put]
 func (h *UsersHandler) Update(c *fiber.Ctx) error {
+	if err := requireSelf(c); err != nil {
+		return err
+	}
+
 	var req updateUserRequest
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
@@ -213,6 +231,10 @@ func (h *UsersHandler) Update(c *fiber.Ctx) error {
 // @Failure      404  {object}  map[string]string
 // @Router       /api/users/{id} [delete]
 func (h *UsersHandler) Delete(c *fiber.Ctx) error {
+	if err := requireSelf(c); err != nil {
+		return err
+	}
+
 	deleted, err := h.repo.Delete(c.Context(), c.Params("id"))
 	if err != nil {
 		return err

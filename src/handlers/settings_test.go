@@ -43,7 +43,7 @@ var _ = Describe("SettingsHandler", Ordered, func() {
 		settingRepo := repository.NewSettingRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
-		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName).Register(app)
+		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewSettingsHandler(settingRepo, auth).Register(app)
 
 		// Seed an auth user and log in

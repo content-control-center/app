@@ -45,7 +45,7 @@ var _ = Describe("UsersHandler", Ordered, func() {
 		settingRepo := repository.NewSettingRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
-		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName).Register(app)
+		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewSettingsHandler(settingRepo, auth).Register(app)
 	})
 
@@ -299,8 +299,27 @@ var _ = Describe("UsersHandler", Ordered, func() {
 			})
 		})
 
-		Context("when authenticated and the user does not exist", func() {
-			It("returns 404", func() {
+		Context("when authenticated as a different user", func() {
+			It("returns 403 and does not modify the target user", func() {
+				target := createUser("Target", "target@example.com", "password-target")
+				createUser("Other", "other@example.com", "password-other")
+				cookie := loginAs("other@example.com", "password-other")
+
+				body, _ := json.Marshal(fiber.Map{"name": "Hacked", "email": "hacked@example.com"})
+				req := httptest.NewRequest("PUT", fmt.Sprintf("/api/users/%s", target.ID), bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(cookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(403))
+
+				// The target user is unchanged and the original password still works.
+				Expect(loginAs("target@example.com", "password-target")).NotTo(BeNil())
+			})
+		})
+
+		Context("when authenticated as self but the route id does not exist", func() {
+			It("returns 403", func() {
 				createUser("Frank", "frank@example.com", "password-frank")
 				cookie := loginAs("frank@example.com", "password-frank")
 
@@ -310,7 +329,7 @@ var _ = Describe("UsersHandler", Ordered, func() {
 				req.AddCookie(cookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(resp.StatusCode).To(Equal(404))
+				Expect(resp.StatusCode).To(Equal(403))
 			})
 		})
 
@@ -363,27 +382,45 @@ var _ = Describe("UsersHandler", Ordered, func() {
 				Expect(body).To(BeEmpty())
 			})
 
-			It("returns 404 on subsequent get", func() {
-				// Use a separate user for auth so the session survives the deletion
-				createUser("Auth", "auth@example.com", "password-auth")
-				cookie := loginAs("auth@example.com", "password-auth")
-
+			It("makes the user unreachable on subsequent get", func() {
 				henry := createUser("Henry", "henry@example.com", "password-henry")
+				cookie := loginAs("henry@example.com", "password-henry")
 
 				delReq := httptest.NewRequest("DELETE", fmt.Sprintf("/api/users/%s", henry.ID), nil)
 				delReq.AddCookie(cookie)
-				app.Test(delReq) //nolint:errcheck
+				delResp, delErr := app.Test(delReq)
+				Expect(delErr).NotTo(HaveOccurred())
+				Expect(delResp.StatusCode).To(Equal(204))
 
+				// Session was tied to the deleted user, so the follow-up Get is now
+				// unauthenticated and the auth middleware returns 401.
 				getReq := httptest.NewRequest("GET", fmt.Sprintf("/api/users/%s", henry.ID), nil)
 				getReq.AddCookie(cookie)
 				resp, err := app.Test(getReq)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(resp.StatusCode).To(Equal(404))
+				Expect(resp.StatusCode).To(Equal(401))
 			})
 		})
 
-		Context("when authenticated and the user does not exist", func() {
-			It("returns 404", func() {
+		Context("when authenticated as a different user", func() {
+			It("returns 403 and does not delete the target user", func() {
+				target := createUser("Target", "target@example.com", "password-target")
+				createUser("Other", "other@example.com", "password-other")
+				cookie := loginAs("other@example.com", "password-other")
+
+				req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/users/%s", target.ID), nil)
+				req.AddCookie(cookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(403))
+
+				// Target still exists and can still log in.
+				Expect(loginAs("target@example.com", "password-target")).NotTo(BeNil())
+			})
+		})
+
+		Context("when authenticated as self but the route id does not exist", func() {
+			It("returns 403", func() {
 				createUser("Iris", "iris@example.com", "password-iris")
 				cookie := loginAs("iris@example.com", "password-iris")
 
@@ -391,7 +428,7 @@ var _ = Describe("UsersHandler", Ordered, func() {
 				req.AddCookie(cookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(resp.StatusCode).To(Equal(404))
+				Expect(resp.StatusCode).To(Equal(403))
 			})
 		})
 	})
