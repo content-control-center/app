@@ -4,7 +4,7 @@ import "github.com/kelseyhightower/envconfig"
 
 type Config struct {
 	Addr              string `envconfig:"ADDR"                default:":3000"`
-	DSN               string `envconfig:"DATABASE_DSN"        default:"file:data.db?cache=shared&_pragma=journal_mode(WAL)"`
+	DSN               string `envconfig:"DATABASE_DSN"        default:"file:data/app.db?cache=shared&_pragma=journal_mode(WAL)"`
 	Debug             bool   `envconfig:"DEBUG"               default:"false"`
 	SessionCookieName string `envconfig:"SESSION_COOKIE_NAME" default:"c3_session"`
 }
