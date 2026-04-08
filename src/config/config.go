@@ -7,6 +7,7 @@ type Config struct {
 	DSN               string `envconfig:"DATABASE_DSN"        default:"file:data/app.db?cache=shared&_pragma=journal_mode(WAL)"`
 	Debug             bool   `envconfig:"DEBUG"               default:"false"`
 	SessionCookieName string `envconfig:"SESSION_COOKIE_NAME" default:"c3_session"`
+	EmbedServerURL    string `envconfig:"EMBED_SERVER_URL"    default:"http://localhost:8080"`
 }
 
 func Load() (*Config, error) {

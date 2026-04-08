@@ -45,7 +45,7 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
-		handlers.NewPiecesHandler(pieceRepo, auth).Register(app)
+		handlers.NewPiecesHandler(pieceRepo, auth, nil).Register(app)
 
 		// Seed an auth user and log in
 		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "admin@example.com", "password": "admin-password"})

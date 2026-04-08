@@ -12,12 +12,13 @@ import (
 )
 
 type PiecesHandler struct {
-	repo repository.PieceRepository
-	auth fiber.Handler
+	repo   repository.PieceRepository
+	auth   fiber.Handler
+	onSave func(pieceID, title, content string) // async embedding trigger; nil = disabled
 }
 
-func NewPiecesHandler(repo repository.PieceRepository, auth fiber.Handler) *PiecesHandler {
-	return &PiecesHandler{repo: repo, auth: auth}
+func NewPiecesHandler(repo repository.PieceRepository, auth fiber.Handler, onSave func(pieceID, title, content string)) *PiecesHandler {
+	return &PiecesHandler{repo: repo, auth: auth, onSave: onSave}
 }
 
 func (h *PiecesHandler) Register(app *fiber.App) {
@@ -94,6 +95,10 @@ func (h *PiecesHandler) Create(c *fiber.Ctx) error {
 		return err
 	}
 
+	if h.onSave != nil {
+		go h.onSave(piece.ID, piece.Title, piece.Content)
+	}
+
 	return c.Status(fiber.StatusCreated).JSON(piece)
 }
 
@@ -156,6 +161,10 @@ func (h *PiecesHandler) Update(c *fiber.Ctx) error {
 
 	if err := h.repo.Update(c.Context(), piece); err != nil {
 		return err
+	}
+
+	if h.onSave != nil {
+		go h.onSave(piece.ID, piece.Title, piece.Content)
 	}
 
 	return c.JSON(piece)

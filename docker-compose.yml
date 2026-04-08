@@ -5,10 +5,13 @@ services:
     environment:
       ADDR: ":9001"
       DATABASE_DSN: "file:/data/app.db?cache=shared&_pragma=journal_mode(WAL)"
+      EMBED_SERVER_URL: "http://llama-embedserver:8080"
     volumes:
       - ./data:/data
     ports:
       - "9001:9001"
+    depends_on:
+      - llama-embedserver
 
   web:
     image: node:20-alpine
@@ -23,6 +26,12 @@ services:
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
     depends_on:
       - api
+
+  llama-embedserver:
+    image: alephbetai/llama-embedserver:latest
+    platform: linux/amd64
+    ports:
+      - "9003:8080"
 
 volumes:
   db-data:
