@@ -111,19 +111,9 @@ var _ = Describe("SettingsHandler", Ordered, func() {
 	// ── Get ──────────────────────────────────────────────────────────────────
 
 	Describe("GET /api/settings/:key", func() {
-		Context("when not authenticated", func() {
-			It("returns 401", func() {
+		Context("when setup_complete is false (default)", func() {
+			It("allows unauthenticated access and returns the setting", func() {
 				req := httptest.NewRequest("GET", "/api/settings/setup_complete", nil)
-				resp, err := app.Test(req)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(resp.StatusCode).To(Equal(401))
-			})
-		})
-
-		Context("when authenticated", func() {
-			It("returns the setting", func() {
-				req := httptest.NewRequest("GET", "/api/settings/setup_complete", nil)
-				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(200))
@@ -134,12 +124,49 @@ var _ = Describe("SettingsHandler", Ordered, func() {
 				Expect(s.Value).To(Equal("false"))
 			})
 
-			It("returns 404 for an unknown key", func() {
-				req := httptest.NewRequest("GET", "/api/settings/nonexistent", nil)
+			It("also allows authenticated access", func() {
+				req := httptest.NewRequest("GET", "/api/settings/setup_complete", nil)
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+			})
+
+			It("returns 404 for an unknown key without auth", func() {
+				req := httptest.NewRequest("GET", "/api/settings/nonexistent", nil)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(404))
+			})
+		})
+
+		Context("when setup_complete is true", func() {
+			BeforeEach(func() {
+				_, err := db.NewUpdate().TableExpr("settings").
+					Set("value = ?", "true").
+					Where("key = ?", "setup_complete").
+					Exec(context.Background())
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("returns 401 without auth", func() {
+				req := httptest.NewRequest("GET", "/api/settings/setup_complete", nil)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+
+			It("returns the setting when authenticated", func() {
+				req := httptest.NewRequest("GET", "/api/settings/setup_complete", nil)
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+
+				var s models.Setting
+				Expect(json.NewDecoder(resp.Body).Decode(&s)).To(Succeed())
+				Expect(s.Key).To(Equal("setup_complete"))
+				Expect(s.Value).To(Equal("true"))
 			})
 		})
 	})
