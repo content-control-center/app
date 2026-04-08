@@ -36,6 +36,9 @@ func New(db *bun.DB, staticFS fs.FS, cfg *config.Config) *fiber.App {
 	handlers.NewSessionsHandler(userRepo, sessionRepo, cfg.SessionCookieName, !cfg.Debug).Register(app)
 	handlers.NewSettingsHandler(settingRepo, auth).Register(app)
 
+	pieceRepo := repository.NewPieceRepository(db)
+	handlers.NewPiecesHandler(pieceRepo, auth).Register(app)
+
 	// Serve the embedded React SPA for all non-API routes.
 	app.Use("/", filesystem.New(filesystem.Config{
 		Root:         http.FS(staticFS),
