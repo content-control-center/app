@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"net/http"
@@ -16,7 +17,7 @@ import (
 	"github.com/content-control-center/app/src/repository"
 )
 
-func New(db *bun.DB, staticFS fs.FS, cfg *config.Config) *fiber.App {
+func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*fiber.App, error) {
 	app := fiber.New(fiber.Config{
 		ErrorHandler: defaultErrorHandler,
 	})
@@ -28,13 +29,22 @@ func New(db *bun.DB, staticFS fs.FS, cfg *config.Config) *fiber.App {
 	userRepo := repository.NewUserRepository(db)
 	sessionRepo := repository.NewSessionRepository(db)
 	settingRepo := repository.NewSettingRepository(db)
+	pieceRepo := repository.NewPieceRepository(db)
+	embeddingRepo := repository.NewEmbeddingRepository(db)
 	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
+
 	handlers.NewHealthHandler(db).Register(app)
 	handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 	// Session cookies are marked Secure in production. Debug mode is the
 	// development escape hatch so localhost over plain HTTP still works.
 	handlers.NewSessionsHandler(userRepo, sessionRepo, cfg.SessionCookieName, !cfg.Debug).Register(app)
 	handlers.NewSettingsHandler(settingRepo, auth).Register(app)
+
+	onSave, err := initEmbedding(ctx, cfg, embeddingRepo)
+	if err != nil {
+		return nil, err
+	}
+	handlers.NewPiecesHandler(pieceRepo, auth, onSave).Register(app)
 
 	// Serve the embedded React SPA for all non-API routes.
 	app.Use("/", filesystem.New(filesystem.Config{
@@ -44,7 +54,7 @@ func New(db *bun.DB, staticFS fs.FS, cfg *config.Config) *fiber.App {
 		Browse:       false,
 	}))
 
-	return app
+	return app, nil
 }
 
 func defaultErrorHandler(c *fiber.Ctx, err error) error {
