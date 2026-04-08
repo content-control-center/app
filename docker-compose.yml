@@ -1,6 +1,7 @@
 services:
   api:
     image: serhiiherasymovbndigital/content-control-center:latest
+    platform: linux/amd64
     environment:
       ADDR: ":3000"
       DATABASE_DSN: "file:/data/app.db?cache=shared&_pragma=journal_mode(WAL)"
