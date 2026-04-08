@@ -1,4 +1,4 @@
-@baseUrl = http://localhost:3000
+@baseUrl = http://localhost:9001
 
 # All settings endpoints require authentication.
 # Run "Login" from sessions/sessions.http first.

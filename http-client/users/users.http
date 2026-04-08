@@ -1,4 +1,4 @@
-@baseUrl = http://localhost:3000
+@baseUrl = http://localhost:9001
 
 # Protected endpoints require a valid session cookie.
 # Run "Login" from sessions/sessions.http first — the HTTP client stores and
