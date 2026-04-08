@@ -1,0 +1,6 @@
+services:
+  llama-embedserver:
+    image: alephbetai/llama-embedserver:latest
+    platform: linux/amd64
+    ports:
+      - "9003:8080"
