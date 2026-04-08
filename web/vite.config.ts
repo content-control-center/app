@@ -12,13 +12,14 @@ export default defineConfig({
     },
     // Tell the browser which port to use for the HMR WebSocket. Must match
     // the host-side port exposed in docker-compose.yml.
+    port: 9002,
     hmr: {
-      clientPort: 5173,
+      clientPort: 9002,
     },
     proxy: {
       // Forward API calls to the Go server during development.
       "/api": {
-        target: process.env.API_URL ?? "http://localhost:3000",
+        target: process.env.API_URL ?? "http://localhost:9001",
         changeOrigin: true,
       },
     },
