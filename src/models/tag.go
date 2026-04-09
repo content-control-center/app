@@ -12,7 +12,7 @@ type Tag struct {
 	ID        string    `bun:"id,pk"                                        json:"id"`
 	Name      string    `bun:"name,notnull"                                 json:"name"`
 	Color     string    `bun:"color,notnull"                                json:"color"`
-	CreatedBy string    `bun:"created_by,notnull"                           json:"created_by"`
-	CreatedAt time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
-	UpdatedAt time.Time `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
+	CreatedBy string    `bun:"created_by,notnull"                           json:"-"`
+	CreatedAt time.Time `bun:"created_at,notnull,default:current_timestamp" json:"-"`
+	UpdatedAt time.Time `bun:"updated_at,notnull,default:current_timestamp" json:"-"`
 }
