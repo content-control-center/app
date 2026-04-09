@@ -259,3 +259,12 @@ func nullSlice(s models.StringSlice) models.StringSlice {
 	}
 	return s
 }
+
+// nullMap returns an empty PostTypeMap instead of nil so the JSON column
+// always stores "{}" rather than null.
+func nullMap(m models.PostTypeMap) models.PostTypeMap {
+	if m == nil {
+		return models.PostTypeMap{}
+	}
+	return m
+}

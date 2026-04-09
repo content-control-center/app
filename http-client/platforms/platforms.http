@@ -1,0 +1,113 @@
+@baseUrl = http://localhost:9001
+
+# All platform endpoints require authentication.
+# Run "Login" from sessions/sessions.http first — the HTTP client stores and
+# sends the cookie automatically on subsequent requests to the same host.
+
+### List all platforms  [protected]
+GET {{baseUrl}}/api/platforms
+Accept: application/json
+
+### Get seeded platform — LinkedIn  [protected]
+GET {{baseUrl}}/api/platforms/linkedin
+Accept: application/json
+
+### Get seeded platform — YouTube  [protected]
+GET {{baseUrl}}/api/platforms/youtube
+Accept: application/json
+
+### Get seeded platform — Facebook  [protected]
+GET {{baseUrl}}/api/platforms/facebook
+Accept: application/json
+
+### Get seeded platform — X (Twitter)  [protected]
+GET {{baseUrl}}/api/platforms/x-twitter
+Accept: application/json
+
+### Get seeded platform — Threads  [protected]
+GET {{baseUrl}}/api/platforms/threads
+Accept: application/json
+
+### Get seeded platform — Instagram  [protected]
+GET {{baseUrl}}/api/platforms/instagram
+Accept: application/json
+
+### Create platform  [protected]
+# @name createPlatform
+POST {{baseUrl}}/api/platforms
+Content-Type: application/json
+
+{
+  "name": "TikTok",
+  "post_types": {
+    "video": "Video",
+    "live": "Live stream",
+    "story": "Story (24h ephemeral)",
+    "duet": "Duet"
+  }
+}
+
+> {% client.global.set("platformId", response.body.id) %}
+
+### Create platform — no post_types  [protected]
+POST {{baseUrl}}/api/platforms
+Content-Type: application/json
+
+{
+  "name": "Pinterest"
+}
+
+### Create platform — missing name (expects 400)  [protected]
+POST {{baseUrl}}/api/platforms
+Content-Type: application/json
+
+{
+  "post_types": {
+    "pin": "Pin"
+  }
+}
+
+### Get platform by ID  [protected]
+GET {{baseUrl}}/api/platforms/{{platformId}}
+Accept: application/json
+
+### Get platform — non-existent ID (expects 404)  [protected]
+GET {{baseUrl}}/api/platforms/nonexistent
+Accept: application/json
+
+### Update platform  [protected]
+PUT {{baseUrl}}/api/platforms/{{platformId}}
+Content-Type: application/json
+
+{
+  "name": "TikTok",
+  "post_types": {
+    "video": "Video",
+    "live": "Live stream",
+    "story": "Story (24h ephemeral)",
+    "duet": "Duet",
+    "series": "Series"
+  }
+}
+
+### Update platform — missing name (expects 400)  [protected]
+PUT {{baseUrl}}/api/platforms/{{platformId}}
+Content-Type: application/json
+
+{
+  "post_types": {}
+}
+
+### Update platform — non-existent ID (expects 404)  [protected]
+PUT {{baseUrl}}/api/platforms/nonexistent
+Content-Type: application/json
+
+{
+  "name": "Ghost Platform"
+}
+
+### Delete platform  [protected]
+DELETE {{baseUrl}}/api/platforms/{{platformId}}
+
+### Delete platform — non-existent ID (expects 404)  [protected]
+DELETE {{baseUrl}}/api/platforms/nonexistent
