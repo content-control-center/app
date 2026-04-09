@@ -6,6 +6,12 @@ services:
       ADDR: ":9001"
       DATABASE_DSN: "file:/data/app.db?cache=shared&_pragma=journal_mode(WAL)"
       EMBED_SERVER_URL: "http://llama-embedserver:8080"
+      STORAGE_ENDPOINT: ""
+      STORAGE_REGION: "auto"
+      STORAGE_ACCESS_KEY: ""
+      STORAGE_SECRET_KEY: ""
+      STORAGE_BUCKET: ""
+      STORAGE_PUBLIC_URL: ""
     volumes:
       - ./data:/data
     ports:
