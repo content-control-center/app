@@ -39,6 +39,7 @@ Content-Type: application/json
   "end_date": "2026-12-31T23:59:59Z",
   "budget": 5000.00,
   "currency": "USD",
+  "language": "en",
   "tags": ["q4", "paid", "seasonal"]
 }
 
@@ -102,6 +103,7 @@ Content-Type: application/json
   "target_platform_ids": ["instagram", "linkedin"],
   "budget": 6000.00,
   "currency": "USD",
+  "language": "en",
   "tags": ["q4", "paid", "revised"]
 }
 

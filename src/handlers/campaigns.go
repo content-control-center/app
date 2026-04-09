@@ -60,6 +60,7 @@ type campaignRequest struct {
 	EndDate           *time.Time              `json:"end_date"`
 	Budget            *float64                `json:"budget"`
 	Currency          string                  `json:"currency"`
+	Language          string                  `json:"language"`
 	Tags              models.StringSlice      `json:"tags"`
 }
 
@@ -138,6 +139,7 @@ func (h *CampaignsHandler) Create(c *fiber.Ctx) error {
 		EndDate:           req.EndDate,
 		Budget:            req.Budget,
 		Currency:          req.Currency,
+		Language:          req.Language,
 		Tags:              nullSlice(req.Tags),
 		CreatedBy:         session.UserID,
 	}
@@ -221,6 +223,7 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 	campaign.EndDate = req.EndDate
 	campaign.Budget = req.Budget
 	campaign.Currency = req.Currency
+	campaign.Language = req.Language
 	campaign.Tags = nullSlice(req.Tags)
 	campaign.UpdatedAt = time.Now().UTC()
 

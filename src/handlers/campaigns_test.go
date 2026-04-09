@@ -181,6 +181,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 					"status":              "scheduled",
 					"budget":              1500.00,
 					"currency":            "USD",
+					"language":            "en",
 					"tags":                []string{"q4", "paid"},
 				})
 				req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
@@ -199,6 +200,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				Expect(c.Budget).NotTo(BeNil())
 				Expect(*c.Budget).To(BeNumerically("~", 1500.00, 0.01))
 				Expect(c.Currency).To(Equal("USD"))
+				Expect(c.Language).To(Equal("en"))
 			})
 
 			It("returns 400 when name is missing", func() {
@@ -303,6 +305,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 					"name":      "Updated Name",
 					"objective": "retention",
 					"status":    "active",
+					"language":  "fr",
 				})
 				req := httptest.NewRequest("PUT", "/api/campaigns/"+c.ID, bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
@@ -316,6 +319,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				Expect(got.Name).To(Equal("Updated Name"))
 				Expect(got.Objective).To(Equal(models.ObjectiveRetention))
 				Expect(got.Status).To(Equal(models.StatusActive))
+				Expect(got.Language).To(Equal("fr"))
 			})
 
 			It("returns 404 for an unknown id", func() {

@@ -15,6 +15,7 @@ CREATE TABLE campaigns
     end_date            DATETIME,
     budget              REAL,
     currency            TEXT     NOT NULL DEFAULT '',
+    language            TEXT     NOT NULL DEFAULT '',
     tags                TEXT     NOT NULL DEFAULT '[]',
     created_by          TEXT     NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

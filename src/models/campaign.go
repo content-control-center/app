@@ -46,6 +46,7 @@ type Campaign struct {
 	EndDate           *time.Time        `bun:"end_date"                                     json:"end_date"`
 	Budget            *float64          `bun:"budget"                                       json:"budget"`
 	Currency          string            `bun:"currency,notnull"                             json:"currency"`
+	Language          string            `bun:"language,notnull"                             json:"language"`
 	Tags              StringSlice       `bun:"tags,notnull"                                 json:"tags"`
 	CreatedBy         string            `bun:"created_by,notnull"                           json:"created_by"`
 	CreatedAt         time.Time         `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
