@@ -43,7 +43,7 @@ func NewPieceOnSaveCallback() func(pieceID, title, content string) {
 
 // Init registers all Genkit flows. It must be called once during server
 // startup, after the Genkit instance and embedder have been initialised.
-func Init(g *genkit.Genkit, embedder ai.Embedder, repo repository.EmbeddingRepository) {
+func Init(g *genkit.Genkit, embedder ai.Embedder, repo repository.PiecesEmbeddingsRepository) {
 	EmbedPieceFlow = genkit.DefineFlow(g, "embedPiece",
 		func(ctx context.Context, in EmbedPieceInput) (struct{}, error) {
 			plainText, err := extractText(in.Content)

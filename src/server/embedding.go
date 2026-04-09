@@ -24,7 +24,7 @@ const (
 // initEmbedding initialises Genkit + the llama embedder and returns an onSave
 // callback suitable for passing to NewPiecesHandler. Returns nil, nil when the
 // embed server URL is empty (embedding disabled).
-func initEmbedding(ctx context.Context, cfg *config.Config, repo repository.EmbeddingRepository) (func(pieceID, title, content string), error) {
+func initEmbedding(ctx context.Context, cfg *config.Config, repo repository.PiecesEmbeddingsRepository) (func(pieceID, title, content string), error) {
 	if cfg.EmbedServerURL == "" {
 		return nil, nil
 	}

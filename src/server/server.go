@@ -31,9 +31,10 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	settingRepo := repository.NewSettingRepository(db)
 	tagRepo := repository.NewTagRepository(db)
 	pieceRepo := repository.NewPieceRepository(db, tagRepo)
-	embeddingRepo := repository.NewEmbeddingRepository(db)
+	embeddingRepo := repository.NewPiecesEmbeddingRepository(db)
 	campaignRepo := repository.NewCampaignRepository(db, tagRepo)
 	platformRepo := repository.NewPlatformRepository(db)
+	postRepo := repository.NewPostRepository(db)
 	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
 
 	handlers.NewHealthHandler(db).Register(app)
@@ -51,6 +52,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	handlers.NewCampaignsHandler(campaignRepo, auth).Register(app)
 	handlers.NewPlatformsHandler(platformRepo, auth).Register(app)
 	handlers.NewTagsHandler(tagRepo, auth).Register(app)
+	handlers.NewPostsHandler(postRepo, auth).Register(app)
 
 	// Serve the embedded React SPA for all non-API routes.
 	app.Use("/", filesystem.New(filesystem.Config{

@@ -76,8 +76,17 @@ func (r *pieceRepository) Delete(ctx context.Context, id string) (bool, error) {
 }
 
 func (r *pieceRepository) hydrateTags(ctx context.Context, pieces []models.Piece) error {
-	return hydrateTags(ctx, pieces, r.tagRepo,
-		func(p models.Piece) []string { return p.TagIDs },
-		func(p *models.Piece, tags []models.Tag) { p.Tags = tags },
-	)
+	for i := range pieces {
+		pieces[i].Tags = []models.Tag{}
+	}
+	ids := collectIDsFlat(pieces, func(p models.Piece) []string { return p.TagIDs })
+	return r.tagRepo.hydrateTags(ctx, ids, func(tagByID map[string]models.Tag) {
+		for i, p := range pieces {
+			for _, id := range p.TagIDs {
+				if t, ok := tagByID[id]; ok {
+					pieces[i].Tags = append(pieces[i].Tags, t)
+				}
+			}
+		}
+	})
 }

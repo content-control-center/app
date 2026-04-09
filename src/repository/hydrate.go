@@ -3,50 +3,57 @@ package repository
 import (
 	"context"
 
-	"github.com/content-control-center/app/src/models"
+	"github.com/uptrace/bun"
 )
 
-// hydrateTags is a generic helper that attaches Tag objects to a slice of any
-// entity type. Callers supply two accessor functions so the generic code never
-// needs to know the concrete field names:
-//
-//   - getIDs  – returns the TagIDs slice for a given item (read-only copy)
-//   - setTags – writes the resolved []models.Tag back onto a pointer to the item
-func hydrateTags[T any](
-	ctx context.Context,
-	items []T,
-	tagRepo TagRepository,
-	getIDs func(T) []string,
-	setTags func(*T, []models.Tag),
-) error {
-	for i := range items {
-		setTags(&items[i], []models.Tag{})
-	}
-
+// collectIDs returns a deduplicated slice of IDs extracted one-per-item.
+func collectIDs[T any](items []T, getID func(T) string) []string {
 	seen := make(map[string]struct{})
-	var allIDs []string
+	var ids []string
+	for _, item := range items {
+		id := getID(item)
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// collectIDsFlat returns a deduplicated slice of IDs extracted from a per-item slice.
+func collectIDsFlat[T any](items []T, getIDs func(T) []string) []string {
+	seen := make(map[string]struct{})
+	var ids []string
 	for _, item := range items {
 		for _, id := range getIDs(item) {
 			if _, ok := seen[id]; !ok {
 				seen[id] = struct{}{}
-				allIDs = append(allIDs, id)
+				ids = append(ids, id)
 			}
 		}
 	}
-
-	tagByID, err := tagRepo.GetByIDs(ctx, allIDs)
-	if err != nil {
-		return err
-	}
-
-	for i, item := range items {
-		tags := make([]models.Tag, 0, len(getIDs(item)))
-		for _, id := range getIDs(item) {
-			if t, ok := tagByID[id]; ok {
-				tags = append(tags, t)
-			}
-		}
-		setTags(&items[i], tags)
-	}
-	return nil
+	return ids
 }
+
+// fetchByIDs fetches records of type T whose id column matches any value in ids
+// and returns an ID→*T index map. Returns an empty map (no error) when ids is empty.
+func fetchByIDs[T any](
+	ctx context.Context,
+	db *bun.DB,
+	ids []string,
+	getID func(*T) string,
+) (map[string]*T, error) {
+	result := make(map[string]*T)
+	if len(ids) == 0 {
+		return result, nil
+	}
+	var items []T
+	if err := db.NewSelect().Model(&items).Where("id IN (?)", bun.In(ids)).Scan(ctx); err != nil {
+		return nil, err
+	}
+	for i := range items {
+		result[getID(&items[i])] = &items[i]
+	}
+	return result, nil
+}
+

@@ -18,6 +18,9 @@ type TagRepository interface {
 	// GetByIDs fetches the tags for the given IDs and returns them indexed by ID.
 	// Unknown IDs are silently ignored. An empty slice returns an empty map.
 	GetByIDs(ctx context.Context, ids []string) (map[string]models.Tag, error)
+	// hydrateTags fetches the tags for the given IDs and calls attach with the
+	// resulting ID→Tag map so the caller can apply them to any entity slice.
+	hydrateTags(ctx context.Context, ids []string, attach func(map[string]models.Tag)) error
 	Update(ctx context.Context, tag *models.Tag) error
 	Delete(ctx context.Context, id string) (bool, error)
 }
@@ -83,4 +86,13 @@ func (r *tagRepository) Delete(ctx context.Context, id string) (bool, error) {
 	}
 	n, _ := res.RowsAffected()
 	return n > 0, nil
+}
+
+func (r *tagRepository) hydrateTags(ctx context.Context, ids []string, attach func(map[string]models.Tag)) error {
+	tagByID, err := r.GetByIDs(ctx, ids)
+	if err != nil {
+		return err
+	}
+	attach(tagByID)
+	return nil
 }

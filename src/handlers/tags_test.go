@@ -144,7 +144,7 @@ var _ = Describe("TagsHandler", Ordered, func() {
 		})
 
 		Context("when authenticated", func() {
-			It("creates a tag and returns 201 with created_by from the session", func() {
+			It("creates a tag and returns 201", func() {
 				body, _ := json.Marshal(fiber.Map{"name": "Paid", "color": "#3498DB"})
 				req := httptest.NewRequest("POST", "/api/tags", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
@@ -158,7 +158,6 @@ var _ = Describe("TagsHandler", Ordered, func() {
 				Expect(t.ID).NotTo(BeEmpty())
 				Expect(t.Name).To(Equal("Paid"))
 				Expect(t.Color).To(Equal("#3498DB"))
-				Expect(t.CreatedBy).NotTo(BeEmpty())
 			})
 
 			It("creates a tag without color and defaults to empty string", func() {

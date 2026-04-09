@@ -76,8 +76,17 @@ func (r *campaignRepository) Delete(ctx context.Context, id string) (bool, error
 }
 
 func (r *campaignRepository) hydrateTags(ctx context.Context, campaigns []models.Campaign) error {
-	return hydrateTags(ctx, campaigns, r.tagRepo,
-		func(c models.Campaign) []string { return c.TagIDs },
-		func(c *models.Campaign, tags []models.Tag) { c.Tags = tags },
-	)
+	for i := range campaigns {
+		campaigns[i].Tags = []models.Tag{}
+	}
+	ids := collectIDsFlat(campaigns, func(c models.Campaign) []string { return c.TagIDs })
+	return r.tagRepo.hydrateTags(ctx, ids, func(tagByID map[string]models.Tag) {
+		for i, c := range campaigns {
+			for _, id := range c.TagIDs {
+				if t, ok := tagByID[id]; ok {
+					campaigns[i].Tags = append(campaigns[i].Tags, t)
+				}
+			}
+		}
+	})
 }

@@ -1,0 +1,142 @@
+@baseUrl = http://localhost:9001
+
+# All post endpoints require authentication.
+# Run "Login" from sessions/sessions.http first — the HTTP client stores and
+# sends the cookie automatically on subsequent requests to the same host.
+#
+# Prerequisites:
+#   - A campaign ID stored in {{campaignId}} (run campaigns/campaigns.http → createCampaign)
+#   - The seeded LinkedIn platform ID: "linkedin"
+
+@platformId = linkedin
+
+### List all posts  [protected]
+GET {{baseUrl}}/api/posts
+Accept: application/json
+
+### List posts by campaign  [protected]
+GET {{baseUrl}}/api/campaigns/{{campaignId}}/posts
+Accept: application/json
+
+### Create post — minimal  [protected]
+# @name createPost
+POST {{baseUrl}}/api/posts
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{platformId}}",
+  "platform_post_type": "article",
+  "title": "Introducing Our New Feature"
+}
+
+> {% client.global.set("postId", response.body.id) %}
+
+### Create post — all fields  [protected]
+POST {{baseUrl}}/api/posts
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{platformId}}",
+  "platform_post_type": "article",
+  "title": "5 Reasons to Try Our Platform",
+  "content": "Whether you're a startup or an enterprise, here's why teams love us.",
+  "media_urls": ["https://cdn.example.com/hero.png"],
+  "scheduled_at": "2026-05-01T09:00:00Z",
+  "status": "scheduled",
+  "cta_type": "link",
+  "cta_url": "https://example.com/signup",
+  "target_audience_notes": "Tech-savvy decision-makers aged 28–45",
+  "used_pieces_ids": []
+}
+
+> {% client.global.set("postId", response.body.id) %}
+
+### Create post — invalid status (expects 400)  [protected]
+POST {{baseUrl}}/api/posts
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{platformId}}",
+  "platform_post_type": "article",
+  "title": "Bad Status Post",
+  "status": "unknown"
+}
+
+### Create post — invalid cta_type (expects 400)  [protected]
+POST {{baseUrl}}/api/posts
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{platformId}}",
+  "platform_post_type": "article",
+  "title": "Bad CTA Post",
+  "cta_type": "popup"
+}
+
+### Create post — missing required fields (expects 400)  [protected]
+POST {{baseUrl}}/api/posts
+Content-Type: application/json
+
+{
+  "title": "Missing campaign and platform"
+}
+
+### Get post by ID  [protected]
+GET {{baseUrl}}/api/posts/{{postId}}
+Accept: application/json
+
+### Get post — non-existent ID (expects 404)  [protected]
+GET {{baseUrl}}/api/posts/nonexistent
+Accept: application/json
+
+### Update post  [protected]
+PUT {{baseUrl}}/api/posts/{{postId}}
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{platformId}}",
+  "platform_post_type": "article",
+  "title": "5 Reasons to Try Our Platform — Updated",
+  "content": "Updated body copy after editorial review.",
+  "media_urls": ["https://cdn.example.com/hero-v2.png"],
+  "scheduled_at": "2026-05-02T09:00:00Z",
+  "status": "approved",
+  "cta_type": "button",
+  "cta_url": "https://example.com/signup",
+  "target_audience_notes": "Tech-savvy decision-makers aged 28–45",
+  "used_pieces_ids": []
+}
+
+### Update post — non-existent ID (expects 404)  [protected]
+PUT {{baseUrl}}/api/posts/nonexistent
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{platformId}}",
+  "platform_post_type": "article",
+  "title": "Ghost Post"
+}
+
+### Update post — invalid status (expects 400)  [protected]
+PUT {{baseUrl}}/api/posts/{{postId}}
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{platformId}}",
+  "platform_post_type": "article",
+  "title": "Bad Status Update",
+  "status": "unknown"
+}
+
+### Delete post  [protected]
+DELETE {{baseUrl}}/api/posts/{{postId}}
+
+### Delete post — non-existent ID (expects 404)  [protected]
+DELETE {{baseUrl}}/api/posts/nonexistent

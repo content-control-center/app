@@ -43,6 +43,8 @@ Content-Type: application/json
   "tag_ids": []
 }
 
+> {% client.global.set("campaignId", response.body.id) %}
+
 ### Create campaign — missing name (expects 400)  [protected]
 POST {{baseUrl}}/api/campaigns
 Content-Type: application/json
