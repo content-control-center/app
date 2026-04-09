@@ -1,0 +1,130 @@
+@baseUrl = http://localhost:9001
+
+# All campaign endpoints require authentication.
+# Run "Login" from sessions/sessions.http first — the HTTP client stores and
+# sends the cookie automatically on subsequent requests to the same host.
+
+### List all campaigns  [protected]
+GET {{baseUrl}}/api/campaigns
+Accept: application/json
+
+### Create campaign — minimal  [protected]
+# @name createCampaign
+POST {{baseUrl}}/api/campaigns
+Content-Type: application/json
+
+{
+  "name": "Summer Awareness Push",
+  "objective": "awareness"
+}
+
+> {% client.global.set("campaignId", response.body.id) %}
+
+### Create campaign — all fields  [protected]
+POST {{baseUrl}}/api/campaigns
+Content-Type: application/json
+
+{
+  "name": "Q4 Conversion Drive",
+  "description": "Drive end-of-year sign-ups via paid and organic channels.",
+  "target_persona": "Tech-savvy millennials aged 25–35",
+  "key_messages": "Fast, reliable, affordable — try it free for 30 days.",
+  "tone_guidelines": "Friendly, confident, and jargon-free.",
+  "objective": "conversion",
+  "status": "scheduled",
+  "use_pieces": true,
+  "pieces_ids": [],
+  "target_platform_ids": ["instagram", "tiktok", "linkedin"],
+  "start_date": "2026-10-01T00:00:00Z",
+  "end_date": "2026-12-31T23:59:59Z",
+  "budget": 5000.00,
+  "currency": "USD",
+  "tags": ["q4", "paid", "seasonal"]
+}
+
+### Create campaign — missing name (expects 400)  [protected]
+POST {{baseUrl}}/api/campaigns
+Content-Type: application/json
+
+{
+  "objective": "awareness"
+}
+
+### Create campaign — missing objective (expects 400)  [protected]
+POST {{baseUrl}}/api/campaigns
+Content-Type: application/json
+
+{
+  "name": "No Objective Campaign"
+}
+
+### Create campaign — invalid objective (expects 400)  [protected]
+POST {{baseUrl}}/api/campaigns
+Content-Type: application/json
+
+{
+  "name": "Bad Objective",
+  "objective": "domination"
+}
+
+### Create campaign — invalid status (expects 400)  [protected]
+POST {{baseUrl}}/api/campaigns
+Content-Type: application/json
+
+{
+  "name": "Bad Status",
+  "objective": "awareness",
+  "status": "unknown"
+}
+
+### Get campaign by ID  [protected]
+GET {{baseUrl}}/api/campaigns/{{campaignId}}
+Accept: application/json
+
+### Get campaign — non-existent ID (expects 404)  [protected]
+GET {{baseUrl}}/api/campaigns/nonexistent
+Accept: application/json
+
+### Update campaign  [protected]
+PUT {{baseUrl}}/api/campaigns/{{campaignId}}
+Content-Type: application/json
+
+{
+  "name": "Q4 Conversion Drive — Revised",
+  "description": "Updated copy after stakeholder review.",
+  "target_persona": "Tech-savvy millennials aged 25–35",
+  "key_messages": "Fast, reliable, affordable — now with team plans.",
+  "tone_guidelines": "Friendly, confident, and jargon-free.",
+  "objective": "conversion",
+  "status": "active",
+  "use_pieces": true,
+  "pieces_ids": [],
+  "target_platform_ids": ["instagram", "linkedin"],
+  "budget": 6000.00,
+  "currency": "USD",
+  "tags": ["q4", "paid", "revised"]
+}
+
+### Update campaign — invalid objective (expects 400)  [protected]
+PUT {{baseUrl}}/api/campaigns/{{campaignId}}
+Content-Type: application/json
+
+{
+  "name": "Bad Update",
+  "objective": "domination"
+}
+
+### Update campaign — non-existent ID (expects 404)  [protected]
+PUT {{baseUrl}}/api/campaigns/nonexistent
+Content-Type: application/json
+
+{
+  "name": "Ghost Campaign",
+  "objective": "awareness"
+}
+
+### Delete campaign  [protected]
+DELETE {{baseUrl}}/api/campaigns/{{campaignId}}
+
+### Delete campaign — non-existent ID (expects 404)  [protected]
+DELETE {{baseUrl}}/api/campaigns/nonexistent
