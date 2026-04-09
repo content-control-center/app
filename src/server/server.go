@@ -15,6 +15,7 @@ import (
 	"github.com/content-control-center/app/src/config"
 	"github.com/content-control-center/app/src/handlers"
 	"github.com/content-control-center/app/src/repository"
+	"github.com/content-control-center/app/src/storage"
 )
 
 func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*fiber.App, error) {
@@ -53,6 +54,12 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	handlers.NewPlatformsHandler(platformRepo, auth).Register(app)
 	handlers.NewTagsHandler(tagRepo, auth).Register(app)
 	handlers.NewPostsHandler(postRepo, auth).Register(app)
+
+	store, err := storage.New(cfg)
+	if err != nil {
+		return nil, err
+	}
+	handlers.NewImagesHandler(store, auth).Register(app)
 
 	// Serve the embedded React SPA for all non-API routes.
 	app.Use("/", filesystem.New(filesystem.Config{
