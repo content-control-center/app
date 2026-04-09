@@ -44,19 +44,7 @@ func initEmbedding(ctx context.Context, cfg *config.Config, repo repository.Embe
 
 	flows.Init(g, embedder, repo)
 
-	onSave := func(pieceID, title, content string) {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if _, err := flows.EmbedPieceFlow.Run(ctx, flows.EmbedPieceInput{
-			PieceID: pieceID,
-			Title:   title,
-			Content: content,
-		}); err != nil {
-			log.Printf("embed piece %s: %v", pieceID, err)
-		}
-	}
-
-	return onSave, nil
+	return flows.NewPieceOnSaveCallback(), nil
 }
 
 // waitForEmbedServer polls GET /health on the embed server until it returns
