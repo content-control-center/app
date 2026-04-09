@@ -11,8 +11,8 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// EmbeddingRepository handles persistence of piece vector embeddings.
-type EmbeddingRepository interface {
+// PiecesEmbeddingsRepository handles persistence of piece vector embeddings.
+type PiecesEmbeddingsRepository interface {
 	Upsert(ctx context.Context, pieceID string, vector []float32, model string) error
 	GetByPieceID(ctx context.Context, pieceID string) (vector []float32, model string, err error)
 }
@@ -21,8 +21,8 @@ type embeddingRepository struct {
 	db *bun.DB
 }
 
-// NewEmbeddingRepository returns a Bun-backed EmbeddingRepository.
-func NewEmbeddingRepository(db *bun.DB) EmbeddingRepository {
+// NewPiecesEmbeddingRepository returns a Bun-backed PiecesEmbeddingsRepository.
+func NewPiecesEmbeddingRepository(db *bun.DB) PiecesEmbeddingsRepository {
 	return &embeddingRepository{db: db}
 }
 

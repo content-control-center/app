@@ -24,14 +24,14 @@ var _ = Describe("Piece embedding flow", Ordered, func() {
 	var (
 		ctx     context.Context
 		db      *bun.DB
-		repo    repository.EmbeddingRepository
+		repo    repository.PiecesEmbeddingsRepository
 		pieceID string
 	)
 
 	BeforeAll(func() {
 		ctx = context.Background()
 		db = mustOpenIntegrationDB()
-		repo = repository.NewEmbeddingRepository(db)
+		repo = repository.NewPiecesEmbeddingRepository(db)
 
 		// Initialise Genkit and the llama embedder once for the whole suite.
 		plugin := llama.New(llama.Config{LlamaEmbedServerAddress: embedServerURL})

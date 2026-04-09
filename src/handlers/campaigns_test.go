@@ -17,7 +17,7 @@ import (
 	"github.com/content-control-center/app/src/repository"
 )
 
-var _ = Describe("PiecesHandler", Ordered, func() {
+var _ = Describe("CampaignsHandler", Ordered, func() {
 	var (
 		app        *fiber.App
 		db         *bun.DB
@@ -42,11 +42,11 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 		sessionRepo := repository.NewSessionRepository(db)
 		settingRepo := repository.NewSettingRepository(db)
 		tagRepo := repository.NewTagRepository(db)
-		pieceRepo := repository.NewPieceRepository(db, tagRepo)
+		campaignRepo := repository.NewCampaignRepository(db, tagRepo)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
-		handlers.NewPiecesHandler(pieceRepo, auth, nil).Register(app)
+		handlers.NewCampaignsHandler(campaignRepo, auth).Register(app)
 		handlers.NewTagsHandler(tagRepo, auth).Register(app)
 
 		// Seed an auth user and log in
@@ -69,7 +69,7 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 	})
 
 	AfterEach(func() {
-		_, err := db.NewDelete().TableExpr("pieces").Where("1 = 1").Exec(context.Background())
+		_, err := db.NewDelete().TableExpr("campaigns").Where("1 = 1").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		_, err = db.NewDelete().TableExpr("tags").Where("1 = 1").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
@@ -79,26 +79,26 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 	})
 
-	// helper: create a piece via the API and return it
-	createPiece := func(title, content string) models.Piece {
-		body, _ := json.Marshal(fiber.Map{"title": title, "content": content})
-		req := httptest.NewRequest("POST", "/api/content-bank/pieces", bytes.NewReader(body))
+	// helper: create a campaign via the API and return it
+	createCampaign := func(name string, objective models.CampaignObjective) models.Campaign {
+		body, _ := json.Marshal(fiber.Map{"name": name, "objective": objective})
+		req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.AddCookie(authCookie)
 		resp, err := app.Test(req)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
-		var p models.Piece
-		Expect(json.NewDecoder(resp.Body).Decode(&p)).To(Succeed())
-		return p
+		var c models.Campaign
+		Expect(json.NewDecoder(resp.Body).Decode(&c)).To(Succeed())
+		return c
 	}
 
 	// ── List ─────────────────────────────────────────────────────────────────
 
-	Describe("GET /api/content-bank/pieces", func() {
+	Describe("GET /api/campaigns", func() {
 		Context("when not authenticated", func() {
 			It("returns 401", func() {
-				req := httptest.NewRequest("GET", "/api/content-bank/pieces", nil)
+				req := httptest.NewRequest("GET", "/api/campaigns", nil)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(401))
@@ -106,42 +106,42 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 		})
 
 		Context("when authenticated", func() {
-			It("returns an empty list when no pieces exist", func() {
-				req := httptest.NewRequest("GET", "/api/content-bank/pieces", nil)
+			It("returns an empty list when no campaigns exist", func() {
+				req := httptest.NewRequest("GET", "/api/campaigns", nil)
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(200))
 
-				var pieces []models.Piece
-				Expect(json.NewDecoder(resp.Body).Decode(&pieces)).To(Succeed())
-				Expect(pieces).To(BeEmpty())
+				var campaigns []models.Campaign
+				Expect(json.NewDecoder(resp.Body).Decode(&campaigns)).To(Succeed())
+				Expect(campaigns).To(BeEmpty())
 			})
 
-			It("returns all pieces", func() {
-				createPiece("First", `[{"type":"paragraph"}]`)
-				createPiece("Second", `[{"type":"paragraph"}]`)
+			It("returns all campaigns", func() {
+				createCampaign("Summer Push", models.ObjectiveAwareness)
+				createCampaign("Q4 Retargeting", models.ObjectiveConversion)
 
-				req := httptest.NewRequest("GET", "/api/content-bank/pieces", nil)
+				req := httptest.NewRequest("GET", "/api/campaigns", nil)
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(200))
 
-				var pieces []models.Piece
-				Expect(json.NewDecoder(resp.Body).Decode(&pieces)).To(Succeed())
-				Expect(pieces).To(HaveLen(2))
+				var campaigns []models.Campaign
+				Expect(json.NewDecoder(resp.Body).Decode(&campaigns)).To(Succeed())
+				Expect(campaigns).To(HaveLen(2))
 			})
 		})
 	})
 
 	// ── Create ───────────────────────────────────────────────────────────────
 
-	Describe("POST /api/content-bank/pieces", func() {
+	Describe("POST /api/campaigns", func() {
 		Context("when not authenticated", func() {
 			It("returns 401", func() {
-				body, _ := json.Marshal(fiber.Map{"title": "Test", "content": `[]`})
-				req := httptest.NewRequest("POST", "/api/content-bank/pieces", bytes.NewReader(body))
+				body, _ := json.Marshal(fiber.Map{"name": "Test", "objective": "awareness"})
+				req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
@@ -150,26 +150,66 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 		})
 
 		Context("when authenticated", func() {
-			It("creates a piece and returns 201 with the created_by from the session", func() {
-				body, _ := json.Marshal(fiber.Map{"title": "My Piece", "content": `[{"type":"paragraph"}]`})
-				req := httptest.NewRequest("POST", "/api/content-bank/pieces", bytes.NewReader(body))
+			It("creates a campaign with required fields and returns 201", func() {
+				body, _ := json.Marshal(fiber.Map{"name": "Launch Campaign", "objective": "engagement"})
+				req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(201))
 
-				var p models.Piece
-				Expect(json.NewDecoder(resp.Body).Decode(&p)).To(Succeed())
-				Expect(p.ID).NotTo(BeEmpty())
-				Expect(p.Title).To(Equal("My Piece"))
-				Expect(p.Content).To(Equal(`[{"type":"paragraph"}]`))
-				Expect(p.CreatedBy).NotTo(BeEmpty())
+				var c models.Campaign
+				Expect(json.NewDecoder(resp.Body).Decode(&c)).To(Succeed())
+				Expect(c.ID).NotTo(BeEmpty())
+				Expect(c.Name).To(Equal("Launch Campaign"))
+				Expect(c.Objective).To(Equal(models.ObjectiveEngagement))
+				Expect(c.Status).To(Equal(models.StatusDraft))
+				Expect(c.CreatedBy).NotTo(BeEmpty())
+				Expect(c.PiecesIDs).To(BeEmpty())
+				Expect(c.TargetPlatformIDs).To(BeEmpty())
+				Expect(c.Tags).To(BeEmpty())
 			})
 
-			It("returns 400 when title is missing", func() {
-				body, _ := json.Marshal(fiber.Map{"content": `[]`})
-				req := httptest.NewRequest("POST", "/api/content-bank/pieces", bytes.NewReader(body))
+			It("creates a campaign with all optional fields", func() {
+				body, _ := json.Marshal(fiber.Map{
+					"name":                "Full Campaign",
+					"objective":           "conversion",
+					"description":         "Drive sign-ups",
+					"target_persona":      "Tech-savvy millennials",
+					"key_messages":        "Fast, reliable, affordable",
+					"tone_guidelines":     "Friendly and professional",
+					"use_pieces":          true,
+					"pieces_ids":          []string{"abc", "def"},
+					"target_platform_ids": []string{"instagram", "tiktok"},
+					"status":              "scheduled",
+					"budget":              1500.00,
+					"currency":            "USD",
+					"language":            "en",
+					"tag_ids":             []string{},
+				})
+				req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(201))
+
+				var c models.Campaign
+				Expect(json.NewDecoder(resp.Body).Decode(&c)).To(Succeed())
+				Expect(c.Status).To(Equal(models.StatusScheduled))
+				Expect(c.UsePieces).To(BeTrue())
+				Expect(c.PiecesIDs).To(ConsistOf("abc", "def"))
+				Expect(c.TagIDs).To(BeEmpty())
+				Expect(c.Budget).NotTo(BeNil())
+				Expect(*c.Budget).To(BeNumerically("~", 1500.00, 0.01))
+				Expect(c.Currency).To(Equal("USD"))
+				Expect(c.Language).To(Equal("en"))
+			})
+
+			It("returns 400 when name is missing", func() {
+				body, _ := json.Marshal(fiber.Map{"objective": "awareness"})
+				req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
@@ -177,9 +217,29 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 				Expect(resp.StatusCode).To(Equal(400))
 			})
 
-			It("returns 400 when content is missing", func() {
-				body, _ := json.Marshal(fiber.Map{"title": "No Content"})
-				req := httptest.NewRequest("POST", "/api/content-bank/pieces", bytes.NewReader(body))
+			It("returns 400 when objective is missing", func() {
+				body, _ := json.Marshal(fiber.Map{"name": "No Objective"})
+				req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(400))
+			})
+
+			It("returns 400 when objective is invalid", func() {
+				body, _ := json.Marshal(fiber.Map{"name": "Bad Objective", "objective": "unknown"})
+				req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(400))
+			})
+
+			It("returns 400 when status is invalid", func() {
+				body, _ := json.Marshal(fiber.Map{"name": "Bad Status", "objective": "awareness", "status": "unknown"})
+				req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
@@ -191,10 +251,10 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 
 	// ── Get ──────────────────────────────────────────────────────────────────
 
-	Describe("GET /api/content-bank/pieces/:id", func() {
+	Describe("GET /api/campaigns/:id", func() {
 		Context("when not authenticated", func() {
 			It("returns 401", func() {
-				req := httptest.NewRequest("GET", "/api/content-bank/pieces/someid", nil)
+				req := httptest.NewRequest("GET", "/api/campaigns/someid", nil)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(401))
@@ -202,23 +262,23 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 		})
 
 		Context("when authenticated", func() {
-			It("returns the piece", func() {
-				p := createPiece("Hello", `[{"type":"paragraph"}]`)
+			It("returns the campaign", func() {
+				c := createCampaign("Brand Awareness", models.ObjectiveAwareness)
 
-				req := httptest.NewRequest("GET", "/api/content-bank/pieces/"+p.ID, nil)
+				req := httptest.NewRequest("GET", "/api/campaigns/"+c.ID, nil)
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(200))
 
-				var got models.Piece
+				var got models.Campaign
 				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
-				Expect(got.ID).To(Equal(p.ID))
-				Expect(got.Title).To(Equal("Hello"))
+				Expect(got.ID).To(Equal(c.ID))
+				Expect(got.Name).To(Equal("Brand Awareness"))
 			})
 
 			It("returns 404 for an unknown id", func() {
-				req := httptest.NewRequest("GET", "/api/content-bank/pieces/nonexistent", nil)
+				req := httptest.NewRequest("GET", "/api/campaigns/nonexistent", nil)
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
@@ -229,11 +289,11 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 
 	// ── Update ───────────────────────────────────────────────────────────────
 
-	Describe("PUT /api/content-bank/pieces/:id", func() {
+	Describe("PUT /api/campaigns/:id", func() {
 		Context("when not authenticated", func() {
 			It("returns 401", func() {
-				body, _ := json.Marshal(fiber.Map{"title": "Updated", "content": `[]`})
-				req := httptest.NewRequest("PUT", "/api/content-bank/pieces/someid", bytes.NewReader(body))
+				body, _ := json.Marshal(fiber.Map{"name": "Updated", "objective": "retention"})
+				req := httptest.NewRequest("PUT", "/api/campaigns/someid", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
@@ -242,26 +302,33 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 		})
 
 		Context("when authenticated", func() {
-			It("updates the piece and returns the updated resource", func() {
-				p := createPiece("Original", `[{"type":"paragraph"}]`)
+			It("updates the campaign and returns the updated resource", func() {
+				c := createCampaign("Original Name", models.ObjectiveAwareness)
 
-				body, _ := json.Marshal(fiber.Map{"title": "Updated", "content": `[{"type":"heading"}]`})
-				req := httptest.NewRequest("PUT", "/api/content-bank/pieces/"+p.ID, bytes.NewReader(body))
+				body, _ := json.Marshal(fiber.Map{
+					"name":      "Updated Name",
+					"objective": "retention",
+					"status":    "active",
+					"language":  "fr",
+				})
+				req := httptest.NewRequest("PUT", "/api/campaigns/"+c.ID, bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(200))
 
-				var got models.Piece
+				var got models.Campaign
 				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
-				Expect(got.Title).To(Equal("Updated"))
-				Expect(got.Content).To(Equal(`[{"type":"heading"}]`))
+				Expect(got.Name).To(Equal("Updated Name"))
+				Expect(got.Objective).To(Equal(models.ObjectiveRetention))
+				Expect(got.Status).To(Equal(models.StatusActive))
+				Expect(got.Language).To(Equal("fr"))
 			})
 
 			It("returns 404 for an unknown id", func() {
-				body, _ := json.Marshal(fiber.Map{"title": "Updated", "content": `[]`})
-				req := httptest.NewRequest("PUT", "/api/content-bank/pieces/nonexistent", bytes.NewReader(body))
+				body, _ := json.Marshal(fiber.Map{"name": "Ghost", "objective": "awareness"})
+				req := httptest.NewRequest("PUT", "/api/campaigns/nonexistent", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
@@ -269,11 +336,23 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 				Expect(resp.StatusCode).To(Equal(404))
 			})
 
-			It("returns 400 when body is invalid", func() {
-				p := createPiece("Original", `[]`)
+			It("returns 400 when name is missing", func() {
+				c := createCampaign("Has Name", models.ObjectiveEngagement)
 
-				body, _ := json.Marshal(fiber.Map{"title": "No Content Field"})
-				req := httptest.NewRequest("PUT", "/api/content-bank/pieces/"+p.ID, bytes.NewReader(body))
+				body, _ := json.Marshal(fiber.Map{"objective": "awareness"})
+				req := httptest.NewRequest("PUT", "/api/campaigns/"+c.ID, bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(400))
+			})
+
+			It("returns 400 when objective is invalid", func() {
+				c := createCampaign("Valid", models.ObjectiveEngagement)
+
+				body, _ := json.Marshal(fiber.Map{"name": "Valid", "objective": "bogus"})
+				req := httptest.NewRequest("PUT", "/api/campaigns/"+c.ID, bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
@@ -285,11 +364,11 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 
 	// ── Tag hydration ────────────────────────────────────────────────────────
 
-	Describe("tag hydration on GET /api/content-bank/pieces and /:id", func() {
+	Describe("tag hydration on GET /api/campaigns and /:id", func() {
 		var tagID string
 
 		BeforeEach(func() {
-			tagBody, _ := json.Marshal(fiber.Map{"name": "Featured", "color": "#FF5733"})
+			tagBody, _ := json.Marshal(fiber.Map{"name": "Q4", "color": "#3498DB"})
 			tagReq := httptest.NewRequest("POST", "/api/tags", bytes.NewReader(tagBody))
 			tagReq.Header.Set("Content-Type", "application/json")
 			tagReq.AddCookie(authCookie)
@@ -303,67 +382,67 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 
 		It("returns tags populated on List", func() {
 			body, _ := json.Marshal(fiber.Map{
-				"title":   "Tagged Piece",
-				"content": `[{"type":"paragraph"}]`,
-				"tag_ids": []string{tagID},
+				"name":      "Tagged Campaign",
+				"objective": "awareness",
+				"tag_ids":   []string{tagID},
 			})
-			req := httptest.NewRequest("POST", "/api/content-bank/pieces", bytes.NewReader(body))
+			req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			req.AddCookie(authCookie)
 			resp, err := app.Test(req)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
 
-			listReq := httptest.NewRequest("GET", "/api/content-bank/pieces", nil)
+			listReq := httptest.NewRequest("GET", "/api/campaigns", nil)
 			listReq.AddCookie(authCookie)
 			listResp, err := app.Test(listReq)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(listResp.StatusCode).To(Equal(200))
 
-			var pieces []models.Piece
-			Expect(json.NewDecoder(listResp.Body).Decode(&pieces)).To(Succeed())
-			Expect(pieces).To(HaveLen(1))
-			Expect(pieces[0].TagIDs).To(ConsistOf(tagID))
-			Expect(pieces[0].Tags).To(HaveLen(1))
-			Expect(pieces[0].Tags[0].ID).To(Equal(tagID))
-			Expect(pieces[0].Tags[0].Name).To(Equal("Featured"))
+			var campaigns []models.Campaign
+			Expect(json.NewDecoder(listResp.Body).Decode(&campaigns)).To(Succeed())
+			Expect(campaigns).To(HaveLen(1))
+			Expect(campaigns[0].TagIDs).To(ConsistOf(tagID))
+			Expect(campaigns[0].Tags).To(HaveLen(1))
+			Expect(campaigns[0].Tags[0].ID).To(Equal(tagID))
+			Expect(campaigns[0].Tags[0].Name).To(Equal("Q4"))
 		})
 
 		It("returns tags populated on GetByID", func() {
-			p := createPiece("Tagged", `[{"type":"paragraph"}]`)
+			c := createCampaign("Untagged", models.ObjectiveAwareness)
 
 			body, _ := json.Marshal(fiber.Map{
-				"title":   "Tagged",
-				"content": `[{"type":"paragraph"}]`,
-				"tag_ids": []string{tagID},
+				"name":      "Untagged",
+				"objective": "awareness",
+				"tag_ids":   []string{tagID},
 			})
-			req := httptest.NewRequest("PUT", "/api/content-bank/pieces/"+p.ID, bytes.NewReader(body))
+			req := httptest.NewRequest("PUT", "/api/campaigns/"+c.ID, bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			req.AddCookie(authCookie)
 			_, err := app.Test(req)
 			Expect(err).NotTo(HaveOccurred())
 
-			getReq := httptest.NewRequest("GET", "/api/content-bank/pieces/"+p.ID, nil)
+			getReq := httptest.NewRequest("GET", "/api/campaigns/"+c.ID, nil)
 			getReq.AddCookie(authCookie)
 			getResp, err := app.Test(getReq)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(getResp.StatusCode).To(Equal(200))
 
-			var got models.Piece
+			var got models.Campaign
 			Expect(json.NewDecoder(getResp.Body).Decode(&got)).To(Succeed())
 			Expect(got.Tags).To(HaveLen(1))
-			Expect(got.Tags[0].Name).To(Equal("Featured"))
+			Expect(got.Tags[0].Name).To(Equal("Q4"))
 		})
 
 		It("returns empty tags array when no tag_ids set", func() {
-			p := createPiece("No Tags", `[{"type":"paragraph"}]`)
+			c := createCampaign("No Tags", models.ObjectiveEngagement)
 
-			getReq := httptest.NewRequest("GET", "/api/content-bank/pieces/"+p.ID, nil)
+			getReq := httptest.NewRequest("GET", "/api/campaigns/"+c.ID, nil)
 			getReq.AddCookie(authCookie)
 			getResp, err := app.Test(getReq)
 			Expect(err).NotTo(HaveOccurred())
 
-			var got models.Piece
+			var got models.Campaign
 			Expect(json.NewDecoder(getResp.Body).Decode(&got)).To(Succeed())
 			Expect(got.Tags).NotTo(BeNil())
 			Expect(got.Tags).To(BeEmpty())
@@ -372,10 +451,10 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 
 	// ── Delete ───────────────────────────────────────────────────────────────
 
-	Describe("DELETE /api/content-bank/pieces/:id", func() {
+	Describe("DELETE /api/campaigns/:id", func() {
 		Context("when not authenticated", func() {
 			It("returns 401", func() {
-				req := httptest.NewRequest("DELETE", "/api/content-bank/pieces/someid", nil)
+				req := httptest.NewRequest("DELETE", "/api/campaigns/someid", nil)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(401))
@@ -383,10 +462,10 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 		})
 
 		Context("when authenticated", func() {
-			It("deletes the piece and returns 204", func() {
-				p := createPiece("To Delete", `[]`)
+			It("deletes the campaign and returns 204", func() {
+				c := createCampaign("To Delete", models.ObjectiveConversion)
 
-				req := httptest.NewRequest("DELETE", "/api/content-bank/pieces/"+p.ID, nil)
+				req := httptest.NewRequest("DELETE", "/api/campaigns/"+c.ID, nil)
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
@@ -394,7 +473,7 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 			})
 
 			It("returns 404 for an unknown id", func() {
-				req := httptest.NewRequest("DELETE", "/api/content-bank/pieces/nonexistent", nil)
+				req := httptest.NewRequest("DELETE", "/api/campaigns/nonexistent", nil)
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())

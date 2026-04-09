@@ -3,6 +3,8 @@ package flows
 import (
 	"context"
 	"fmt"
+	"log"
+	"time"
 
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/core"
@@ -22,9 +24,26 @@ type EmbedPieceInput struct {
 // It is set by Init and ready for use after server startup.
 var EmbedPieceFlow *core.Flow[EmbedPieceInput, struct{}, struct{}]
 
+// NewPieceOnSaveCallback returns a fire-and-forget callback that runs EmbedPieceFlow
+// asynchronously. It is intended to be passed as the onSave argument to
+// NewPiecesHandler.
+func NewPieceOnSaveCallback() func(pieceID, title, content string) {
+	return func(pieceID, title, content string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, err := EmbedPieceFlow.Run(ctx, EmbedPieceInput{
+			PieceID: pieceID,
+			Title:   title,
+			Content: content,
+		}); err != nil {
+			log.Printf("embed piece %s: %v", pieceID, err)
+		}
+	}
+}
+
 // Init registers all Genkit flows. It must be called once during server
 // startup, after the Genkit instance and embedder have been initialised.
-func Init(g *genkit.Genkit, embedder ai.Embedder, repo repository.EmbeddingRepository) {
+func Init(g *genkit.Genkit, embedder ai.Embedder, repo repository.PiecesEmbeddingsRepository) {
 	EmbedPieceFlow = genkit.DefineFlow(g, "embedPiece",
 		func(ctx context.Context, in EmbedPieceInput) (struct{}, error) {
 			plainText, err := extractText(in.Content)

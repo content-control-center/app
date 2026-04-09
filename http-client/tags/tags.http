@@ -1,0 +1,76 @@
+@baseUrl = http://localhost:9001
+
+# All tag endpoints require authentication.
+# Run "Login" from sessions/sessions.http first — the HTTP client stores and
+# sends the cookie automatically on subsequent requests to the same host.
+
+### List all tags  [protected]
+GET {{baseUrl}}/api/tags
+Accept: application/json
+
+### Create tag  [protected]
+# @name createTag
+POST {{baseUrl}}/api/tags
+Content-Type: application/json
+
+{
+  "name": "Paid",
+  "color": "#3498DB"
+}
+
+> {% client.global.set("tagId", response.body.id) %}
+
+### Create tag — no color  [protected]
+POST {{baseUrl}}/api/tags
+Content-Type: application/json
+
+{
+  "name": "Organic"
+}
+
+### Create tag — missing name (expects 400)  [protected]
+POST {{baseUrl}}/api/tags
+Content-Type: application/json
+
+{
+  "color": "#FF0000"
+}
+
+### Get tag by ID  [protected]
+GET {{baseUrl}}/api/tags/{{tagId}}
+Accept: application/json
+
+### Get tag — non-existent ID (expects 404)  [protected]
+GET {{baseUrl}}/api/tags/nonexistent
+Accept: application/json
+
+### Update tag  [protected]
+PUT {{baseUrl}}/api/tags/{{tagId}}
+Content-Type: application/json
+
+{
+  "name": "Paid Media",
+  "color": "#2980B9"
+}
+
+### Update tag — missing name (expects 400)  [protected]
+PUT {{baseUrl}}/api/tags/{{tagId}}
+Content-Type: application/json
+
+{
+  "color": "#FF0000"
+}
+
+### Update tag — non-existent ID (expects 404)  [protected]
+PUT {{baseUrl}}/api/tags/nonexistent
+Content-Type: application/json
+
+{
+  "name": "Ghost Tag"
+}
+
+### Delete tag  [protected]
+DELETE {{baseUrl}}/api/tags/{{tagId}}
+
+### Delete tag — non-existent ID (expects 404)  [protected]
+DELETE {{baseUrl}}/api/tags/nonexistent
