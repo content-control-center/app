@@ -61,7 +61,7 @@ type campaignRequest struct {
 	Budget            *float64                `json:"budget"`
 	Currency          string                  `json:"currency"`
 	Language          string                  `json:"language"`
-	Tags              models.StringSlice      `json:"tags"`
+	TagIDs            models.StringSlice      `json:"tag_ids"`
 }
 
 func (r *campaignRequest) toStatus() models.CampaignStatus {
@@ -140,7 +140,8 @@ func (h *CampaignsHandler) Create(c *fiber.Ctx) error {
 		Budget:            req.Budget,
 		Currency:          req.Currency,
 		Language:          req.Language,
-		Tags:              nullSlice(req.Tags),
+		TagIDs:            nullSlice(req.TagIDs),
+		Tags:              []models.Tag{},
 		CreatedBy:         session.UserID,
 	}
 	if err := h.repo.Create(c.Context(), campaign); err != nil {
@@ -224,7 +225,7 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 	campaign.Budget = req.Budget
 	campaign.Currency = req.Currency
 	campaign.Language = req.Language
-	campaign.Tags = nullSlice(req.Tags)
+	campaign.TagIDs = nullSlice(req.TagIDs)
 	campaign.UpdatedAt = time.Now().UTC()
 
 	if err := h.repo.Update(c.Context(), campaign); err != nil {

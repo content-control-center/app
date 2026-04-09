@@ -40,7 +40,7 @@ Content-Type: application/json
   "budget": 5000.00,
   "currency": "USD",
   "language": "en",
-  "tags": ["q4", "paid", "seasonal"]
+  "tag_ids": []
 }
 
 ### Create campaign — missing name (expects 400)  [protected]
@@ -104,7 +104,7 @@ Content-Type: application/json
   "budget": 6000.00,
   "currency": "USD",
   "language": "en",
-  "tags": ["q4", "paid", "revised"]
+  "tag_ids": []
 }
 
 ### Update campaign — invalid objective (expects 400)  [protected]

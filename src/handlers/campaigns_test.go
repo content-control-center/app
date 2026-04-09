@@ -41,11 +41,13 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 		userRepo := repository.NewUserRepository(db)
 		sessionRepo := repository.NewSessionRepository(db)
 		settingRepo := repository.NewSettingRepository(db)
-		campaignRepo := repository.NewCampaignRepository(db)
+		tagRepo := repository.NewTagRepository(db)
+		campaignRepo := repository.NewCampaignRepository(db, tagRepo)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, auth).Register(app)
+		handlers.NewTagsHandler(tagRepo, auth).Register(app)
 
 		// Seed an auth user and log in
 		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "admin@example.com", "password": "admin-password"})
@@ -68,6 +70,8 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 
 	AfterEach(func() {
 		_, err := db.NewDelete().TableExpr("campaigns").Where("1 = 1").Exec(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		_, err = db.NewDelete().TableExpr("tags").Where("1 = 1").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		_, err = db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
@@ -182,7 +186,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 					"budget":              1500.00,
 					"currency":            "USD",
 					"language":            "en",
-					"tags":                []string{"q4", "paid"},
+					"tag_ids":             []string{},
 				})
 				req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
@@ -196,7 +200,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				Expect(c.Status).To(Equal(models.StatusScheduled))
 				Expect(c.UsePieces).To(BeTrue())
 				Expect(c.PiecesIDs).To(ConsistOf("abc", "def"))
-				Expect(c.Tags).To(ConsistOf("q4", "paid"))
+				Expect(c.TagIDs).To(BeEmpty())
 				Expect(c.Budget).NotTo(BeNil())
 				Expect(*c.Budget).To(BeNumerically("~", 1500.00, 0.01))
 				Expect(c.Currency).To(Equal("USD"))
@@ -355,6 +359,93 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(400))
 			})
+		})
+	})
+
+	// ── Tag hydration ────────────────────────────────────────────────────────
+
+	Describe("tag hydration on GET /api/campaigns and /:id", func() {
+		var tagID string
+
+		BeforeEach(func() {
+			tagBody, _ := json.Marshal(fiber.Map{"name": "Q4", "color": "#3498DB"})
+			tagReq := httptest.NewRequest("POST", "/api/tags", bytes.NewReader(tagBody))
+			tagReq.Header.Set("Content-Type", "application/json")
+			tagReq.AddCookie(authCookie)
+			tagResp, err := app.Test(tagReq)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(tagResp.StatusCode).To(Equal(fiber.StatusCreated))
+			var t map[string]any
+			Expect(json.NewDecoder(tagResp.Body).Decode(&t)).To(Succeed())
+			tagID = t["id"].(string)
+		})
+
+		It("returns tags populated on List", func() {
+			body, _ := json.Marshal(fiber.Map{
+				"name":      "Tagged Campaign",
+				"objective": "awareness",
+				"tag_ids":   []string{tagID},
+			})
+			req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+
+			listReq := httptest.NewRequest("GET", "/api/campaigns", nil)
+			listReq.AddCookie(authCookie)
+			listResp, err := app.Test(listReq)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(listResp.StatusCode).To(Equal(200))
+
+			var campaigns []models.Campaign
+			Expect(json.NewDecoder(listResp.Body).Decode(&campaigns)).To(Succeed())
+			Expect(campaigns).To(HaveLen(1))
+			Expect(campaigns[0].TagIDs).To(ConsistOf(tagID))
+			Expect(campaigns[0].Tags).To(HaveLen(1))
+			Expect(campaigns[0].Tags[0].ID).To(Equal(tagID))
+			Expect(campaigns[0].Tags[0].Name).To(Equal("Q4"))
+		})
+
+		It("returns tags populated on GetByID", func() {
+			c := createCampaign("Untagged", models.ObjectiveAwareness)
+
+			body, _ := json.Marshal(fiber.Map{
+				"name":      "Untagged",
+				"objective": "awareness",
+				"tag_ids":   []string{tagID},
+			})
+			req := httptest.NewRequest("PUT", "/api/campaigns/"+c.ID, bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(authCookie)
+			_, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+
+			getReq := httptest.NewRequest("GET", "/api/campaigns/"+c.ID, nil)
+			getReq.AddCookie(authCookie)
+			getResp, err := app.Test(getReq)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(getResp.StatusCode).To(Equal(200))
+
+			var got models.Campaign
+			Expect(json.NewDecoder(getResp.Body).Decode(&got)).To(Succeed())
+			Expect(got.Tags).To(HaveLen(1))
+			Expect(got.Tags[0].Name).To(Equal("Q4"))
+		})
+
+		It("returns empty tags array when no tag_ids set", func() {
+			c := createCampaign("No Tags", models.ObjectiveEngagement)
+
+			getReq := httptest.NewRequest("GET", "/api/campaigns/"+c.ID, nil)
+			getReq.AddCookie(authCookie)
+			getResp, err := app.Test(getReq)
+			Expect(err).NotTo(HaveOccurred())
+
+			var got models.Campaign
+			Expect(json.NewDecoder(getResp.Body).Decode(&got)).To(Succeed())
+			Expect(got.Tags).NotTo(BeNil())
+			Expect(got.Tags).To(BeEmpty())
 		})
 	})
 

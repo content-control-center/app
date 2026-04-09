@@ -20,17 +20,21 @@ type CampaignRepository interface {
 }
 
 type campaignRepository struct {
-	db *bun.DB
+	db      *bun.DB
+	tagRepo TagRepository
 }
 
 // NewCampaignRepository returns a Bun-backed CampaignRepository.
-func NewCampaignRepository(db *bun.DB) CampaignRepository {
-	return &campaignRepository{db: db}
+func NewCampaignRepository(db *bun.DB, tagRepo TagRepository) CampaignRepository {
+	return &campaignRepository{db: db, tagRepo: tagRepo}
 }
 
 func (r *campaignRepository) List(ctx context.Context) ([]models.Campaign, error) {
 	var campaigns []models.Campaign
 	if err := r.db.NewSelect().Model(&campaigns).OrderExpr("created_at ASC").Scan(ctx); err != nil {
+		return nil, err
+	}
+	if err := r.hydrateTags(ctx, campaigns); err != nil {
 		return nil, err
 	}
 	return campaigns, nil
@@ -50,7 +54,11 @@ func (r *campaignRepository) GetByID(ctx context.Context, id string) (*models.Ca
 		}
 		return nil, err
 	}
-	return campaign, nil
+	campaigns := []models.Campaign{*campaign}
+	if err := r.hydrateTags(ctx, campaigns); err != nil {
+		return nil, err
+	}
+	return &campaigns[0], nil
 }
 
 func (r *campaignRepository) Update(ctx context.Context, campaign *models.Campaign) error {
@@ -65,4 +73,11 @@ func (r *campaignRepository) Delete(ctx context.Context, id string) (bool, error
 	}
 	n, _ := res.RowsAffected()
 	return n > 0, nil
+}
+
+func (r *campaignRepository) hydrateTags(ctx context.Context, campaigns []models.Campaign) error {
+	return hydrateTags(ctx, campaigns, r.tagRepo,
+		func(c models.Campaign) []string { return c.TagIDs },
+		func(c *models.Campaign, tags []models.Tag) { c.Tags = tags },
+	)
 }

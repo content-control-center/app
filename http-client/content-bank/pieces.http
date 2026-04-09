@@ -15,7 +15,8 @@ Content-Type: application/json
 
 {
   "title": "My First Piece",
-  "content": "[{\"id\":\"1\",\"type\":\"paragraph\",\"props\":{\"textColor\":\"default\",\"backgroundColor\":\"default\",\"textAlignment\":\"left\"},\"content\":[{\"type\":\"text\",\"text\":\"Hello, world!\",\"styles\":{}}],\"children\":[]}]"
+  "content": "[{\"id\":\"1\",\"type\":\"paragraph\",\"props\":{\"textColor\":\"default\",\"backgroundColor\":\"default\",\"textAlignment\":\"left\"},\"content\":[{\"type\":\"text\",\"text\":\"Hello, world!\",\"styles\":{}}],\"children\":[]}]",
+  "tag_ids": []
 }
 
 > {% client.global.set("pieceId", response.body.id) %}
@@ -50,7 +51,8 @@ Content-Type: application/json
 
 {
   "title": "Updated Piece Title",
-  "content": "[{\"id\":\"1\",\"type\":\"heading\",\"props\":{\"level\":1,\"textColor\":\"default\",\"backgroundColor\":\"default\",\"textAlignment\":\"left\"},\"content\":[{\"type\":\"text\",\"text\":\"Updated heading\",\"styles\":{}}],\"children\":[]},{\"id\":\"2\",\"type\":\"paragraph\",\"props\":{\"textColor\":\"default\",\"backgroundColor\":\"default\",\"textAlignment\":\"left\"},\"content\":[{\"type\":\"text\",\"text\":\"Updated body text.\",\"styles\":{}}],\"children\":[]}]"
+  "content": "[{\"id\":\"1\",\"type\":\"heading\",\"props\":{\"level\":1,\"textColor\":\"default\",\"backgroundColor\":\"default\",\"textAlignment\":\"left\"},\"content\":[{\"type\":\"text\",\"text\":\"Updated heading\",\"styles\":{}}],\"children\":[]},{\"id\":\"2\",\"type\":\"paragraph\",\"props\":{\"textColor\":\"default\",\"backgroundColor\":\"default\",\"textAlignment\":\"left\"},\"content\":[{\"type\":\"text\",\"text\":\"Updated body text.\",\"styles\":{}}],\"children\":[]}]",
+  "tag_ids": []
 }
 
 ### Update piece — missing content (expects 400)  [protected]

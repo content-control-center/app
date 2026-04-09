@@ -31,13 +31,15 @@ func (h *PiecesHandler) Register(app *fiber.App) {
 }
 
 type createPieceRequest struct {
-	Title   string `json:"title"   validate:"required"`
-	Content string `json:"content" validate:"required"`
+	Title   string             `json:"title"   validate:"required"`
+	Content string             `json:"content" validate:"required"`
+	TagIDs  models.StringSlice `json:"tag_ids"`
 }
 
 type updatePieceRequest struct {
-	Title   string `json:"title"   validate:"required"`
-	Content string `json:"content" validate:"required"`
+	Title   string             `json:"title"   validate:"required"`
+	Content string             `json:"content" validate:"required"`
+	TagIDs  models.StringSlice `json:"tag_ids"`
 }
 
 // List godoc
@@ -89,6 +91,8 @@ func (h *PiecesHandler) Create(c *fiber.Ctx) error {
 		ID:        id,
 		Title:     req.Title,
 		Content:   req.Content,
+		TagIDs:    nullSlice(req.TagIDs),
+		Tags:      []models.Tag{},
 		CreatedBy: session.UserID,
 	}
 	if err := h.repo.Create(c.Context(), piece); err != nil {
@@ -157,6 +161,7 @@ func (h *PiecesHandler) Update(c *fiber.Ctx) error {
 
 	piece.Title = req.Title
 	piece.Content = req.Content
+	piece.TagIDs = nullSlice(req.TagIDs)
 	piece.UpdatedAt = time.Now().UTC()
 
 	if err := h.repo.Update(c.Context(), piece); err != nil {

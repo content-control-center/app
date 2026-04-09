@@ -20,17 +20,21 @@ type PieceRepository interface {
 }
 
 type pieceRepository struct {
-	db *bun.DB
+	db      *bun.DB
+	tagRepo TagRepository
 }
 
 // NewPieceRepository returns a Bun-backed PieceRepository.
-func NewPieceRepository(db *bun.DB) PieceRepository {
-	return &pieceRepository{db: db}
+func NewPieceRepository(db *bun.DB, tagRepo TagRepository) PieceRepository {
+	return &pieceRepository{db: db, tagRepo: tagRepo}
 }
 
 func (r *pieceRepository) List(ctx context.Context) ([]models.Piece, error) {
 	var pieces []models.Piece
 	if err := r.db.NewSelect().Model(&pieces).OrderExpr("created_at ASC").Scan(ctx); err != nil {
+		return nil, err
+	}
+	if err := r.hydrateTags(ctx, pieces); err != nil {
 		return nil, err
 	}
 	return pieces, nil
@@ -50,7 +54,11 @@ func (r *pieceRepository) GetByID(ctx context.Context, id string) (*models.Piece
 		}
 		return nil, err
 	}
-	return piece, nil
+	pieces := []models.Piece{*piece}
+	if err := r.hydrateTags(ctx, pieces); err != nil {
+		return nil, err
+	}
+	return &pieces[0], nil
 }
 
 func (r *pieceRepository) Update(ctx context.Context, piece *models.Piece) error {
@@ -65,4 +73,11 @@ func (r *pieceRepository) Delete(ctx context.Context, id string) (bool, error) {
 	}
 	n, _ := res.RowsAffected()
 	return n > 0, nil
+}
+
+func (r *pieceRepository) hydrateTags(ctx context.Context, pieces []models.Piece) error {
+	return hydrateTags(ctx, pieces, r.tagRepo,
+		func(p models.Piece) []string { return p.TagIDs },
+		func(p *models.Piece, tags []models.Tag) { p.Tags = tags },
+	)
 }

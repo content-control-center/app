@@ -41,11 +41,13 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 		userRepo := repository.NewUserRepository(db)
 		sessionRepo := repository.NewSessionRepository(db)
 		settingRepo := repository.NewSettingRepository(db)
-		pieceRepo := repository.NewPieceRepository(db)
+		tagRepo := repository.NewTagRepository(db)
+		pieceRepo := repository.NewPieceRepository(db, tagRepo)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewPiecesHandler(pieceRepo, auth, nil).Register(app)
+		handlers.NewTagsHandler(tagRepo, auth).Register(app)
 
 		// Seed an auth user and log in
 		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "admin@example.com", "password": "admin-password"})
@@ -68,6 +70,8 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 
 	AfterEach(func() {
 		_, err := db.NewDelete().TableExpr("pieces").Where("1 = 1").Exec(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		_, err = db.NewDelete().TableExpr("tags").Where("1 = 1").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		_, err = db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
@@ -276,6 +280,93 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(400))
 			})
+		})
+	})
+
+	// ── Tag hydration ────────────────────────────────────────────────────────
+
+	Describe("tag hydration on GET /api/content-bank/pieces and /:id", func() {
+		var tagID string
+
+		BeforeEach(func() {
+			tagBody, _ := json.Marshal(fiber.Map{"name": "Featured", "color": "#FF5733"})
+			tagReq := httptest.NewRequest("POST", "/api/tags", bytes.NewReader(tagBody))
+			tagReq.Header.Set("Content-Type", "application/json")
+			tagReq.AddCookie(authCookie)
+			tagResp, err := app.Test(tagReq)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(tagResp.StatusCode).To(Equal(fiber.StatusCreated))
+			var t map[string]any
+			Expect(json.NewDecoder(tagResp.Body).Decode(&t)).To(Succeed())
+			tagID = t["id"].(string)
+		})
+
+		It("returns tags populated on List", func() {
+			body, _ := json.Marshal(fiber.Map{
+				"title":   "Tagged Piece",
+				"content": `[{"type":"paragraph"}]`,
+				"tag_ids": []string{tagID},
+			})
+			req := httptest.NewRequest("POST", "/api/content-bank/pieces", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+
+			listReq := httptest.NewRequest("GET", "/api/content-bank/pieces", nil)
+			listReq.AddCookie(authCookie)
+			listResp, err := app.Test(listReq)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(listResp.StatusCode).To(Equal(200))
+
+			var pieces []models.Piece
+			Expect(json.NewDecoder(listResp.Body).Decode(&pieces)).To(Succeed())
+			Expect(pieces).To(HaveLen(1))
+			Expect(pieces[0].TagIDs).To(ConsistOf(tagID))
+			Expect(pieces[0].Tags).To(HaveLen(1))
+			Expect(pieces[0].Tags[0].ID).To(Equal(tagID))
+			Expect(pieces[0].Tags[0].Name).To(Equal("Featured"))
+		})
+
+		It("returns tags populated on GetByID", func() {
+			p := createPiece("Tagged", `[{"type":"paragraph"}]`)
+
+			body, _ := json.Marshal(fiber.Map{
+				"title":   "Tagged",
+				"content": `[{"type":"paragraph"}]`,
+				"tag_ids": []string{tagID},
+			})
+			req := httptest.NewRequest("PUT", "/api/content-bank/pieces/"+p.ID, bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(authCookie)
+			_, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+
+			getReq := httptest.NewRequest("GET", "/api/content-bank/pieces/"+p.ID, nil)
+			getReq.AddCookie(authCookie)
+			getResp, err := app.Test(getReq)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(getResp.StatusCode).To(Equal(200))
+
+			var got models.Piece
+			Expect(json.NewDecoder(getResp.Body).Decode(&got)).To(Succeed())
+			Expect(got.Tags).To(HaveLen(1))
+			Expect(got.Tags[0].Name).To(Equal("Featured"))
+		})
+
+		It("returns empty tags array when no tag_ids set", func() {
+			p := createPiece("No Tags", `[{"type":"paragraph"}]`)
+
+			getReq := httptest.NewRequest("GET", "/api/content-bank/pieces/"+p.ID, nil)
+			getReq.AddCookie(authCookie)
+			getResp, err := app.Test(getReq)
+			Expect(err).NotTo(HaveOccurred())
+
+			var got models.Piece
+			Expect(json.NewDecoder(getResp.Body).Decode(&got)).To(Succeed())
+			Expect(got.Tags).NotTo(BeNil())
+			Expect(got.Tags).To(BeEmpty())
 		})
 	})
 
