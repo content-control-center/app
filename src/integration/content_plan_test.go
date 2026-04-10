@@ -1,0 +1,131 @@
+//go:build integration
+
+package integration_test
+
+import (
+	"context"
+	"os"
+	"time"
+
+	"github.com/firebase/genkit/go/genkit"
+	"github.com/firebase/genkit/go/plugins/compat_oai/anthropic"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"github.com/uptrace/bun"
+
+	"github.com/content-control-center/app/src/genkit/flows/content_plan"
+	"github.com/content-control-center/app/src/models"
+	"github.com/content-control-center/app/src/repository"
+)
+
+var _ = Describe("Content plan flow", Ordered, func() {
+	var (
+		ctx        context.Context
+		db         *bun.DB
+		userID     string
+		campaignID string
+		platformID = "linkedin"
+	)
+
+	BeforeAll(func() {
+		apiKey := os.Getenv("ANTHROPIC_API_KEY")
+		if apiKey == "" {
+			Skip("ANTHROPIC_API_KEY not set — skipping content plan integration tests")
+		}
+
+		ctx = context.Background()
+		db = mustOpenIntegrationDB()
+
+		tagRepo := repository.NewTagRepository(db)
+		campaignRepo := repository.NewCampaignRepository(db, tagRepo)
+		pieceRepo := repository.NewPieceRepository(db, tagRepo)
+		embeddingRepo := repository.NewPiecesEmbeddingRepository(db)
+		platformRepo := repository.NewPlatformRepository(db)
+		postRepo := repository.NewPostRepository(db)
+
+		// Seed user.
+		var err error
+		userID, err = models.NewID()
+		Expect(err).NotTo(HaveOccurred())
+		user := &models.User{
+			ID:           userID,
+			Name:         "Content Plan Tester",
+			Email:        "cp-integration@test.local",
+			PasswordHash: "placeholder",
+		}
+		_, err = db.NewInsert().Model(user).Exec(ctx)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Seed a campaign with all required fields.
+		start := time.Now().UTC().Truncate(24 * time.Hour)
+		end := start.Add(14 * 24 * time.Hour)
+		estCount := 6
+		campaignID, err = models.NewID()
+		Expect(err).NotTo(HaveOccurred())
+		campaign := &models.Campaign{
+			ID:                campaignID,
+			Name:              "Integration Test Campaign",
+			Description:       "A campaign to test AI-driven content plan generation.",
+			TargetPersona:     "Marketing professionals aged 25–45 interested in SaaS tools.",
+			KeyMessages:       "Save time, increase reach, data-driven insights.",
+			ToneGuidelines:    "Professional yet approachable; use concrete examples.",
+			Objective:         models.ObjectiveAwareness,
+			Status:            models.StatusDraft,
+			Language:          "en",
+			TargetPlatformIDs: models.StringSlice{platformID},
+			EstimatedPostCount: &estCount,
+			StartDate:         &start,
+			EndDate:           &end,
+			CreatedBy:         userID,
+		}
+		Expect(campaignRepo.Create(ctx, campaign)).To(Succeed())
+
+		// Initialise the Anthropic-backed Genkit flow.
+		g := genkit.Init(ctx, genkit.WithPlugins(&anthropic.Anthropic{}))
+
+		modelID := os.Getenv("MODEL_ID")
+		if modelID == "" {
+			modelID = "claude-haiku-4-5-20251001"
+		}
+		flowCfg := content_plan.ContentPlanFlowConfig{
+			ModelID:   modelID,
+			MaxPieces: 5,
+		}
+		repos := content_plan.ContentPlanRepos{
+			Campaigns:  campaignRepo,
+			Pieces:     pieceRepo,
+			Embeddings: embeddingRepo,
+			Platforms:  platformRepo,
+			Posts:      postRepo,
+		}
+		Expect(content_plan.InitContentPlan(g, flowCfg, repos)).To(Succeed())
+	})
+
+	AfterAll(func() {
+		_, _ = db.NewDelete().TableExpr("posts").Where("campaign_id = ?", campaignID).Exec(ctx)
+		_, _ = db.NewDelete().TableExpr("campaigns").Where("id = ?", campaignID).Exec(ctx)
+		_, _ = db.NewDelete().TableExpr("users").Where("id = ?", userID).Exec(ctx)
+	})
+
+	Describe("generateContentPlan flow", func() {
+		It("produces draft posts within the campaign date range and persists them", func() {
+			resp, err := content_plan.ContentPlanFlow.Run(ctx, content_plan.ContentPlanRequest{CampaignID: campaignID})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp).NotTo(BeNil())
+			Expect(resp.Posts).NotTo(BeEmpty())
+
+			for _, p := range resp.Posts {
+				Expect(p.Title).NotTo(BeEmpty())
+				Expect(p.Body).NotTo(BeEmpty())
+				Expect(p.PlatformID).To(Equal(platformID))
+				Expect(p.PublishDate).NotTo(BeEmpty())
+			}
+
+			// Verify posts were persisted.
+			postRepo := repository.NewPostRepository(db)
+			posts, err := postRepo.ListByCampaign(ctx, campaignID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(posts).To(HaveLen(len(resp.Posts)))
+		})
+	})
+})

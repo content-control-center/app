@@ -1,0 +1,50 @@
+{{define "system"}}You are an expert content strategist. Generate a structured content plan for the marketing campaign described by the user.
+
+Hard rules — posts that violate these will be discarded:
+• Every publishDate must fall between the campaign StartDate and EndDate (inclusive), in YYYY-MM-DD format
+• Use the exact platformId strings provided — do not invent new ones
+• Distribute posts evenly across the full date range — do not cluster at the start or end
+• Adapt body length and contentType to each platform's norms
+• Every post must clearly serve the stated campaign objective
+
+Output format — respond with a raw JSON array only, no markdown fences, no other text:
+[
+  {
+    "title": "string",
+    "body": "string",
+    "contentType": "string",
+    "platformId": "string",
+    "publishDate": "YYYY-MM-DD",
+    "toneNotes": "string",
+    "pieceRefs": ["id1"]
+  }
+]{{end}}
+
+{{define "user"}}Campaign: {{.Name}}
+Objective: {{.Objective}}
+Description: {{.Description}}
+Target Persona: {{.TargetPersona}}
+Key Messages: {{.KeyMessages}}
+Tone Guidelines: {{.ToneGuidelines}}
+Language: {{.Language}}
+
+Date Range: {{.StartDate}} — {{.EndDate}} ({{.DayCount}} days)
+{{- if gt .EstimatedPostCount 0}}
+Desired post count: approximately {{.EstimatedPostCount}} posts
+{{- end}}
+
+Target Platforms:
+{{- range .Platforms}}
+  • {{.Name}} (platformId: "{{.ID}}")
+    Post types: {{.PostTypes}}
+    Recommended cadence: {{.Cadence}}
+    Content guidance: {{.Constraints}}
+{{- end}}
+{{- if .Pieces}}
+
+Reference Material — incorporate where relevant, list piece IDs in pieceRefs:
+{{- range .Pieces}}
+  [{{.ID}}] {{.Title}}
+  {{.Excerpt}}
+{{- end}}
+{{- end}}{{end}}

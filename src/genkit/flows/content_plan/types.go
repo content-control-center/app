@@ -1,0 +1,73 @@
+package content_plan
+
+import "time"
+
+// ContentPlanRequest is the input to the generateContentPlan flow.
+type ContentPlanRequest struct {
+	CampaignID string `json:"campaignId"`
+}
+
+// DraftPost is both the AI output schema (via GenerateData[[]DraftPost]) and
+// the shape persisted as a Post record with status=draft.
+type DraftPost struct {
+	Title       string   `json:"title"                   jsonschema:"description=Short descriptive title for the post"`
+	Body        string   `json:"body"                    jsonschema:"description=Complete post copy adapted to the platform"`
+	ContentType string   `json:"contentType"             jsonschema:"description=Content format slug e.g. text-post article carousel thread video reel"`
+	PlatformID  string   `json:"platformId"              jsonschema:"description=Exact platform ID string from the campaign e.g. linkedin x-twitter instagram"`
+	PublishDate string   `json:"publishDate"             jsonschema:"description=ISO 8601 date YYYY-MM-DD within the campaign date range"`
+	ToneNotes   string   `json:"toneNotes"               jsonschema:"description=How the campaign tone guidelines apply to this specific post"`
+	PieceRefs   []string `json:"pieceRefs,omitempty"     jsonschema:"description=IDs of reference pieces incorporated in this post"`
+}
+
+// ContentPlanResponse is returned by the handler and the flow.
+type ContentPlanResponse struct {
+	CampaignID  string      `json:"campaignId"`
+	GeneratedAt time.Time   `json:"generatedAt"`
+	Posts       []DraftPost `json:"posts"`
+	Warnings    []string    `json:"warnings,omitempty"`
+}
+
+// resolvedPiece is an internal type used to build the prompt context.
+type resolvedPiece struct {
+	ID      string
+	Title   string
+	Excerpt string
+}
+
+// resolvedPlatform is an internal type used to build the prompt context.
+type resolvedPlatform struct {
+	ID          string
+	Name        string
+	PostTypes   string // comma-separated display names
+	Cadence     string // e.g. "1–2 posts per week"
+	Constraints string // character limits, format notes
+}
+
+// contentPlanTemplateData is the data passed to the user-prompt template.
+type contentPlanTemplateData struct {
+	Name               string
+	Description        string
+	Objective          string
+	TargetPersona      string
+	KeyMessages        string
+	ToneGuidelines     string
+	Language           string
+	StartDate          string
+	EndDate            string
+	DayCount           int
+	EstimatedPostCount int
+	Platforms          []resolvedPlatform
+	Pieces             []resolvedPiece
+}
+
+// ValidationError is returned by the flow when preconditions are not met.
+// Handlers map this to HTTP 400.
+type ValidationError struct{ Msg string }
+
+func (e *ValidationError) Error() string { return e.Msg }
+
+// AIError is returned when the Anthropic API call fails.
+// Handlers map this to HTTP 502.
+type AIError struct{ Msg string }
+
+func (e *AIError) Error() string { return e.Msg }
