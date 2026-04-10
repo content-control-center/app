@@ -58,8 +58,9 @@ type campaignRequest struct {
 	Status            models.CampaignStatus   `json:"status"`
 	StartDate         *time.Time              `json:"start_date"`
 	EndDate           *time.Time              `json:"end_date"`
-	Budget            *float64                `json:"budget"`
-	Currency          string                  `json:"currency"`
+	EstimatedPostCount *int                    `json:"estimated_post_count"`
+	Budget             *float64               `json:"budget"`
+	Currency           string                 `json:"currency"`
 	Language          string                  `json:"language"`
 	TagIDs            models.StringSlice      `json:"tag_ids"`
 }
@@ -134,10 +135,11 @@ func (h *CampaignsHandler) Create(c *fiber.Ctx) error {
 		PiecesIDs:         nullSlice(req.PiecesIDs),
 		TargetPlatformIDs: nullSlice(req.TargetPlatformIDs),
 		Objective:         req.Objective,
-		Status:            status,
-		StartDate:         req.StartDate,
-		EndDate:           req.EndDate,
-		Budget:            req.Budget,
+		Status:             status,
+		EstimatedPostCount: req.EstimatedPostCount,
+		StartDate:          req.StartDate,
+		EndDate:            req.EndDate,
+		Budget:             req.Budget,
 		Currency:          req.Currency,
 		Language:          req.Language,
 		TagIDs:            nullSlice(req.TagIDs),
@@ -220,6 +222,7 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 	campaign.TargetPlatformIDs = nullSlice(req.TargetPlatformIDs)
 	campaign.Objective = req.Objective
 	campaign.Status = status
+	campaign.EstimatedPostCount = req.EstimatedPostCount
 	campaign.StartDate = req.StartDate
 	campaign.EndDate = req.EndDate
 	campaign.Budget = req.Budget

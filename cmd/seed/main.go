@@ -45,7 +45,8 @@ type seedCampaign struct {
 	UsePieces         bool     `json:"use_pieces"`
 	PieceIndices      []int    `json:"piece_indices"`       // 0-based indices into pieces slice
 	TargetPlatformIDs []string `json:"target_platform_ids"` // literal platform IDs (seeded by migrations)
-	Budget            *float64 `json:"budget"`
+	EstimatedPostCount *int     `json:"estimated_post_count"`
+	Budget             *float64 `json:"budget"`
 	Currency          string   `json:"currency"`
 	Language          string   `json:"language"`
 	Tags              []string `json:"tags"` // tag names, resolved to IDs at runtime
@@ -172,24 +173,25 @@ func main() {
 			log.Fatalf("generate campaign id: %v", err)
 		}
 		c := &models.Campaign{
-			ID:                id,
-			Name:              sc.Name,
-			Description:       sc.Description,
-			TargetPersona:     sc.TargetPersona,
-			KeyMessages:       sc.KeyMessages,
-			ToneGuidelines:    sc.ToneGuidelines,
-			Objective:         models.CampaignObjective(sc.Objective),
-			Status:            models.CampaignStatus(sc.Status),
-			UsePieces:         sc.UsePieces,
-			PiecesIDs:         resolveIndices(sc.PieceIndices, pieceIDs, "piece"),
-			TargetPlatformIDs: models.StringSlice(sc.TargetPlatformIDs),
-			Budget:            sc.Budget,
-			Currency:          sc.Currency,
-			Language:          sc.Language,
-			TagIDs:            resolveTagIDs(sc.Tags, tagIDs),
-			StartDate:         parseTime(sc.StartDate, sc.Name, "start_date"),
-			EndDate:           parseTime(sc.EndDate, sc.Name, "end_date"),
-			CreatedBy:         userID,
+			ID:                 id,
+			Name:               sc.Name,
+			Description:        sc.Description,
+			TargetPersona:      sc.TargetPersona,
+			KeyMessages:        sc.KeyMessages,
+			ToneGuidelines:     sc.ToneGuidelines,
+			Objective:          models.CampaignObjective(sc.Objective),
+			Status:             models.CampaignStatus(sc.Status),
+			UsePieces:          sc.UsePieces,
+			PiecesIDs:          resolveIndices(sc.PieceIndices, pieceIDs, "piece"),
+			TargetPlatformIDs:  models.StringSlice(sc.TargetPlatformIDs),
+			EstimatedPostCount: sc.EstimatedPostCount,
+			Budget:             sc.Budget,
+			Currency:           sc.Currency,
+			Language:           sc.Language,
+			TagIDs:             resolveTagIDs(sc.Tags, tagIDs),
+			StartDate:          parseTime(sc.StartDate, sc.Name, "start_date"),
+			EndDate:            parseTime(sc.EndDate, sc.Name, "end_date"),
+			CreatedBy:          userID,
 		}
 		if err := campaignRepo.Create(ctx, c); err != nil {
 			log.Fatalf("create campaign %q: %v", sc.Name, err)

@@ -172,21 +172,23 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 			})
 
 			It("creates a campaign with all optional fields", func() {
+				count := 20
 				body, _ := json.Marshal(fiber.Map{
-					"name":                "Full Campaign",
-					"objective":           "conversion",
-					"description":         "Drive sign-ups",
-					"target_persona":      "Tech-savvy millennials",
-					"key_messages":        "Fast, reliable, affordable",
-					"tone_guidelines":     "Friendly and professional",
-					"use_pieces":          true,
-					"pieces_ids":          []string{"abc", "def"},
-					"target_platform_ids": []string{"instagram", "tiktok"},
-					"status":              "scheduled",
-					"budget":              1500.00,
-					"currency":            "USD",
-					"language":            "en",
-					"tag_ids":             []string{},
+					"name":                 "Full Campaign",
+					"objective":            "conversion",
+					"description":          "Drive sign-ups",
+					"target_persona":       "Tech-savvy millennials",
+					"key_messages":         "Fast, reliable, affordable",
+					"tone_guidelines":      "Friendly and professional",
+					"use_pieces":           true,
+					"pieces_ids":           []string{"abc", "def"},
+					"target_platform_ids":  []string{"instagram", "tiktok"},
+					"status":               "scheduled",
+					"estimated_post_count": count,
+					"budget":               1500.00,
+					"currency":             "USD",
+					"language":             "en",
+					"tag_ids":              []string{},
 				})
 				req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
@@ -201,10 +203,26 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				Expect(c.UsePieces).To(BeTrue())
 				Expect(c.PiecesIDs).To(ConsistOf("abc", "def"))
 				Expect(c.TagIDs).To(BeEmpty())
+				Expect(c.EstimatedPostCount).NotTo(BeNil())
+				Expect(*c.EstimatedPostCount).To(Equal(count))
 				Expect(c.Budget).NotTo(BeNil())
 				Expect(*c.Budget).To(BeNumerically("~", 1500.00, 0.01))
 				Expect(c.Currency).To(Equal("USD"))
 				Expect(c.Language).To(Equal("en"))
+			})
+
+			It("stores nil estimated_post_count when omitted", func() {
+				body, _ := json.Marshal(fiber.Map{"name": "No Count", "objective": "awareness"})
+				req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(201))
+
+				var c models.Campaign
+				Expect(json.NewDecoder(resp.Body).Decode(&c)).To(Succeed())
+				Expect(c.EstimatedPostCount).To(BeNil())
 			})
 
 			It("returns 400 when name is missing", func() {
@@ -305,11 +323,13 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 			It("updates the campaign and returns the updated resource", func() {
 				c := createCampaign("Original Name", models.ObjectiveAwareness)
 
+				count := 15
 				body, _ := json.Marshal(fiber.Map{
-					"name":      "Updated Name",
-					"objective": "retention",
-					"status":    "active",
-					"language":  "fr",
+					"name":                 "Updated Name",
+					"objective":            "retention",
+					"status":               "active",
+					"language":             "fr",
+					"estimated_post_count": count,
 				})
 				req := httptest.NewRequest("PUT", "/api/campaigns/"+c.ID, bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
@@ -324,6 +344,8 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				Expect(got.Objective).To(Equal(models.ObjectiveRetention))
 				Expect(got.Status).To(Equal(models.StatusActive))
 				Expect(got.Language).To(Equal("fr"))
+				Expect(got.EstimatedPostCount).NotTo(BeNil())
+				Expect(*got.EstimatedPostCount).To(Equal(count))
 			})
 
 			It("returns 404 for an unknown id", func() {
