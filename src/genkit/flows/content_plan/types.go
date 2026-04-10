@@ -71,3 +71,31 @@ func (e *ValidationError) Error() string { return e.Msg }
 type AIError struct{ Msg string }
 
 func (e *AIError) Error() string { return e.Msg }
+
+// ── SSE types ─────────────────────────────────────────────────────────────────
+
+// SSEEventKind identifies the three SSE event types emitted by GenerateDraft.
+type SSEEventKind string
+
+const (
+	SSEEventStep     SSEEventKind = "step"
+	SSEEventComplete SSEEventKind = "complete"
+	SSEEventError    SSEEventKind = "error"
+)
+
+// StepEventPayload is the data payload for a "step" SSE event.
+type StepEventPayload struct {
+	Step   string `json:"step"`
+	Status string `json:"status"` // always "done"
+}
+
+// ErrorEventPayload is the data payload for an "error" SSE event.
+type ErrorEventPayload struct {
+	Message string `json:"message"`
+	Code    int    `json:"code"` // HTTP semantic: 400, 502, 500
+}
+
+// OnEventFunc is an optional callback invoked after each flow step completes.
+// name is one of the SSEEventKind constants; data is JSON-serialisable.
+// A nil OnEventFunc is valid — the flow runs silently.
+type OnEventFunc func(name SSEEventKind, data any)

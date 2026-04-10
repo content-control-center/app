@@ -25,23 +25,23 @@ POST {{baseUrl}}/api/campaigns
 Content-Type: application/json
 
 {
-  "name": "Q4 Conversion Drive",
-  "description": "Drive end-of-year sign-ups via paid and organic channels.",
-  "target_persona": "Tech-savvy millennials aged 25–35",
-  "key_messages": "Fast, reliable, affordable — try it free for 30 days.",
-  "tone_guidelines": "Friendly, confident, and jargon-free.",
-  "objective": "conversion",
-  "status": "scheduled",
-  "use_pieces": true,
-  "pieces_ids": [],
-  "target_platform_ids": ["instagram", "tiktok", "linkedin"],
-  "start_date": "2026-10-01T00:00:00Z",
-  "end_date": "2026-12-31T23:59:59Z",
-  "estimated_post_count": 20,
-  "budget": 5000.00,
-  "currency": "USD",
-  "language": "en",
-  "tag_ids": []
+    "name": "Rust programming language in modern financial applications",
+    "description": "Educate financial technology professionals and engineering leaders on the advantages of Rust for building high-performance, memory-safe financial systems — from trading engines to risk modeling pipelines.",
+    "target_persona": "Senior software engineers, tech leads, and CTOs at fintech companies and financial institutions, aged 28–45, evaluating systems-level languages for latency-sensitive and safety-critical workloads.",
+    "key_messages": "Rust delivers C++-level performance with compile-time memory safety — no garbage collector pauses, no data races, no 3 AM crashes in production. The language the finance industry didn't know it was waiting for.",
+    "tone_guidelines": "Technically credible yet accessible. Confident without being preachy. Speak peer-to-peer with engineers — show, don't sell. Use concrete benchmarks and real-world case studies over abstract claims.",
+    "objective": "awareness",
+    "status": "scheduled",
+    "use_pieces": true,
+    "pieces_ids": [],
+    "target_platform_ids": ["linkedin", "facebook", "threads"],
+    "start_date": "2026-10-01T00:00:00Z",
+    "end_date": "2026-12-31T23:59:59Z",
+    "estimated_post_count": 30,
+    "budget": 5000.00,
+    "currency": "USD",
+    "language": "en",
+    "tag_ids": []
 }
 
 > {% client.global.set("campaignId", response.body.id) %}
@@ -138,4 +138,7 @@ DELETE {{baseUrl}}/api/campaigns/nonexistent
 ### Generate draft posts for campaign  [protected]
 # Requires ANTHROPIC_API_KEY to be set in the server environment.
 # Returns 503 when the feature is disabled (no API key).
+# Response is a Server-Sent Events stream.
+# Events: "step" (progress), "complete" (ContentPlanResponse), "error" (code + message).
 POST {{baseUrl}}/api/campaigns/{{campaignId}}/generate-draft
+Accept: text/event-stream

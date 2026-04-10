@@ -22,6 +22,9 @@ import (
 func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*fiber.App, error) {
 	app := fiber.New(fiber.Config{
 		ErrorHandler: defaultErrorHandler,
+		// WriteTimeout 0 disables the per-response write deadline so that SSE
+		// streams (e.g. /generate-draft) are not forcibly closed mid-flight.
+		WriteTimeout: 0,
 	})
 
 	app.Use(recover.New())

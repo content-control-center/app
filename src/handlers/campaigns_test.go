@@ -1,11 +1,13 @@
 package handlers_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	. "github.com/onsi/ginkgo/v2"
@@ -514,7 +516,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				auth2 := handlers.RequireAuth(sessionRepo, testCookieName)
 				handlers.NewUsersHandler(userRepo, settingRepo, auth2).Register(appWithDraft)
 				handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(appWithDraft)
-				noop := func(_ context.Context, _ string) (*content_plan.ContentPlanResponse, error) {
+				noop := func(_ context.Context, _ string, _ content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error) {
 					return &content_plan.ContentPlanResponse{}, nil
 				}
 				handlers.NewCampaignsHandler(campaignRepo, auth2, noop).Register(appWithDraft)
@@ -545,7 +547,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				auth2 := handlers.RequireAuth(sessionRepo, testCookieName)
 				handlers.NewUsersHandler(userRepo, settingRepo, auth2).Register(appWithDraft)
 				handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(appWithDraft)
-				noop := func(_ context.Context, _ string) (*content_plan.ContentPlanResponse, error) {
+				noop := func(_ context.Context, _ string, _ content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error) {
 					return &content_plan.ContentPlanResponse{}, nil
 				}
 				handlers.NewCampaignsHandler(campaignRepo, auth2, noop).Register(appWithDraft)
@@ -587,6 +589,169 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				draftResp, err := appWithDraft.Test(draftReq)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(draftResp.StatusCode).To(Equal(403))
+			})
+
+			It("streams step and complete SSE events on success", func() {
+				appWithDraft := fiber.New(fiber.Config{
+					ErrorHandler: func(c *fiber.Ctx, err error) error {
+						code := fiber.StatusInternalServerError
+						if e, ok := err.(*fiber.Error); ok {
+							code = e.Code
+						}
+						return c.Status(code).JSON(fiber.Map{"error": err.Error()})
+					},
+				})
+				tagRepo := repository.NewTagRepository(db)
+				campaignRepo := repository.NewCampaignRepository(db, tagRepo)
+				sessionRepo := repository.NewSessionRepository(db)
+				settingRepo := repository.NewSettingRepository(db)
+				userRepo := repository.NewUserRepository(db)
+				auth2 := handlers.RequireAuth(sessionRepo, testCookieName)
+				handlers.NewUsersHandler(userRepo, settingRepo, auth2).Register(appWithDraft)
+				handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(appWithDraft)
+
+				stub := func(_ context.Context, _ string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error) {
+					onEvent(content_plan.SSEEventStep, content_plan.StepEventPayload{Step: "validateInput", Status: "done"})
+					onEvent(content_plan.SSEEventStep, content_plan.StepEventPayload{Step: "generatePosts", Status: "done"})
+					return &content_plan.ContentPlanResponse{CampaignID: "test"}, nil
+				}
+				handlers.NewCampaignsHandler(campaignRepo, auth2, stub).Register(appWithDraft)
+
+				// Seed user/session for appWithDraft.
+				body, _ := json.Marshal(fiber.Map{"name": "SSE User", "email": "sse@example.com", "password": "sse-password"})
+				regReq := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
+				regReq.Header.Set("Content-Type", "application/json")
+				_, err := appWithDraft.Test(regReq)
+				Expect(err).NotTo(HaveOccurred())
+				loginBody, _ := json.Marshal(fiber.Map{"email": "sse@example.com", "password": "sse-password"})
+				loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
+				loginReq.Header.Set("Content-Type", "application/json")
+				loginResp, err := appWithDraft.Test(loginReq)
+				Expect(err).NotTo(HaveOccurred())
+				var sseCookie *http.Cookie
+				for _, ck := range loginResp.Cookies() {
+					sseCookie = ck
+				}
+
+				// Create campaign.
+				campBody, _ := json.Marshal(fiber.Map{"name": "SSE Campaign", "objective": "awareness"})
+				campReq := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(campBody))
+				campReq.Header.Set("Content-Type", "application/json")
+				campReq.AddCookie(sseCookie)
+				campResp, err := appWithDraft.Test(campReq)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(campResp.StatusCode).To(Equal(fiber.StatusCreated))
+				var camp models.Campaign
+				Expect(json.NewDecoder(campResp.Body).Decode(&camp)).To(Succeed())
+
+				// Call generate-draft.
+				draftReq := httptest.NewRequest("POST", "/api/campaigns/"+camp.ID+"/generate-draft", nil)
+				draftReq.AddCookie(sseCookie)
+				draftResp, err := appWithDraft.Test(draftReq, 10000)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(draftResp.StatusCode).To(Equal(200))
+				Expect(draftResp.Header.Get("Content-Type")).To(ContainSubstring("text/event-stream"))
+
+				// Parse SSE lines.
+				type sseEvent struct{ event, data string }
+				var events []sseEvent
+				scanner := bufio.NewScanner(draftResp.Body)
+				var curEvent, curData string
+				for scanner.Scan() {
+					line := scanner.Text()
+					switch {
+					case strings.HasPrefix(line, "event: "):
+						curEvent = strings.TrimPrefix(line, "event: ")
+					case strings.HasPrefix(line, "data: "):
+						curData = strings.TrimPrefix(line, "data: ")
+					case line == "":
+						if curEvent != "" {
+							events = append(events, sseEvent{curEvent, curData})
+						}
+						curEvent, curData = "", ""
+					}
+				}
+
+				Expect(events).To(HaveLen(3)) // 2 step + 1 complete
+				Expect(events[0].event).To(Equal("step"))
+				Expect(events[1].event).To(Equal("step"))
+				Expect(events[2].event).To(Equal("complete"))
+
+				var completePayload content_plan.ContentPlanResponse
+				Expect(json.Unmarshal([]byte(events[2].data), &completePayload)).To(Succeed())
+				Expect(completePayload.CampaignID).To(Equal("test"))
+			})
+
+			It("streams an error SSE event on failure", func() {
+				appWithDraft := fiber.New(fiber.Config{
+					ErrorHandler: func(c *fiber.Ctx, err error) error {
+						code := fiber.StatusInternalServerError
+						if e, ok := err.(*fiber.Error); ok {
+							code = e.Code
+						}
+						return c.Status(code).JSON(fiber.Map{"error": err.Error()})
+					},
+				})
+				tagRepo := repository.NewTagRepository(db)
+				campaignRepo := repository.NewCampaignRepository(db, tagRepo)
+				sessionRepo := repository.NewSessionRepository(db)
+				settingRepo := repository.NewSettingRepository(db)
+				userRepo := repository.NewUserRepository(db)
+				auth2 := handlers.RequireAuth(sessionRepo, testCookieName)
+				handlers.NewUsersHandler(userRepo, settingRepo, auth2).Register(appWithDraft)
+				handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(appWithDraft)
+
+				stub := func(_ context.Context, _ string, _ content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error) {
+					return nil, &content_plan.ValidationError{Msg: "missing required fields"}
+				}
+				handlers.NewCampaignsHandler(campaignRepo, auth2, stub).Register(appWithDraft)
+
+				// Seed user/session.
+				body, _ := json.Marshal(fiber.Map{"name": "Err User", "email": "err@example.com", "password": "err-password"})
+				regReq := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
+				regReq.Header.Set("Content-Type", "application/json")
+				_, err := appWithDraft.Test(regReq)
+				Expect(err).NotTo(HaveOccurred())
+				loginBody, _ := json.Marshal(fiber.Map{"email": "err@example.com", "password": "err-password"})
+				loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
+				loginReq.Header.Set("Content-Type", "application/json")
+				loginResp, err := appWithDraft.Test(loginReq)
+				Expect(err).NotTo(HaveOccurred())
+				var errCookie *http.Cookie
+				for _, ck := range loginResp.Cookies() {
+					errCookie = ck
+				}
+
+				campBody, _ := json.Marshal(fiber.Map{"name": "Err Campaign", "objective": "awareness"})
+				campReq := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(campBody))
+				campReq.Header.Set("Content-Type", "application/json")
+				campReq.AddCookie(errCookie)
+				campResp, err := appWithDraft.Test(campReq)
+				Expect(err).NotTo(HaveOccurred())
+				var camp models.Campaign
+				Expect(json.NewDecoder(campResp.Body).Decode(&camp)).To(Succeed())
+
+				draftReq := httptest.NewRequest("POST", "/api/campaigns/"+camp.ID+"/generate-draft", nil)
+				draftReq.AddCookie(errCookie)
+				draftResp, err := appWithDraft.Test(draftReq, 10000)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(draftResp.StatusCode).To(Equal(200))
+
+				scanner := bufio.NewScanner(draftResp.Body)
+				var eventType, eventData string
+				for scanner.Scan() {
+					line := scanner.Text()
+					if strings.HasPrefix(line, "event: ") {
+						eventType = strings.TrimPrefix(line, "event: ")
+					} else if strings.HasPrefix(line, "data: ") {
+						eventData = strings.TrimPrefix(line, "data: ")
+					}
+				}
+				Expect(eventType).To(Equal("error"))
+				var errPayload content_plan.ErrorEventPayload
+				Expect(json.Unmarshal([]byte(eventData), &errPayload)).To(Succeed())
+				Expect(errPayload.Code).To(Equal(400))
+				Expect(errPayload.Message).To(Equal("missing required fields"))
 			})
 		})
 	})

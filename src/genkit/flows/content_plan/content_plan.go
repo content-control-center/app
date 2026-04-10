@@ -27,6 +27,11 @@ var promptFS embed.FS
 // Set by InitContentPlan; nil until then.
 var ContentPlanFlow *core.Flow[ContentPlanRequest, *ContentPlanResponse, struct{}]
 
+// contentPlanRunner is a direct closure over (g, cfg, repos) that bypasses
+// the Genkit flow wrapper, allowing an OnEventFunc to be threaded through.
+// Set by InitContentPlan alongside ContentPlanFlow.
+var contentPlanRunner func(ctx context.Context, req ContentPlanRequest, onEvent OnEventFunc) (*ContentPlanResponse, error)
+
 // ContentPlanFlowConfig holds the settings for the content plan flow.
 type ContentPlanFlowConfig struct {
 	ModelID    string
@@ -65,96 +70,80 @@ func InitContentPlan(g *genkit.Genkit, cfg ContentPlanFlowConfig, repos ContentP
 
 	ContentPlanFlow = genkit.DefineFlow(g, "generateContentPlan",
 		func(ctx context.Context, req ContentPlanRequest) (*ContentPlanResponse, error) {
-			return runContentPlan(ctx, g, req, cfg, repos)
+			return runContentPlan(ctx, g, req, cfg, repos, nil)
 		},
 	)
+
+	contentPlanRunner = func(ctx context.Context, req ContentPlanRequest, onEvent OnEventFunc) (*ContentPlanResponse, error) {
+		return runContentPlan(ctx, g, req, cfg, repos, onEvent)
+	}
+
 	return nil
 }
 
-// NewContentPlanCallback returns a synchronous callback that invokes
-// ContentPlanFlow and is suitable for passing to the handler.
-func NewContentPlanCallback() func(ctx context.Context, campaignID string) (*ContentPlanResponse, error) {
-	return func(ctx context.Context, campaignID string) (*ContentPlanResponse, error) {
-		resp, err := ContentPlanFlow.Run(ctx, ContentPlanRequest{CampaignID: campaignID})
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
+// NewContentPlanCallback returns a callback suitable for passing to the
+// campaigns handler. onEvent is forwarded to the flow for SSE streaming;
+// pass nil for a silent, non-streaming call.
+func NewContentPlanCallback() func(ctx context.Context, campaignID string, onEvent OnEventFunc) (*ContentPlanResponse, error) {
+	return func(ctx context.Context, campaignID string, onEvent OnEventFunc) (*ContentPlanResponse, error) {
+		return contentPlanRunner(ctx, ContentPlanRequest{CampaignID: campaignID}, onEvent)
 	}
 }
 
-// runContentPlan executes the six traced steps of the flow.
-func runContentPlan(ctx context.Context, g *genkit.Genkit, req ContentPlanRequest, cfg ContentPlanFlowConfig, repos ContentPlanRepos) (*ContentPlanResponse, error) {
+// emit calls onEvent when it is non-nil. It is a safe no-op otherwise.
+func emit(onEvent OnEventFunc, name SSEEventKind, data any) {
+	if onEvent != nil {
+		onEvent(name, data)
+	}
+}
+
+// runContentPlan executes the six steps of the flow.
+func runContentPlan(ctx context.Context, g *genkit.Genkit, req ContentPlanRequest, cfg ContentPlanFlowConfig, repos ContentPlanRepos, onEvent OnEventFunc) (*ContentPlanResponse, error) {
 	// ── Step 1: validateInput ─────────────────────────────────────────────────
-	campaign, err := genkit.Run(ctx, "validateInput", func() (*models.Campaign, error) {
-		return validateInput(ctx, req.CampaignID, repos.Campaigns, repos.Pieces)
-	})
+	campaign, err := validateInput(ctx, req.CampaignID, repos.Campaigns, repos.Pieces)
 	if err != nil {
 		return nil, err
 	}
+	emit(onEvent, SSEEventStep, StepEventPayload{Step: "validateInput", Status: "done"})
 
 	// ── Step 2: resolvePieces ─────────────────────────────────────────────────
-	type piecesResult struct {
-		Pieces   []resolvedPiece
-		Warnings []string
-	}
-	pr, err := genkit.Run(ctx, "resolvePieces", func() (piecesResult, error) {
-		pieces, warnings, err := resolvePieces(ctx, campaign, cfg, repos)
-		return piecesResult{Pieces: pieces, Warnings: warnings}, err
-	})
+	pieces, pieceWarnings, err := resolvePieces(ctx, campaign, cfg, repos)
 	if err != nil {
 		return nil, err
 	}
-	warnings := pr.Warnings
+	emit(onEvent, SSEEventStep, StepEventPayload{Step: "resolvePieces", Status: "done"})
+	warnings := pieceWarnings
 
 	// ── Step 3: resolvePlatforms ──────────────────────────────────────────────
-	platforms, err := genkit.Run(ctx, "resolvePlatforms", func() ([]resolvedPlatform, error) {
-		return resolvePlatforms(ctx, campaign.TargetPlatformIDs, repos.Platforms)
-	})
+	platforms, err := resolvePlatforms(ctx, campaign.TargetPlatformIDs, repos.Platforms)
 	if err != nil {
 		return nil, err
 	}
+	emit(onEvent, SSEEventStep, StepEventPayload{Step: "resolvePlatforms", Status: "done"})
 
 	// ── Step 4: generatePosts ─────────────────────────────────────────────────
-	type genResult struct {
-		Posts    []DraftPost
-		Warnings []string
-	}
-	gr, err := genkit.Run(ctx, "generatePosts", func() (genResult, error) {
-		posts, genWarnings, err := generatePosts(ctx, g, campaign, platforms, pr.Pieces, cfg)
-		return genResult{Posts: posts, Warnings: genWarnings}, err
-	})
+	posts, genWarnings, err := generatePosts(ctx, g, campaign, platforms, pieces, cfg)
 	if err != nil {
 		return nil, err
 	}
-	warnings = append(warnings, gr.Warnings...)
+	emit(onEvent, SSEEventStep, StepEventPayload{Step: "generatePosts", Status: "done"})
+	warnings = append(warnings, genWarnings...)
 
 	// ── Step 5: validateOutput ────────────────────────────────────────────────
-	type validResult struct {
-		Posts    []DraftPost
-		Warnings []string
-	}
-	vr, err := genkit.Run(ctx, "validateOutput", func() (validResult, error) {
-		posts, valWarnings := validateOutput(gr.Posts, campaign, platforms)
-		return validResult{Posts: posts, Warnings: valWarnings}, nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	warnings = append(warnings, vr.Warnings...)
+	validPosts, valWarnings := validateOutput(posts, campaign, platforms)
+	emit(onEvent, SSEEventStep, StepEventPayload{Step: "validateOutput", Status: "done"})
+	warnings = append(warnings, valWarnings...)
 
 	// ── Step 6: persistDraftPosts ─────────────────────────────────────────────
-	_, err = genkit.Run(ctx, "persistDraftPosts", func() (struct{}, error) {
-		return struct{}{}, persistDraftPosts(ctx, vr.Posts, campaign, repos.Posts)
-	})
-	if err != nil {
+	if err := persistDraftPosts(ctx, validPosts, campaign, repos.Posts); err != nil {
 		return nil, err
 	}
+	emit(onEvent, SSEEventStep, StepEventPayload{Step: "persistDraftPosts", Status: "done"})
 
 	return &ContentPlanResponse{
 		CampaignID:  campaign.ID,
 		GeneratedAt: time.Now().UTC(),
-		Posts:       vr.Posts,
+		Posts:       validPosts,
 		Warnings:    warnings,
 	}, nil
 }

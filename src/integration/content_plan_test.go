@@ -127,5 +127,39 @@ var _ = Describe("Content plan flow", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(posts).To(HaveLen(len(resp.Posts)))
 		})
+
+		It("emits SSE step events via NewContentPlanCallback", func() {
+			// Clean up posts from previous test so the run is fresh.
+			_, _ = db.NewDelete().TableExpr("posts").Where("campaign_id = ?", campaignID).Exec(ctx)
+
+			var events []content_plan.StepEventPayload
+			onEvent := content_plan.OnEventFunc(func(name content_plan.SSEEventKind, data any) {
+				if name == content_plan.SSEEventStep {
+					if p, ok := data.(content_plan.StepEventPayload); ok {
+						events = append(events, p)
+					}
+				}
+			})
+
+			cb := content_plan.NewContentPlanCallback()
+			resp, err := cb(ctx, campaignID, onEvent)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp).NotTo(BeNil())
+
+			// The flow has 6 named steps; all should be emitted.
+			stepNames := make([]string, len(events))
+			for i, e := range events {
+				stepNames[i] = e.Step
+				Expect(e.Status).To(Equal("done"))
+			}
+			Expect(stepNames).To(ConsistOf(
+				"validateInput",
+				"resolvePieces",
+				"resolvePlatforms",
+				"generatePosts",
+				"validateOutput",
+				"persistDraftPosts",
+			))
+		})
 	})
 })

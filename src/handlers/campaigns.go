@@ -1,12 +1,16 @@
 package handlers
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/valyala/fasthttp"
 
 	"github.com/content-control-center/app/src/genkit/flows/content_plan"
 	"github.com/content-control-center/app/src/models"
@@ -32,10 +36,10 @@ var validStatuses = map[models.CampaignStatus]bool{
 type CampaignsHandler struct {
 	repo          repository.CampaignRepository
 	auth          fiber.Handler
-	generateDraft func(ctx context.Context, campaignID string) (*content_plan.ContentPlanResponse, error)
+	generateDraft func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)
 }
 
-func NewCampaignsHandler(repo repository.CampaignRepository, auth fiber.Handler, generateDraft func(ctx context.Context, campaignID string) (*content_plan.ContentPlanResponse, error)) *CampaignsHandler {
+func NewCampaignsHandler(repo repository.CampaignRepository, auth fiber.Handler, generateDraft func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)) *CampaignsHandler {
 	return &CampaignsHandler{repo: repo, auth: auth, generateDraft: generateDraft}
 }
 
@@ -263,14 +267,16 @@ func (h *CampaignsHandler) Delete(c *fiber.Ctx) error {
 }
 
 // GenerateDraft godoc
-// @Summary      Generate draft posts
-// @Description  Calls the AI content plan flow to generate draft Posts for the campaign.
+// @Summary      Generate draft posts (SSE)
+// @Description  Calls the AI content plan flow and streams progress via Server-Sent Events.
+// @Description  Each step emits an SSE event of type "step" with payload {"step":"<name>","status":"done"}.
+// @Description  On success a final "complete" event carries the full ContentPlanResponse payload.
+// @Description  On failure an "error" event carries {"message":"<text>","code":<http_code>}.
 // @Tags         campaigns
-// @Produce      json
+// @Produce      text/event-stream
 // @Security     CookieAuth
-// @Param        id   path      string  true  "Campaign Sqid"
-// @Success      200  {object}  content_plan.ContentPlanResponse
-// @Failure      400  {object}  map[string]string
+// @Param        id   path  string  true  "Campaign Sqid"
+// @Success      200  "SSE stream: step / complete / error events"
 // @Failure      401  {object}  map[string]string
 // @Failure      403  {object}  map[string]string
 // @Failure      404  {object}  map[string]string
@@ -294,20 +300,47 @@ func (h *CampaignsHandler) GenerateDraft(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "forbidden")
 	}
 
-	resp, err := h.generateDraft(c.Context(), campaign.ID)
-	if err != nil {
-		var ve *content_plan.ValidationError
-		if errors.As(err, &ve) {
-			return fiber.NewError(fiber.StatusBadRequest, ve.Msg)
-		}
-		var ae *content_plan.AIError
-		if errors.As(err, &ae) {
-			return fiber.NewError(fiber.StatusBadGateway, ae.Msg)
-		}
-		return err
-	}
+	c.Set("Content-Type", "text/event-stream")
+	c.Set("Cache-Control", "no-cache")
+	c.Set("Connection", "keep-alive")
+	c.Set("X-Accel-Buffering", "no")
 
-	return c.JSON(resp)
+	campaignID := campaign.ID
+	generateDraft := h.generateDraft
+
+	c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
+		writeEvent := func(event string, data any) {
+			b, _ := json.Marshal(data)
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
+			_ = w.Flush()
+		}
+
+		onEvent := content_plan.OnEventFunc(func(name content_plan.SSEEventKind, data any) {
+			writeEvent(string(name), data)
+		})
+
+		resp, err := generateDraft(context.Background(), campaignID, onEvent)
+		if err != nil {
+			code := fiber.StatusInternalServerError
+			msg := err.Error()
+			var ve *content_plan.ValidationError
+			var ae *content_plan.AIError
+			switch {
+			case errors.As(err, &ve):
+				code = fiber.StatusBadRequest
+				msg = ve.Msg
+			case errors.As(err, &ae):
+				code = fiber.StatusBadGateway
+				msg = ae.Msg
+			}
+			writeEvent(string(content_plan.SSEEventError), content_plan.ErrorEventPayload{Message: msg, Code: code})
+			return
+		}
+
+		writeEvent(string(content_plan.SSEEventComplete), resp)
+	}))
+
+	return nil
 }
 
 // nullSlice returns an empty StringSlice instead of nil so the JSON column
