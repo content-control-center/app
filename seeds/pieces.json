@@ -1,0 +1,465 @@
+[
+  {
+    "title": "The Future of Work: Embracing AI in Modern Organizations",
+    "tags": ["Thought Leadership", "Industry News"],
+    "content": [
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "The Future of Work: Embracing AI in Modern Organizations"}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "Artificial intelligence is no longer a distant promise — it is reshaping how teams collaborate, create, and compete. Organizations that treat AI as a productivity multiplier rather than a replacement strategy are already pulling ahead."}],
+        "children": []
+      },
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "From Automation to Augmentation"}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "The most successful implementations of AI we've studied share a common trait: they put humans in the decision seat while delegating research, drafting, and pattern recognition to machines. This is the augmentation mindset — and it consistently produces better outcomes than automation-first thinking."}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "Teams that adopt AI-assisted workflows report a 40% reduction in time spent on first drafts and a 3x increase in the volume of content experiments they can run per quarter. More experiments mean more data, which compounds into a durable competitive advantage."}],
+        "children": []
+      },
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "What Leaders Need to Do Now"}],
+        "children": []
+      },
+      {
+        "type": "bulletListItem",
+        "content": [{"type": "text", "text": "Identify three repetitive knowledge tasks your team does today that AI could handle within 30 days."}],
+        "children": []
+      },
+      {
+        "type": "bulletListItem",
+        "content": [{"type": "text", "text": "Create psychological safety around AI experimentation — reward curiosity, not just output."}],
+        "children": []
+      },
+      {
+        "type": "bulletListItem",
+        "content": [{"type": "text", "text": "Measure human output quality before and after AI assist to build an evidence base for broader rollout."}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "The organizations that will define the next decade are not waiting for AI to be perfect. They are iterating in public, learning faster than competitors, and building institutional knowledge that compounds daily."}],
+        "children": []
+      }
+    ]
+  },
+  {
+    "title": "Advanced Analytics: See What Others Miss",
+    "tags": ["Product Features", "Technical"],
+    "content": [
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "Advanced Analytics: See What Others Miss"}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "Most analytics dashboards tell you what happened. Our Advanced Analytics suite tells you why — and what to do next. Built for content teams who need to move fast without guessing, it turns raw engagement data into prioritized action lists."}],
+        "children": []
+      },
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "Key Capabilities"}],
+        "children": []
+      },
+      {
+        "type": "bulletListItem",
+        "content": [{"type": "text", "text": "Cross-platform attribution: trace a conversion back to the exact piece of content and the platform post that drove it."}],
+        "children": []
+      },
+      {
+        "type": "bulletListItem",
+        "content": [{"type": "text", "text": "Audience segment performance: compare how different personas respond to the same message."}],
+        "children": []
+      },
+      {
+        "type": "bulletListItem",
+        "content": [{"type": "text", "text": "Content velocity scoring: understand which content types are generating momentum versus stalling."}],
+        "children": []
+      },
+      {
+        "type": "bulletListItem",
+        "content": [{"type": "text", "text": "AI-generated insight summaries: plain-language weekly digests delivered directly to your inbox."}],
+        "children": []
+      },
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "Built for Speed"}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "Dashboards refresh every 15 minutes. Anomaly alerts fire within seconds. Whether you're monitoring a live campaign launch or reviewing quarterly trends, you always have the freshest data without leaving your workflow."}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "Advanced Analytics is available on all Pro and Enterprise plans. Existing customers can enable it from the Settings → Integrations panel."}],
+        "children": []
+      }
+    ]
+  },
+  {
+    "title": "How TechCorp Doubled Engagement in 90 Days",
+    "tags": ["Customer Stories"],
+    "content": [
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "How TechCorp Doubled Engagement in 90 Days"}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "TechCorp's content team of five was publishing consistently but struggling to break through the noise. Engagement rates on LinkedIn had plateaued at 1.2% for six consecutive quarters. They needed a new approach — not more content, but smarter content."}],
+        "children": []
+      },
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "The Challenge"}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "The team was spending 70% of their time in coordination: briefing writers, chasing approvals, and manually repurposing long-form posts into social variants. Creative energy was being consumed by logistics."}],
+        "children": []
+      },
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "The Approach"}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "TechCorp restructured their workflow around a content library of reusable pieces — core messages, proof points, and narrative hooks — that any team member could assemble into platform-specific posts. Campaign briefs became the source of truth, and the platform handled variant generation automatically."}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "\"Within the first month we had already reduced our content production cycle from two weeks to three days,\" said Sarah Chen, Head of Content at TechCorp. \"By month three, we had doubled our LinkedIn engagement rate and were publishing across four platforms instead of two.\""}],
+        "children": []
+      },
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "Results at 90 Days"}],
+        "children": []
+      },
+      {
+        "type": "bulletListItem",
+        "content": [{"type": "text", "text": "Engagement rate: 1.2% → 2.6% on LinkedIn"}],
+        "children": []
+      },
+      {
+        "type": "bulletListItem",
+        "content": [{"type": "text", "text": "Production cycle: 14 days → 3 days"}],
+        "children": []
+      },
+      {
+        "type": "bulletListItem",
+        "content": [{"type": "text", "text": "Active platforms: 2 → 4"}],
+        "children": []
+      },
+      {
+        "type": "bulletListItem",
+        "content": [{"type": "text", "text": "Content team headcount: unchanged (5 people)"}],
+        "children": []
+      }
+    ]
+  },
+  {
+    "title": "10 Rules for Writing Marketing Copy That Converts",
+    "tags": ["Educational"],
+    "content": [
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "10 Rules for Writing Marketing Copy That Converts"}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "Great copy is not about being clever. It is about being clear, credible, and compelling at exactly the right moment. These ten rules are distilled from thousands of A/B tests and are applicable across platforms from LinkedIn articles to paid ads."}],
+        "children": []
+      },
+      {
+        "type": "numberedListItem",
+        "content": [{"type": "text", "text": "Lead with the outcome, not the feature. Readers care about what changes for them, not about your product's architecture."}],
+        "children": []
+      },
+      {
+        "type": "numberedListItem",
+        "content": [{"type": "text", "text": "Use the reader's exact language. Mine reviews, support tickets, and sales calls for the precise words your audience uses to describe their problems."}],
+        "children": []
+      },
+      {
+        "type": "numberedListItem",
+        "content": [{"type": "text", "text": "One message per piece. Trying to make three points simultaneously makes zero points. Ruthlessly cut."}],
+        "children": []
+      },
+      {
+        "type": "numberedListItem",
+        "content": [{"type": "text", "text": "Specificity builds trust. \"Customers save 4.5 hours per week\" converts better than \"saves time.\""}],
+        "children": []
+      },
+      {
+        "type": "numberedListItem",
+        "content": [{"type": "text", "text": "Address the objection in the copy. If readers are going to say \"but…\" before they finish, answer the objection before they ask it."}],
+        "children": []
+      },
+      {
+        "type": "numberedListItem",
+        "content": [{"type": "text", "text": "Short sentences earn attention. Long sentences lose it. Alternate length for rhythm."}],
+        "children": []
+      },
+      {
+        "type": "numberedListItem",
+        "content": [{"type": "text", "text": "The CTA is the copy. Your call to action should be so specific that clicking it feels like the only logical next step."}],
+        "children": []
+      },
+      {
+        "type": "numberedListItem",
+        "content": [{"type": "text", "text": "Test the headline first. Eighty percent of people read the headline and nothing else. Win the headline, win the click."}],
+        "children": []
+      },
+      {
+        "type": "numberedListItem",
+        "content": [{"type": "text", "text": "Social proof belongs near the conversion point. Move testimonials closer to the CTA and watch conversion rates improve."}],
+        "children": []
+      },
+      {
+        "type": "numberedListItem",
+        "content": [{"type": "text", "text": "Reread as a skeptic. After drafting, switch roles and challenge every claim. If you cannot defend it with data, cut or soften it."}],
+        "children": []
+      }
+    ]
+  },
+  {
+    "title": "Introducing v2.0: Everything You Asked For",
+    "tags": ["Product Features", "Brand Voice"],
+    "content": [
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "Introducing v2.0: Everything You Asked For"}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "We spent six months listening. To your support tickets, your feature requests, your workarounds, and your candid feedback in user interviews. v2.0 is the result of that listening — a release built entirely around the problems you told us mattered most."}],
+        "children": []
+      },
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "What's New"}],
+        "children": []
+      },
+      {
+        "type": "bulletListItem",
+        "content": [{"type": "text", "text": "AI-assisted content briefs: generate structured campaign briefs from a single sentence goal."}],
+        "children": []
+      },
+      {
+        "type": "bulletListItem",
+        "content": [{"type": "text", "text": "Bulk scheduling: queue up to 90 days of posts across all connected platforms in a single session."}],
+        "children": []
+      },
+      {
+        "type": "bulletListItem",
+        "content": [{"type": "text", "text": "Piece suggestions: when drafting a post, the system surfaces relevant content pieces automatically based on your campaign brief."}],
+        "children": []
+      },
+      {
+        "type": "bulletListItem",
+        "content": [{"type": "text", "text": "Approval workflows: multi-step review chains with inline commenting and one-click approval."}],
+        "children": []
+      },
+      {
+        "type": "bulletListItem",
+        "content": [{"type": "text", "text": "Dark mode: finally."}],
+        "children": []
+      },
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "How to Upgrade"}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "v2.0 is available to all customers starting today. Your existing data, campaigns, and integrations migrate automatically — no action required. New features are gated by plan tier and can be unlocked from your account settings."}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "Thank you for building v2.0 with us. The best feedback we ever received was honest, and you gave us plenty of it."}],
+        "children": []
+      }
+    ]
+  },
+  {
+    "title": "Our Story: From Garage to Global",
+    "tags": ["Brand Voice"],
+    "content": [
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "Our Story: From Garage to Global"}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "It started with a frustration that most content marketers will recognize immediately: we had great ideas, mediocre processes, and no system that could hold it all together. Spreadsheets. Slack threads. Google Drive folders three levels deep. The ideas were there; the infrastructure was not."}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "In 2022, four of us crowded around a kitchen table and decided to build the tool we wished existed. We were a writer, a designer, an engineer, and a marketer — which in hindsight was exactly the right team to build software for content teams."}],
+        "children": []
+      },
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "First Customer, First Lesson"}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "Our first paying customer used the product in a way we hadn't anticipated — not as a publishing tool but as a thinking tool. They used campaigns to structure strategy before a single word was written. That insight reshaped our entire product philosophy: great content starts with great thinking, and the platform's job is to make both easier."}],
+        "children": []
+      },
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "Where We Are Today"}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "Today we serve thousands of content teams across 40 countries. Our team has grown from four to forty. The kitchen table is long gone, but the founding philosophy has not changed: every feature we ship has to make content teams faster, clearer, or more confident. Nothing ships if it doesn't meet that bar."}],
+        "children": []
+      }
+    ]
+  },
+  {
+    "title": "Your Ultimate Holiday Gift Guide for Productive Teams",
+    "tags": ["Seasonal", "Educational"],
+    "content": [
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "Your Ultimate Holiday Gift Guide for Productive Teams"}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "The end-of-year budget window is open, procurement approvals are easier to get, and your team has been asking for better tools all year. Here's how to spend it well on tools that will compound in value long after the decorations come down."}],
+        "children": []
+      },
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "For the Content Team"}],
+        "children": []
+      },
+      {
+        "type": "bulletListItem",
+        "content": [{"type": "text", "text": "A unified content platform that connects strategy, creation, and scheduling in one place. The productivity gains show up in week one."}],
+        "children": []
+      },
+      {
+        "type": "bulletListItem",
+        "content": [{"type": "text", "text": "AI writing assistance subscriptions — not to replace your writers, but to eliminate the blank-page problem permanently."}],
+        "children": []
+      },
+      {
+        "type": "bulletListItem",
+        "content": [{"type": "text", "text": "A professional stock photography subscription. Custom visuals convert; generic ones do not."}],
+        "children": []
+      },
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "For the Marketing Leader"}],
+        "children": []
+      },
+      {
+        "type": "bulletListItem",
+        "content": [{"type": "text", "text": "An advanced analytics platform that closes the loop between content and revenue."}],
+        "children": []
+      },
+      {
+        "type": "bulletListItem",
+        "content": [{"type": "text", "text": "A seat at a Q1 strategy workshop — alignment before the year starts is worth more than any tool."}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "The best gifts are the ones that keep delivering. Invest in tools your team will use every day, and the ROI takes care of itself. Happy planning — and happy holidays."}],
+        "children": []
+      }
+    ]
+  },
+  {
+    "title": "Integrating the API in Under 30 Minutes",
+    "tags": ["Technical", "Educational"],
+    "content": [
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "Integrating the API in Under 30 Minutes"}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "This guide walks you through a complete integration from authentication to your first successful API call. Prerequisites: an active account, API credentials from Settings → Developer, and basic familiarity with HTTP clients."}],
+        "children": []
+      },
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "Step 1: Authenticate"}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "All API requests use Bearer token authentication. Generate a token from Settings → Developer → API Keys. Tokens are scoped by permission level and expire after 90 days unless rotated. Store tokens in environment variables — never in source code."}],
+        "children": []
+      },
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "Step 2: Fetch Your First Campaign"}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "Send a GET request to /api/campaigns with your Bearer token in the Authorization header. The response is a JSON array of campaign objects ordered by creation date. Each campaign includes its piece IDs, platform targets, and current status."}],
+        "children": []
+      },
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "Step 3: Create a Post Programmatically"}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "POST to /api/posts with a JSON body containing campaign_id, platform_id, platform_post_type, title, and content. The API validates all fields against the platform's post type schema and returns the created post with its generated ID."}],
+        "children": []
+      },
+      {
+        "type": "heading",
+        "content": [{"type": "text", "text": "Rate Limits and Error Handling"}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "The API enforces 1000 requests per minute per token. Rate limit headers are included in every response. On 429, implement exponential backoff starting at 1 second. On 422, inspect the errors array in the response body — each entry maps to a specific field and includes a human-readable message."}],
+        "children": []
+      },
+      {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "Full API reference, code samples in seven languages, and a Postman collection are available at our developer portal."}],
+        "children": []
+      }
+    ]
+  }
+]

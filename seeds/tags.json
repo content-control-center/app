@@ -1,0 +1,10 @@
+[
+  { "name": "Brand Voice",        "color": "#6366f1" },
+  { "name": "Product Features",   "color": "#0ea5e9" },
+  { "name": "Customer Stories",   "color": "#10b981" },
+  { "name": "Industry News",      "color": "#f59e0b" },
+  { "name": "Thought Leadership", "color": "#8b5cf6" },
+  { "name": "Seasonal",           "color": "#ef4444" },
+  { "name": "Technical",          "color": "#64748b" },
+  { "name": "Educational",        "color": "#14b8a6" }
+]
