@@ -134,3 +134,8 @@ DELETE {{baseUrl}}/api/campaigns/{{campaignId}}
 
 ### Delete campaign — non-existent ID (expects 404)  [protected]
 DELETE {{baseUrl}}/api/campaigns/nonexistent
+
+### Generate draft posts for campaign  [protected]
+# Requires ANTHROPIC_API_KEY to be set in the server environment.
+# Returns 503 when the feature is disabled (no API key).
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/generate-draft

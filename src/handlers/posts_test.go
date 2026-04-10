@@ -49,7 +49,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
-		handlers.NewCampaignsHandler(campaignRepo, auth).Register(app)
+		handlers.NewCampaignsHandler(campaignRepo, auth, nil).Register(app)
 		handlers.NewPiecesHandler(pieceRepo, auth, nil).Register(app)
 		handlers.NewPostsHandler(postRepo, auth).Register(app)
 

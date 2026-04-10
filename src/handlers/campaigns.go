@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/content-control-center/app/src/genkit/flows/content_plan"
 	"github.com/content-control-center/app/src/models"
 	"github.com/content-control-center/app/src/repository"
 )
@@ -28,12 +30,13 @@ var validStatuses = map[models.CampaignStatus]bool{
 }
 
 type CampaignsHandler struct {
-	repo repository.CampaignRepository
-	auth fiber.Handler
+	repo          repository.CampaignRepository
+	auth          fiber.Handler
+	generateDraft func(ctx context.Context, campaignID string) (*content_plan.ContentPlanResponse, error)
 }
 
-func NewCampaignsHandler(repo repository.CampaignRepository, auth fiber.Handler) *CampaignsHandler {
-	return &CampaignsHandler{repo: repo, auth: auth}
+func NewCampaignsHandler(repo repository.CampaignRepository, auth fiber.Handler, generateDraft func(ctx context.Context, campaignID string) (*content_plan.ContentPlanResponse, error)) *CampaignsHandler {
+	return &CampaignsHandler{repo: repo, auth: auth, generateDraft: generateDraft}
 }
 
 func (h *CampaignsHandler) Register(app *fiber.App) {
@@ -43,26 +46,27 @@ func (h *CampaignsHandler) Register(app *fiber.App) {
 	g.Get("/:id", h.auth, h.Get)
 	g.Put("/:id", h.auth, h.Update)
 	g.Delete("/:id", h.auth, h.Delete)
+	g.Post("/:id/generate-draft", h.auth, h.GenerateDraft)
 }
 
 type campaignRequest struct {
-	Name              string                  `json:"name"                validate:"required"`
-	Description       string                  `json:"description"`
-	TargetPersona     string                  `json:"target_persona"`
-	KeyMessages       string                  `json:"key_messages"`
-	ToneGuidelines    string                  `json:"tone_guidelines"`
-	UsePieces         bool                    `json:"use_pieces"`
-	PiecesIDs         models.StringSlice      `json:"pieces_ids"`
-	TargetPlatformIDs models.StringSlice      `json:"target_platform_ids"`
-	Objective         models.CampaignObjective `json:"objective"           validate:"required"`
-	Status            models.CampaignStatus   `json:"status"`
-	StartDate         *time.Time              `json:"start_date"`
-	EndDate           *time.Time              `json:"end_date"`
-	EstimatedPostCount *int                    `json:"estimated_post_count"`
-	Budget             *float64               `json:"budget"`
-	Currency           string                 `json:"currency"`
-	Language          string                  `json:"language"`
-	TagIDs            models.StringSlice      `json:"tag_ids"`
+	Name               string                   `json:"name"                validate:"required"`
+	Description        string                   `json:"description"`
+	TargetPersona      string                   `json:"target_persona"`
+	KeyMessages        string                   `json:"key_messages"`
+	ToneGuidelines     string                   `json:"tone_guidelines"`
+	UsePieces          bool                     `json:"use_pieces"`
+	PiecesIDs          models.StringSlice       `json:"pieces_ids"`
+	TargetPlatformIDs  models.StringSlice       `json:"target_platform_ids"`
+	Objective          models.CampaignObjective `json:"objective"           validate:"required"`
+	Status             models.CampaignStatus    `json:"status"`
+	StartDate          *time.Time               `json:"start_date"`
+	EndDate            *time.Time               `json:"end_date"`
+	EstimatedPostCount *int                     `json:"estimated_post_count"`
+	Budget             *float64                 `json:"budget"`
+	Currency           string                   `json:"currency"`
+	Language           string                   `json:"language"`
+	TagIDs             models.StringSlice       `json:"tag_ids"`
 }
 
 func (r *campaignRequest) toStatus() models.CampaignStatus {
@@ -125,26 +129,26 @@ func (h *CampaignsHandler) Create(c *fiber.Ctx) error {
 	}
 
 	campaign := &models.Campaign{
-		ID:                id,
-		Name:              req.Name,
-		Description:       req.Description,
-		TargetPersona:     req.TargetPersona,
-		KeyMessages:       req.KeyMessages,
-		ToneGuidelines:    req.ToneGuidelines,
-		UsePieces:         req.UsePieces,
-		PiecesIDs:         nullSlice(req.PiecesIDs),
-		TargetPlatformIDs: nullSlice(req.TargetPlatformIDs),
-		Objective:         req.Objective,
+		ID:                 id,
+		Name:               req.Name,
+		Description:        req.Description,
+		TargetPersona:      req.TargetPersona,
+		KeyMessages:        req.KeyMessages,
+		ToneGuidelines:     req.ToneGuidelines,
+		UsePieces:          req.UsePieces,
+		PiecesIDs:          nullSlice(req.PiecesIDs),
+		TargetPlatformIDs:  nullSlice(req.TargetPlatformIDs),
+		Objective:          req.Objective,
 		Status:             status,
 		EstimatedPostCount: req.EstimatedPostCount,
 		StartDate:          req.StartDate,
 		EndDate:            req.EndDate,
 		Budget:             req.Budget,
-		Currency:          req.Currency,
-		Language:          req.Language,
-		TagIDs:            nullSlice(req.TagIDs),
-		Tags:              []models.Tag{},
-		CreatedBy:         session.UserID,
+		Currency:           req.Currency,
+		Language:           req.Language,
+		TagIDs:             nullSlice(req.TagIDs),
+		Tags:               []models.Tag{},
+		CreatedBy:          session.UserID,
 	}
 	if err := h.repo.Create(c.Context(), campaign); err != nil {
 		return err
@@ -256,6 +260,54 @@ func (h *CampaignsHandler) Delete(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "campaign not found")
 	}
 	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// GenerateDraft godoc
+// @Summary      Generate draft posts
+// @Description  Calls the AI content plan flow to generate draft Posts for the campaign.
+// @Tags         campaigns
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id   path      string  true  "Campaign Sqid"
+// @Success      200  {object}  content_plan.ContentPlanResponse
+// @Failure      400  {object}  map[string]string
+// @Failure      401  {object}  map[string]string
+// @Failure      403  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Failure      503  {object}  map[string]string
+// @Router       /api/campaigns/{id}/generate-draft [post]
+func (h *CampaignsHandler) GenerateDraft(c *fiber.Ctx) error {
+	if h.generateDraft == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "content plan feature is not enabled")
+	}
+
+	campaign, err := h.repo.GetByID(c.Context(), c.Params("id"))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "campaign not found")
+		}
+		return err
+	}
+
+	session := c.Locals("session").(*models.Session)
+	if campaign.CreatedBy != session.UserID {
+		return fiber.NewError(fiber.StatusForbidden, "forbidden")
+	}
+
+	resp, err := h.generateDraft(c.Context(), campaign.ID)
+	if err != nil {
+		var ve *content_plan.ValidationError
+		if errors.As(err, &ve) {
+			return fiber.NewError(fiber.StatusBadRequest, ve.Msg)
+		}
+		var ae *content_plan.AIError
+		if errors.As(err, &ae) {
+			return fiber.NewError(fiber.StatusBadGateway, ae.Msg)
+		}
+		return err
+	}
+
+	return c.JSON(resp)
 }
 
 // nullSlice returns an empty StringSlice instead of nil so the JSON column

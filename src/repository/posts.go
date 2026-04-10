@@ -15,6 +15,7 @@ type PostRepository interface {
 	List(ctx context.Context) ([]models.Post, error)
 	ListByCampaign(ctx context.Context, campaignID string) ([]models.Post, error)
 	Create(ctx context.Context, post *models.Post) error
+	CreateBatch(ctx context.Context, posts []*models.Post) error
 	GetByID(ctx context.Context, id string) (*models.Post, error)
 	Update(ctx context.Context, post *models.Post) error
 	Delete(ctx context.Context, id string) (bool, error)
@@ -54,6 +55,16 @@ func (r *postRepository) ListByCampaign(ctx context.Context, campaignID string) 
 func (r *postRepository) Create(ctx context.Context, post *models.Post) error {
 	_, err := r.db.NewInsert().Model(post).Exec(ctx)
 	return err
+}
+
+func (r *postRepository) CreateBatch(ctx context.Context, posts []*models.Post) error {
+	if len(posts) == 0 {
+		return nil
+	}
+	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		_, err := tx.NewInsert().Model(&posts).Exec(ctx)
+		return err
+	})
 }
 
 func (r *postRepository) GetByID(ctx context.Context, id string) (*models.Post, error) {

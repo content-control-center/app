@@ -9,6 +9,11 @@ type Config struct {
 	SessionCookieName string `envconfig:"SESSION_COOKIE_NAME" default:"c3_session"`
 	EmbedServerURL    string `envconfig:"EMBED_SERVER_URL"    default:"http://localhost:8080"`
 
+	// Anthropic config.
+	AnthropicAPIKey string `envconfig:"ANTHROPIC_API_KEY"   default:""`
+	ModelID         string `envconfig:"MODEL_ID"            default:"claude-sonnet-4-5-20250929"`
+	MaxPieceContext int    `envconfig:"MAX_PIECE_CONTEXT"   default:"15"`
+
 	// Object storage (S3-compatible: Cloudflare R2, DigitalOcean Spaces, AWS S3).
 	// Leave StorageEndpoint empty to disable image uploads.
 	StorageEndpoint  string `envconfig:"STORAGE_ENDPOINT"   default:""`

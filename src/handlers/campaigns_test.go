@@ -12,6 +12,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
 
+	"github.com/content-control-center/app/src/genkit/flows/content_plan"
 	"github.com/content-control-center/app/src/handlers"
 	"github.com/content-control-center/app/src/models"
 	"github.com/content-control-center/app/src/repository"
@@ -46,7 +47,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
-		handlers.NewCampaignsHandler(campaignRepo, auth).Register(app)
+		handlers.NewCampaignsHandler(campaignRepo, auth, nil).Register(app)
 		handlers.NewTagsHandler(tagRepo, auth).Register(app)
 
 		// Seed an auth user and log in
@@ -468,6 +469,125 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 			Expect(json.NewDecoder(getResp.Body).Decode(&got)).To(Succeed())
 			Expect(got.Tags).NotTo(BeNil())
 			Expect(got.Tags).To(BeEmpty())
+		})
+	})
+
+	// ── GenerateDraft ────────────────────────────────────────────────────────
+
+	Describe("POST /api/campaigns/:id/generate-draft", func() {
+		Context("when not authenticated", func() {
+			It("returns 401", func() {
+				req := httptest.NewRequest("POST", "/api/campaigns/someid/generate-draft", nil)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+		})
+
+		Context("when authenticated", func() {
+			It("returns 503 when generateDraft is nil", func() {
+				// The test app is wired with generateDraft=nil.
+				c := createCampaign("Draft Campaign", models.ObjectiveAwareness)
+				req := httptest.NewRequest("POST", "/api/campaigns/"+c.ID+"/generate-draft", nil)
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(503))
+			})
+
+			It("returns 404 for an unknown campaign id", func() {
+				// Wire a no-op generateDraft so we don't hit 503 first.
+				appWithDraft := fiber.New(fiber.Config{
+					ErrorHandler: func(c *fiber.Ctx, err error) error {
+						code := fiber.StatusInternalServerError
+						if e, ok := err.(*fiber.Error); ok {
+							code = e.Code
+						}
+						return c.Status(code).JSON(fiber.Map{"error": err.Error()})
+					},
+				})
+				tagRepo := repository.NewTagRepository(db)
+				campaignRepo := repository.NewCampaignRepository(db, tagRepo)
+				sessionRepo := repository.NewSessionRepository(db)
+				settingRepo := repository.NewSettingRepository(db)
+				userRepo := repository.NewUserRepository(db)
+				auth2 := handlers.RequireAuth(sessionRepo, testCookieName)
+				handlers.NewUsersHandler(userRepo, settingRepo, auth2).Register(appWithDraft)
+				handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(appWithDraft)
+				noop := func(_ context.Context, _ string) (*content_plan.ContentPlanResponse, error) {
+					return &content_plan.ContentPlanResponse{}, nil
+				}
+				handlers.NewCampaignsHandler(campaignRepo, auth2, noop).Register(appWithDraft)
+
+				req := httptest.NewRequest("POST", "/api/campaigns/nonexistent/generate-draft", nil)
+				req.AddCookie(authCookie)
+				resp, err := appWithDraft.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(404))
+			})
+
+			It("returns 403 for another user's campaign", func() {
+				// Create a second user whose campaign the first user should not access.
+				appWithDraft := fiber.New(fiber.Config{
+					ErrorHandler: func(c *fiber.Ctx, err error) error {
+						code := fiber.StatusInternalServerError
+						if e, ok := err.(*fiber.Error); ok {
+							code = e.Code
+						}
+						return c.Status(code).JSON(fiber.Map{"error": err.Error()})
+					},
+				})
+				tagRepo := repository.NewTagRepository(db)
+				campaignRepo := repository.NewCampaignRepository(db, tagRepo)
+				sessionRepo := repository.NewSessionRepository(db)
+				settingRepo := repository.NewSettingRepository(db)
+				userRepo := repository.NewUserRepository(db)
+				auth2 := handlers.RequireAuth(sessionRepo, testCookieName)
+				handlers.NewUsersHandler(userRepo, settingRepo, auth2).Register(appWithDraft)
+				handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(appWithDraft)
+				noop := func(_ context.Context, _ string) (*content_plan.ContentPlanResponse, error) {
+					return &content_plan.ContentPlanResponse{}, nil
+				}
+				handlers.NewCampaignsHandler(campaignRepo, auth2, noop).Register(appWithDraft)
+
+				// Register and log in as a second user.
+				body, _ := json.Marshal(fiber.Map{"name": "Other", "email": "other@example.com", "password": "other-password"})
+				regReq := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
+				regReq.Header.Set("Content-Type", "application/json")
+				regResp, err := appWithDraft.Test(regReq)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(regResp.StatusCode).To(Equal(fiber.StatusCreated))
+				var otherUser models.User
+				Expect(json.NewDecoder(regResp.Body).Decode(&otherUser)).To(Succeed())
+
+				loginBody, _ := json.Marshal(fiber.Map{"email": "other@example.com", "password": "other-password"})
+				loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
+				loginReq.Header.Set("Content-Type", "application/json")
+				loginResp, err := appWithDraft.Test(loginReq)
+				Expect(err).NotTo(HaveOccurred())
+				var otherCookie *http.Cookie
+				for _, ck := range loginResp.Cookies() {
+					otherCookie = ck
+				}
+
+				// Create a campaign as the second user.
+				campBody, _ := json.Marshal(fiber.Map{"name": "Other's Campaign", "objective": "awareness"})
+				campReq := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(campBody))
+				campReq.Header.Set("Content-Type", "application/json")
+				campReq.AddCookie(otherCookie)
+				campResp, err := appWithDraft.Test(campReq)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(campResp.StatusCode).To(Equal(fiber.StatusCreated))
+				var otherCampaign models.Campaign
+				Expect(json.NewDecoder(campResp.Body).Decode(&otherCampaign)).To(Succeed())
+
+				// Try to generate draft as the first user (authCookie) — should get 403.
+				draftReq := httptest.NewRequest("POST", "/api/campaigns/"+otherCampaign.ID+"/generate-draft", nil)
+				draftReq.AddCookie(authCookie)
+				draftResp, err := appWithDraft.Test(draftReq)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(draftResp.StatusCode).To(Equal(403))
+			})
 		})
 	})
 

@@ -13,6 +13,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/content-control-center/app/src/config"
+	"github.com/content-control-center/app/src/genkit/flows/content_plan"
 	"github.com/content-control-center/app/src/handlers"
 	"github.com/content-control-center/app/src/repository"
 	"github.com/content-control-center/app/src/storage"
@@ -45,12 +46,24 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	handlers.NewSessionsHandler(userRepo, sessionRepo, cfg.SessionCookieName, !cfg.Debug).Register(app)
 	handlers.NewSettingsHandler(settingRepo, auth).Register(app)
 
-	onSave, err := initEmbedding(ctx, cfg, embeddingRepo)
+	onSave, embedder, err := initEmbedding(ctx, cfg, embeddingRepo)
 	if err != nil {
 		return nil, err
 	}
 	handlers.NewPiecesHandler(pieceRepo, auth, onSave).Register(app)
-	handlers.NewCampaignsHandler(campaignRepo, auth).Register(app)
+
+	contentPlanRepos := content_plan.ContentPlanRepos{
+		Campaigns:  campaignRepo,
+		Pieces:     pieceRepo,
+		Embeddings: embeddingRepo,
+		Platforms:  platformRepo,
+		Posts:      postRepo,
+	}
+	generateDraft, err := initContentPlan(ctx, cfg, embedder, contentPlanRepos)
+	if err != nil {
+		return nil, err
+	}
+	handlers.NewCampaignsHandler(campaignRepo, auth, generateDraft).Register(app)
 	handlers.NewPlatformsHandler(platformRepo, auth).Register(app)
 	handlers.NewTagsHandler(tagRepo, auth).Register(app)
 	handlers.NewPostsHandler(postRepo, auth).Register(app)
