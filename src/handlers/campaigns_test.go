@@ -45,7 +45,8 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 		sessionRepo := repository.NewSessionRepository(db)
 		settingRepo := repository.NewSettingRepository(db)
 		tagRepo := repository.NewTagRepository(db)
-		campaignRepo := repository.NewCampaignRepository(db, tagRepo)
+		platformRepo := repository.NewPlatformRepository(db)
+		campaignRepo := repository.NewCampaignRepository(db, tagRepo, platformRepo)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
@@ -185,7 +186,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 					"tone_guidelines":      "Friendly and professional",
 					"use_pieces":           true,
 					"pieces_ids":           []string{"abc", "def"},
-					"target_platform_ids":  []string{"instagram", "tiktok"},
+					"target_platform_ids":  []string{"rzgpTkARLH0L", "tiktok"},
 					"status":               "scheduled",
 					"estimated_post_count": count,
 					"budget":               1500.00,
@@ -296,6 +297,33 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
 				Expect(got.ID).To(Equal(c.ID))
 				Expect(got.Name).To(Equal("Brand Awareness"))
+			})
+
+			It("returns hydrated platforms for known target_platform_ids", func() {
+				body, _ := json.Marshal(fiber.Map{
+					"name":                "Platform Hydration Test",
+					"objective":           "awareness",
+					"target_platform_ids": []string{"rzgpTkARLH0L", "tiktok"},
+				})
+				req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, _ := app.Test(req)
+				var created models.Campaign
+				json.NewDecoder(resp.Body).Decode(&created)
+
+				req = httptest.NewRequest("GET", "/api/campaigns/"+created.ID, nil)
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+
+				var got models.Campaign
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				// rzgpTkARLH0L is the seeded Instagram platform; "tiktok" has no match
+				Expect(got.Platforms).To(HaveLen(1))
+				Expect(got.Platforms[0].ID).To(Equal("rzgpTkARLH0L"))
+				Expect(got.Platforms[0].Name).To(Equal("Instagram"))
 			})
 
 			It("returns 404 for an unknown id", func() {
@@ -509,7 +537,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 					},
 				})
 				tagRepo := repository.NewTagRepository(db)
-				campaignRepo := repository.NewCampaignRepository(db, tagRepo)
+				campaignRepo := repository.NewCampaignRepository(db, tagRepo, repository.NewPlatformRepository(db))
 				sessionRepo := repository.NewSessionRepository(db)
 				settingRepo := repository.NewSettingRepository(db)
 				userRepo := repository.NewUserRepository(db)
@@ -540,7 +568,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 					},
 				})
 				tagRepo := repository.NewTagRepository(db)
-				campaignRepo := repository.NewCampaignRepository(db, tagRepo)
+				campaignRepo := repository.NewCampaignRepository(db, tagRepo, repository.NewPlatformRepository(db))
 				sessionRepo := repository.NewSessionRepository(db)
 				settingRepo := repository.NewSettingRepository(db)
 				userRepo := repository.NewUserRepository(db)
@@ -602,7 +630,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 					},
 				})
 				tagRepo := repository.NewTagRepository(db)
-				campaignRepo := repository.NewCampaignRepository(db, tagRepo)
+				campaignRepo := repository.NewCampaignRepository(db, tagRepo, repository.NewPlatformRepository(db))
 				sessionRepo := repository.NewSessionRepository(db)
 				settingRepo := repository.NewSettingRepository(db)
 				userRepo := repository.NewUserRepository(db)
@@ -693,7 +721,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 					},
 				})
 				tagRepo := repository.NewTagRepository(db)
-				campaignRepo := repository.NewCampaignRepository(db, tagRepo)
+				campaignRepo := repository.NewCampaignRepository(db, tagRepo, repository.NewPlatformRepository(db))
 				sessionRepo := repository.NewSessionRepository(db)
 				settingRepo := repository.NewSettingRepository(db)
 				userRepo := repository.NewUserRepository(db)

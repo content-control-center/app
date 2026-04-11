@@ -37,8 +37,8 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	tagRepo := repository.NewTagRepository(db)
 	pieceRepo := repository.NewPieceRepository(db, tagRepo)
 	embeddingRepo := repository.NewPiecesEmbeddingRepository(db)
-	campaignRepo := repository.NewCampaignRepository(db, tagRepo)
 	platformRepo := repository.NewPlatformRepository(db)
+	campaignRepo := repository.NewCampaignRepository(db, tagRepo, platformRepo)
 	postRepo := repository.NewPostRepository(db)
 	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
 

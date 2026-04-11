@@ -24,7 +24,7 @@ var _ = Describe("Content plan flow", Ordered, func() {
 		db         *bun.DB
 		userID     string
 		campaignID string
-		platformID = "linkedin"
+		platformID = "AXqWG7U2qnpt" // seeded LinkedIn platform (Sqid)
 	)
 
 	BeforeAll(func() {
@@ -37,10 +37,10 @@ var _ = Describe("Content plan flow", Ordered, func() {
 		db = mustOpenIntegrationDB()
 
 		tagRepo := repository.NewTagRepository(db)
-		campaignRepo := repository.NewCampaignRepository(db, tagRepo)
 		pieceRepo := repository.NewPieceRepository(db, tagRepo)
 		embeddingRepo := repository.NewPiecesEmbeddingRepository(db)
 		platformRepo := repository.NewPlatformRepository(db)
+		campaignRepo := repository.NewCampaignRepository(db, tagRepo, platformRepo)
 		postRepo := repository.NewPostRepository(db)
 
 		// Seed user.

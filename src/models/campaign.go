@@ -54,6 +54,7 @@ type Campaign struct {
 	Currency  string         `bun:"currency,notnull"                             json:"currency"`
 	TagIDs    StringSlice    `bun:"tag_ids,notnull"                              json:"tag_ids"`
 	Tags      []Tag          `bun:"-"                                            json:"tags"`
+	Platforms []Platform     `bun:"-"                                            json:"platforms"`
 	CreatedBy string         `bun:"created_by,notnull"                           json:"created_by"`
 	CreatedAt time.Time      `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
 	UpdatedAt time.Time      `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
