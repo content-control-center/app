@@ -16,7 +16,7 @@ type DraftPost struct {
 	PlatformID  string   `json:"platformId"              jsonschema:"description=Exact platform ID string from the campaign e.g. linkedin x-twitter instagram"`
 	PublishDate string   `json:"publishDate"             jsonschema:"description=ISO 8601 date YYYY-MM-DD within the campaign date range"`
 	ToneNotes   string   `json:"toneNotes"               jsonschema:"description=How the campaign tone guidelines apply to this specific post"`
-	PieceRefs   []string `json:"pieceRefs,omitempty"     jsonschema:"description=IDs of reference pieces incorporated in this post"`
+	PieceRefs   []string `json:"pieceRefs,omitempty"     jsonschema:"description=IDs of pieces whose facts or ideas were directly used in this post; omit if none"`
 }
 
 // ContentPlanResponse is returned by the handler and the flow.

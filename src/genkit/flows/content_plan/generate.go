@@ -107,7 +107,7 @@ func generatePosts(
 		return nil, nil, &AIError{Msg: fmt.Sprintf("model response is not valid JSON: %v\nraw: %.200s", err, text)}
 	}
 
-	const maxBodyRunes = 300
+	const maxBodyRunes = 500
 	var warnings []string
 	for i := range posts {
 		runes := []rune(posts[i].Body)

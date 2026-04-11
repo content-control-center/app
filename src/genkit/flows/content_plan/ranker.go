@@ -1,6 +1,7 @@
 package content_plan
 
 import (
+	"log"
 	"math"
 	"sort"
 )
@@ -16,7 +17,9 @@ func rankByCosineSimilarity(query []float32, embeddings map[string][]float32, to
 
 	scores := make([]scored, 0, len(embeddings))
 	for id, vec := range embeddings {
-		if s := cosineSimilarity(query, vec); s >= minScore {
+		s := cosineSimilarity(query, vec)
+		log.Printf("content_plan: piece %s similarity=%.4f (threshold=%.4f, pass=%v)", id, s, minScore, s >= minScore)
+		if s >= minScore {
 			scores = append(scores, scored{id: id, score: s})
 		}
 	}

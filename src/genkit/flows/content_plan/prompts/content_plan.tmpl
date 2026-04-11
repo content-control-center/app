@@ -6,7 +6,7 @@ Hard rules — posts that violate these will be discarded:
 • Distribute posts evenly across the full date range — do not cluster at the start or end
 • Adapt contentType to each platform's norms
 • Every post must clearly serve the stated campaign objective
-• body must be a bullet list of 2–5 short theses (key points to expand later), NOT finished copy — maximum 300 characters total
+• body must be a bullet list of 5–7 short theses (key points to expand later), NOT finished copy — maximum 500 characters total
 
 Output format — respond with a raw JSON array only, no markdown fences, no other text:
 [
@@ -17,9 +17,10 @@ Output format — respond with a raw JSON array only, no markdown fences, no oth
     "platformId": "string",
     "publishDate": "YYYY-MM-DD",
     "toneNotes": "string",
-    "pieceRefs": ["id1"]
+    "pieceRefs": ["id1", "id2"]
   }
-]{{end}}
+]
+pieceRefs must list ONLY the IDs of pieces whose facts, ideas, or wording were directly drawn upon for this post's theses. Omit pieceRefs entirely (or leave it empty) when no reference material was used.{{end}}
 
 {{define "user"}}Campaign: {{.Name}}
 Objective: {{.Objective}}
@@ -43,7 +44,7 @@ Target Platforms:
 {{- end}}
 {{- if .Pieces}}
 
-Reference Material — incorporate where relevant, list piece IDs in pieceRefs:
+Reference Material — use only when directly relevant to a post's theses; list the IDs of pieces you actually drew from in that post's pieceRefs:
 {{- range .Pieces}}
   [{{.ID}}] {{.Title}}
   {{.Excerpt}}

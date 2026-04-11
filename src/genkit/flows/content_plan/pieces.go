@@ -74,13 +74,15 @@ func resolvePieces(ctx context.Context, campaign *models.Campaign, cfg ContentPl
 
 // minPieceSimilarity is the minimum cosine similarity a piece must score
 // against the campaign query to be included in the prompt context.
-const minPieceSimilarity = 0.4
+// Calibrated for the embeddinggemma-300m model: related content typically
+// scores 0.70–0.85; loosely related falls in 0.50–0.65.
+const minPieceSimilarity = 0.7
 
 // semanticRank ranks candidateIDs by cosine similarity to the campaign's key
 // messages + description, filters out pieces below minPieceSimilarity, and
 // returns the top-N IDs plus the excluded ones.
 func semanticRank(ctx context.Context, campaign *models.Campaign, candidateIDs []string, cfg ContentPlanFlowConfig, embeddingRepo repository.PiecesEmbeddingsRepository) (top []string, excluded []string, err error) {
-	query := campaign.KeyMessages + "\n" + campaign.Description
+	query := campaign.Name + "\n" + campaign.KeyMessages + "\n" + campaign.Description
 	qResp, err := cfg.Embedder.Embed(ctx, &ai.EmbedRequest{
 		Input: []*ai.Document{ai.DocumentFromText(query, nil)},
 	})
