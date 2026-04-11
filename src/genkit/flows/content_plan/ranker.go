@@ -6,9 +6,9 @@ import (
 )
 
 // rankByCosineSimilarity returns up to topN piece IDs ordered by descending
-// cosine similarity to the query vector. When len(embeddings) <= topN every ID
-// is returned in similarity order. A zero or mismatched vector scores as 0.
-func rankByCosineSimilarity(query []float32, embeddings map[string][]float32, topN int) []string {
+// cosine similarity to the query vector. Only IDs with a score >= minScore are
+// included. A zero or mismatched vector scores as 0.
+func rankByCosineSimilarity(query []float32, embeddings map[string][]float32, topN int, minScore float32) []string {
 	type scored struct {
 		id    string
 		score float32
@@ -16,7 +16,9 @@ func rankByCosineSimilarity(query []float32, embeddings map[string][]float32, to
 
 	scores := make([]scored, 0, len(embeddings))
 	for id, vec := range embeddings {
-		scores = append(scores, scored{id: id, score: cosineSimilarity(query, vec)})
+		if s := cosineSimilarity(query, vec); s >= minScore {
+			scores = append(scores, scored{id: id, score: s})
+		}
 	}
 
 	sort.Slice(scores, func(i, j int) bool { return scores[i].score > scores[j].score })

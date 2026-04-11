@@ -17,7 +17,14 @@ import (
 	"github.com/content-control-center/app/src/repository"
 )
 
-func generatePosts(ctx context.Context, g *genkit.Genkit, campaign *models.Campaign, platforms []resolvedPlatform, pieces []resolvedPiece, cfg ContentPlanFlowConfig) ([]DraftPost, []string, error) {
+func generatePosts(
+	ctx context.Context,
+	g *genkit.Genkit,
+	campaign *models.Campaign,
+	platforms []resolvedPlatform,
+	pieces []resolvedPiece,
+	cfg ContentPlanFlowConfig,
+) ([]DraftPost, []string, error) {
 	estCount := 0
 	if campaign.EstimatedPostCount != nil {
 		estCount = *campaign.EstimatedPostCount
@@ -49,6 +56,9 @@ func generatePosts(ctx context.Context, g *genkit.Genkit, campaign *models.Campa
 	if err != nil {
 		return nil, nil, fmt.Errorf("render user prompt: %w", err)
 	}
+
+	log.Printf("content_plan: system prompt:\n%s", systemPrompt)
+	log.Printf("content_plan: user prompt:\n%s", userPrompt)
 
 	// Retry loop: 1 retry with 2s backoff on API or parse failure.
 	const maxAttempts = 2
@@ -96,7 +106,17 @@ func generatePosts(ctx context.Context, g *genkit.Genkit, campaign *models.Campa
 	if err := json.Unmarshal([]byte(text), &posts); err != nil {
 		return nil, nil, &AIError{Msg: fmt.Sprintf("model response is not valid JSON: %v\nraw: %.200s", err, text)}
 	}
-	return posts, nil, nil
+
+	const maxBodyRunes = 300
+	var warnings []string
+	for i := range posts {
+		runes := []rune(posts[i].Body)
+		if len(runes) > maxBodyRunes {
+			posts[i].Body = string(runes[:maxBodyRunes])
+			warnings = append(warnings, fmt.Sprintf("post %d body truncated to %d chars", i, maxBodyRunes))
+		}
+	}
+	return posts, warnings, nil
 }
 
 func persistDraftPosts(ctx context.Context, posts []DraftPost, campaign *models.Campaign, postRepo repository.PostRepository) error {

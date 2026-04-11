@@ -33,8 +33,8 @@ func resolvePieces(ctx context.Context, campaign *models.Campaign, cfg ContentPl
 		}
 	}
 
-	// Semantic ranking when we have more candidates than the context budget.
-	if len(candidateIDs) > cfg.MaxPieces && cfg.Embedder != nil {
+	// Semantic ranking: filter by relevance and trim to context budget.
+	if cfg.Embedder != nil {
 		ranked, skipped, err := semanticRank(ctx, campaign, candidateIDs, cfg, repos.Embeddings)
 		if err != nil {
 			log.Printf("content_plan: semantic ranking failed (%v) — using creation order", err)
@@ -72,8 +72,13 @@ func resolvePieces(ctx context.Context, campaign *models.Campaign, cfg ContentPl
 	return pieces, warnings, nil
 }
 
+// minPieceSimilarity is the minimum cosine similarity a piece must score
+// against the campaign query to be included in the prompt context.
+const minPieceSimilarity = 0.4
+
 // semanticRank ranks candidateIDs by cosine similarity to the campaign's key
-// messages + description and returns the top-N IDs plus the excluded ones.
+// messages + description, filters out pieces below minPieceSimilarity, and
+// returns the top-N IDs plus the excluded ones.
 func semanticRank(ctx context.Context, campaign *models.Campaign, candidateIDs []string, cfg ContentPlanFlowConfig, embeddingRepo repository.PiecesEmbeddingsRepository) (top []string, excluded []string, err error) {
 	query := campaign.KeyMessages + "\n" + campaign.Description
 	qResp, err := cfg.Embedder.Embed(ctx, &ai.EmbedRequest{
@@ -97,7 +102,7 @@ func semanticRank(ctx context.Context, campaign *models.Campaign, candidateIDs [
 		embeddings[id] = vec
 	}
 
-	ranked := rankByCosineSimilarity(queryVec, embeddings, cfg.MaxPieces)
+	ranked := rankByCosineSimilarity(queryVec, embeddings, cfg.MaxPieces, minPieceSimilarity)
 
 	// Collect excluded IDs.
 	rankedSet := make(map[string]bool, len(ranked))
