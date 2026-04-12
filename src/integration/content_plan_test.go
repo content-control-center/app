@@ -90,8 +90,9 @@ var _ = Describe("Content plan flow", Ordered, func() {
 			modelID = "claude-haiku-4-5-20251001"
 		}
 		flowCfg := content_plan.ContentPlanFlowConfig{
-			ModelID:   modelID,
-			MaxPieces: 5,
+			ModelID:         modelID,
+			MaxPieces:       5,
+			MaxOutputTokens: 8192,
 		}
 		repos := content_plan.ContentPlanRepos{
 			Campaigns:  campaignRepo,
