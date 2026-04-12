@@ -67,7 +67,7 @@ var _ = Describe("PlatformsHandler", Ordered, func() {
 	})
 
 	AfterEach(func() {
-		_, err := db.NewDelete().TableExpr("platforms").Where("id NOT IN ('linkedin','youtube','facebook','x-twitter','threads','instagram')").Exec(context.Background())
+		_, err := db.NewDelete().TableExpr("platforms").Where("id NOT IN ('AXqWG7U2qnpt','8S8bWQTG6qD','zBU1zqVICGfk','81mUCmc2xsKd','pQ4yxT3SuE57','rzgpTkARLH0L')").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		_, err = db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
@@ -76,8 +76,8 @@ var _ = Describe("PlatformsHandler", Ordered, func() {
 	})
 
 	// helper: create a platform via the API and return it
-	createPlatform := func(name string, postTypes models.PostTypeMap) models.Platform {
-		body, _ := json.Marshal(fiber.Map{"name": name, "post_types": postTypes})
+	createPlatform := func(name string, postTypes models.PostTypeMap, cadence, constraints string) models.Platform {
+		body, _ := json.Marshal(fiber.Map{"name": name, "post_types": postTypes, "cadence": cadence, "constraints": constraints})
 		req := httptest.NewRequest("POST", "/api/platforms", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.AddCookie(authCookie)
@@ -115,7 +115,7 @@ var _ = Describe("PlatformsHandler", Ordered, func() {
 			})
 
 			It("includes newly created platforms", func() {
-				createPlatform("TikTok", models.PostTypeMap{"video": "Video", "live": "Live"})
+				createPlatform("TikTok", models.PostTypeMap{"video": "Video", "live": "Live"}, "", "")
 
 				req := httptest.NewRequest("GET", "/api/platforms", nil)
 				req.AddCookie(authCookie)
@@ -166,6 +166,26 @@ var _ = Describe("PlatformsHandler", Ordered, func() {
 				Expect(p.PostTypes).To(HaveKeyWithValue("story", "Story"))
 			})
 
+			It("creates a platform with cadence and constraints and returns them", func() {
+				body, _ := json.Marshal(fiber.Map{
+					"name":        "TikTok",
+					"post_types":  fiber.Map{"video": "Video"},
+					"cadence":     "1–2 videos per day",
+					"constraints": "videos up to 10 min; captions up to 2200 chars",
+				})
+				req := httptest.NewRequest("POST", "/api/platforms", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(201))
+
+				var p models.Platform
+				Expect(json.NewDecoder(resp.Body).Decode(&p)).To(Succeed())
+				Expect(p.Cadence).To(Equal("1–2 videos per day"))
+				Expect(p.Constraints).To(Equal("videos up to 10 min; captions up to 2200 chars"))
+			})
+
 			It("creates a platform without post_types and returns an empty map", func() {
 				body, _ := json.Marshal(fiber.Map{"name": "Pinterest"})
 				req := httptest.NewRequest("POST", "/api/platforms", bytes.NewReader(body))
@@ -198,7 +218,7 @@ var _ = Describe("PlatformsHandler", Ordered, func() {
 	Describe("GET /api/platforms/:id", func() {
 		Context("when not authenticated", func() {
 			It("returns 401", func() {
-				req := httptest.NewRequest("GET", "/api/platforms/linkedin", nil)
+				req := httptest.NewRequest("GET", "/api/platforms/AXqWG7U2qnpt", nil)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(401))
@@ -206,8 +226,8 @@ var _ = Describe("PlatformsHandler", Ordered, func() {
 		})
 
 		Context("when authenticated", func() {
-			It("returns the seeded LinkedIn platform with all post types", func() {
-				req := httptest.NewRequest("GET", "/api/platforms/linkedin", nil)
+			It("returns the seeded LinkedIn platform with all post types, cadence, and constraints", func() {
+				req := httptest.NewRequest("GET", "/api/platforms/AXqWG7U2qnpt", nil)
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
@@ -215,15 +235,17 @@ var _ = Describe("PlatformsHandler", Ordered, func() {
 
 				var p models.Platform
 				Expect(json.NewDecoder(resp.Body).Decode(&p)).To(Succeed())
-				Expect(p.ID).To(Equal("linkedin"))
+				Expect(p.ID).To(Equal("AXqWG7U2qnpt"))
 				Expect(p.Name).To(Equal("LinkedIn"))
 				Expect(p.PostTypes).To(HaveKey("text-post"))
 				Expect(p.PostTypes).To(HaveKey("article"))
 				Expect(p.PostTypes).To(HaveLen(9))
+				Expect(p.Cadence).To(Equal("1–2 posts per week"))
+				Expect(p.Constraints).To(ContainSubstring("3000 chars"))
 			})
 
 			It("returns a created platform", func() {
-				p := createPlatform("TikTok", models.PostTypeMap{"video": "Video"})
+				p := createPlatform("TikTok", models.PostTypeMap{"video": "Video"}, "", "")
 
 				req := httptest.NewRequest("GET", "/api/platforms/"+p.ID, nil)
 				req.AddCookie(authCookie)
@@ -263,7 +285,7 @@ var _ = Describe("PlatformsHandler", Ordered, func() {
 
 		Context("when authenticated", func() {
 			It("updates name and post_types and returns the updated resource", func() {
-				p := createPlatform("Old Name", models.PostTypeMap{"video": "Video"})
+				p := createPlatform("Old Name", models.PostTypeMap{"video": "Video"}, "", "")
 
 				body, _ := json.Marshal(fiber.Map{
 					"name":       "New Name",
@@ -282,6 +304,28 @@ var _ = Describe("PlatformsHandler", Ordered, func() {
 				Expect(got.PostTypes).To(HaveKeyWithValue("short", "Short"))
 			})
 
+			It("updates cadence and constraints and persists them", func() {
+				p := createPlatform("TikTok", models.PostTypeMap{"video": "Video"}, "1–2 videos per day", "videos up to 10 min")
+
+				body, _ := json.Marshal(fiber.Map{
+					"name":        "TikTok",
+					"post_types":  fiber.Map{"video": "Video"},
+					"cadence":     "3–5 videos per day",
+					"constraints": "videos up to 3 min; captions up to 150 chars",
+				})
+				req := httptest.NewRequest("PUT", "/api/platforms/"+p.ID, bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+
+				var got models.Platform
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect(got.Cadence).To(Equal("3–5 videos per day"))
+				Expect(got.Constraints).To(Equal("videos up to 3 min; captions up to 150 chars"))
+			})
+
 			It("returns 404 for an unknown id", func() {
 				body, _ := json.Marshal(fiber.Map{"name": "Ghost"})
 				req := httptest.NewRequest("PUT", "/api/platforms/nonexistent", bytes.NewReader(body))
@@ -293,7 +337,7 @@ var _ = Describe("PlatformsHandler", Ordered, func() {
 			})
 
 			It("returns 400 when name is missing", func() {
-				p := createPlatform("Has Name", models.PostTypeMap{})
+				p := createPlatform("Has Name", models.PostTypeMap{}, "", "")
 
 				body, _ := json.Marshal(fiber.Map{"post_types": fiber.Map{}})
 				req := httptest.NewRequest("PUT", "/api/platforms/"+p.ID, bytes.NewReader(body))
@@ -320,7 +364,7 @@ var _ = Describe("PlatformsHandler", Ordered, func() {
 
 		Context("when authenticated", func() {
 			It("deletes a created platform and returns 204", func() {
-				p := createPlatform("To Delete", models.PostTypeMap{})
+				p := createPlatform("To Delete", models.PostTypeMap{}, "", "")
 
 				req := httptest.NewRequest("DELETE", "/api/platforms/"+p.ID, nil)
 				req.AddCookie(authCookie)

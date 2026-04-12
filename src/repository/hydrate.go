@@ -4,7 +4,37 @@ import (
 	"context"
 
 	"github.com/uptrace/bun"
+
+	"github.com/content-control-center/app/src/models"
 )
+
+// HydrateTags populates the Tags field on each item in items.
+// getIDs extracts the tag ID list from an item; getTags returns a pointer to
+// the Tags slice on the item so it can be initialised and appended to.
+func HydrateTags[T any](
+	ctx context.Context,
+	tagRepo TagRepository,
+	items []T,
+	getIDs func(T) []string,
+	getTags func(*T) *[]models.Tag,
+) error {
+	for i := range items {
+		*getTags(&items[i]) = []models.Tag{}
+	}
+	ids := collectIDsFlat(items, getIDs)
+	tagByID, err := tagRepo.GetByIDs(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for i := range items {
+		for _, id := range getIDs(items[i]) {
+			if t, ok := tagByID[id]; ok {
+				*getTags(&items[i]) = append(*getTags(&items[i]), t)
+			}
+		}
+	}
+	return nil
+}
 
 // collectIDs returns a deduplicated slice of IDs extracted one-per-item.
 func collectIDs[T any](items []T, getID func(T) string) []string {

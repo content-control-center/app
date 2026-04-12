@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/alephbet-ai/llama-genkit-embedder/llama"
+	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
 	"github.com/content-control-center/app/src/config"
@@ -21,20 +22,31 @@ const (
 	DefaultMaxRetries    = 12 // 12 × 5 s = 1 min total
 )
 
-// Init initialises Genkit + the llama embedder and returns an onSave callback.
-// Returns nil, nil when embed server URL is empty (embedding disabled).
-func Init(ctx context.Context, cfg *config.Config, repo repository.PiecesEmbeddingsRepository) (func(pieceID, title, content string), error) {
+// Init initialises Genkit + the llama embedder and returns an onSave callback
+// and the raw embedder (used for semantic ranking). Returns nil, nil, nil when
+// embed server URL is empty (embedding disabled).
+func Init(
+	ctx context.Context,
+	cfg *config.Config,
+	repo repository.PiecesEmbeddingsRepository,
+) (func(pieceID, title, content string), ai.Embedder, error) {
 	return InitWithOptions(ctx, cfg.EmbedServerURL, DefaultMaxRetries, DefaultRetryInterval, repo)
 }
 
 // InitWithOptions is like Init but lets the caller control retry behaviour.
-func InitWithOptions(ctx context.Context, embedServerURL string, maxRetries int, retryInterval time.Duration, repo repository.PiecesEmbeddingsRepository) (func(pieceID, title, content string), error) {
+func InitWithOptions(
+	ctx context.Context,
+	embedServerURL string,
+	maxRetries int,
+	retryInterval time.Duration,
+	repo repository.PiecesEmbeddingsRepository,
+) (func(pieceID, title, content string), ai.Embedder, error) {
 	if embedServerURL == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	if err := waitForEmbedServer(ctx, embedServerURL, maxRetries, retryInterval); err != nil {
-		return nil, fmt.Errorf("embed server unavailable: %w", err)
+		return nil, nil, fmt.Errorf("embed server unavailable: %w", err)
 	}
 
 	plugin := llama.New(llama.Config{LlamaEmbedServerAddress: embedServerURL})
@@ -42,12 +54,12 @@ func InitWithOptions(ctx context.Context, embedServerURL string, maxRetries int,
 
 	embedder, err := plugin.DefineEmbedder(g)
 	if err != nil {
-		return nil, fmt.Errorf("init embedder: %w", err)
+		return nil, nil, fmt.Errorf("init embedder: %w", err)
 	}
 
 	flows.Init(g, embedder, repo)
 
-	return flows.NewPieceOnSaveCallback(), nil
+	return flows.NewPieceOnSaveCallback(), embedder, nil
 }
 
 func waitForEmbedServer(ctx context.Context, baseURL string, maxRetries int, retryInterval time.Duration) error {

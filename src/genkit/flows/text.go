@@ -20,9 +20,9 @@ type blocknoteInline struct {
 	Content []blocknoteInline `json:"content"` // present on "link" nodes
 }
 
-// extractText parses a BlockNote JSON document and returns the plain text
+// ExtractText parses a BlockNote JSON document and returns the plain text
 // content of all blocks, with blocks separated by newlines.
-func extractText(blocknoteJSON string) (string, error) {
+func ExtractText(blocknoteJSON string) (string, error) {
 	var blocks []blocknoteBlock
 	if err := json.Unmarshal([]byte(blocknoteJSON), &blocks); err != nil {
 		return "", err

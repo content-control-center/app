@@ -67,7 +67,7 @@ func TestExtractText(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := extractText(tt.input)
+			got, err := ExtractText(tt.input)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -79,7 +79,7 @@ func TestExtractText(t *testing.T) {
 }
 
 func TestExtractText_InvalidJSON(t *testing.T) {
-	_, err := extractText(`not json`)
+	_, err := ExtractText(`not json`)
 	if err == nil {
 		t.Error("expected error for invalid JSON, got nil")
 	}

@@ -41,7 +41,7 @@ type Campaign struct {
 	ToneGuidelines     string            `bun:"tone_guidelines,notnull"                      json:"tone_guidelines"`
 	UsePieces          bool              `bun:"use_pieces,notnull"                           json:"use_pieces"`
 	PiecesIDs          StringSlice       `bun:"pieces_ids,notnull"                           json:"pieces_ids"`
-	TargetPlatformIDs  StringSlice       `bun:"target_platform_ids,notnull"                  json:"target_platform_ids"`
+	TargetPlatforms    CampaignPlatforms `bun:"target_platforms,notnull"                     json:"target_platforms"`
 	Objective          CampaignObjective `bun:"objective,notnull"                            json:"objective"`
 	StartDate          *time.Time        `bun:"start_date"                                   json:"start_date"`
 	EndDate            *time.Time        `bun:"end_date"                                     json:"end_date"`
@@ -54,6 +54,7 @@ type Campaign struct {
 	Currency  string         `bun:"currency,notnull"                             json:"currency"`
 	TagIDs    StringSlice    `bun:"tag_ids,notnull"                              json:"tag_ids"`
 	Tags      []Tag          `bun:"-"                                            json:"tags"`
+	Platforms []Platform     `bun:"-"                                            json:"platforms"`
 	CreatedBy string         `bun:"created_by,notnull"                           json:"created_by"`
 	CreatedAt time.Time      `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
 	UpdatedAt time.Time      `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`

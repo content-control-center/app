@@ -35,23 +35,23 @@ type seedPiece struct {
 }
 
 type seedCampaign struct {
-	Name              string   `json:"name"`
-	Description       string   `json:"description"`
-	TargetPersona     string   `json:"target_persona"`
-	KeyMessages       string   `json:"key_messages"`
-	ToneGuidelines    string   `json:"tone_guidelines"`
-	Objective         string   `json:"objective"`
-	Status            string   `json:"status"`
-	UsePieces         bool     `json:"use_pieces"`
-	PieceIndices      []int    `json:"piece_indices"`       // 0-based indices into pieces slice
-	TargetPlatformIDs []string `json:"target_platform_ids"` // literal platform IDs (seeded by migrations)
+	Name               string   `json:"name"`
+	Description        string   `json:"description"`
+	TargetPersona      string   `json:"target_persona"`
+	KeyMessages        string   `json:"key_messages"`
+	ToneGuidelines     string   `json:"tone_guidelines"`
+	Objective          string   `json:"objective"`
+	Status             string   `json:"status"`
+	UsePieces          bool     `json:"use_pieces"`
+	PieceIndices       []int    `json:"piece_indices"`       // 0-based indices into pieces slice
+	TargetPlatformIDs  []string `json:"target_platform_ids"` // literal platform IDs (seeded by migrations)
 	EstimatedPostCount *int     `json:"estimated_post_count"`
 	Budget             *float64 `json:"budget"`
-	Currency          string   `json:"currency"`
-	Language          string   `json:"language"`
-	Tags              []string `json:"tags"` // tag names, resolved to IDs at runtime
-	StartDate         *string  `json:"start_date"`
-	EndDate           *string  `json:"end_date"`
+	Currency           string   `json:"currency"`
+	Language           string   `json:"language"`
+	Tags               []string `json:"tags"` // tag names, resolved to IDs at runtime
+	StartDate          *string  `json:"start_date"`
+	EndDate            *string  `json:"end_date"`
 }
 
 type seedPost struct {
@@ -236,7 +236,7 @@ func main() {
 	// Use a short retry window so the seed command doesn't stall when the embed
 	// server is not running. Embeddings are optional — the seed succeeds either way.
 	embeddingRepo := repository.NewPiecesEmbeddingRepository(db)
-	onSave, err := embedding.InitWithOptions(ctx, cfg.EmbedServerURL, 2, 3*time.Second, embeddingRepo)
+	onSave, _, err := embedding.InitWithOptions(ctx, cfg.EmbedServerURL, 2, 3*time.Second, embeddingRepo)
 	if err != nil {
 		log.Printf("embeddings: server unavailable (%v) — skipping", err)
 	}
