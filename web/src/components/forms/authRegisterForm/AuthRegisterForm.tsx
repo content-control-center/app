@@ -7,10 +7,10 @@ import { Icon } from '@/components/ui/icon'
 import { useRegister } from '@/hooks/useAuth'
 import { useFormValidation } from '@/hooks/useFormValidation'
 import { registerSchema, PASSWORD_RULES, cn } from '@/lib'
+import type { LoginPayload } from '@/services/api/sessions'
 
 type AuthRegisterFormProps = {
-  /** When provided, called with the registered email instead of navigating to /. */
-  onSuccess?: (email: string) => void
+  onSuccess?: (credentials: LoginPayload) => void
 }
 
 export function AuthRegisterForm({ onSuccess }: AuthRegisterFormProps) {
@@ -32,7 +32,7 @@ export function AuthRegisterForm({ onSuccess }: AuthRegisterFormProps) {
     register(data, {
       onSuccess: () => {
         if (onSuccess) {
-          onSuccess(data.email)
+          onSuccess({ email: data.email, password: data.password })
         } else {
           navigate({ to: '/' })
         }
@@ -52,6 +52,7 @@ export function AuthRegisterForm({ onSuccess }: AuthRegisterFormProps) {
           <Input
             id="firstName"
             type="text"
+            autoComplete="given-name"
             variant="default"
             placeholder="Enter your first name"
             value={values.firstName}
@@ -68,6 +69,7 @@ export function AuthRegisterForm({ onSuccess }: AuthRegisterFormProps) {
           <Input
             id="lastName"
             type="text"
+            autoComplete="family-name"
             variant="default"
             placeholder="Enter your last name"
             value={values.lastName}
@@ -84,6 +86,7 @@ export function AuthRegisterForm({ onSuccess }: AuthRegisterFormProps) {
           <Input
             id="email"
             type="email"
+            autoComplete="username"
             variant="default"
             placeholder="Enter your email"
             value={values.email}
@@ -98,6 +101,7 @@ export function AuthRegisterForm({ onSuccess }: AuthRegisterFormProps) {
           <Input
             id="password"
             type="password"
+            autoComplete="new-password"
             variant="default"
             placeholder="Enter password"
             value={values.password}

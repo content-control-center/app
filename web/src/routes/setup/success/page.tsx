@@ -1,0 +1,55 @@
+import { useNavigate, useLocation } from "@tanstack/react-router";
+
+import { AppAuth } from "@/components/layout/AppAuth";
+import { Button } from "@/components/ui/button";
+import { Icon } from "@/components/ui/icon";
+import { useLogin } from "@/hooks/useAuth";
+import { invalidateSetupComplete, markSetupComplete } from "@/services/api/setup";
+
+function SetupSuccessPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { mutate: login, isPending, error } = useLogin();
+
+  const credentials = location.state.credentials!;
+
+  const handleLogin = () => {
+    login(credentials, {
+        onSuccess: async () => {
+          await markSetupComplete();
+          invalidateSetupComplete();
+          navigate({ to: "/" });
+        },
+      }
+    );
+  };
+
+  return (
+    <AppAuth
+      title="You're all set!"
+      subtitle="Your administrator account has been created successfully."
+      form={
+        <div className="flex flex-col gap-6 shrink-0 animate-in fade-in duration-500">
+          {error && (
+            <p className="text-sm text-destructive">{error.message}</p>
+          )}
+          <Button
+            type="button"
+            onClick={handleLogin}
+            variant="defaultInverted"
+            size="default"
+            className="w-full justify-between"
+            loading={isPending}
+            disabled={isPending}
+          >
+            <span>LOG IN AND PROCEED</span>
+            <Icon className="size-4" name="arrow_right_top" />
+          </Button>
+        </div>
+      }
+      bottomNav={undefined}
+    />
+  );
+}
+
+export default SetupSuccessPage;

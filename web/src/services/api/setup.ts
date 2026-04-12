@@ -27,6 +27,18 @@ export function invalidateSetupComplete(): void {
   cached = null;
 }
 
+export async function markSetupComplete(): Promise<void> {
+  const res = await fetch("/api/settings/setup_complete", {
+    method: "PUT",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value: "true" }),
+  });
+  if (!res.ok) {
+    throw new Error("Failed to mark setup as complete");
+  }
+}
+
 async function fetchSetupComplete(): Promise<boolean> {
   try {
     const res = await fetch("/api/settings/setup_complete", {

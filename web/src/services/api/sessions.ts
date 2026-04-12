@@ -41,6 +41,31 @@ export async function logout(): Promise<void> {
   }
 }
 
+let sessionCached: Promise<boolean> | null = null;
+
+export function checkSession(): Promise<boolean> {
+  if (sessionCached === null) {
+    sessionCached = fetchSession();
+  }
+  return sessionCached;
+}
+
+export function invalidateSession(): void {
+  sessionCached = null;
+}
+
+async function fetchSession(): Promise<boolean> {
+  try {
+    const res = await fetch("/api/users/", {
+      method: "GET",
+      credentials: "include",
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 async function errorMessage(res: Response, fallback: string): Promise<string> {
   try {
     const body = (await res.json()) as { error?: string };

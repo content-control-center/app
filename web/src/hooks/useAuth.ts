@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import {
   login as loginRequest,
   logout as logoutRequest,
+  invalidateSession,
   type LoginPayload,
   type Session,
 } from "@/services/api/sessions";
@@ -28,6 +29,7 @@ export function useLogin() {
   return useMutation<Session, Error, LoginPayload>({
     mutationFn: loginRequest,
     onSuccess: (session, variables) => {
+      invalidateSession();
       const now = new Date().toISOString();
       const stubUser: User = {
         id: session.user_id,
@@ -56,6 +58,7 @@ export function useLogout() {
   return useMutation<void, Error, void>({
     mutationFn: logoutRequest,
     onSuccess: () => {
+      invalidateSession();
       clearUser();
     },
   });

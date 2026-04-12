@@ -13,6 +13,7 @@ import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
 import { Route as AuthIndexRouteImport } from './routes/auth/index'
 import { Route as SetupWelcomeIndexRouteImport } from './routes/setup/welcome/index'
+import { Route as SetupSuccessIndexRouteImport } from './routes/setup/success/index'
 import { Route as SetupAdminIndexRouteImport } from './routes/setup/admin/index'
 import { Route as AuthRegisterIndexRouteImport } from './routes/auth/register/index'
 import { Route as AuthLoginIndexRouteImport } from './routes/auth/login/index'
@@ -36,6 +37,11 @@ const AuthIndexRoute = AuthIndexRouteImport.update({
 const SetupWelcomeIndexRoute = SetupWelcomeIndexRouteImport.update({
   id: '/setup/welcome/',
   path: '/setup/welcome/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SetupSuccessIndexRoute = SetupSuccessIndexRouteImport.update({
+  id: '/setup/success/',
+  path: '/setup/success/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SetupAdminIndexRoute = SetupAdminIndexRouteImport.update({
@@ -74,6 +80,7 @@ export interface FileRoutesByFullPath {
   '/auth/login/': typeof AuthLoginIndexRoute
   '/auth/register/': typeof AuthRegisterIndexRoute
   '/setup/admin/': typeof SetupAdminIndexRoute
+  '/setup/success/': typeof SetupSuccessIndexRoute
   '/setup/welcome/': typeof SetupWelcomeIndexRoute
 }
 export interface FileRoutesByTo {
@@ -85,6 +92,7 @@ export interface FileRoutesByTo {
   '/auth/login': typeof AuthLoginIndexRoute
   '/auth/register': typeof AuthRegisterIndexRoute
   '/setup/admin': typeof SetupAdminIndexRoute
+  '/setup/success': typeof SetupSuccessIndexRoute
   '/setup/welcome': typeof SetupWelcomeIndexRoute
 }
 export interface FileRoutesById {
@@ -97,6 +105,7 @@ export interface FileRoutesById {
   '/auth/login/': typeof AuthLoginIndexRoute
   '/auth/register/': typeof AuthRegisterIndexRoute
   '/setup/admin/': typeof SetupAdminIndexRoute
+  '/setup/success/': typeof SetupSuccessIndexRoute
   '/setup/welcome/': typeof SetupWelcomeIndexRoute
 }
 export interface FileRouteTypes {
@@ -110,6 +119,7 @@ export interface FileRouteTypes {
     | '/auth/login/'
     | '/auth/register/'
     | '/setup/admin/'
+    | '/setup/success/'
     | '/setup/welcome/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -121,6 +131,7 @@ export interface FileRouteTypes {
     | '/auth/login'
     | '/auth/register'
     | '/setup/admin'
+    | '/setup/success'
     | '/setup/welcome'
   id:
     | '__root__'
@@ -132,6 +143,7 @@ export interface FileRouteTypes {
     | '/auth/login/'
     | '/auth/register/'
     | '/setup/admin/'
+    | '/setup/success/'
     | '/setup/welcome/'
   fileRoutesById: FileRoutesById
 }
@@ -143,6 +155,7 @@ export interface RootRouteChildren {
   AuthLoginIndexRoute: typeof AuthLoginIndexRoute
   AuthRegisterIndexRoute: typeof AuthRegisterIndexRoute
   SetupAdminIndexRoute: typeof SetupAdminIndexRoute
+  SetupSuccessIndexRoute: typeof SetupSuccessIndexRoute
   SetupWelcomeIndexRoute: typeof SetupWelcomeIndexRoute
 }
 
@@ -174,6 +187,13 @@ declare module '@tanstack/react-router' {
       path: '/setup/welcome'
       fullPath: '/setup/welcome/'
       preLoaderRoute: typeof SetupWelcomeIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/setup/success/': {
+      id: '/setup/success/'
+      path: '/setup/success'
+      fullPath: '/setup/success/'
+      preLoaderRoute: typeof SetupSuccessIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/setup/admin/': {
@@ -234,6 +254,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthLoginIndexRoute: AuthLoginIndexRoute,
   AuthRegisterIndexRoute: AuthRegisterIndexRoute,
   SetupAdminIndexRoute: SetupAdminIndexRoute,
+  SetupSuccessIndexRoute: SetupSuccessIndexRoute,
   SetupWelcomeIndexRoute: SetupWelcomeIndexRoute,
 }
 export const routeTree = rootRouteImport
