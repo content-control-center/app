@@ -5,10 +5,19 @@ services:
     environment:
       ADDR: ":9001"
       DATABASE_DSN: "file:/data/app.db?cache=shared&_pragma=journal_mode(WAL)"
+      EMBED_SERVER_URL: "http://llama-embedserver:8080"
+      STORAGE_ENDPOINT: ""
+      STORAGE_REGION: "auto"
+      STORAGE_ACCESS_KEY: ""
+      STORAGE_SECRET_KEY: ""
+      STORAGE_BUCKET: ""
+      STORAGE_PUBLIC_URL: ""
     volumes:
       - ./data:/data
     ports:
       - "9001:9001"
+    depends_on:
+      - llama-embedserver
 
   web:
     image: node:20-alpine
@@ -25,6 +34,12 @@ services:
     command: sh -c "corepack enable && corepack prepare pnpm@latest --activate && pnpm install --frozen-lockfile && pnpm exec vite --host 0.0.0.0"
     depends_on:
       - api
+
+  llama-embedserver:
+    image: alephbetai/llama-embedserver:latest
+    platform: linux/amd64
+    ports:
+      - "9003:8080"
 
 volumes:
   db-data:

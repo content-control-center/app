@@ -1,0 +1,80 @@
+[
+  {
+    "campaign_index": 0,
+    "platform_id": "linkedin",
+    "platform_post_type": "text-post",
+    "title": "v2.0 Launch: What Changed and Why",
+    "content": "We shipped v2.0 today.\n\nSix months of listening to customers resulted in five major changes:\n→ AI-assisted briefs that turn a one-sentence goal into a structured campaign\n→ Bulk scheduling across all platforms in a single session\n→ Piece suggestions surfaced automatically while you draft\n→ Multi-step approval workflows with inline commenting\n→ Dark mode (the #1 most-requested feature, and yes, we heard you)\n\nEverything migrates automatically. No action required from your team.\n\nThe features that matter most to your workflow are now easier to reach. That was the whole point.\n\nFull changelog at the link in comments.",
+    "status": "approved",
+    "cta_type": "link",
+    "cta_url": "https://example.com/changelog/v2",
+    "target_audience_notes": "Content marketing managers and team leads who are already customers or actively evaluating. Prioritize LinkedIn feed placement over InMail.",
+    "piece_indices": [4],
+    "scheduled_at": "2026-04-15T09:00:00Z"
+  },
+  {
+    "campaign_index": 0,
+    "platform_id": "x-twitter",
+    "platform_post_type": "thread",
+    "title": "v2.0 Launch Thread",
+    "content": "We shipped v2.0 today. Here's what we built and why — a thread.\n\n1/ AI-assisted campaign briefs. Type one sentence. Get a structured brief with persona, key messages, and tone guidelines. Planning time cut in half in beta.\n\n2/ Bulk scheduling. Queue 90 days of posts across every connected platform in one session. Never touch the scheduling queue again.\n\n3/ Piece suggestions. While you draft a post, the system surfaces relevant content pieces from your library automatically. No more starting from scratch.\n\n4/ Approval workflows. Multi-step review chains, inline commenting, one-click approval. Built for teams that need a paper trail.\n\n5/ Dark mode. You asked. We listened.\n\nv2.0 is live for all customers today. Existing data migrates automatically.",
+    "status": "draft",
+    "cta_type": "link",
+    "cta_url": "https://example.com/changelog/v2",
+    "target_audience_notes": "Tech-adjacent marketers and content professionals on X. Conversational tone. The thread format performs best with this audience for product announcements.",
+    "piece_indices": [4],
+    "scheduled_at": "2026-04-15T10:30:00Z"
+  },
+  {
+    "campaign_index": 1,
+    "platform_id": "linkedin",
+    "platform_post_type": "article",
+    "title": "The One Mental Shift That Separates Good Content Teams From Great Ones",
+    "content": "Most content teams optimize for output. The best ones optimize for learning.\n\nOutput teams ask: how many posts did we publish this week?\nLearning teams ask: what did we discover this week that changes what we publish next week?\n\nThe difference compounds. After six months, the learning team is operating on a fundamentally different plane. They know which messages resonate with which audience segments. They know which content types build pipeline and which ones just generate likes. They have eliminated an enormous amount of wasted effort.\n\nThe mental shift is simple but not easy: treat every piece of content as a hypothesis, not a deliverable.\n\nA deliverable is done when it is published. A hypothesis is done when it has taught you something.\n\nThis reframe changes everything downstream — how you brief, how you measure, how you review, and how you decide what to build next.",
+    "status": "in_review",
+    "cta_type": "none",
+    "cta_url": "",
+    "target_audience_notes": "Senior marketers and content leaders who engage with long-form LinkedIn articles. This audience skews toward sharing over commenting. Target through organic reach and sponsored distribution to lookalike audiences.",
+    "piece_indices": [0, 3],
+    "scheduled_at": null
+  },
+  {
+    "campaign_index": 2,
+    "platform_id": "linkedin",
+    "platform_post_type": "image-post",
+    "title": "TechCorp: From 1.2% to 2.6% Engagement in 90 Days",
+    "content": "TechCorp's content team of 5 had a problem every content marketer recognizes.\n\nGreat ideas. No system. Engagement plateaued at 1.2% for six straight quarters.\n\nThey didn't hire more people. They changed their process.\n\nInstead of writing new content from scratch for every campaign, they built a library of reusable content pieces — core messages, proof points, narrative hooks — that any team member could assemble into platform-specific posts.\n\nNinety days later:\n↑ Engagement: 1.2% → 2.6%\n↓ Production cycle: 14 days → 3 days\n↑ Active platforms: 2 → 4\n→ Team size: unchanged\n\n\"Within the first month we had reduced our content cycle from two weeks to three days.\" — Sarah Chen, Head of Content, TechCorp\n\nThe full case study is linked in comments.",
+    "status": "draft",
+    "cta_type": "link",
+    "cta_url": "https://example.com/case-studies/techcorp",
+    "target_audience_notes": "Existing customers 30–90 days post-onboarding and warm prospects in active sales cycles. High-intent audience — this post should appear in sponsored distribution targeting users who have visited the pricing page.",
+    "piece_indices": [2],
+    "scheduled_at": null
+  },
+  {
+    "campaign_index": 3,
+    "platform_id": "instagram",
+    "platform_post_type": "carousel",
+    "title": "8 Tools Your Content Team Actually Wants This Holiday",
+    "content": "Slide 1: Your content team asked for better tools all year. Here's your list.\n\nSlide 2: A unified platform that connects strategy, creation, and scheduling. The one tool that replaces five.\n\nSlide 3: AI writing assistance — not to replace your writers, but to eliminate the blank-page problem permanently.\n\nSlide 4: A professional stock photography subscription. Custom visuals convert. Generic ones do not.\n\nSlide 5: Advanced analytics that close the loop between content and revenue. Know what works before you scale it.\n\nSlide 6: A seat at a Q1 strategy workshop. Alignment before the year starts is worth more than any tool.\n\nSlide 7: Annual plan savings. Lock in 30% off and start Q1 already in motion.\n\nSlide 8: The best gifts keep delivering. Invest in tools your team uses every single day.",
+    "status": "scheduled",
+    "cta_type": "link",
+    "cta_url": "https://example.com/holiday",
+    "target_audience_notes": "Marketing managers and team leads with Q4 budget to allocate. Carousel format performs well on Instagram for list-style content. Target 28–45 age range, marketing and communications job titles.",
+    "piece_indices": [6],
+    "scheduled_at": "2026-11-28T12:00:00Z"
+  },
+  {
+    "campaign_index": 4,
+    "platform_id": "linkedin",
+    "platform_post_type": "text-post",
+    "title": "Our API Takes 30 Minutes to Integrate. Here's Proof.",
+    "content": "Most \"easy integration\" claims fall apart when you actually try them.\n\nSo here's the exact sequence:\n\n1. Generate an API key from Settings → Developer (30 seconds)\n2. Send a GET to /api/campaigns with your Bearer token (2 minutes)\n3. POST to /api/posts with campaign_id, platform_id, post type, and content (5 minutes)\n4. Handle the 422 response body if validation fails — every error maps to a specific field with a plain-language message (10 minutes to read the docs)\n\nThat's it. You're publishing programmatically.\n\nRate limits: 1000 req/min. Headers included in every response. Exponential backoff on 429.\n\nFull reference, SDKs in 7 languages, and a Postman collection are in the developer portal.\n\nLink in comments. DMs open if you hit a wall.",
+    "status": "draft",
+    "cta_type": "link",
+    "cta_url": "https://example.com/developers",
+    "target_audience_notes": "Software engineers and technical leads evaluating the platform. LinkedIn engineering audience responds to specificity and step-by-step breakdowns over abstract capability claims.",
+    "piece_indices": [7, 1],
+    "scheduled_at": null
+  }
+]

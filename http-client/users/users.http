@@ -1,4 +1,4 @@
-@baseUrl = http://localhost:3000
+@baseUrl = http://localhost:9001
 
 # Protected endpoints require a valid session cookie.
 # Run "Login" from sessions/sessions.http first — the HTTP client stores and
@@ -15,7 +15,7 @@ Content-Type: application/json
 
 {
   "name": "Serhii Herasymov",
-  "email": "serhii23daat.ua",
+  "email": "serhii@daat.ua",
   "password": "s3cur3P@ssw0rd"
 }
 

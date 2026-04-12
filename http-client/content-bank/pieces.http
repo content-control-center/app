@@ -1,0 +1,79 @@
+@baseUrl = http://localhost:9001
+
+# All pieces endpoints require authentication.
+# Run "Login" from sessions/sessions.http first — the HTTP client stores and
+# sends the cookie automatically on subsequent requests to the same host.
+
+### List all pieces  [protected]
+GET {{baseUrl}}/api/content-bank/pieces
+Accept: application/json
+
+### Create piece  [protected]
+# @name createPiece
+POST {{baseUrl}}/api/content-bank/pieces
+Content-Type: application/json
+
+{
+  "title": "My First Piece",
+  "content": "[{\"id\":\"1\",\"type\":\"paragraph\",\"props\":{\"textColor\":\"default\",\"backgroundColor\":\"default\",\"textAlignment\":\"left\"},\"content\":[{\"type\":\"text\",\"text\":\"Hello, world!\",\"styles\":{}}],\"children\":[]}]",
+  "tag_ids": []
+}
+
+> {% client.global.set("pieceId", response.body.id) %}
+
+### Create piece — missing title (expects 400)  [protected]
+POST {{baseUrl}}/api/content-bank/pieces
+Content-Type: application/json
+
+{
+  "content": "[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"No title\",\"styles\":{}}]}]"
+}
+
+### Create piece — missing content (expects 400)  [protected]
+POST {{baseUrl}}/api/content-bank/pieces
+Content-Type: application/json
+
+{
+  "title": "No Content"
+}
+
+### Get piece by ID  [protected]
+GET {{baseUrl}}/api/content-bank/pieces/{{pieceId}}
+Accept: application/json
+
+### Get piece — non-existent ID (expects 404)  [protected]
+GET {{baseUrl}}/api/content-bank/pieces/nonexistent
+Accept: application/json
+
+### Update piece  [protected]
+PUT {{baseUrl}}/api/content-bank/pieces/{{pieceId}}
+Content-Type: application/json
+
+{
+  "title": "Updated Piece Title",
+  "content": "[{\"id\":\"1\",\"type\":\"heading\",\"props\":{\"level\":1,\"textColor\":\"default\",\"backgroundColor\":\"default\",\"textAlignment\":\"left\"},\"content\":[{\"type\":\"text\",\"text\":\"Updated heading\",\"styles\":{}}],\"children\":[]},{\"id\":\"2\",\"type\":\"paragraph\",\"props\":{\"textColor\":\"default\",\"backgroundColor\":\"default\",\"textAlignment\":\"left\"},\"content\":[{\"type\":\"text\",\"text\":\"Updated body text.\",\"styles\":{}}],\"children\":[]}]",
+  "tag_ids": []
+}
+
+### Update piece — missing content (expects 400)  [protected]
+PUT {{baseUrl}}/api/content-bank/pieces/{{pieceId}}
+Content-Type: application/json
+
+{
+  "title": "Title Only"
+}
+
+### Update piece — non-existent ID (expects 404)  [protected]
+PUT {{baseUrl}}/api/content-bank/pieces/nonexistent
+Content-Type: application/json
+
+{
+  "title": "Ghost Piece",
+  "content": "[]"
+}
+
+### Delete piece  [protected]
+DELETE {{baseUrl}}/api/content-bank/pieces/{{pieceId}}
+
+### Delete piece — non-existent ID (expects 404)  [protected]
+DELETE {{baseUrl}}/api/content-bank/pieces/nonexistent

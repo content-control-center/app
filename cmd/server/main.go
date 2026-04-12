@@ -42,7 +42,10 @@ func main() {
 		log.Fatalf("load static assets: %v", err)
 	}
 
-	app := server.New(db, staticFS, cfg)
+	app, err := server.New(context.Background(), db, staticFS, cfg)
+	if err != nil {
+		log.Fatalf("init server: %v", err)
+	}
 
 	log.Printf("listening on %s", cfg.Addr)
 	if err := app.Listen(cfg.Addr); err != nil {

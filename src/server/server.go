@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"net/http"
@@ -14,9 +15,10 @@ import (
 	"github.com/content-control-center/app/src/config"
 	"github.com/content-control-center/app/src/handlers"
 	"github.com/content-control-center/app/src/repository"
+	"github.com/content-control-center/app/src/storage"
 )
 
-func New(db *bun.DB, staticFS fs.FS, cfg *config.Config) *fiber.App {
+func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*fiber.App, error) {
 	app := fiber.New(fiber.Config{
 		ErrorHandler: defaultErrorHandler,
 	})
@@ -28,13 +30,36 @@ func New(db *bun.DB, staticFS fs.FS, cfg *config.Config) *fiber.App {
 	userRepo := repository.NewUserRepository(db)
 	sessionRepo := repository.NewSessionRepository(db)
 	settingRepo := repository.NewSettingRepository(db)
+	tagRepo := repository.NewTagRepository(db)
+	pieceRepo := repository.NewPieceRepository(db, tagRepo)
+	embeddingRepo := repository.NewPiecesEmbeddingRepository(db)
+	campaignRepo := repository.NewCampaignRepository(db, tagRepo)
+	platformRepo := repository.NewPlatformRepository(db)
+	postRepo := repository.NewPostRepository(db)
 	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
+
 	handlers.NewHealthHandler(db).Register(app)
 	handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 	// Session cookies are marked Secure in production. Debug mode is the
 	// development escape hatch so localhost over plain HTTP still works.
 	handlers.NewSessionsHandler(userRepo, sessionRepo, cfg.SessionCookieName, !cfg.Debug).Register(app)
 	handlers.NewSettingsHandler(settingRepo, auth).Register(app)
+
+	onSave, err := initEmbedding(ctx, cfg, embeddingRepo)
+	if err != nil {
+		return nil, err
+	}
+	handlers.NewPiecesHandler(pieceRepo, auth, onSave).Register(app)
+	handlers.NewCampaignsHandler(campaignRepo, auth).Register(app)
+	handlers.NewPlatformsHandler(platformRepo, auth).Register(app)
+	handlers.NewTagsHandler(tagRepo, auth).Register(app)
+	handlers.NewPostsHandler(postRepo, auth).Register(app)
+
+	store, err := storage.New(cfg)
+	if err != nil {
+		return nil, err
+	}
+	handlers.NewImagesHandler(store, auth).Register(app)
 
 	// Serve the embedded React SPA for all non-API routes.
 	app.Use("/", filesystem.New(filesystem.Config{
@@ -44,7 +69,7 @@ func New(db *bun.DB, staticFS fs.FS, cfg *config.Config) *fiber.App {
 		Browse:       false,
 	}))
 
-	return app
+	return app, nil
 }
 
 func defaultErrorHandler(c *fiber.Ctx, err error) error {
