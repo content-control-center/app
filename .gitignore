@@ -15,6 +15,9 @@ web/.pnpm-store/
 web/dist/
 !web/dist/index.html
 
+# Env
+.env.*
+
 # OS
 .DS_Store
 /.idea/
