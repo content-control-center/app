@@ -550,7 +550,10 @@ function App() {
 
   return (
     <div className="h-screen overflow-hidden bg-slate-50 text-slate-800">
-      <main className="grid h-full grid-cols-1 divide-y divide-slate-200 lg:grid-cols-3 lg:divide-x lg:divide-y-0">
+      <header className="border-b border-slate-200 bg-white px-6 py-3">
+        <h1 className="text-sm font-semibold text-slate-600">CON-28 As a User, I want to generate an AI-augmented draft Content Plan for my Campaign</h1>
+      </header>
+      <main className="grid h-full grid-cols-1 divide-y divide-slate-200 lg:grid-cols-3 lg:divide-x lg:divide-y-0" style={{height: "calc(100% - 49px)"}}>
 
         {/* Left panel — tabbed */}
         <section className="flex h-full flex-col overflow-hidden">
