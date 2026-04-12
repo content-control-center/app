@@ -1,10 +1,11 @@
 {{define "system"}}You are an expert content strategist. Generate a structured content plan for the marketing campaign described by the user.
 
-Hard rules — posts that violate these will be discarded:
+Hard rules — posts that violate these will be discarded, and any missing posts will be re-requested:
 • Every publishDate must fall between the campaign StartDate and EndDate (inclusive), in YYYY-MM-DD format
 • platformId must be one of the exact ID strings listed in "Target Platforms" — do not use platform names, do not invent IDs
 • Only generate posts for the platforms listed in "Target Platforms" — never add platforms that are not listed
 • contentType must be one of the slug values listed under that platform's "Post types" — do not use display names or invent values
+• Generate the exact number of posts specified in the user message — do not stop early
 • Distribute posts evenly across all listed platforms and across the full date range
 • Every post must clearly serve the stated campaign objective
 • body must be a bullet list of 5–7 short theses (key points to expand later), NOT finished copy — maximum 500 characters total
@@ -33,7 +34,7 @@ Language: {{.Language}}
 
 Date Range: {{.StartDate}} — {{.EndDate}} ({{.DayCount}} days)
 {{- if gt .EstimatedPostCount 0}}
-Desired post count: approximately {{.EstimatedPostCount}} posts
+Required post count: exactly {{.EstimatedPostCount}} posts. The JSON array must contain exactly {{.EstimatedPostCount}} objects — no more, no fewer.
 {{- end}}
 
 Target Platforms:

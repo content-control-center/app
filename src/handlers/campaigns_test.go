@@ -646,6 +646,10 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 
 				stub := func(_ context.Context, _ string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error) {
 					onEvent(content_plan.SSEEventStep, content_plan.StepEventPayload{Step: "validateInput", Status: "done"})
+					onEvent(content_plan.SSEEventPost, content_plan.PostEventPayload{
+						Post:  content_plan.DraftPost{Title: "First Post", Body: "Body text", PlatformID: "linkedin", ContentType: "text-post", PublishDate: "2026-05-01"},
+						Index: 0,
+					})
 					onEvent(content_plan.SSEEventStep, content_plan.StepEventPayload{Step: "generatePosts", Status: "done"})
 					return &content_plan.ContentPlanResponse{CampaignID: "test"}, nil
 				}
@@ -706,13 +710,19 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 					}
 				}
 
-				Expect(events).To(HaveLen(3)) // 2 step + 1 complete
+				Expect(events).To(HaveLen(4)) // 2 step + 1 post + 1 complete
 				Expect(events[0].event).To(Equal("step"))
-				Expect(events[1].event).To(Equal("step"))
-				Expect(events[2].event).To(Equal("complete"))
+				Expect(events[1].event).To(Equal("post"))
+				Expect(events[2].event).To(Equal("step"))
+				Expect(events[3].event).To(Equal("complete"))
+
+				var postPayload content_plan.PostEventPayload
+				Expect(json.Unmarshal([]byte(events[1].data), &postPayload)).To(Succeed())
+				Expect(postPayload.Index).To(Equal(0))
+				Expect(postPayload.Post.Title).To(Equal("First Post"))
 
 				var completePayload content_plan.ContentPlanResponse
-				Expect(json.Unmarshal([]byte(events[2].data), &completePayload)).To(Succeed())
+				Expect(json.Unmarshal([]byte(events[3].data), &completePayload)).To(Succeed())
 				Expect(completePayload.CampaignID).To(Equal("test"))
 			})
 

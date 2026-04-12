@@ -80,6 +80,7 @@ type SSEEventKind string
 
 const (
 	SSEEventStep     SSEEventKind = "step"
+	SSEEventPost     SSEEventKind = "post"
 	SSEEventComplete SSEEventKind = "complete"
 	SSEEventError    SSEEventKind = "error"
 )
@@ -88,6 +89,14 @@ const (
 type StepEventPayload struct {
 	Step   string `json:"step"`
 	Status string `json:"status"` // always "done"
+}
+
+// PostEventPayload is the data payload for a "post" SSE event.
+// Emitted incrementally during model generation for each draft post
+// as it is parsed from the streaming model response.
+type PostEventPayload struct {
+	Post  DraftPost `json:"post"`
+	Index int       `json:"index"` // 0-based order from the stream
 }
 
 // ErrorEventPayload is the data payload for an "error" SSE event.

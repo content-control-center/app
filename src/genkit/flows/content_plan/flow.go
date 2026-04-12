@@ -29,11 +29,12 @@ var contentPlanRunner func(ctx context.Context, req ContentPlanRequest, onEvent 
 
 // ContentPlanFlowConfig holds the settings for the content plan flow.
 type ContentPlanFlowConfig struct {
-	ModelID    string
-	MaxPieces  int
-	Embedder   ai.Embedder // nil = skip semantic ranking, fall back to creation order
-	systemTmpl *template.Template
-	userTmpl   *template.Template
+	ModelID         string
+	MaxPieces       int
+	MaxOutputTokens int64       // max_tokens sent to the model; 0 falls back to 8192
+	Embedder        ai.Embedder // nil = skip semantic ranking, fall back to creation order
+	systemTmpl      *template.Template
+	userTmpl        *template.Template
 }
 
 // ContentPlanRepos bundles all repository dependencies for the flow.
@@ -143,7 +144,7 @@ func runContentPlan(
 
 	// ── Step 4: generatePosts ─────────────────────────────────────────────────
 	log.Printf("content_plan[%s]: step 4/6 generatePosts (model=%s estimatedCount=%d)", req.CampaignID, cfg.ModelID, campaign.EstimatedPostCount)
-	posts, genWarnings, err := generatePosts(ctx, g, campaign, platforms, pieces, cfg)
+	posts, genWarnings, err := generatePosts(ctx, g, campaign, platforms, pieces, cfg, onEvent)
 	if err != nil {
 		log.Printf("content_plan[%s]: generatePosts failed after %s: %v", req.CampaignID, time.Since(start).Round(time.Millisecond), err)
 		return nil, err

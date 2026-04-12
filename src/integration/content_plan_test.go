@@ -163,5 +163,34 @@ var _ = Describe("Content plan flow", Ordered, func() {
 				"persistDraftPosts",
 			))
 		})
+
+		It("emits SSE post events incrementally during model streaming", func() {
+			// Clean up posts from previous tests so the run is fresh.
+			_, _ = db.NewDelete().TableExpr("posts").Where("campaign_id = ?", campaignID).Exec(ctx)
+
+			var postEvents []content_plan.PostEventPayload
+			onEvent := content_plan.OnEventFunc(func(name content_plan.SSEEventKind, data any) {
+				if name == content_plan.SSEEventPost {
+					if p, ok := data.(content_plan.PostEventPayload); ok {
+						postEvents = append(postEvents, p)
+					}
+				}
+			})
+
+			cb := content_plan.NewContentPlanCallback()
+			resp, err := cb(ctx, campaignID, onEvent)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp).NotTo(BeNil())
+
+			// Every post in the final response must have been streamed as a post event.
+			Expect(postEvents).To(HaveLen(len(resp.Posts)))
+
+			// Indices must be sequential starting from 0.
+			for i, pe := range postEvents {
+				Expect(pe.Index).To(Equal(i))
+				Expect(pe.Post.Title).NotTo(BeEmpty())
+				Expect(pe.Post.PlatformID).NotTo(BeEmpty())
+			}
+		})
 	})
 })
