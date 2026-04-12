@@ -33,23 +33,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const location = useLocation()
   const isCollapsed = isMobile ? false : state === 'collapsed'
   const { user } = useAuthStore()
-  const { isSecondaryNavbarOpen, toggleSecondaryNavbar, closeSecondaryNavbar } = useSettingsStore()
+  const { closeSecondaryNavbar } = useSettingsStore()
   const navigate = useNavigate()
 
   const handleLogout = () => {
     navigate({ to: '/auth/logout' })
-  }
-
-
-  const handleCampaignsClick = () => {
-    if (isSecondaryNavbarOpen) {
-      closeSecondaryNavbar()
-    } else {
-      toggleSecondaryNavbar()
-    }
-    if (!location.pathname.startsWith('/campaigns') && isSecondaryNavbarOpen) {
-      navigate({ to: '/campaigns' })
-    }
   }
 
 
@@ -107,13 +95,15 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               iconName="nav_portfolios"
               text="Campaigns"
               isActive={location.pathname.startsWith('/campaigns')}
-              onClick={handleCampaignsClick}
+              to="/campaigns"
+              onClick={closeSecondaryNavbar}
             />
             <AppSidebarButtonMenu
               iconName="nav_ideas"
               text="Content Bank"
               isActive={location.pathname.startsWith('/content-bank')}
-              onClick={handleCampaignsClick}
+              to="/content-bank"
+              onClick={closeSecondaryNavbar}
             />
             <div
               className={cn(
@@ -125,7 +115,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 isCollapsed && 'opacity-0 pointer-events-none'
               )}
             >
-              {/*<Icon name={'empty'} className={'size-5 flex-none'} />*/}
               <div className={'absolute top-1/2 h-px w-full bg-sidebar-border'}></div>
               <div
                 className={

@@ -1,9 +1,13 @@
 import {
   createRootRouteWithContext,
+  Link,
   Outlet,
   redirect,
 } from "@tanstack/react-router";
 
+import { PageContainer } from "../components/page-primitives/PageContainer";
+import { PageError } from "../components/page-primitives/PageError";
+import { Button } from "../components/ui/button";
 import { isSetupComplete } from "../services/api/setup";
 import { checkSession } from "../services/api/sessions";
 import { getMe } from "../services/api/users";
@@ -50,4 +54,19 @@ export const Route = createRootRouteWithContext<RouterContext>()({
     return { auth: { isAuthenticated: authenticated } };
   },
   component: () => <Outlet />,
+  notFoundComponent: () => (
+    <PageContainer variant="fullscreen">
+      <PageError
+        subHeader="404"
+        header="Page not found"
+        message="The page you're looking for doesn't exist or has been moved."
+        errorType="NOT FOUND"
+        action={
+          <Link to="/">
+            <Button variant="outline">Go home</Button>
+          </Link>
+        }
+      />
+    </PageContainer>
+  ),
 });
