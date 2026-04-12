@@ -11,6 +11,7 @@ coverage.out
 
 # Node / React
 web/node_modules/
+web/.pnpm-store/
 web/dist/
 !web/dist/index.html
 
