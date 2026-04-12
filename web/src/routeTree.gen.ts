@@ -12,13 +12,15 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
 import { Route as AuthIndexRouteImport } from './routes/auth/index'
+import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
 import { Route as SetupWelcomeIndexRouteImport } from './routes/setup/welcome/index'
 import { Route as SetupSuccessIndexRouteImport } from './routes/setup/success/index'
 import { Route as SetupAdminIndexRouteImport } from './routes/setup/admin/index'
-import { Route as AuthRegisterIndexRouteImport } from './routes/auth/register/index'
+import { Route as AuthLogoutIndexRouteImport } from './routes/auth/logout/index'
 import { Route as AuthLoginIndexRouteImport } from './routes/auth/login/index'
 import { Route as AuthForgotIndexRouteImport } from './routes/auth/forgot/index'
 import { Route as AuthenticatedContentBankIndexRouteImport } from './routes/_authenticated/content-bank/index'
+import { Route as AuthenticatedCampaignsIndexRouteImport } from './routes/_authenticated/campaigns/index'
 
 const AuthenticatedRoute = AuthenticatedRouteImport.update({
   id: '/_authenticated',
@@ -33,6 +35,11 @@ const AuthIndexRoute = AuthIndexRouteImport.update({
   id: '/auth/',
   path: '/auth/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AuthenticatedIndexRoute = AuthenticatedIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AuthenticatedRoute,
 } as any)
 const SetupWelcomeIndexRoute = SetupWelcomeIndexRouteImport.update({
   id: '/setup/welcome/',
@@ -49,9 +56,9 @@ const SetupAdminIndexRoute = SetupAdminIndexRouteImport.update({
   path: '/setup/admin/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthRegisterIndexRoute = AuthRegisterIndexRouteImport.update({
-  id: '/auth/register/',
-  path: '/auth/register/',
+const AuthLogoutIndexRoute = AuthLogoutIndexRouteImport.update({
+  id: '/auth/logout/',
+  path: '/auth/logout/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthLoginIndexRoute = AuthLoginIndexRouteImport.update({
@@ -70,27 +77,35 @@ const AuthenticatedContentBankIndexRoute =
     path: '/content-bank/',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
+const AuthenticatedCampaignsIndexRoute =
+  AuthenticatedCampaignsIndexRouteImport.update({
+    id: '/campaigns/',
+    path: '/campaigns/',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof AuthenticatedRouteWithChildren
+  '/': typeof AuthenticatedIndexRoute
   '/auth/': typeof AuthIndexRoute
   '/setup/': typeof SetupIndexRoute
+  '/campaigns/': typeof AuthenticatedCampaignsIndexRoute
   '/content-bank/': typeof AuthenticatedContentBankIndexRoute
   '/auth/forgot/': typeof AuthForgotIndexRoute
   '/auth/login/': typeof AuthLoginIndexRoute
-  '/auth/register/': typeof AuthRegisterIndexRoute
+  '/auth/logout/': typeof AuthLogoutIndexRoute
   '/setup/admin/': typeof SetupAdminIndexRoute
   '/setup/success/': typeof SetupSuccessIndexRoute
   '/setup/welcome/': typeof SetupWelcomeIndexRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof AuthenticatedRouteWithChildren
+  '/': typeof AuthenticatedIndexRoute
   '/auth': typeof AuthIndexRoute
   '/setup': typeof SetupIndexRoute
+  '/campaigns': typeof AuthenticatedCampaignsIndexRoute
   '/content-bank': typeof AuthenticatedContentBankIndexRoute
   '/auth/forgot': typeof AuthForgotIndexRoute
   '/auth/login': typeof AuthLoginIndexRoute
-  '/auth/register': typeof AuthRegisterIndexRoute
+  '/auth/logout': typeof AuthLogoutIndexRoute
   '/setup/admin': typeof SetupAdminIndexRoute
   '/setup/success': typeof SetupSuccessIndexRoute
   '/setup/welcome': typeof SetupWelcomeIndexRoute
@@ -98,12 +113,14 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authenticated': typeof AuthenticatedRouteWithChildren
+  '/_authenticated/': typeof AuthenticatedIndexRoute
   '/auth/': typeof AuthIndexRoute
   '/setup/': typeof SetupIndexRoute
+  '/_authenticated/campaigns/': typeof AuthenticatedCampaignsIndexRoute
   '/_authenticated/content-bank/': typeof AuthenticatedContentBankIndexRoute
   '/auth/forgot/': typeof AuthForgotIndexRoute
   '/auth/login/': typeof AuthLoginIndexRoute
-  '/auth/register/': typeof AuthRegisterIndexRoute
+  '/auth/logout/': typeof AuthLogoutIndexRoute
   '/setup/admin/': typeof SetupAdminIndexRoute
   '/setup/success/': typeof SetupSuccessIndexRoute
   '/setup/welcome/': typeof SetupWelcomeIndexRoute
@@ -114,10 +131,11 @@ export interface FileRouteTypes {
     | '/'
     | '/auth/'
     | '/setup/'
+    | '/campaigns/'
     | '/content-bank/'
     | '/auth/forgot/'
     | '/auth/login/'
-    | '/auth/register/'
+    | '/auth/logout/'
     | '/setup/admin/'
     | '/setup/success/'
     | '/setup/welcome/'
@@ -126,22 +144,25 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/setup'
+    | '/campaigns'
     | '/content-bank'
     | '/auth/forgot'
     | '/auth/login'
-    | '/auth/register'
+    | '/auth/logout'
     | '/setup/admin'
     | '/setup/success'
     | '/setup/welcome'
   id:
     | '__root__'
     | '/_authenticated'
+    | '/_authenticated/'
     | '/auth/'
     | '/setup/'
+    | '/_authenticated/campaigns/'
     | '/_authenticated/content-bank/'
     | '/auth/forgot/'
     | '/auth/login/'
-    | '/auth/register/'
+    | '/auth/logout/'
     | '/setup/admin/'
     | '/setup/success/'
     | '/setup/welcome/'
@@ -153,7 +174,7 @@ export interface RootRouteChildren {
   SetupIndexRoute: typeof SetupIndexRoute
   AuthForgotIndexRoute: typeof AuthForgotIndexRoute
   AuthLoginIndexRoute: typeof AuthLoginIndexRoute
-  AuthRegisterIndexRoute: typeof AuthRegisterIndexRoute
+  AuthLogoutIndexRoute: typeof AuthLogoutIndexRoute
   SetupAdminIndexRoute: typeof SetupAdminIndexRoute
   SetupSuccessIndexRoute: typeof SetupSuccessIndexRoute
   SetupWelcomeIndexRoute: typeof SetupWelcomeIndexRoute
@@ -182,6 +203,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/': {
+      id: '/_authenticated/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof AuthenticatedIndexRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/setup/welcome/': {
       id: '/setup/welcome/'
       path: '/setup/welcome'
@@ -203,11 +231,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SetupAdminIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/auth/register/': {
-      id: '/auth/register/'
-      path: '/auth/register'
-      fullPath: '/auth/register/'
-      preLoaderRoute: typeof AuthRegisterIndexRouteImport
+    '/auth/logout/': {
+      id: '/auth/logout/'
+      path: '/auth/logout'
+      fullPath: '/auth/logout/'
+      preLoaderRoute: typeof AuthLogoutIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/auth/login/': {
@@ -231,14 +259,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedContentBankIndexRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/campaigns/': {
+      id: '/_authenticated/campaigns/'
+      path: '/campaigns'
+      fullPath: '/campaigns/'
+      preLoaderRoute: typeof AuthenticatedCampaignsIndexRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
   }
 }
 
 interface AuthenticatedRouteChildren {
+  AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
+  AuthenticatedCampaignsIndexRoute: typeof AuthenticatedCampaignsIndexRoute
   AuthenticatedContentBankIndexRoute: typeof AuthenticatedContentBankIndexRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
+  AuthenticatedIndexRoute: AuthenticatedIndexRoute,
+  AuthenticatedCampaignsIndexRoute: AuthenticatedCampaignsIndexRoute,
   AuthenticatedContentBankIndexRoute: AuthenticatedContentBankIndexRoute,
 }
 
@@ -252,7 +291,7 @@ const rootRouteChildren: RootRouteChildren = {
   SetupIndexRoute: SetupIndexRoute,
   AuthForgotIndexRoute: AuthForgotIndexRoute,
   AuthLoginIndexRoute: AuthLoginIndexRoute,
-  AuthRegisterIndexRoute: AuthRegisterIndexRoute,
+  AuthLogoutIndexRoute: AuthLogoutIndexRoute,
   SetupAdminIndexRoute: SetupAdminIndexRoute,
   SetupSuccessIndexRoute: SetupSuccessIndexRoute,
   SetupWelcomeIndexRoute: SetupWelcomeIndexRoute,

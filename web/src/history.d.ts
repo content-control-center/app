@@ -1,5 +1,5 @@
 import "@tanstack/history";
-import type { LoginPayload } from "@/services/api/sessions";
+import type { LoginPayload } from "@/types/session";
 
 declare module "@tanstack/history" {
   interface HistoryState {

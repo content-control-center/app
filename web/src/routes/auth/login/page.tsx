@@ -1,4 +1,3 @@
-import { Link } from '@tanstack/react-router'
 import { AppAuth } from '@/components/layout/AppAuth'
 import { AuthLoginForm } from '@/components/forms/authLoginForm'
 
@@ -10,10 +9,7 @@ function LoginPage() {
       form={<AuthLoginForm />}
       bottomNav={
         <>
-          Don't have an account?{' '}
-          <Link to="/auth/register" className={'text-primary-foreground font-medium'}>
-            Sign up here
-          </Link>
+          Don't have an account? Contact the instance owner
         </>
       }
     />

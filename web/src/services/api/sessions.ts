@@ -7,16 +7,7 @@
  * authenticated user.
  */
 
-export type LoginPayload = {
-  email: string;
-  password: string;
-};
-
-export type Session = {
-  id: string;
-  user_id: string;
-  expires_at: string;
-};
+import type { LoginPayload, Session } from "@/types/session";
 
 export async function login(payload: LoginPayload): Promise<Session> {
   const res = await fetch("/api/sessions", {

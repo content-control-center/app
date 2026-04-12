@@ -2,7 +2,7 @@ import { useNavigate } from "@tanstack/react-router";
 
 import { AppAuth } from "@/components/layout/AppAuth";
 import { AuthRegisterForm } from "@/components/forms/authRegisterForm";
-import type { LoginPayload } from "@/services/api/sessions";
+import type { LoginPayload } from "@/types/session";
 
 function SetupAdminPage() {
   const navigate = useNavigate();

@@ -4,41 +4,20 @@ import {
   login as loginRequest,
   logout as logoutRequest,
   invalidateSession,
-  type LoginPayload,
-  type Session,
 } from "@/services/api/sessions";
-import {
-  register as registerRequest,
-  type RegisterPayload,
-  type User,
-} from "@/services/api/users";
+import { register as registerRequest, getMe } from "@/services/api/users";
+import type { LoginPayload, Session } from "@/types/session";
+import type { RegisterPayload, User } from "@/types/user";
 import { useAuthStore } from "@/stores/authStore";
 
-/**
- * Auth hooks — thin wrappers around the session/user services that also
- * keep the zustand `authStore` in sync so route guards (read via router
- * context) can react synchronously.
- *
- * The backend login endpoint returns a `Session`, not a `User`. Until a
- * `/api/me` endpoint exists we synthesize a minimal `User` record from the
- * session + the email the caller submitted. It's enough for
- * `isAuthenticated()` to flip; a real profile fetch can replace this later.
- */
 export function useLogin() {
   const setUser = useAuthStore((s) => s.setUser);
   return useMutation<Session, Error, LoginPayload>({
     mutationFn: loginRequest,
-    onSuccess: (session, variables) => {
+    onSuccess: async () => {
       invalidateSession();
-      const now = new Date().toISOString();
-      const stubUser: User = {
-        id: session.user_id,
-        name: "",
-        email: variables.email,
-        created_at: now,
-        updated_at: now,
-      };
-      setUser(stubUser);
+      const user = await getMe();
+      setUser(user);
     },
   });
 }

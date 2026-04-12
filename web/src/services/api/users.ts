@@ -7,20 +7,22 @@
  * join them into a single `name` field here.
  */
 
-export type User = {
-  id: string;
-  name: string;
-  email: string;
-  created_at: string;
-  updated_at: string;
-};
+import type { User, RegisterPayload } from "@/types/user";
 
-export type RegisterPayload = {
-  firstName: string;
-  lastName: string;
-  email: string;
-  password: string;
-};
+/**
+ * TODO: replace with real `GET /api/me` once the backend supports it.
+ */
+export async function getMe(): Promise<User> {
+  const now = new Date().toISOString();
+  return {
+    id: "stub",
+    firstName: "John",
+    lastName: "Doe",
+    email: "email@example.com",
+    created_at: now,
+    updated_at: now,
+  };
+}
 
 export async function register(payload: RegisterPayload): Promise<User> {
   const res = await fetch("/api/users", {
@@ -36,7 +38,9 @@ export async function register(payload: RegisterPayload): Promise<User> {
   if (!res.ok) {
     throw new Error(await errorMessage(res, "Unable to create account"));
   }
-  return (await res.json()) as User;
+  const body = (await res.json()) as { id: string; name: string; email: string; created_at: string; updated_at: string };
+  const [firstName = "", ...rest] = body.name.split(" ");
+  return { ...body, firstName, lastName: rest.join(" ") };
 }
 
 async function errorMessage(res: Response, fallback: string): Promise<string> {

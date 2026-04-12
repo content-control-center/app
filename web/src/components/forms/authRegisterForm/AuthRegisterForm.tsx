@@ -7,7 +7,7 @@ import { Icon } from '@/components/ui/icon'
 import { useRegister } from '@/hooks/useAuth'
 import { useFormValidation } from '@/hooks/useFormValidation'
 import { registerSchema, PASSWORD_RULES, cn } from '@/lib'
-import type { LoginPayload } from '@/services/api/sessions'
+import type { LoginPayload } from '@/types/session'
 
 type AuthRegisterFormProps = {
   onSuccess?: (credentials: LoginPayload) => void

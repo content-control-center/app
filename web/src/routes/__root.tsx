@@ -6,6 +6,8 @@ import {
 
 import { isSetupComplete } from "../services/api/setup";
 import { checkSession } from "../services/api/sessions";
+import { getMe } from "../services/api/users";
+import { useAuthStore } from "../stores/authStore";
 
 export interface RouterContext {
   auth: {
@@ -37,6 +39,12 @@ export const Route = createRootRouteWithContext<RouterContext>()({
         to: "/auth/login",
         search: { redirect: location.pathname },
       });
+    }
+
+    // Hydrate auth store if session is valid but store is empty (e.g. fresh tab)
+    if (authenticated && !useAuthStore.getState().user) {
+      const user = await getMe();
+      useAuthStore.getState().setUser(user);
     }
 
     return { auth: { isAuthenticated: authenticated } };
