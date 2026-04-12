@@ -1,10 +1,16 @@
-import portfolioEmptyImage from '@/assets/portfolios/portfolio-folder-empty.webp'
+import { Button } from '@/components/ui/button'
 import { cn } from '@/lib'
+import portfolioEmptyImage from '@/assets/illustrations/folder-empty.webp'
+import { Icon } from '@/components/ui/icon.tsx'
 
-type PortfolioFilterOutStateProps = {
+type TableEmptyStateProps = {
+  message?: string
+  actionLabel?: string
+  onAction?: () => void
   className?: string
 }
-export function CampaignFilterOutState({ className = '' }: PortfolioFilterOutStateProps) {
+
+export function TableEmptyState({ onAction, className }: TableEmptyStateProps) {
   return (
     <div
       className={cn(
@@ -22,7 +28,14 @@ export function CampaignFilterOutState({ className = '' }: PortfolioFilterOutSta
           </div>
           <div>Try to relax your filtration criteria</div>
         </div>
-        <div className={'h-10'}></div>
+        {onAction ? (
+          <Button variant={'defaultInverted'} onClick={onAction}>
+            <Icon name={'filter_empty'} className={'size-4 stroke-[2px]'} />
+            <span>RESET FILTERS</span>
+          </Button>
+        ) : (
+          <div className={'h-10'}></div>
+        )}
       </div>
     </div>
   )
