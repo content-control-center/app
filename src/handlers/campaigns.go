@@ -61,7 +61,7 @@ type campaignRequest struct {
 	ToneGuidelines     string                   `json:"tone_guidelines"`
 	UsePieces          bool                     `json:"use_pieces"`
 	PiecesIDs          models.StringSlice       `json:"pieces_ids"`
-	TargetPlatformIDs  models.StringSlice       `json:"target_platform_ids"`
+	TargetPlatforms    models.CampaignPlatforms `json:"target_platforms"`
 	Objective          models.CampaignObjective `json:"objective"           validate:"required"`
 	Status             models.CampaignStatus    `json:"status"`
 	StartDate          *time.Time               `json:"start_date"`
@@ -141,7 +141,7 @@ func (h *CampaignsHandler) Create(c *fiber.Ctx) error {
 		ToneGuidelines:     req.ToneGuidelines,
 		UsePieces:          req.UsePieces,
 		PiecesIDs:          nullSlice(req.PiecesIDs),
-		TargetPlatformIDs:  nullSlice(req.TargetPlatformIDs),
+		TargetPlatforms:    nullCampaignPlatforms(req.TargetPlatforms),
 		Objective:          req.Objective,
 		Status:             status,
 		EstimatedPostCount: req.EstimatedPostCount,
@@ -227,7 +227,7 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 	campaign.ToneGuidelines = req.ToneGuidelines
 	campaign.UsePieces = req.UsePieces
 	campaign.PiecesIDs = nullSlice(req.PiecesIDs)
-	campaign.TargetPlatformIDs = nullSlice(req.TargetPlatformIDs)
+	campaign.TargetPlatforms = nullCampaignPlatforms(req.TargetPlatforms)
 	campaign.Objective = req.Objective
 	campaign.Status = status
 	campaign.EstimatedPostCount = req.EstimatedPostCount
@@ -350,6 +350,14 @@ func nullSlice(s models.StringSlice) models.StringSlice {
 		return models.StringSlice{}
 	}
 	return s
+}
+
+// nullCampaignPlatforms returns an empty CampaignPlatforms instead of nil.
+func nullCampaignPlatforms(p models.CampaignPlatforms) models.CampaignPlatforms {
+	if p == nil {
+		return models.CampaignPlatforms{}
+	}
+	return p
 }
 
 // nullMap returns an empty PostTypeMap instead of nil so the JSON column

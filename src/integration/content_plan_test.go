@@ -72,7 +72,9 @@ var _ = Describe("Content plan flow", Ordered, func() {
 			Objective:         models.ObjectiveAwareness,
 			Status:            models.StatusDraft,
 			Language:          "en",
-			TargetPlatformIDs: models.StringSlice{platformID},
+			TargetPlatforms: models.CampaignPlatforms{
+					{ID: platformID, PostTypes: []string{"text-post", "article"}},
+				},
 			EstimatedPostCount: &estCount,
 			StartDate:         &start,
 			EndDate:           &end,

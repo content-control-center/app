@@ -11,7 +11,7 @@ type Config struct {
 
 	// Anthropic config.
 	AnthropicAPIKey string `envconfig:"ANTHROPIC_API_KEY"   default:""`
-	ModelID         string `envconfig:"MODEL_ID"            default:"claude-sonnet-4-5-20250929"`
+	ModelID         string `envconfig:"MODEL_ID"            default:"claude-haiku-4-5-20251001"` // claude-sonnet-4-5-20250929
 	MaxPieceContext int    `envconfig:"MAX_PIECE_CONTEXT"   default:"15"`
 
 	// Object storage (S3-compatible: Cloudflare R2, DigitalOcean Spaces, AWS S3).

@@ -41,7 +41,7 @@ type Campaign struct {
 	ToneGuidelines     string            `bun:"tone_guidelines,notnull"                      json:"tone_guidelines"`
 	UsePieces          bool              `bun:"use_pieces,notnull"                           json:"use_pieces"`
 	PiecesIDs          StringSlice       `bun:"pieces_ids,notnull"                           json:"pieces_ids"`
-	TargetPlatformIDs  StringSlice       `bun:"target_platform_ids,notnull"                  json:"target_platform_ids"`
+	TargetPlatforms    CampaignPlatforms `bun:"target_platforms,notnull"                     json:"target_platforms"`
 	Objective          CampaignObjective `bun:"objective,notnull"                            json:"objective"`
 	StartDate          *time.Time        `bun:"start_date"                                   json:"start_date"`
 	EndDate            *time.Time        `bun:"end_date"                                     json:"end_date"`

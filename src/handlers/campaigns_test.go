@@ -171,7 +171,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				Expect(c.Status).To(Equal(models.StatusDraft))
 				Expect(c.CreatedBy).NotTo(BeEmpty())
 				Expect(c.PiecesIDs).To(BeEmpty())
-				Expect(c.TargetPlatformIDs).To(BeEmpty())
+				Expect(c.TargetPlatforms).To(BeEmpty())
 				Expect(c.Tags).To(BeEmpty())
 			})
 
@@ -186,7 +186,10 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 					"tone_guidelines":      "Friendly and professional",
 					"use_pieces":           true,
 					"pieces_ids":           []string{"abc", "def"},
-					"target_platform_ids":  []string{"rzgpTkARLH0L", "tiktok"},
+					"target_platforms": []fiber.Map{
+						{"id": "rzgpTkARLH0L", "post_types": []string{"image-post", "reel"}},
+						{"id": "tiktok", "post_types": []string{"video"}},
+					},
 					"status":               "scheduled",
 					"estimated_post_count": count,
 					"budget":               1500.00,
@@ -299,11 +302,14 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				Expect(got.Name).To(Equal("Brand Awareness"))
 			})
 
-			It("returns hydrated platforms for known target_platform_ids", func() {
+			It("returns hydrated platforms for known target_platforms", func() {
 				body, _ := json.Marshal(fiber.Map{
-					"name":                "Platform Hydration Test",
-					"objective":           "awareness",
-					"target_platform_ids": []string{"rzgpTkARLH0L", "tiktok"},
+					"name":      "Platform Hydration Test",
+					"objective": "awareness",
+					"target_platforms": []fiber.Map{
+						{"id": "rzgpTkARLH0L", "post_types": []string{"image-post"}},
+						{"id": "tiktok", "post_types": []string{"video"}},
+					},
 				})
 				req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")

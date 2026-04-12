@@ -28,6 +28,36 @@ func (s *StringSlice) Scan(src any) error {
 	}
 }
 
+// CampaignPlatform is a target platform entry on a campaign, carrying the
+// platform ID and the subset of post types selected for that campaign.
+type CampaignPlatform struct {
+	ID        string   `json:"id"`
+	PostTypes []string `json:"post_types"`
+}
+
+// CampaignPlatforms is a []CampaignPlatform that serialises as a JSON array
+// in a SQLite TEXT column.
+type CampaignPlatforms []CampaignPlatform
+
+func (s CampaignPlatforms) Value() (driver.Value, error) {
+	b, err := json.Marshal(s)
+	return string(b), err
+}
+
+func (s *CampaignPlatforms) Scan(src any) error {
+	switch v := src.(type) {
+	case string:
+		return json.Unmarshal([]byte(v), s)
+	case []byte:
+		return json.Unmarshal(v, s)
+	case nil:
+		*s = CampaignPlatforms{}
+		return nil
+	default:
+		return fmt.Errorf("CampaignPlatforms: cannot scan %T", src)
+	}
+}
+
 // PostTypeMap is a map[string]string that serialises as a JSON object in a
 // SQLite TEXT column. Keys are post-type slugs, values are display names.
 type PostTypeMap map[string]string

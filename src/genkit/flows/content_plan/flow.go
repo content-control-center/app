@@ -111,7 +111,7 @@ func runContentPlan(
 		log.Printf("content_plan[%s]: validateInput failed after %s: %v", req.CampaignID, time.Since(start).Round(time.Millisecond), err)
 		return nil, err
 	}
-	log.Printf("content_plan[%s]: validateInput done (campaign=%q platforms=%v)", req.CampaignID, campaign.Name, []string(campaign.TargetPlatformIDs))
+	log.Printf("content_plan[%s]: validateInput done (campaign=%q platforms=%d)", req.CampaignID, campaign.Name, len(campaign.TargetPlatforms))
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "validateInput", Status: "done"})
 
 	// ── Step 2: resolvePieces ─────────────────────────────────────────────────
@@ -127,10 +127,16 @@ func runContentPlan(
 
 	// ── Step 3: resolvePlatforms ──────────────────────────────────────────────
 	log.Printf("content_plan[%s]: step 3/6 resolvePlatforms", req.CampaignID)
-	platforms, err := resolvePlatforms(ctx, campaign.TargetPlatformIDs, repos.Platforms)
+	platforms, err := resolvePlatforms(ctx, campaign.TargetPlatforms, repos.Platforms)
 	if err != nil {
 		log.Printf("content_plan[%s]: resolvePlatforms failed after %s: %v", req.CampaignID, time.Since(start).Round(time.Millisecond), err)
 		return nil, err
+	}
+	if len(platforms) == 0 {
+		return nil, &ValidationError{Msg: "none of the campaign's target platforms could be resolved — check that platform IDs are valid"}
+	}
+	if len(platforms) < len(campaign.TargetPlatforms) {
+		log.Printf("content_plan[%s]: WARNING resolvePlatforms resolved %d/%d platforms — some IDs may be stale", req.CampaignID, len(platforms), len(campaign.TargetPlatforms))
 	}
 	log.Printf("content_plan[%s]: resolvePlatforms done (%d platforms)", req.CampaignID, len(platforms))
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "resolvePlatforms", Status: "done"})

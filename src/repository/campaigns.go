@@ -86,14 +86,20 @@ func (r *campaignRepository) hydratePlatforms(ctx context.Context, campaigns []m
 	for i := range campaigns {
 		campaigns[i].Platforms = []models.Platform{}
 	}
-	ids := collectIDsFlat(campaigns, func(c models.Campaign) []string { return c.TargetPlatformIDs })
+	ids := collectIDsFlat(campaigns, func(c models.Campaign) []string {
+		out := make([]string, len(c.TargetPlatforms))
+		for i, tp := range c.TargetPlatforms {
+			out[i] = tp.ID
+		}
+		return out
+	})
 	byID, err := fetchByIDs(ctx, r.db, ids, func(p *models.Platform) string { return p.ID })
 	if err != nil {
 		return err
 	}
 	for i, c := range campaigns {
-		for _, id := range c.TargetPlatformIDs {
-			if p, ok := byID[id]; ok {
+		for _, tp := range c.TargetPlatforms {
+			if p, ok := byID[tp.ID]; ok {
 				campaigns[i].Platforms = append(campaigns[i].Platforms, *p)
 			}
 		}

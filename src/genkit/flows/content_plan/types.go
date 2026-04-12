@@ -36,11 +36,12 @@ type resolvedPiece struct {
 
 // resolvedPlatform is an internal type used to build the prompt context.
 type resolvedPlatform struct {
-	ID          string
-	Name        string
-	PostTypes   string // comma-separated display names
-	Cadence     string // e.g. "1–2 posts per week"
-	Constraints string // character limits, format notes
+	ID           string
+	Name         string
+	PostTypes    string   // comma-separated slugs shown in the prompt
+	AllowedSlugs []string // non-empty = hard-enforce these slugs in validateOutput; nil = allow all
+	Cadence      string   // e.g. "1–2 posts per week"
+	Constraints  string   // character limits, format notes
 }
 
 // contentPlanTemplateData is the data passed to the user-prompt template.

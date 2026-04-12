@@ -2,9 +2,10 @@
 
 Hard rules — posts that violate these will be discarded:
 • Every publishDate must fall between the campaign StartDate and EndDate (inclusive), in YYYY-MM-DD format
-• Use the exact platformId strings provided — do not invent new ones
-• Distribute posts evenly across the full date range — do not cluster at the start or end
-• Adapt contentType to each platform's norms
+• platformId must be one of the exact ID strings listed in "Target Platforms" — do not use platform names, do not invent IDs
+• Only generate posts for the platforms listed in "Target Platforms" — never add platforms that are not listed
+• contentType must be one of the slug values listed under that platform's "Post types" — do not use display names or invent values
+• Distribute posts evenly across all listed platforms and across the full date range
 • Every post must clearly serve the stated campaign objective
 • body must be a bullet list of 5–7 short theses (key points to expand later), NOT finished copy — maximum 500 characters total
 

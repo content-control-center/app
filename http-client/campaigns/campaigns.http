@@ -34,7 +34,11 @@ Content-Type: application/json
     "status": "scheduled",
     "use_pieces": true,
     "pieces_ids": [],
-    "target_platform_ids": ["AXqWG7U2qnpt", "zBU1zqVICGfk", "pQ4yxT3SuE57"],
+    "target_platforms": [
+        {"id": "AXqWG7U2qnpt", "post_types": ["text-post", "article", "carousel"]},
+        {"id": "zBU1zqVICGfk", "post_types": ["text-post", "image-post", "video"]},
+        {"id": "pQ4yxT3SuE57", "post_types": ["text-post"]}
+    ],
     "start_date": "2026-10-01T00:00:00Z",
     "end_date": "2026-12-31T23:59:59Z",
     "estimated_post_count": 30,

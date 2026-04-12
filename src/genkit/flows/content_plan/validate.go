@@ -41,8 +41,8 @@ func validateInput(ctx context.Context, campaignID string, campaignRepo reposito
 	if c.EndDate == nil {
 		missing = append(missing, "end_date")
 	}
-	if len(c.TargetPlatformIDs) == 0 {
-		missing = append(missing, "target_platform_ids")
+	if len(c.TargetPlatforms) == 0 {
+		missing = append(missing, "target_platforms")
 	}
 	if len(missing) > 0 {
 		return nil, &ValidationError{Msg: "missing required campaign fields: " + strings.Join(missing, ", ")}
@@ -69,8 +69,18 @@ func validateInput(ctx context.Context, campaignID string, campaignRepo reposito
 
 func validateOutput(posts []DraftPost, campaign *models.Campaign, platforms []resolvedPlatform) ([]DraftPost, []string) {
 	validPlatformIDs := make(map[string]bool, len(platforms))
+	// platformAllowedSlugs is non-nil only when the campaign explicitly
+	// constrains post types for that platform.
+	platformAllowedSlugs := make(map[string]map[string]bool)
 	for _, p := range platforms {
 		validPlatformIDs[p.ID] = true
+		if len(p.AllowedSlugs) > 0 {
+			m := make(map[string]bool, len(p.AllowedSlugs))
+			for _, s := range p.AllowedSlugs {
+				m[s] = true
+			}
+			platformAllowedSlugs[p.ID] = m
+		}
 	}
 
 	startDate := campaign.StartDate.Format("2006-01-02")
@@ -83,6 +93,12 @@ func validateOutput(posts []DraftPost, campaign *models.Campaign, platforms []re
 		if !validPlatformIDs[post.PlatformID] {
 			warnings = append(warnings, fmt.Sprintf("post %q dropped: unknown platformId %q", post.Title, post.PlatformID))
 			continue
+		}
+		if allowed, ok := platformAllowedSlugs[post.PlatformID]; ok {
+			if !allowed[post.ContentType] {
+				warnings = append(warnings, fmt.Sprintf("post %q dropped: contentType %q not allowed for platform %q", post.Title, post.ContentType, post.PlatformID))
+				continue
+			}
 		}
 		d := post.PublishDate
 		if d < startDate || d > endDate {
