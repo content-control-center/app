@@ -1,5 +1,5 @@
 import { type FormEvent } from 'react'
-import { Link, useNavigate } from '@tanstack/react-router'
+import { useNavigate } from '@tanstack/react-router'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -76,14 +76,6 @@ export function AuthLoginForm() {
         )}
       </div>
       <div></div>
-      <div className="text-[13px] leading-4 h-8 flex flex-col justify-center text-secondary-foreground">
-        <span>
-          Forgot your password?{' '}
-          <Link to="/auth/forgot" className={'text-primary-foreground font-medium'}>
-            Reset it here
-          </Link>
-        </span>
-      </div>
       <div className="w-full">
         <Button
           type="submit"

@@ -5,11 +5,11 @@ function LoginPage() {
   return (
     <AppAuth
       title="Welcome Back"
-      subtitle="Log in to continue managing your investments"
+      subtitle="Log in to continue managing your content"
       form={<AuthLoginForm />}
       bottomNav={
         <>
-          Don't have an account? Contact the instance owner
+          Issues with getting access? Contact the instance owner
         </>
       }
     />

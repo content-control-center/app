@@ -52,9 +52,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     }
   }
 
-  if (!user) return null
 
-  const initials = `${user.firstName[0]}${user.lastName[0]}`.toUpperCase()
+  const initials = `${user!.firstName[0]}${user!.lastName[0]}`.toUpperCase()
 
   return (
     <>
@@ -152,9 +151,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           <div>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button
-                  variant="container"
-                  className={cn('w-full justify-start gap-6 p-0 overflow-hidden')}
+                <div
+                  role="button"
+                  tabIndex={0}
+                  className={cn('flex w-full items-center justify-start gap-6 p-0 cursor-pointer select-none overflow-hidden')}
                 >
                   <div className="relative shrink-0">
                     <Avatar className="size-10">
@@ -163,25 +163,24 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
                   </div>
                   <div className="flex flex-col items-start flex-1 min-w-0">
-                    <p className="text-sm font-regular truncate">{`${user.firstName} ${user.lastName}`}</p>
+                    <p className="text-sm font-regular truncate">{`${user!.firstName} ${user!.lastName}`}</p>
                     <p className="text-xs text-tertiary-foreground truncate">
-                      { user.email}
+                      { user!.email}
                     </p>
                   </div>
-                </Button>
+                </div>
               </DropdownMenuTrigger>
               <DropdownMenuContent
                 className="w-68 px-6 pt-6 pb-4 shadow-md"
-                align="end"
                 side="right"
+                align="end"
                 sideOffset={8}
-                alignOffset={0}
               >
                 <DropdownMenuLabel className="font-normal p-0" asChild>
                   <div className="flex flex-col space-y-1">
-                    <div className="h-8 text-xl font-display font-medium truncate">{`${user.firstName} ${user.lastName}`}</div>
+                    <div className="h-8 text-xl font-display font-medium truncate">{`${user!.firstName} ${user!.lastName}`}</div>
                     <div className="text-sm leading-none text-tertiary-foreground">
-                      {user.email}
+                      {user!.email}
                     </div>
                   </div>
                 </DropdownMenuLabel>
