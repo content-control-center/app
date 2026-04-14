@@ -1,4 +1,5 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
+import type { ChangeEvent, KeyboardEvent } from "react";
 import { useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import type { Block } from "@blocknote/core";
@@ -6,16 +7,18 @@ import "@blocknote/mantine/style.css";
 import "@/blocknote-theme.css";
 
 type ContentPieceEditorProps = {
+  initialTitle: string;
   initialContent: string;
+  onTitleChange: (title: string) => void;
   onContentChange: (content: string) => void;
-  onTitleChange?: (title: string) => void;
+  onDirty?: () => void;
 };
 
 const DEFAULT_CONTENT: Block[] = [
   {
-    type: "heading",
-    props: { level: 1 },
-    content: [{ type: "text", text: "Untitled", styles: {} }],
+    type: "paragraph",
+    props: {},
+    content: [],
   } as unknown as Block,
 ];
 
@@ -30,46 +33,110 @@ function parseBlocks(raw: string): Block[] {
   return DEFAULT_CONTENT;
 }
 
-function extractFirstH1(blocks: Block[]): string {
-  const h1 = blocks.find(
-    (b) => b.type === "heading" && (b.props as { level?: number }).level === 1,
-  );
-  if (!h1 || !Array.isArray(h1.content)) return "";
-  return (h1.content as { type: string; text: string }[])
-    .filter((c) => c.type === "text")
-    .map((c) => c.text)
-    .join("");
-}
-
 export function ContentPieceEditor({
+  initialTitle,
   initialContent,
-  onContentChange,
   onTitleChange,
+  onContentChange,
+  onDirty,
 }: ContentPieceEditorProps) {
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [title, setTitle] = useState(initialTitle);
+  const titleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const contentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const titleRef = useRef<HTMLTextAreaElement | null>(null);
 
   const editor = useCreateBlockNote({
     initialContent: parseBlocks(initialContent),
   });
 
-  const handleChange = useCallback(() => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => {
-      const blocks = editor.document;
-      onContentChange(JSON.stringify(blocks));
-      onTitleChange?.(extractFirstH1(blocks));
-    }, 500);
-  }, [editor, onContentChange, onTitleChange]);
+  const autosizeTitle = useCallback(() => {
+    const el = titleRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, []);
 
   useEffect(() => {
-    onTitleChange?.(extractFirstH1(editor.document));
-  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
+    autosizeTitle();
+  }, [title, autosizeTitle]);
+
+  const handleTitleChange = useCallback(
+    (e: ChangeEvent<HTMLTextAreaElement>) => {
+      const next = e.target.value.replace(/\n/g, "");
+      setTitle(next);
+      onDirty?.();
+      if (titleTimerRef.current) clearTimeout(titleTimerRef.current);
+      titleTimerRef.current = setTimeout(() => {
+        onTitleChange(next.trim() === "" ? " " : next);
+      }, 500);
+    },
+    [onTitleChange, onDirty],
+  );
+
+  const displayTitle = title.trim() === "" ? "" : title;
+
+  const focusFirstBlock = useCallback(() => {
+    const first = editor.document[0];
+    if (first) {
+      editor.setTextCursorPosition(first, "start");
+    }
+    editor.focus();
+  }, [editor]);
+
+  const handleTitleKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const first = editor.document[0];
+        const firstIsEmptyParagraph =
+          first?.type === "paragraph" &&
+          Array.isArray(first.content) &&
+          first.content.length === 0;
+        if (!firstIsEmptyParagraph && first) {
+          editor.insertBlocks(
+            [{ type: "paragraph" }],
+            first,
+            "before",
+          );
+        }
+        requestAnimationFrame(() => focusFirstBlock());
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        focusFirstBlock();
+      }
+    },
+    [editor, focusFirstBlock],
+  );
+
+  const handleContentChange = useCallback(() => {
+    onDirty?.();
+    if (contentTimerRef.current) clearTimeout(contentTimerRef.current);
+    contentTimerRef.current = setTimeout(() => {
+      onContentChange(JSON.stringify(editor.document));
+    }, 500);
+  }, [editor, onContentChange, onDirty]);
 
   useEffect(() => {
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
+      if (titleTimerRef.current) clearTimeout(titleTimerRef.current);
+      if (contentTimerRef.current) clearTimeout(contentTimerRef.current);
     };
   }, []);
 
-  return <BlockNoteView editor={editor} onChange={handleChange} theme="light" />;
+  return (
+    <div className="flex flex-col">
+      <textarea
+        ref={titleRef}
+        value={displayTitle}
+        onChange={handleTitleChange}
+        onKeyDown={handleTitleKeyDown}
+        placeholder="Title"
+        rows={1}
+        className="resize-none overflow-hidden bg-transparent border-0 outline-none w-full text-4xl font-bold tracking-tight placeholder:text-tertiary-foreground mb-4"
+      />
+      <BlockNoteView editor={editor} onChange={handleContentChange} theme="light" />
+    </div>
+  );
 }

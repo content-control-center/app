@@ -6,7 +6,7 @@ const pageContainerVariants = cva('w-full', {
   variants: {
     variant: {
       default: 'h-full space-y-4 py-6',
-      fullFlex: 'h-svh flex flex-col justify-stretch overflow-hidden pb-2',
+      fullFlex: 'h-svh flex flex-col justify-stretch overflow-hidden',
       fullscreen: 'min-h-svh h-0 flex flex-col',
     },
   },

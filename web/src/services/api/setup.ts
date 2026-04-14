@@ -17,8 +17,12 @@ const settingResponseSchema = z.object({
 let cached: Promise<boolean> | null = null;
 
 export function isSetupComplete(): Promise<boolean> {
+  console.log("[setup] isSetupComplete called", { cached: cached !== null });
   if (cached === null) {
-    cached = fetchSetupComplete();
+    cached = fetchSetupComplete().then((result) => {
+      console.log("[setup] isSetupComplete resolved", result);
+      return result;
+    });
   }
   return cached;
 }
@@ -45,6 +49,9 @@ async function fetchSetupComplete(): Promise<boolean> {
       method: "GET",
       credentials: "include",
     });
+    // Backend leaves this endpoint open only while setup is incomplete; once
+    // setup_complete=true it requires auth and returns 401 to anonymous callers.
+    if (res.status === 401) return true;
     if (!res.ok) return false;
     const parsed = settingResponseSchema.safeParse(await res.json());
     if (!parsed.success) return false;

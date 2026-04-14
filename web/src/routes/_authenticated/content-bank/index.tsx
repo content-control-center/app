@@ -22,7 +22,7 @@ function ContentBank() {
 
   const handleCreate = () => {
     createPiece.mutate(
-      { title: "Untitled", content: " " },
+      { title: " ", content: " " },
       {
         onSuccess: (piece) => {
           navigate({ to: "/content-bank/$pieceId", params: { pieceId: piece.id } });
