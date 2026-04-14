@@ -1,0 +1,91 @@
+/*
+ * BlockNote theme overrides
+ * Maps BlockNote CSS variables to our Tailwind/project design tokens.
+ */
+
+/* ── Color overrides ── */
+.bn-container {
+  --bn-colors-editor-text: var(--foreground);
+  --bn-colors-editor-background: transparent;
+
+  --bn-colors-menu-text: var(--popover-foreground);
+  --bn-colors-menu-background: var(--popover);
+  --bn-colors-tooltip-text: var(--popover-foreground);
+  --bn-colors-tooltip-background: var(--secondary);
+
+  --bn-colors-hovered-text: var(--popover-foreground);
+  --bn-colors-hovered-background: var(--popover-hover);
+
+  --bn-colors-selected-text: var(--primary);
+  --bn-colors-selected-background: var(--primary-foreground);
+
+  --bn-colors-disabled-text: var(--quaternary-foreground);
+  --bn-colors-disabled-background: var(--secondary);
+
+  --bn-colors-shadow: var(--quinary);
+  --bn-colors-border: var(--border);
+  --bn-colors-side-menu: var(--quaternary-foreground);
+
+  /* Font */
+  --bn-font-family: var(--font-sans);
+
+  /* Border radius — align with project's tight radius */
+  --bn-border-radius: var(--radius-lg);
+
+  /* Shadows */
+  --bn-shadow-medium: var(--shadow-md);
+  --bn-shadow-light: var(--shadow-md);
+}
+
+/* ── Typography: smaller headings & paragraph ── */
+
+.bn-container .bn-default-styles {
+  font-size: 14px;
+}
+
+.bn-container [data-content-type="heading"] {
+  --level: 1.75em;
+}
+
+.bn-container [data-content-type="heading"][data-level="2"] {
+  --level: 1.375em;
+}
+
+.bn-container [data-content-type="heading"][data-level="3"] {
+  --level: 1.125em;
+}
+
+.bn-container [data-content-type="heading"][data-level="4"] {
+  --level: 1em;
+}
+
+.bn-container [data-content-type="heading"][data-level="5"] {
+  --level: 0.875em;
+}
+
+.bn-container [data-content-type="heading"][data-level="6"] {
+  --level: 0.8em;
+}
+
+/* ── Side menu heights — match our reduced heading sizes ── */
+
+.bn-container .bn-side-menu {
+  height: 27px;
+}
+
+.bn-container .bn-side-menu[data-block-type="heading"][data-level="1"] {
+  height: 43px;
+}
+
+.bn-container .bn-side-menu[data-block-type="heading"][data-level="2"] {
+  height: 35px;
+}
+
+.bn-container .bn-side-menu[data-block-type="heading"][data-level="3"] {
+  height: 30px;
+}
+
+/* Reduce editor inline padding */
+.bn-container .bn-editor {
+  padding-inline: 0;
+}

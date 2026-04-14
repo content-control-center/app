@@ -1,0 +1,128 @@
+import { memo, useMemo } from 'react'
+import { Link } from '@tanstack/react-router'
+import { Trash2 } from 'lucide-react'
+import { VirtualTable } from '../VirtualTable'
+import { TextCell } from '../TableCells'
+import type { ColumnConfig } from '../types'
+import type { Piece } from '@/types/content'
+import { Button } from '@/components/ui/button'
+
+type PieceRow = Piece & Record<string, unknown>
+
+type ContentPiecesTableProps = {
+  pieces: Piece[]
+  onDelete: (id: string) => void
+  emptyStateMessage?: string
+  emptyStateActionLabel?: string
+  onEmptyStateAction?: () => void
+}
+
+function formatDate(dateStr: string): string {
+  const date = new Date(dateStr)
+  return date.toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  })
+}
+
+function ContentPiecesTableComponent({
+  pieces,
+  onDelete,
+  emptyStateMessage = 'No content pieces',
+  emptyStateActionLabel,
+  onEmptyStateAction,
+}: ContentPiecesTableProps) {
+  const data = pieces as PieceRow[]
+
+  const columnConfigs = useMemo<ColumnConfig<PieceRow>[]>(
+    () => [
+      {
+        id: 'title',
+        accessorKey: 'title',
+        header: 'Title',
+        isAutoSize: true,
+        cell: (_value, row) => (
+          <div className="h-[34px] border-b-2 border-background px-3 leading-8">
+            <Link
+              to="/content-bank/$pieceId"
+              params={{ pieceId: row.id }}
+              className="hover:underline"
+            >
+              <TextCell value={row.title} />
+            </Link>
+          </div>
+        ),
+      },
+      {
+        id: 'created_at',
+        accessorKey: 'created_at',
+        header: 'Created',
+        size: 140,
+        minSize: 120,
+        cell: (_value, row) => (
+          <div className="h-[34px] border-b-2 border-background px-3 leading-8">
+            <TextCell value={formatDate(row.created_at)} />
+          </div>
+        ),
+      },
+      {
+        id: 'updated_at',
+        accessorKey: 'updated_at',
+        header: 'Last Modified',
+        size: 140,
+        minSize: 120,
+        cell: (_value, row) => (
+          <div className="h-[34px] border-b-2 border-background px-3 leading-8">
+            <TextCell value={formatDate(row.updated_at)} />
+          </div>
+        ),
+      },
+      {
+        id: 'actions',
+        header: '',
+        size: 60,
+        minSize: 60,
+        sortable: false,
+        cell: (_value, row) => (
+          <div className="h-[34px] border-b-2 border-background px-3 flex items-center justify-center">
+            <Button
+              variant="ghost"
+              size="xsIcon"
+              onClick={(e) => {
+                e.stopPropagation()
+                onDelete(row.id)
+              }}
+            >
+              <Trash2 className="size-4 text-tertiary-foreground hover:text-destructive" />
+            </Button>
+          </div>
+        ),
+      },
+    ],
+    [onDelete],
+  )
+
+  const activeColumns = useMemo(
+    () => ['title', 'created_at', 'updated_at', 'actions'],
+    [],
+  )
+
+  return (
+    <VirtualTable
+      data={data}
+      columnConfigs={columnConfigs}
+      activeColumns={activeColumns}
+      initialSorting={[{ id: 'title', desc: false }]}
+      estimatedRowHeight={34}
+      overscan={5}
+      showFooter={false}
+      fillHeight={false}
+      emptyStateMessage={emptyStateMessage}
+      emptyStateActionLabel={emptyStateActionLabel}
+      onEmptyStateAction={onEmptyStateAction}
+    />
+  )
+}
+
+export const ContentPiecesTable = memo(ContentPiecesTableComponent)

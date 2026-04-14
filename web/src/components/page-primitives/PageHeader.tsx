@@ -6,6 +6,7 @@ import { useSettingsStore } from '@/stores/settingsStore'
 import { cn } from '@/lib'
 import { Button } from '@/components/ui/button.tsx'
 import { useIsMobile } from '@/hooks/use-mobile.ts'
+import { useOverlayStore } from '@/stores/overlayStore'
 
 type PageHeaderProps = {
   title: string
@@ -27,7 +28,11 @@ export function PageHeader({
   const isMobile = useIsMobile()
 
   const handleTitleClick = () => {
+    if (isMobile) {
+      useOverlayStore.getState().open('campaign-selector')
+    } else {
       openSecondaryNavbar()
+    }
   }
 
   return (
