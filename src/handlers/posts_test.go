@@ -73,7 +73,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		authCookie = cookies[0]
 
 		// Seed a campaign used across tests.
-		cBody, _ := json.Marshal(fiber.Map{"name": "Test Campaign", "campaign_type_id": "ct_awareness"})
+		cBody, _ := json.Marshal(fiber.Map{"name": "Test Campaign", "campaign_type_id": "Uk"})
 		cReq := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(cBody))
 		cReq.Header.Set("Content-Type", "application/json")
 		cReq.AddCookie(authCookie)

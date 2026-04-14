@@ -125,8 +125,8 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 			})
 
 			It("returns all campaigns", func() {
-				createCampaign("Summer Push", "ct_awareness")
-				createCampaign("Q4 Retargeting", "ct_conversion")
+				createCampaign("Summer Push", "Uk")
+				createCampaign("Q4 Retargeting", "Ef")
 
 				req := httptest.NewRequest("GET", "/api/campaigns", nil)
 				req.AddCookie(authCookie)
@@ -146,7 +146,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 	Describe("POST /api/campaigns", func() {
 		Context("when not authenticated", func() {
 			It("returns 401", func() {
-				body, _ := json.Marshal(fiber.Map{"name": "Test", "campaign_type_id": "ct_awareness"})
+				body, _ := json.Marshal(fiber.Map{"name": "Test", "campaign_type_id": "Uk"})
 				req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				resp, err := app.Test(req)
@@ -157,7 +157,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 
 		Context("when authenticated", func() {
 			It("creates a campaign with required fields and returns 201", func() {
-				body, _ := json.Marshal(fiber.Map{"name": "Launch Campaign", "campaign_type_id": "ct_engagement"})
+				body, _ := json.Marshal(fiber.Map{"name": "Launch Campaign", "campaign_type_id": "gb"})
 				req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				req.AddCookie(authCookie)
@@ -169,7 +169,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				Expect(json.NewDecoder(resp.Body).Decode(&c)).To(Succeed())
 				Expect(c.ID).NotTo(BeEmpty())
 				Expect(c.Name).To(Equal("Launch Campaign"))
-				Expect(c.CampaignTypeID).To(Equal("ct_engagement"))
+				Expect(c.CampaignTypeID).To(Equal("gb"))
 				Expect(c.Status).To(Equal(models.StatusDraft))
 				Expect(c.CreatedBy).NotTo(BeEmpty())
 				Expect(c.PiecesIDs).To(BeEmpty())
@@ -181,7 +181,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				count := 20
 				body, _ := json.Marshal(fiber.Map{
 					"name":             "Full Campaign",
-					"campaign_type_id": "ct_conversion",
+					"campaign_type_id": "Ef",
 					"description":      "Drive sign-ups",
 					"target_persona":   "Tech-savvy millennials",
 					"key_messages":     "Fast, reliable, affordable",
@@ -221,7 +221,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 			})
 
 			It("stores nil estimated_post_count when omitted", func() {
-				body, _ := json.Marshal(fiber.Map{"name": "No Count", "campaign_type_id": "ct_awareness"})
+				body, _ := json.Marshal(fiber.Map{"name": "No Count", "campaign_type_id": "Uk"})
 				req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				req.AddCookie(authCookie)
@@ -235,7 +235,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 			})
 
 			It("returns 400 when name is missing", func() {
-				body, _ := json.Marshal(fiber.Map{"campaign_type_id": "ct_awareness"})
+				body, _ := json.Marshal(fiber.Map{"campaign_type_id": "Uk"})
 				req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				req.AddCookie(authCookie)
@@ -255,7 +255,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 			})
 
 			It("returns 400 when campaign_type_id is invalid", func() {
-				body, _ := json.Marshal(fiber.Map{"name": "Bad Type", "campaign_type_id": "ct_unknown"})
+				body, _ := json.Marshal(fiber.Map{"name": "Bad Type", "campaign_type_id": "nonexistent"})
 				req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				req.AddCookie(authCookie)
@@ -265,7 +265,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 			})
 
 			It("returns 400 when status is invalid", func() {
-				body, _ := json.Marshal(fiber.Map{"name": "Bad Status", "campaign_type_id": "ct_awareness", "status": "unknown"})
+				body, _ := json.Marshal(fiber.Map{"name": "Bad Status", "campaign_type_id": "Uk", "status": "unknown"})
 				req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				req.AddCookie(authCookie)
@@ -290,7 +290,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 
 		Context("when authenticated", func() {
 			It("returns the campaign with hydrated campaign_type", func() {
-				c := createCampaign("Brand Awareness", "ct_awareness")
+				c := createCampaign("Brand Awareness", "Uk")
 
 				req := httptest.NewRequest("GET", "/api/campaigns/"+c.ID, nil)
 				req.AddCookie(authCookie)
@@ -309,7 +309,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 			It("returns hydrated platforms for known target_platforms", func() {
 				body, _ := json.Marshal(fiber.Map{
 					"name":             "Platform Hydration Test",
-					"campaign_type_id": "ct_awareness",
+					"campaign_type_id": "Uk",
 					"target_platforms": []fiber.Map{
 						{"id": "rzgpTkARLH0L", "post_types": []string{"image-post"}},
 						{"id": "tiktok", "post_types": []string{"video"}},
@@ -351,7 +351,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 	Describe("PUT /api/campaigns/:id", func() {
 		Context("when not authenticated", func() {
 			It("returns 401", func() {
-				body, _ := json.Marshal(fiber.Map{"name": "Updated", "campaign_type_id": "ct_retention"})
+				body, _ := json.Marshal(fiber.Map{"name": "Updated", "campaign_type_id": "Vq"})
 				req := httptest.NewRequest("PUT", "/api/campaigns/someid", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				resp, err := app.Test(req)
@@ -362,12 +362,12 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 
 		Context("when authenticated", func() {
 			It("updates the campaign and returns the updated resource", func() {
-				c := createCampaign("Original Name", "ct_awareness")
+				c := createCampaign("Original Name", "Uk")
 
 				count := 15
 				body, _ := json.Marshal(fiber.Map{
 					"name":                 "Updated Name",
-					"campaign_type_id":     "ct_retention",
+					"campaign_type_id":     "Vq",
 					"status":               "active",
 					"language":             "fr",
 					"estimated_post_count": count,
@@ -382,7 +382,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				var got models.Campaign
 				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
 				Expect(got.Name).To(Equal("Updated Name"))
-				Expect(got.CampaignTypeID).To(Equal("ct_retention"))
+				Expect(got.CampaignTypeID).To(Equal("Vq"))
 				Expect(got.Status).To(Equal(models.StatusActive))
 				Expect(got.Language).To(Equal("fr"))
 				Expect(got.EstimatedPostCount).NotTo(BeNil())
@@ -390,7 +390,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 			})
 
 			It("returns 404 for an unknown id", func() {
-				body, _ := json.Marshal(fiber.Map{"name": "Ghost", "campaign_type_id": "ct_awareness"})
+				body, _ := json.Marshal(fiber.Map{"name": "Ghost", "campaign_type_id": "Uk"})
 				req := httptest.NewRequest("PUT", "/api/campaigns/nonexistent", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				req.AddCookie(authCookie)
@@ -400,9 +400,9 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 			})
 
 			It("returns 400 when name is missing", func() {
-				c := createCampaign("Has Name", "ct_engagement")
+				c := createCampaign("Has Name", "gb")
 
-				body, _ := json.Marshal(fiber.Map{"campaign_type_id": "ct_awareness"})
+				body, _ := json.Marshal(fiber.Map{"campaign_type_id": "Uk"})
 				req := httptest.NewRequest("PUT", "/api/campaigns/"+c.ID, bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				req.AddCookie(authCookie)
@@ -412,9 +412,9 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 			})
 
 			It("returns 400 when campaign_type_id is invalid", func() {
-				c := createCampaign("Valid", "ct_engagement")
+				c := createCampaign("Valid", "gb")
 
-				body, _ := json.Marshal(fiber.Map{"name": "Valid", "campaign_type_id": "ct_bogus"})
+				body, _ := json.Marshal(fiber.Map{"name": "Valid", "campaign_type_id": "nonexistent"})
 				req := httptest.NewRequest("PUT", "/api/campaigns/"+c.ID, bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				req.AddCookie(authCookie)
@@ -446,7 +446,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 		It("returns tags populated on List", func() {
 			body, _ := json.Marshal(fiber.Map{
 				"name":             "Tagged Campaign",
-				"campaign_type_id": "ct_awareness",
+				"campaign_type_id": "Uk",
 				"tag_ids":          []string{tagID},
 			})
 			req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
@@ -472,11 +472,11 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 		})
 
 		It("returns tags populated on GetByID", func() {
-			c := createCampaign("Untagged", "ct_awareness")
+			c := createCampaign("Untagged", "Uk")
 
 			body, _ := json.Marshal(fiber.Map{
 				"name":             "Untagged",
-				"campaign_type_id": "ct_awareness",
+				"campaign_type_id": "Uk",
 				"tag_ids":          []string{tagID},
 			})
 			req := httptest.NewRequest("PUT", "/api/campaigns/"+c.ID, bytes.NewReader(body))
@@ -498,7 +498,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 		})
 
 		It("returns empty tags array when no tag_ids set", func() {
-			c := createCampaign("No Tags", "ct_engagement")
+			c := createCampaign("No Tags", "gb")
 
 			getReq := httptest.NewRequest("GET", "/api/campaigns/"+c.ID, nil)
 			getReq.AddCookie(authCookie)
@@ -527,7 +527,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 		Context("when authenticated", func() {
 			It("returns 503 when generateDraft is nil", func() {
 				// The test app is wired with generateDraft=nil.
-				c := createCampaign("Draft Campaign", "ct_awareness")
+				c := createCampaign("Draft Campaign", "Uk")
 				req := httptest.NewRequest("POST", "/api/campaigns/"+c.ID+"/generate-draft", nil)
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
@@ -611,7 +611,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				}
 
 				// Create a campaign as the second user.
-				campBody, _ := json.Marshal(fiber.Map{"name": "Other's Campaign", "campaign_type_id": "ct_awareness"})
+				campBody, _ := json.Marshal(fiber.Map{"name": "Other's Campaign", "campaign_type_id": "Uk"})
 				campReq := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(campBody))
 				campReq.Header.Set("Content-Type", "application/json")
 				campReq.AddCookie(otherCookie)
@@ -676,7 +676,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				}
 
 				// Create campaign.
-				campBody, _ := json.Marshal(fiber.Map{"name": "SSE Campaign", "campaign_type_id": "ct_awareness"})
+				campBody, _ := json.Marshal(fiber.Map{"name": "SSE Campaign", "campaign_type_id": "Uk"})
 				campReq := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(campBody))
 				campReq.Header.Set("Content-Type", "application/json")
 				campReq.AddCookie(sseCookie)
@@ -770,7 +770,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 					errCookie = ck
 				}
 
-				campBody, _ := json.Marshal(fiber.Map{"name": "Err Campaign", "campaign_type_id": "ct_awareness"})
+				campBody, _ := json.Marshal(fiber.Map{"name": "Err Campaign", "campaign_type_id": "Uk"})
 				campReq := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(campBody))
 				campReq.Header.Set("Content-Type", "application/json")
 				campReq.AddCookie(errCookie)
@@ -818,7 +818,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 
 		Context("when authenticated", func() {
 			It("deletes the campaign and returns 204", func() {
-				c := createCampaign("To Delete", "ct_conversion")
+				c := createCampaign("To Delete", "Ef")
 
 				req := httptest.NewRequest("DELETE", "/api/campaigns/"+c.ID, nil)
 				req.AddCookie(authCookie)

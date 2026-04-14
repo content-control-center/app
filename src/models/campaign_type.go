@@ -13,6 +13,7 @@ type CampaignType struct {
 	Name        string    `bun:"name,notnull"                                 json:"name"`
 	Label       string    `bun:"label,notnull"                                json:"label"`
 	Description string    `bun:"description,notnull"                          json:"description"`
+	IsSystem    bool      `bun:"is_system,notnull"                            json:"is_system"`
 	CreatedAt   time.Time `bun:"created_at,notnull,default:current_timestamp" json:"-"`
 	UpdatedAt   time.Time `bun:"updated_at,notnull,default:current_timestamp" json:"-"`
 

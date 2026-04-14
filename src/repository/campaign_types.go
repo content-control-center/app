@@ -10,11 +10,20 @@ import (
 	"github.com/content-control-center/app/src/models"
 )
 
-// CampaignTypeRepository defines read operations for the CampaignType domain.
-// Types and phases are seeded by migration and are never created or deleted via the API.
+// CampaignTypeRepository defines persistence operations for the CampaignType domain.
+// System types (is_system = true) are seeded by migration; only user-created types
+// support write operations.
 type CampaignTypeRepository interface {
 	List(ctx context.Context) ([]models.CampaignType, error)
 	GetByID(ctx context.Context, id string) (*models.CampaignType, error)
+	Create(ctx context.Context, ct *models.CampaignType) error
+	Update(ctx context.Context, ct *models.CampaignType) error
+	Delete(ctx context.Context, id string) (bool, error)
+
+	AddPhase(ctx context.Context, phase *models.CampaignTypePhase) error
+	GetPhaseByID(ctx context.Context, id string) (*models.CampaignTypePhase, error)
+	UpdatePhase(ctx context.Context, phase *models.CampaignTypePhase) error
+	DeletePhase(ctx context.Context, id string) (bool, error)
 }
 
 type campaignTypeRepository struct {
@@ -50,6 +59,56 @@ func (r *campaignTypeRepository) GetByID(ctx context.Context, id string) (*model
 		return nil, err
 	}
 	return &types[0], nil
+}
+
+func (r *campaignTypeRepository) Create(ctx context.Context, ct *models.CampaignType) error {
+	_, err := r.db.NewInsert().Model(ct).Exec(ctx)
+	return err
+}
+
+func (r *campaignTypeRepository) Update(ctx context.Context, ct *models.CampaignType) error {
+	_, err := r.db.NewUpdate().Model(ct).WherePK().Exec(ctx)
+	return err
+}
+
+func (r *campaignTypeRepository) Delete(ctx context.Context, id string) (bool, error) {
+	res, err := r.db.NewDelete().Model((*models.CampaignType)(nil)).Where("id = ?", id).Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+func (r *campaignTypeRepository) AddPhase(ctx context.Context, phase *models.CampaignTypePhase) error {
+	_, err := r.db.NewInsert().Model(phase).Exec(ctx)
+	return err
+}
+
+func (r *campaignTypeRepository) GetPhaseByID(ctx context.Context, id string) (*models.CampaignTypePhase, error) {
+	phase := new(models.CampaignTypePhase)
+	err := r.db.NewSelect().Model(phase).Where("ctp.id = ?", id).Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, sql.ErrNoRows
+		}
+		return nil, err
+	}
+	return phase, nil
+}
+
+func (r *campaignTypeRepository) UpdatePhase(ctx context.Context, phase *models.CampaignTypePhase) error {
+	_, err := r.db.NewUpdate().Model(phase).WherePK().Exec(ctx)
+	return err
+}
+
+func (r *campaignTypeRepository) DeletePhase(ctx context.Context, id string) (bool, error) {
+	res, err := r.db.NewDelete().Model((*models.CampaignTypePhase)(nil)).Where("id = ?", id).Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 func (r *campaignTypeRepository) hydratePhases(ctx context.Context, types []models.CampaignType) error {
