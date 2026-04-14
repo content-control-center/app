@@ -25,3 +25,4 @@ web/dist/
 # Claude
 CLAUDE.md
 **/CLAUDE.md
+/.claude/
