@@ -75,7 +75,7 @@ var _ = Describe("CampaignTypesHandler", Ordered, func() {
 
 	AfterEach(func() {
 		// Only delete user-created campaign types; seeded system types must survive across tests.
-		_, err := db.NewDelete().TableExpr("campaign_types").Where("is_system = FALSE").Exec(context.Background())
+		_, err := db.NewDelete().TableExpr("campaigns_types").Where("is_system = FALSE").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		_, err = db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())

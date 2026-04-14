@@ -86,7 +86,7 @@ Content-Type: application/json
 }
 
 ### Get campaign by ID  [protected]
-GET {{baseUrl}}/api/campaigns/{{campaignId}}
+GET {{baseUrl}}/api/campaigns/AWLjLyJpA9KR
 Accept: application/json
 
 ### Get campaign — non-existent ID (expects 404)  [protected]

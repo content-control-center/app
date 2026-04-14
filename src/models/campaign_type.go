@@ -7,7 +7,7 @@ import (
 )
 
 type CampaignType struct {
-	bun.BaseModel `bun:"table:campaign_types,alias:ct" swaggerignore:"true"`
+	bun.BaseModel `bun:"table:campaigns_types,alias:ct" swaggerignore:"true"`
 
 	ID          string    `bun:"id,pk"                                        json:"id"`
 	Name        string    `bun:"name,notnull"                                 json:"name"`
@@ -21,7 +21,7 @@ type CampaignType struct {
 }
 
 type CampaignTypePhase struct {
-	bun.BaseModel `bun:"table:campaign_type_phases,alias:ctp" swaggerignore:"true"`
+	bun.BaseModel `bun:"table:campaigns_types_phases,alias:ctp" swaggerignore:"true"`
 
 	ID             string    `bun:"id,pk"                                        json:"id"`
 	CampaignTypeID string    `bun:"campaign_type_id,notnull"                     json:"campaign_type_id"`

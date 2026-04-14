@@ -72,7 +72,7 @@ func (r *campaignTypeRepository) Update(ctx context.Context, ct *models.Campaign
 }
 
 func (r *campaignTypeRepository) Delete(ctx context.Context, id string) (bool, error) {
-	res, err := r.db.NewDelete().Model((*models.CampaignType)(nil)).Where("id = ?", id).Exec(ctx)
+	res, err := r.db.NewDelete().TableExpr("campaigns_types").Where("id = ?", id).Exec(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -103,7 +103,7 @@ func (r *campaignTypeRepository) UpdatePhase(ctx context.Context, phase *models.
 }
 
 func (r *campaignTypeRepository) DeletePhase(ctx context.Context, id string) (bool, error) {
-	res, err := r.db.NewDelete().Model((*models.CampaignTypePhase)(nil)).Where("id = ?", id).Exec(ctx)
+	res, err := r.db.NewDelete().TableExpr("campaigns_types_phases").Where("id = ?", id).Exec(ctx)
 	if err != nil {
 		return false, err
 	}

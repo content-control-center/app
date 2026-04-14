@@ -4,7 +4,6 @@ CREATE TABLE campaign_types
     name        TEXT     NOT NULL UNIQUE,
     label       TEXT     NOT NULL DEFAULT '',
     description TEXT     NOT NULL DEFAULT '',
-    is_system   BOOLEAN  NOT NULL DEFAULT FALSE,
     created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -23,11 +22,11 @@ CREATE TABLE campaign_type_phases
 -- ── Seed campaign types ───────────────────────────────────────────────────────
 -- IDs are deterministic Sqids: Encode([1]) = Uk, [2] = gb, [3] = Ef, [4] = Vq
 
-INSERT INTO campaign_types (id, name, label, description, is_system) VALUES
-    ('Uk', 'awareness',  'Awareness',  'Increase brand/product visibility among new audiences.',                                                     TRUE),
-    ('gb', 'engagement', 'Engagement', 'Build interactive relationships with the audience; increase frequency and depth of interaction.',             TRUE),
-    ('Ef', 'conversion', 'Conversion', 'Drive a specific action — purchase, signup, demo request, subscription.',                                    TRUE),
-    ('Vq', 'retention',  'Retention',  'Keep existing customers active, loyal, and expanding usage.',                                                TRUE);
+INSERT INTO campaign_types (id, name, label, description) VALUES
+    ('Uk', 'awareness',  'Awareness',  'Increase brand/product visibility among new audiences.'),
+    ('gb', 'engagement', 'Engagement', 'Build interactive relationships with the audience; increase frequency and depth of interaction.'),
+    ('Ef', 'conversion', 'Conversion', 'Drive a specific action — purchase, signup, demo request, subscription.'),
+    ('Vq', 'retention',  'Retention',  'Keep existing customers active, loyal, and expanding usage.');
 
 -- ── Seed phases ───────────────────────────────────────────────────────────────
 -- Phase IDs are deterministic Sqids: Encode([10..42])
