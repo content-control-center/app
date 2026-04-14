@@ -16,6 +16,7 @@ type EditPageHeaderProps = {
   breadcrumbs?: Breadcrumb[]
   className?: string
   actions?: ReactNode
+  unsaved?: boolean
 }
 
 export function EditPageHeader({
@@ -23,11 +24,12 @@ export function EditPageHeader({
   breadcrumbs = [],
   className,
   actions,
+  unsaved = false,
 }: EditPageHeaderProps) {
   const isMobile = useIsMobile()
 
   return (
-    <div className={cn('px-3 lg:px-6 flex flex-col gap-0 shrink-0', className)}>
+    <div className={cn('sticky top-0 z-10 pt-6 pb-6 px-3 lg:px-6 flex flex-col gap-0 shrink-0 bg-gradient-to-b from-background from-42% to-transparent', className)}>
       <div className="flex gap-3">
         <div className="md:hidden shrink-0">
           <Button
@@ -41,7 +43,7 @@ export function EditPageHeader({
           </Button>
         </div>
         <div className="flex flex-1 justify-center lg:justify-start items-center gap-2">
-          <nav className="flex items-center gap-1.5 text-[1rem] leading-6 font-medium font-sans tracking-tight truncate">
+          <nav className="flex items-center gap-1.5 text-[13px] leading-4 font-medium font-sans tracking-tight truncate">
             {breadcrumbs.map((crumb) => (
               <span key={crumb.to} className="flex items-center gap-1.5">
                 <Link to={crumb.to} className="text-tertiary-foreground hover:text-foreground transition-colors">
@@ -52,6 +54,15 @@ export function EditPageHeader({
             ))}
             <span className="truncate">{title}</span>
           </nav>
+          <span
+            aria-hidden={!unsaved}
+            aria-label="Unsaved changes"
+            title="Unsaved changes"
+            className={cn(
+              'inline-block size-1.5 rounded-full bg-gray-500 shrink-0 transition-opacity duration-200',
+              unsaved ? 'opacity-100 animate-pulse' : 'opacity-0',
+            )}
+          />
         </div>
         {actions && <div className="flex shrink-0 items-start gap-2">{actions}</div>}
       </div>
