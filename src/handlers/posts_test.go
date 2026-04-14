@@ -43,13 +43,14 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		sessionRepo := repository.NewSessionRepository(db)
 		settingRepo := repository.NewSettingRepository(db)
 		tagRepo := repository.NewTagRepository(db)
-		campaignRepo := repository.NewCampaignRepository(db, tagRepo, repository.NewPlatformRepository(db))
+		campaignTypeRepo := repository.NewCampaignTypeRepository(db)
+		campaignRepo := repository.NewCampaignRepository(db, tagRepo, repository.NewPlatformRepository(db), campaignTypeRepo)
 		pieceRepo := repository.NewPieceRepository(db, tagRepo)
 		postRepo := repository.NewPostRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
-		handlers.NewCampaignsHandler(campaignRepo, auth, nil).Register(app)
+		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil).Register(app)
 		handlers.NewPiecesHandler(pieceRepo, auth, nil).Register(app)
 		handlers.NewPostsHandler(postRepo, auth).Register(app)
 
@@ -72,7 +73,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		authCookie = cookies[0]
 
 		// Seed a campaign used across tests.
-		cBody, _ := json.Marshal(fiber.Map{"name": "Test Campaign", "objective": "awareness"})
+		cBody, _ := json.Marshal(fiber.Map{"name": "Test Campaign", "campaign_type_id": "ct_awareness"})
 		cReq := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(cBody))
 		cReq.Header.Set("Content-Type", "application/json")
 		cReq.AddCookie(authCookie)

@@ -32,8 +32,8 @@ func validateInput(ctx context.Context, campaignID string, campaignRepo reposito
 	if c.ToneGuidelines == "" {
 		missing = append(missing, "tone_guidelines")
 	}
-	if c.Objective == "" {
-		missing = append(missing, "objective")
+	if c.CampaignTypeID == "" {
+		missing = append(missing, "campaign_type_id")
 	}
 	if c.StartDate == nil {
 		missing = append(missing, "start_date")

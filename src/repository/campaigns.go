@@ -20,14 +20,15 @@ type CampaignRepository interface {
 }
 
 type campaignRepository struct {
-	db           *bun.DB
-	tagRepo      TagRepository
-	platformRepo PlatformRepository
+	db               *bun.DB
+	tagRepo          TagRepository
+	platformRepo     PlatformRepository
+	campaignTypeRepo CampaignTypeRepository
 }
 
 // NewCampaignRepository returns a Bun-backed CampaignRepository.
-func NewCampaignRepository(db *bun.DB, tagRepo TagRepository, platformRepo PlatformRepository) CampaignRepository {
-	return &campaignRepository{db: db, tagRepo: tagRepo, platformRepo: platformRepo}
+func NewCampaignRepository(db *bun.DB, tagRepo TagRepository, platformRepo PlatformRepository, campaignTypeRepo CampaignTypeRepository) CampaignRepository {
+	return &campaignRepository{db: db, tagRepo: tagRepo, platformRepo: platformRepo, campaignTypeRepo: campaignTypeRepo}
 }
 
 func (r *campaignRepository) List(ctx context.Context) ([]models.Campaign, error) {
@@ -39,6 +40,9 @@ func (r *campaignRepository) List(ctx context.Context) ([]models.Campaign, error
 		return nil, err
 	}
 	if err := r.hydratePlatforms(ctx, campaigns); err != nil {
+		return nil, err
+	}
+	if err := r.hydrateCampaignTypes(ctx, campaigns); err != nil {
 		return nil, err
 	}
 	return campaigns, nil
@@ -63,6 +67,9 @@ func (r *campaignRepository) GetByID(ctx context.Context, id string) (*models.Ca
 		return nil, err
 	}
 	if err := r.hydratePlatforms(ctx, campaigns); err != nil {
+		return nil, err
+	}
+	if err := r.hydrateCampaignTypes(ctx, campaigns); err != nil {
 		return nil, err
 	}
 	return &campaigns[0], nil
@@ -102,6 +109,23 @@ func (r *campaignRepository) hydratePlatforms(ctx context.Context, campaigns []m
 			if p, ok := byID[tp.ID]; ok {
 				campaigns[i].Platforms = append(campaigns[i].Platforms, *p)
 			}
+		}
+	}
+	return nil
+}
+
+func (r *campaignRepository) hydrateCampaignTypes(ctx context.Context, campaigns []models.Campaign) error {
+	ids := make([]string, 0, len(campaigns))
+	for _, c := range campaigns {
+		ids = append(ids, c.CampaignTypeID)
+	}
+	byID, err := fetchByIDs(ctx, r.db, ids, func(ct *models.CampaignType) string { return ct.ID })
+	if err != nil {
+		return err
+	}
+	for i, c := range campaigns {
+		if ct, ok := byID[c.CampaignTypeID]; ok {
+			campaigns[i].CampaignType = ct
 		}
 	}
 	return nil

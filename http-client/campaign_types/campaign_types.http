@@ -1,0 +1,29 @@
+@baseUrl = http://localhost:9001
+
+# All campaign_types endpoints require authentication.
+# Run "Login" from sessions/sessions.http first — the HTTP client stores and
+# sends the cookie automatically on subsequent requests to the same host.
+
+### List all campaign types with phases  [protected]
+GET {{baseUrl}}/api/campaign_types
+Accept: application/json
+
+### Get campaign type — Awareness  [protected]
+GET {{baseUrl}}/api/campaign_types/ct_awareness
+Accept: application/json
+
+### Get campaign type — Engagement  [protected]
+GET {{baseUrl}}/api/campaign_types/ct_engagement
+Accept: application/json
+
+### Get campaign type — Conversion  [protected]
+GET {{baseUrl}}/api/campaign_types/ct_conversion
+Accept: application/json
+
+### Get campaign type — Retention  [protected]
+GET {{baseUrl}}/api/campaign_types/ct_retention
+Accept: application/json
+
+### Get campaign type — non-existent ID (expects 404)  [protected]
+GET {{baseUrl}}/api/campaign_types/ct_unknown
+Accept: application/json

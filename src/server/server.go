@@ -38,7 +38,8 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	pieceRepo := repository.NewPieceRepository(db, tagRepo)
 	embeddingRepo := repository.NewPiecesEmbeddingRepository(db)
 	platformRepo := repository.NewPlatformRepository(db)
-	campaignRepo := repository.NewCampaignRepository(db, tagRepo, platformRepo)
+	campaignTypeRepo := repository.NewCampaignTypeRepository(db)
+	campaignRepo := repository.NewCampaignRepository(db, tagRepo, platformRepo, campaignTypeRepo)
 	postRepo := repository.NewPostRepository(db)
 	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
 
@@ -66,7 +67,8 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	if err != nil {
 		return nil, err
 	}
-	handlers.NewCampaignsHandler(campaignRepo, auth, generateDraft).Register(app)
+	handlers.NewCampaignTypesHandler(campaignTypeRepo, auth).Register(app)
+	handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, generateDraft).Register(app)
 	handlers.NewPlatformsHandler(platformRepo, auth).Register(app)
 	handlers.NewTagsHandler(tagRepo, auth).Register(app)
 	handlers.NewPostsHandler(postRepo, auth).Register(app)

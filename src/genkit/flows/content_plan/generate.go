@@ -92,7 +92,7 @@ func generatePosts(
 	data := contentPlanTemplateData{
 		Name:               campaign.Name,
 		Description:        campaign.Description,
-		Objective:          string(campaign.Objective),
+		Objective:          campaign.CampaignType.Name,
 		TargetPersona:      campaign.TargetPersona,
 		KeyMessages:        campaign.KeyMessages,
 		ToneGuidelines:     campaign.ToneGuidelines,

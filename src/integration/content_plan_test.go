@@ -69,7 +69,7 @@ var _ = Describe("Content plan flow", Ordered, func() {
 			TargetPersona:     "Marketing professionals aged 25–45 interested in SaaS tools.",
 			KeyMessages:       "Save time, increase reach, data-driven insights.",
 			ToneGuidelines:    "Professional yet approachable; use concrete examples.",
-			Objective:         models.ObjectiveAwareness,
+			CampaignTypeID:    "ct_awareness",
 			Status:            models.StatusDraft,
 			Language:          "en",
 			TargetPlatforms: models.CampaignPlatforms{

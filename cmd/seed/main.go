@@ -40,7 +40,7 @@ type seedCampaign struct {
 	TargetPersona      string   `json:"target_persona"`
 	KeyMessages        string   `json:"key_messages"`
 	ToneGuidelines     string   `json:"tone_guidelines"`
-	Objective          string   `json:"objective"`
+	CampaignTypeID     string   `json:"campaign_type_id"`
 	Status             string   `json:"status"`
 	UsePieces          bool     `json:"use_pieces"`
 	PieceIndices       []int    `json:"piece_indices"`       // 0-based indices into pieces slice
@@ -179,7 +179,7 @@ func main() {
 			TargetPersona:      sc.TargetPersona,
 			KeyMessages:        sc.KeyMessages,
 			ToneGuidelines:     sc.ToneGuidelines,
-			Objective:          models.CampaignObjective(sc.Objective),
+			CampaignTypeID:     sc.CampaignTypeID,
 			Status:             models.CampaignStatus(sc.Status),
 			UsePieces:          sc.UsePieces,
 			PiecesIDs:          resolveIndices(sc.PieceIndices, pieceIDs, "piece"),
