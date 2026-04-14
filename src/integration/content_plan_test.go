@@ -40,7 +40,8 @@ var _ = Describe("Content plan flow", Ordered, func() {
 		pieceRepo := repository.NewPieceRepository(db, tagRepo)
 		embeddingRepo := repository.NewPiecesEmbeddingRepository(db)
 		platformRepo := repository.NewPlatformRepository(db)
-		campaignRepo := repository.NewCampaignRepository(db, tagRepo, platformRepo)
+		campaignTypeRepo := repository.NewCampaignTypeRepository(db)
+		campaignRepo := repository.NewCampaignRepository(db, tagRepo, platformRepo, campaignTypeRepo)
 		postRepo := repository.NewPostRepository(db)
 
 		// Seed user.
