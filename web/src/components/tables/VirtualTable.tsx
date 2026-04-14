@@ -136,7 +136,7 @@ function VirtualTableComponent<TData extends Record<string, unknown>>({
           return (
             <div
               className={cn(
-                'h-[34px] border-b-2 pt-0.5 border-background leading-7 relative',
+                'h-[34px] border-b-2 border-background leading-7 relative',
                 cellClass
               )}
             >

@@ -2,7 +2,6 @@
 import { useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 // import { useNavigate, useLocation } from '@tanstack/react-router'
-import { useOverlay } from '@/hooks/useOverlay'
 import { useIsMobile } from '@/hooks/use-mobile.ts'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Icon } from '@/components/ui/icon'
@@ -14,7 +13,7 @@ export function CampaignsListContent() {
   // const navigate = useNavigate()
   // const location = useLocation()
   const isMobile = useIsMobile()
-  const createOverlay = useOverlay('create-campaign')
+//  const createOverlay = useOverlay('create-campaign')
 
   useEffect(() => {
     // Separate "All Campaigns" from regular campaigns
@@ -69,7 +68,7 @@ export function CampaignsListContent() {
               size={'lg'}
               variant={'link'}
               className="justify-start w-full px-0"
-              onClick={() => createOverlay.open()}
+          //    onClick={() => createOverlay.open()}
             >
               <Icon name={'plus'} />
               <span>CREATE CAMPAIGN</span>
@@ -83,7 +82,7 @@ export function CampaignsListContent() {
             size={'lg'}
             variant={'outline'}
             className="w-full justify-between flex-row-reverse"
-            onClick={() => createOverlay.open()}
+          //  onClick={() => createOverlay.open()}
           >
             <Icon name={'plus'} />
             <span>CREATE PORTFOLIO</span>

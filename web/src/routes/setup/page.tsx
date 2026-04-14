@@ -5,13 +5,8 @@ import { AppAuth } from '@/components/layout/AppAuth'
 type PageState = 'form' | 'email-sent'
 
 function RegisterPage() {
-  const [pageState, setPageState] = useState<PageState>('form')
-  const [registeredEmail, setRegisteredEmail] = useState<string>()
-
-  const handleRegistrationSuccess = (email: string) => {
-    setRegisteredEmail(email)
-    setPageState('email-sent')
-  }
+  const [pageState] = useState<PageState>('form')
+  const [registeredEmail] = useState<string>()
 
   const getTitleSubtitle = (): { title: string; subtitle: string } => {
     switch (pageState) {
