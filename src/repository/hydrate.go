@@ -50,6 +50,21 @@ func collectIDs[T any](items []T, getID func(T) string) []string {
 	return ids
 }
 
+// collectIDsPtr returns a deduplicated slice of non-nil IDs extracted from nullable pointer fields.
+func collectIDsPtr[T any](items []T, getID func(T) *string) []string {
+	seen := make(map[string]struct{})
+	var ids []string
+	for _, item := range items {
+		if ptr := getID(item); ptr != nil {
+			if _, ok := seen[*ptr]; !ok {
+				seen[*ptr] = struct{}{}
+				ids = append(ids, *ptr)
+			}
+		}
+	}
+	return ids
+}
+
 // collectIDsFlat returns a deduplicated slice of IDs extracted from a per-item slice.
 func collectIDsFlat[T any](items []T, getIDs func(T) []string) []string {
 	seen := make(map[string]struct{})

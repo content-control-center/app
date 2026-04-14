@@ -89,20 +89,32 @@ func generatePosts(
 
 	dayCount := int(campaign.EndDate.Sub(*campaign.StartDate).Hours() / 24)
 
+	phases := make([]resolvedPhase, len(campaign.CampaignType.Phases))
+	for i, p := range campaign.CampaignType.Phases {
+		phases[i] = resolvedPhase{
+			ID:       p.ID,
+			Name:     p.Name,
+			Purpose:  p.Purpose,
+			Sequence: p.Sequence,
+		}
+	}
+
 	data := contentPlanTemplateData{
-		Name:               campaign.Name,
-		Description:        campaign.Description,
-		Objective:          campaign.CampaignType.Name,
-		TargetPersona:      campaign.TargetPersona,
-		KeyMessages:        campaign.KeyMessages,
-		ToneGuidelines:     campaign.ToneGuidelines,
-		Language:           campaign.Language,
-		StartDate:          campaign.StartDate.Format("2006-01-02"),
-		EndDate:            campaign.EndDate.Format("2006-01-02"),
-		DayCount:           dayCount,
-		EstimatedPostCount: estCount,
-		Platforms:          platforms,
-		Pieces:             pieces,
+		Name:                    campaign.Name,
+		Description:             campaign.Description,
+		CampaignTypeLabel:       campaign.CampaignType.Label,
+		CampaignTypeDescription: campaign.CampaignType.Description,
+		Phases:                  phases,
+		TargetPersona:           campaign.TargetPersona,
+		KeyMessages:             campaign.KeyMessages,
+		ToneGuidelines:          campaign.ToneGuidelines,
+		Language:                campaign.Language,
+		StartDate:               campaign.StartDate.Format("2006-01-02"),
+		EndDate:                 campaign.EndDate.Format("2006-01-02"),
+		DayCount:                dayCount,
+		EstimatedPostCount:      estCount,
+		Platforms:               platforms,
+		Pieces:                  pieces,
 	}
 
 	systemPrompt, err := renderTemplate(cfg.systemTmpl, data)
@@ -274,6 +286,11 @@ func persistDraftPosts(ctx context.Context, posts []DraftPost, campaign *models.
 			scheduledAt = &t
 		}
 
+		var phaseID *string
+		if dp.PhaseID != "" {
+			phaseID = &dp.PhaseID
+		}
+
 		records = append(records, &models.Post{
 			ID:                  id,
 			CampaignID:          campaign.ID,
@@ -287,6 +304,7 @@ func persistDraftPosts(ctx context.Context, posts []DraftPost, campaign *models.
 			CTAUrl:              "",
 			TargetAudienceNotes: dp.ToneNotes,
 			UsedPiecesIDs:       models.StringSlice(dp.PieceRefs),
+			CampaignTypePhaseID: phaseID,
 			ScheduledAt:         scheduledAt,
 			CreatedBy:           campaign.CreatedBy,
 		})

@@ -16,6 +16,7 @@ type DraftPost struct {
 	PlatformID  string   `json:"platformId"              jsonschema:"description=Exact platform ID string from the campaign e.g. linkedin x-twitter instagram"`
 	PublishDate string   `json:"publishDate"             jsonschema:"description=ISO 8601 date YYYY-MM-DD within the campaign date range"`
 	ToneNotes   string   `json:"toneNotes"               jsonschema:"description=How the campaign tone guidelines apply to this specific post"`
+	PhaseID     string   `json:"phaseId"                 jsonschema:"description=Exact phase ID from the campaign phases list; every post must be assigned to one phase"`
 	PieceRefs   []string `json:"pieceRefs,omitempty"     jsonschema:"description=IDs of pieces whose facts or ideas were directly used in this post; omit if none"`
 }
 
@@ -44,21 +45,31 @@ type resolvedPlatform struct {
 	Constraints  string   // character limits, format notes
 }
 
+// resolvedPhase is an internal type used to build the prompt context.
+type resolvedPhase struct {
+	ID       string
+	Name     string
+	Purpose  string
+	Sequence int
+}
+
 // contentPlanTemplateData is the data passed to the user-prompt template.
 type contentPlanTemplateData struct {
-	Name               string
-	Description        string
-	Objective          string
-	TargetPersona      string
-	KeyMessages        string
-	ToneGuidelines     string
-	Language           string
-	StartDate          string
-	EndDate            string
-	DayCount           int
-	EstimatedPostCount int
-	Platforms          []resolvedPlatform
-	Pieces             []resolvedPiece
+	Name                   string
+	Description            string
+	CampaignTypeLabel      string
+	CampaignTypeDescription string
+	Phases                 []resolvedPhase
+	TargetPersona          string
+	KeyMessages            string
+	ToneGuidelines         string
+	Language               string
+	StartDate              string
+	EndDate                string
+	DayCount               int
+	EstimatedPostCount     int
+	Platforms              []resolvedPlatform
+	Pieces                 []resolvedPiece
 }
 
 // ValidationError is returned by the flow when preconditions are not met.

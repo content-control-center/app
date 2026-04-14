@@ -105,6 +105,7 @@ func (r *postRepository) hydrateRelations(ctx context.Context, posts []models.Po
 	campaignIDs := collectIDs(posts, func(p models.Post) string { return p.CampaignID })
 	platformIDs := collectIDs(posts, func(p models.Post) string { return p.PlatformID })
 	pieceIDs := collectIDsFlat(posts, func(p models.Post) []string { return p.UsedPiecesIDs })
+	phaseIDs := collectIDsPtr(posts, func(p models.Post) *string { return p.CampaignTypePhaseID })
 
 	campaignByID, err := fetchByIDs[models.Campaign](ctx, r.db, campaignIDs, func(c *models.Campaign) string { return c.ID })
 	if err != nil {
@@ -127,6 +128,11 @@ func (r *postRepository) hydrateRelations(ctx context.Context, posts []models.Po
 		p.Tags = []models.Tag{}
 	}
 
+	phaseByID, err := fetchByIDs[models.CampaignTypePhase](ctx, r.db, phaseIDs, func(p *models.CampaignTypePhase) string { return p.ID })
+	if err != nil {
+		return err
+	}
+
 	for i, p := range posts {
 		posts[i].Campaign = campaignByID[p.CampaignID]
 		posts[i].Platform = platformByID[p.PlatformID]
@@ -134,6 +140,9 @@ func (r *postRepository) hydrateRelations(ctx context.Context, posts []models.Po
 			if piece, ok := pieceByID[id]; ok {
 				posts[i].UsedPieces = append(posts[i].UsedPieces, *piece)
 			}
+		}
+		if p.CampaignTypePhaseID != nil {
+			posts[i].CampaignTypePhase = phaseByID[*p.CampaignTypePhaseID]
 		}
 	}
 	return nil
