@@ -47,10 +47,10 @@ func (h *PostsHandler) Register(app *fiber.App) {
 }
 
 type postRequest struct {
-	CampaignID          string             `json:"campaign_id"           validate:"required"`
-	PlatformID          string             `json:"platform_id"           validate:"required"`
-	PlatformPostType    string             `json:"platform_post_type"    validate:"required"`
-	Title               string             `json:"title"                 validate:"required"`
+	CampaignID          string             `json:"campaign_id"             validate:"required"`
+	PlatformID          string             `json:"platform_id"             validate:"required"`
+	PlatformPostType    string             `json:"platform_post_type"      validate:"required"`
+	Title               string             `json:"title"                   validate:"required"`
 	Content             string             `json:"content"`
 	MediaURLs           models.StringSlice `json:"media_urls"`
 	ScheduledAt         *time.Time         `json:"scheduled_at"`
@@ -60,6 +60,7 @@ type postRequest struct {
 	CTAUrl              string             `json:"cta_url"`
 	TargetAudienceNotes string             `json:"target_audience_notes"`
 	UsedPiecesIDs       models.StringSlice `json:"used_pieces_ids"`
+	CampaignTypePhaseID *string            `json:"campaign_type_phase_id"`
 }
 
 func (r *postRequest) toStatus() models.PostStatus {
@@ -162,6 +163,7 @@ func (h *PostsHandler) Create(c *fiber.Ctx) error {
 		CTAUrl:              req.CTAUrl,
 		TargetAudienceNotes: req.TargetAudienceNotes,
 		UsedPiecesIDs:       nullSlice(req.UsedPiecesIDs),
+		CampaignTypePhaseID: req.CampaignTypePhaseID,
 		CreatedBy:           session.UserID,
 		UsedPieces:          []models.Piece{},
 	}
@@ -243,6 +245,7 @@ func (h *PostsHandler) Update(c *fiber.Ctx) error {
 	post.Status = status
 	post.CTAType = ctaType
 	post.CTAUrl = req.CTAUrl
+	post.CampaignTypePhaseID = req.CampaignTypePhaseID
 	post.TargetAudienceNotes = req.TargetAudienceNotes
 	post.UsedPiecesIDs = nullSlice(req.UsedPiecesIDs)
 	post.UpdatedAt = time.Now().UTC()

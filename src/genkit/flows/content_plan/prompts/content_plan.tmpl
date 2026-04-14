@@ -5,8 +5,11 @@ Hard rules — posts that violate these will be discarded, and any missing posts
 • platformId must be one of the exact ID strings listed in "Target Platforms" — do not use platform names, do not invent IDs
 • Only generate posts for the platforms listed in "Target Platforms" — never add platforms that are not listed
 • contentType must be one of the slug values listed under that platform's "Post types" — do not use display names or invent values
+• phaseId must be exactly one of the IDs listed under "Campaign Phases" — do not invent phase IDs, do not leave it empty
 • Generate the exact number of posts specified in the user message — do not stop early
 • Distribute posts evenly across all listed platforms and across the full date range
+• Distribute posts chronologically by phase sequence — earlier phases must be front-loaded in the date range; later phases appear toward the end
+• Each post's angle and content must serve both the campaign type's overall goal and the specific phase's purpose
 • Every post must clearly serve the stated campaign objective
 • body must be a bullet list of 5–7 short theses (key points to expand later), NOT finished copy — maximum 500 characters total
 
@@ -19,13 +22,15 @@ Output format — respond with a raw JSON array only, no markdown fences, no oth
     "platformId": "string",
     "publishDate": "YYYY-MM-DD",
     "toneNotes": "string",
+    "phaseId": "string",
     "pieceRefs": ["id1", "id2"]
   }
 ]
 pieceRefs must list ONLY the IDs of pieces whose facts, ideas, or wording were directly drawn upon for this post's theses. Omit pieceRefs entirely (or leave it empty) when no reference material was used.{{end}}
 
 {{define "user"}}Campaign: {{.Name}}
-Objective: {{.Objective}}
+Campaign Type: {{.CampaignTypeLabel}}
+Campaign Type Goal: {{.CampaignTypeDescription}}
 Description: {{.Description}}
 Target Persona: {{.TargetPersona}}
 Key Messages: {{.KeyMessages}}
@@ -35,6 +40,12 @@ Language: {{.Language}}
 Date Range: {{.StartDate}} — {{.EndDate}} ({{.DayCount}} days)
 {{- if gt .EstimatedPostCount 0}}
 Required post count: exactly {{.EstimatedPostCount}} posts. The JSON array must contain exactly {{.EstimatedPostCount}} objects — no more, no fewer.
+{{- end}}
+
+Campaign Phases — assign every post to exactly one phase using the exact phaseId:
+{{- range .Phases}}
+  Phase {{.Sequence}}: {{.Name}} (phaseId: "{{.ID}}")
+  Purpose: {{.Purpose}}
 {{- end}}
 
 Target Platforms:

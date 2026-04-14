@@ -1,0 +1,127 @@
+@baseUrl = http://localhost:9001
+
+# All campaign_types endpoints require authentication.
+# Run "Login" from sessions/sessions.http first.
+
+# Seeded system campaign type IDs (deterministic Sqids):
+#   awareness  -> Uk
+#   engagement -> gb
+#   conversion -> Ef
+#   retention  -> Vq
+
+### List all campaign types with phases  [protected]
+GET {{baseUrl}}/api/campaign_types
+Accept: application/json
+
+### Get campaign type — Awareness  [protected]
+GET {{baseUrl}}/api/campaign_types/Uk
+Accept: application/json
+
+### Get campaign type — Engagement  [protected]
+GET {{baseUrl}}/api/campaign_types/gb
+Accept: application/json
+
+### Get campaign type — Conversion  [protected]
+GET {{baseUrl}}/api/campaign_types/Ef
+Accept: application/json
+
+### Get campaign type — Retention  [protected]
+GET {{baseUrl}}/api/campaign_types/Vq
+Accept: application/json
+
+### Get campaign type — non-existent ID (expects 404)  [protected]
+GET {{baseUrl}}/api/campaign_types/nonexistent
+Accept: application/json
+
+### Create campaign type from scratch  [protected]
+# @name createCampaignType
+POST {{baseUrl}}/api/campaign_types
+Content-Type: application/json
+
+{
+  "name": "product-launch",
+  "label": "Product Launch",
+  "description": "Specialized phases for a new product launch."
+}
+
+> {% client.global.set("campaignTypeId", response.body.id) %}
+
+### Create campaign type — missing name (expects 400)  [protected]
+POST {{baseUrl}}/api/campaign_types
+Content-Type: application/json
+
+{
+  "label": "No Name"
+}
+
+### Update campaign type  [protected]
+PUT {{baseUrl}}/api/campaign_types/{{campaignTypeId}}
+Content-Type: application/json
+
+{
+  "name": "product-launch-v2",
+  "label": "Product Launch v2",
+  "description": "Updated description."
+}
+
+### Update system type (expects 403)  [protected]
+PUT {{baseUrl}}/api/campaign_types/Uk
+Content-Type: application/json
+
+{
+  "name": "hacked",
+  "label": "Hacked"
+}
+
+### Clone campaign type — from Awareness  [protected]
+# @name cloneCampaignType
+POST {{baseUrl}}/api/campaign_types/Uk/clone
+Content-Type: application/json
+
+{
+  "name": "my-awareness",
+  "label": "My Awareness"
+}
+
+> {% client.global.set("clonedTypeId", response.body.id) %}
+
+### Clone campaign type — non-existent source (expects 404)  [protected]
+POST {{baseUrl}}/api/campaign_types/nonexistent/clone
+Content-Type: application/json
+
+{
+  "name": "ghost-clone",
+  "label": "Ghost Clone"
+}
+
+### Add phase to campaign type  [protected]
+# @name addPhase
+POST {{baseUrl}}/api/campaign_types/{{campaignTypeId}}/phases
+Content-Type: application/json
+
+{
+  "name": "Kickoff",
+  "purpose": "Set the stage and align the team.",
+  "sequence": 1
+}
+
+> {% client.global.set("phaseId", response.body.id) %}
+
+### Update phase  [protected]
+PUT {{baseUrl}}/api/campaign_types/{{campaignTypeId}}/phases/{{phaseId}}
+Content-Type: application/json
+
+{
+  "name": "Kickoff (Revised)",
+  "purpose": "Updated purpose.",
+  "sequence": 1
+}
+
+### Delete phase  [protected]
+DELETE {{baseUrl}}/api/campaign_types/{{campaignTypeId}}/phases/{{phaseId}}
+
+### Delete campaign type  [protected]
+DELETE {{baseUrl}}/api/campaign_types/{{campaignTypeId}}
+
+### Delete system type (expects 403)  [protected]
+DELETE {{baseUrl}}/api/campaign_types/Uk

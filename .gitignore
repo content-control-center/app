@@ -15,6 +15,13 @@ web/.pnpm-store/
 web/dist/
 !web/dist/index.html
 
+prototyping/**/.agents
+prototyping/**/.claude
+prototyping/**/.vite
+prototyping/**/dist
+prototyping/**/node_modules
+prototyping/**/skills-lock.json
+
 # Env
 .env.*
 

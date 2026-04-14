@@ -40,7 +40,8 @@ var _ = Describe("Content plan flow", Ordered, func() {
 		pieceRepo := repository.NewPieceRepository(db, tagRepo)
 		embeddingRepo := repository.NewPiecesEmbeddingRepository(db)
 		platformRepo := repository.NewPlatformRepository(db)
-		campaignRepo := repository.NewCampaignRepository(db, tagRepo, platformRepo)
+		campaignTypeRepo := repository.NewCampaignTypeRepository(db)
+		campaignRepo := repository.NewCampaignRepository(db, tagRepo, platformRepo, campaignTypeRepo)
 		postRepo := repository.NewPostRepository(db)
 
 		// Seed user.
@@ -69,7 +70,7 @@ var _ = Describe("Content plan flow", Ordered, func() {
 			TargetPersona:     "Marketing professionals aged 25–45 interested in SaaS tools.",
 			KeyMessages:       "Save time, increase reach, data-driven insights.",
 			ToneGuidelines:    "Professional yet approachable; use concrete examples.",
-			Objective:         models.ObjectiveAwareness,
+			CampaignTypeID:    "Uk",
 			Status:            models.StatusDraft,
 			Language:          "en",
 			TargetPlatforms: models.CampaignPlatforms{

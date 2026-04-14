@@ -32,8 +32,11 @@ func validateInput(ctx context.Context, campaignID string, campaignRepo reposito
 	if c.ToneGuidelines == "" {
 		missing = append(missing, "tone_guidelines")
 	}
-	if c.Objective == "" {
-		missing = append(missing, "objective")
+	if c.CampaignTypeID == "" {
+		missing = append(missing, "campaign_type_id")
+	}
+	if c.CampaignType != nil && len(c.CampaignType.Phases) == 0 {
+		return nil, &ValidationError{Msg: "campaign type has no phases — add at least one phase before generating content"}
 	}
 	if c.StartDate == nil {
 		missing = append(missing, "start_date")
@@ -83,6 +86,11 @@ func validateOutput(posts []DraftPost, campaign *models.Campaign, platforms []re
 		}
 	}
 
+	validPhaseIDs := make(map[string]bool, len(campaign.CampaignType.Phases))
+	for _, ph := range campaign.CampaignType.Phases {
+		validPhaseIDs[ph.ID] = true
+	}
+
 	startDate := campaign.StartDate.Format("2006-01-02")
 	endDate := campaign.EndDate.Format("2006-01-02")
 
@@ -103,6 +111,10 @@ func validateOutput(posts []DraftPost, campaign *models.Campaign, platforms []re
 		d := post.PublishDate
 		if d < startDate || d > endDate {
 			warnings = append(warnings, fmt.Sprintf("post %q dropped: publishDate %q is outside campaign range", post.Title, d))
+			continue
+		}
+		if !validPhaseIDs[post.PhaseID] {
+			warnings = append(warnings, fmt.Sprintf("post %q dropped: unknown phaseId %q", post.Title, post.PhaseID))
 			continue
 		}
 		valid = append(valid, post)

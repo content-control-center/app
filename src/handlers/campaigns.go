@@ -17,13 +17,6 @@ import (
 	"github.com/content-control-center/app/src/repository"
 )
 
-var validObjectives = map[models.CampaignObjective]bool{
-	models.ObjectiveAwareness:  true,
-	models.ObjectiveEngagement: true,
-	models.ObjectiveConversion: true,
-	models.ObjectiveRetention:  true,
-}
-
 var validStatuses = map[models.CampaignStatus]bool{
 	models.StatusDraft:     true,
 	models.StatusScheduled: true,
@@ -34,13 +27,14 @@ var validStatuses = map[models.CampaignStatus]bool{
 }
 
 type CampaignsHandler struct {
-	repo          repository.CampaignRepository
-	auth          fiber.Handler
-	generateDraft func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)
+	repo             repository.CampaignRepository
+	campaignTypeRepo repository.CampaignTypeRepository
+	auth             fiber.Handler
+	generateDraft    func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)
 }
 
-func NewCampaignsHandler(repo repository.CampaignRepository, auth fiber.Handler, generateDraft func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)) *CampaignsHandler {
-	return &CampaignsHandler{repo: repo, auth: auth, generateDraft: generateDraft}
+func NewCampaignsHandler(repo repository.CampaignRepository, campaignTypeRepo repository.CampaignTypeRepository, auth fiber.Handler, generateDraft func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)) *CampaignsHandler {
+	return &CampaignsHandler{repo: repo, campaignTypeRepo: campaignTypeRepo, auth: auth, generateDraft: generateDraft}
 }
 
 func (h *CampaignsHandler) Register(app *fiber.App) {
@@ -62,7 +56,7 @@ type campaignRequest struct {
 	UsePieces          bool                     `json:"use_pieces"`
 	PiecesIDs          models.StringSlice       `json:"pieces_ids"`
 	TargetPlatforms    models.CampaignPlatforms `json:"target_platforms"`
-	Objective          models.CampaignObjective `json:"objective"           validate:"required"`
+	CampaignTypeID     string                   `json:"campaign_type_id"    validate:"required"`
 	Status             models.CampaignStatus    `json:"status"`
 	StartDate          *time.Time               `json:"start_date"`
 	EndDate            *time.Time               `json:"end_date"`
@@ -117,12 +111,12 @@ func (h *CampaignsHandler) Create(c *fiber.Ctx) error {
 	if err := validate.Struct(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
 	}
-	if !validObjectives[req.Objective] {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid objective")
-	}
 	status := req.toStatus()
 	if !validStatuses[status] {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid status")
+	}
+	if _, err := h.campaignTypeRepo.GetByID(c.Context(), req.CampaignTypeID); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid campaign_type_id")
 	}
 
 	session := c.Locals("session").(*models.Session)
@@ -142,7 +136,7 @@ func (h *CampaignsHandler) Create(c *fiber.Ctx) error {
 		UsePieces:          req.UsePieces,
 		PiecesIDs:          nullSlice(req.PiecesIDs),
 		TargetPlatforms:    nullCampaignPlatforms(req.TargetPlatforms),
-		Objective:          req.Objective,
+		CampaignTypeID:     req.CampaignTypeID,
 		Status:             status,
 		EstimatedPostCount: req.EstimatedPostCount,
 		StartDate:          req.StartDate,
@@ -204,12 +198,12 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 	if err := validate.Struct(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
 	}
-	if !validObjectives[req.Objective] {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid objective")
-	}
 	status := req.toStatus()
 	if !validStatuses[status] {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid status")
+	}
+	if _, err := h.campaignTypeRepo.GetByID(c.Context(), req.CampaignTypeID); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid campaign_type_id")
 	}
 
 	campaign, err := h.repo.GetByID(c.Context(), c.Params("id"))
@@ -228,7 +222,7 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 	campaign.UsePieces = req.UsePieces
 	campaign.PiecesIDs = nullSlice(req.PiecesIDs)
 	campaign.TargetPlatforms = nullCampaignPlatforms(req.TargetPlatforms)
-	campaign.Objective = req.Objective
+	campaign.CampaignTypeID = req.CampaignTypeID
 	campaign.Status = status
 	campaign.EstimatedPostCount = req.EstimatedPostCount
 	campaign.StartDate = req.StartDate
