@@ -20,13 +20,15 @@ type CampaignRepository interface {
 }
 
 type campaignRepository struct {
-	db      *bun.DB
-	tagRepo TagRepository
+	db               *bun.DB
+	tagRepo          TagRepository
+	platformRepo     PlatformRepository
+	campaignTypeRepo CampaignTypeRepository
 }
 
 // NewCampaignRepository returns a Bun-backed CampaignRepository.
-func NewCampaignRepository(db *bun.DB, tagRepo TagRepository) CampaignRepository {
-	return &campaignRepository{db: db, tagRepo: tagRepo}
+func NewCampaignRepository(db *bun.DB, tagRepo TagRepository, platformRepo PlatformRepository, campaignTypeRepo CampaignTypeRepository) CampaignRepository {
+	return &campaignRepository{db: db, tagRepo: tagRepo, platformRepo: platformRepo, campaignTypeRepo: campaignTypeRepo}
 }
 
 func (r *campaignRepository) List(ctx context.Context) ([]models.Campaign, error) {
@@ -35,6 +37,12 @@ func (r *campaignRepository) List(ctx context.Context) ([]models.Campaign, error
 		return nil, err
 	}
 	if err := r.hydrateTags(ctx, campaigns); err != nil {
+		return nil, err
+	}
+	if err := r.hydratePlatforms(ctx, campaigns); err != nil {
+		return nil, err
+	}
+	if err := r.hydrateCampaignTypes(ctx, campaigns); err != nil {
 		return nil, err
 	}
 	return campaigns, nil
@@ -58,6 +66,12 @@ func (r *campaignRepository) GetByID(ctx context.Context, id string) (*models.Ca
 	if err := r.hydrateTags(ctx, campaigns); err != nil {
 		return nil, err
 	}
+	if err := r.hydratePlatforms(ctx, campaigns); err != nil {
+		return nil, err
+	}
+	if err := r.hydrateCampaignTypes(ctx, campaigns); err != nil {
+		return nil, err
+	}
 	return &campaigns[0], nil
 }
 
@@ -75,18 +89,51 @@ func (r *campaignRepository) Delete(ctx context.Context, id string) (bool, error
 	return n > 0, nil
 }
 
-func (r *campaignRepository) hydrateTags(ctx context.Context, campaigns []models.Campaign) error {
+func (r *campaignRepository) hydratePlatforms(ctx context.Context, campaigns []models.Campaign) error {
 	for i := range campaigns {
-		campaigns[i].Tags = []models.Tag{}
+		campaigns[i].Platforms = []models.Platform{}
 	}
-	ids := collectIDsFlat(campaigns, func(c models.Campaign) []string { return c.TagIDs })
-	return r.tagRepo.hydrateTags(ctx, ids, func(tagByID map[string]models.Tag) {
-		for i, c := range campaigns {
-			for _, id := range c.TagIDs {
-				if t, ok := tagByID[id]; ok {
-					campaigns[i].Tags = append(campaigns[i].Tags, t)
-				}
+	ids := collectIDsFlat(campaigns, func(c models.Campaign) []string {
+		out := make([]string, len(c.TargetPlatforms))
+		for i, tp := range c.TargetPlatforms {
+			out[i] = tp.ID
+		}
+		return out
+	})
+	byID, err := fetchByIDs(ctx, r.db, ids, func(p *models.Platform) string { return p.ID })
+	if err != nil {
+		return err
+	}
+	for i, c := range campaigns {
+		for _, tp := range c.TargetPlatforms {
+			if p, ok := byID[tp.ID]; ok {
+				campaigns[i].Platforms = append(campaigns[i].Platforms, *p)
 			}
 		}
-	})
+	}
+	return nil
+}
+
+func (r *campaignRepository) hydrateCampaignTypes(ctx context.Context, campaigns []models.Campaign) error {
+	ids := make([]string, 0, len(campaigns))
+	for _, c := range campaigns {
+		ids = append(ids, c.CampaignTypeID)
+	}
+	byID, err := r.campaignTypeRepo.GetByIDs(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for i, c := range campaigns {
+		if ct, ok := byID[c.CampaignTypeID]; ok {
+			campaigns[i].CampaignType = ct
+		}
+	}
+	return nil
+}
+
+func (r *campaignRepository) hydrateTags(ctx context.Context, campaigns []models.Campaign) error {
+	return HydrateTags(ctx, r.tagRepo, campaigns,
+		func(c models.Campaign) []string { return c.TagIDs },
+		func(c *models.Campaign) *[]models.Tag { return &c.Tags },
+	)
 }

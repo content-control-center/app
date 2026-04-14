@@ -43,13 +43,14 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		sessionRepo := repository.NewSessionRepository(db)
 		settingRepo := repository.NewSettingRepository(db)
 		tagRepo := repository.NewTagRepository(db)
-		campaignRepo := repository.NewCampaignRepository(db, tagRepo)
+		campaignTypeRepo := repository.NewCampaignTypeRepository(db)
+		campaignRepo := repository.NewCampaignRepository(db, tagRepo, repository.NewPlatformRepository(db), campaignTypeRepo)
 		pieceRepo := repository.NewPieceRepository(db, tagRepo)
 		postRepo := repository.NewPostRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
-		handlers.NewCampaignsHandler(campaignRepo, auth).Register(app)
+		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil).Register(app)
 		handlers.NewPiecesHandler(pieceRepo, auth, nil).Register(app)
 		handlers.NewPostsHandler(postRepo, auth).Register(app)
 
@@ -72,7 +73,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		authCookie = cookies[0]
 
 		// Seed a campaign used across tests.
-		cBody, _ := json.Marshal(fiber.Map{"name": "Test Campaign", "objective": "awareness"})
+		cBody, _ := json.Marshal(fiber.Map{"name": "Test Campaign", "campaign_type_id": "Uk"})
 		cReq := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(cBody))
 		cReq.Header.Set("Content-Type", "application/json")
 		cReq.AddCookie(authCookie)
@@ -101,7 +102,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 	createPost := func(title string, extraFields fiber.Map) models.Post {
 		payload := fiber.Map{
 			"campaign_id":        campaignID,
-			"platform_id":        "linkedin",
+			"platform_id":        "AXqWG7U2qnpt",
 			"platform_post_type": "text-post",
 			"title":              title,
 		}
@@ -161,7 +162,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				Expect(posts[0].Campaign).NotTo(BeNil())
 				Expect(posts[0].Campaign.ID).To(Equal(campaignID))
 				Expect(posts[0].Platform).NotTo(BeNil())
-				Expect(posts[0].Platform.ID).To(Equal("linkedin"))
+				Expect(posts[0].Platform.ID).To(Equal("AXqWG7U2qnpt"))
 			})
 		})
 	})
@@ -219,7 +220,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		Context("when not authenticated", func() {
 			It("returns 401", func() {
 				body, _ := json.Marshal(fiber.Map{
-					"campaign_id": campaignID, "platform_id": "linkedin",
+					"campaign_id": campaignID, "platform_id": "AXqWG7U2qnpt",
 					"platform_post_type": "text-post", "title": "Test",
 				})
 				req := httptest.NewRequest("POST", "/api/posts", bytes.NewReader(body))
@@ -260,7 +261,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 
 			It("returns 400 when campaign_id is missing", func() {
 				body, _ := json.Marshal(fiber.Map{
-					"platform_id": "linkedin", "platform_post_type": "text-post", "title": "No Campaign",
+					"platform_id": "AXqWG7U2qnpt", "platform_post_type": "text-post", "title": "No Campaign",
 				})
 				req := httptest.NewRequest("POST", "/api/posts", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
@@ -284,7 +285,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 
 			It("returns 400 when title is missing", func() {
 				body, _ := json.Marshal(fiber.Map{
-					"campaign_id": campaignID, "platform_id": "linkedin", "platform_post_type": "text-post",
+					"campaign_id": campaignID, "platform_id": "AXqWG7U2qnpt", "platform_post_type": "text-post",
 				})
 				req := httptest.NewRequest("POST", "/api/posts", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
@@ -296,7 +297,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 
 			It("returns 400 when status is invalid", func() {
 				body, _ := json.Marshal(fiber.Map{
-					"campaign_id": campaignID, "platform_id": "linkedin",
+					"campaign_id": campaignID, "platform_id": "AXqWG7U2qnpt",
 					"platform_post_type": "text-post", "title": "Bad Status", "status": "unknown",
 				})
 				req := httptest.NewRequest("POST", "/api/posts", bytes.NewReader(body))
@@ -309,7 +310,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 
 			It("returns 400 when cta_type is invalid", func() {
 				body, _ := json.Marshal(fiber.Map{
-					"campaign_id": campaignID, "platform_id": "linkedin",
+					"campaign_id": campaignID, "platform_id": "AXqWG7U2qnpt",
 					"platform_post_type": "text-post", "title": "Bad CTA", "cta_type": "unknown",
 				})
 				req := httptest.NewRequest("POST", "/api/posts", bytes.NewReader(body))
@@ -351,7 +352,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				Expect(got.Campaign.ID).To(Equal(campaignID))
 				Expect(got.Campaign.Name).To(Equal("Test Campaign"))
 				Expect(got.Platform).NotTo(BeNil())
-				Expect(got.Platform.ID).To(Equal("linkedin"))
+				Expect(got.Platform.ID).To(Equal("AXqWG7U2qnpt"))
 				Expect(got.Platform.Name).To(Equal("LinkedIn"))
 				Expect(got.UsedPieces).To(BeEmpty())
 			})
@@ -401,7 +402,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		Context("when not authenticated", func() {
 			It("returns 401", func() {
 				body, _ := json.Marshal(fiber.Map{
-					"campaign_id": campaignID, "platform_id": "linkedin",
+					"campaign_id": campaignID, "platform_id": "AXqWG7U2qnpt",
 					"platform_post_type": "text-post", "title": "Updated",
 				})
 				req := httptest.NewRequest("PUT", "/api/posts/someid", bytes.NewReader(body))
@@ -418,7 +419,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 
 				body, _ := json.Marshal(fiber.Map{
 					"campaign_id":        campaignID,
-					"platform_id":        "linkedin",
+					"platform_id":        "AXqWG7U2qnpt",
 					"platform_post_type": "image-post",
 					"title":              "Updated Title",
 					"status":             "approved",
@@ -444,7 +445,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 
 			It("returns 404 for an unknown id", func() {
 				body, _ := json.Marshal(fiber.Map{
-					"campaign_id": campaignID, "platform_id": "linkedin",
+					"campaign_id": campaignID, "platform_id": "AXqWG7U2qnpt",
 					"platform_post_type": "text-post", "title": "Ghost",
 				})
 				req := httptest.NewRequest("PUT", "/api/posts/nonexistent", bytes.NewReader(body))
@@ -459,7 +460,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				p := createPost("Has Title", nil)
 
 				body, _ := json.Marshal(fiber.Map{
-					"campaign_id": campaignID, "platform_id": "linkedin", "platform_post_type": "text-post",
+					"campaign_id": campaignID, "platform_id": "AXqWG7U2qnpt", "platform_post_type": "text-post",
 				})
 				req := httptest.NewRequest("PUT", "/api/posts/"+p.ID, bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")

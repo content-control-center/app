@@ -6,16 +6,6 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// CampaignObjective is the marketing goal of a campaign.
-type CampaignObjective string
-
-const (
-	ObjectiveAwareness  CampaignObjective = "awareness"
-	ObjectiveEngagement CampaignObjective = "engagement"
-	ObjectiveConversion CampaignObjective = "conversion"
-	ObjectiveRetention  CampaignObjective = "retention"
-)
-
 // CampaignStatus represents the lifecycle state of a campaign.
 type CampaignStatus string
 
@@ -41,20 +31,22 @@ type Campaign struct {
 	ToneGuidelines     string            `bun:"tone_guidelines,notnull"                      json:"tone_guidelines"`
 	UsePieces          bool              `bun:"use_pieces,notnull"                           json:"use_pieces"`
 	PiecesIDs          StringSlice       `bun:"pieces_ids,notnull"                           json:"pieces_ids"`
-	TargetPlatformIDs  StringSlice       `bun:"target_platform_ids,notnull"                  json:"target_platform_ids"`
-	Objective          CampaignObjective `bun:"objective,notnull"                            json:"objective"`
+	TargetPlatforms    CampaignPlatforms `bun:"target_platforms,notnull"                     json:"target_platforms"`
+	CampaignTypeID     string            `bun:"campaign_type_id,notnull"                     json:"campaign_type_id"`
 	StartDate          *time.Time        `bun:"start_date"                                   json:"start_date"`
 	EndDate            *time.Time        `bun:"end_date"                                     json:"end_date"`
 	EstimatedPostCount *int              `bun:"estimated_post_count"                         json:"estimated_post_count"`
 	Language           string            `bun:"language,notnull"                             json:"language"`
 
 	// system
-	Status    CampaignStatus `bun:"status,notnull"                               json:"status"`
-	Budget    *float64       `bun:"budget"                                       json:"budget"`
-	Currency  string         `bun:"currency,notnull"                             json:"currency"`
-	TagIDs    StringSlice    `bun:"tag_ids,notnull"                              json:"tag_ids"`
-	Tags      []Tag          `bun:"-"                                            json:"tags"`
-	CreatedBy string         `bun:"created_by,notnull"                           json:"created_by"`
-	CreatedAt time.Time      `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
-	UpdatedAt time.Time      `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
+	Status       CampaignStatus `bun:"status,notnull"                               json:"status"`
+	Budget       *float64       `bun:"budget"                                       json:"budget"`
+	Currency     string         `bun:"currency,notnull"                             json:"currency"`
+	TagIDs       StringSlice    `bun:"tag_ids,notnull"                              json:"tag_ids"`
+	Tags         []Tag          `bun:"-"                                            json:"tags"`
+	Platforms    []Platform     `bun:"-"                                            json:"platforms"`
+	CampaignType *CampaignType  `bun:"-"                                            json:"campaign_type,omitempty"`
+	CreatedBy    string         `bun:"created_by,notnull"                           json:"created_by"`
+	CreatedAt    time.Time      `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
+	UpdatedAt    time.Time      `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
 }

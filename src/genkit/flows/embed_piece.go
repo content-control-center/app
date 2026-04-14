@@ -46,7 +46,7 @@ func NewPieceOnSaveCallback() func(pieceID, title, content string) {
 func Init(g *genkit.Genkit, embedder ai.Embedder, repo repository.PiecesEmbeddingsRepository) {
 	EmbedPieceFlow = genkit.DefineFlow(g, "embedPiece",
 		func(ctx context.Context, in EmbedPieceInput) (struct{}, error) {
-			plainText, err := extractText(in.Content)
+			plainText, err := ExtractText(in.Content)
 			if err != nil {
 				return struct{}{}, fmt.Errorf("extract text from piece %s: %w", in.PieceID, err)
 			}

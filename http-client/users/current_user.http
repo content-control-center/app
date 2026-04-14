@@ -1,0 +1,13 @@
+@baseUrl = http://localhost:9001
+
+# Protected endpoint — run "Login" from sessions/sessions.http first so the
+# HTTP client stores and sends the session cookie automatically.
+
+### Get current user  [protected]
+GET {{baseUrl}}/api/current_user
+Accept: application/json
+
+### Get current user — invalid session cookie (expects 401)
+GET {{baseUrl}}/api/current_user
+Accept: application/json
+Cookie: c3_session=invalid

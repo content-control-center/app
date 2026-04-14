@@ -30,8 +30,10 @@ func (h *PlatformsHandler) Register(app *fiber.App) {
 }
 
 type platformRequest struct {
-	Name      string            `json:"name"       validate:"required"`
-	PostTypes models.PostTypeMap `json:"post_types"`
+	Name        string             `json:"name"        validate:"required"`
+	PostTypes   models.PostTypeMap `json:"post_types"`
+	Cadence     string             `json:"cadence"`
+	Constraints string             `json:"constraints"`
 }
 
 // List godoc
@@ -78,9 +80,11 @@ func (h *PlatformsHandler) Create(c *fiber.Ctx) error {
 	}
 
 	platform := &models.Platform{
-		ID:        id,
-		Name:      req.Name,
-		PostTypes: nullMap(req.PostTypes),
+		ID:          id,
+		Name:        req.Name,
+		PostTypes:   nullMap(req.PostTypes),
+		Cadence:     req.Cadence,
+		Constraints: req.Constraints,
 	}
 	if err := h.repo.Create(c.Context(), platform); err != nil {
 		return err
@@ -143,6 +147,8 @@ func (h *PlatformsHandler) Update(c *fiber.Ctx) error {
 
 	platform.Name = req.Name
 	platform.PostTypes = nullMap(req.PostTypes)
+	platform.Cadence = req.Cadence
+	platform.Constraints = req.Constraints
 	platform.UpdatedAt = time.Now().UTC()
 
 	if err := h.repo.Update(c.Context(), platform); err != nil {

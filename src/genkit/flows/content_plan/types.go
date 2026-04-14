@@ -1,0 +1,122 @@
+package content_plan
+
+import "time"
+
+// ContentPlanRequest is the input to the generateContentPlan flow.
+type ContentPlanRequest struct {
+	CampaignID string `json:"campaignId"`
+}
+
+// DraftPost is both the AI output schema (via GenerateData[[]DraftPost]) and
+// the shape persisted as a Post record with status=draft.
+type DraftPost struct {
+	Title       string   `json:"title"                   jsonschema:"description=Short descriptive title for the post"`
+	Body        string   `json:"body"                    jsonschema:"description=Complete post copy adapted to the platform"`
+	ContentType string   `json:"contentType"             jsonschema:"description=Content format slug e.g. text-post article carousel thread video reel"`
+	PlatformID  string   `json:"platformId"              jsonschema:"description=Exact platform ID string from the campaign e.g. linkedin x-twitter instagram"`
+	PublishDate string   `json:"publishDate"             jsonschema:"description=ISO 8601 date YYYY-MM-DD within the campaign date range"`
+	ToneNotes   string   `json:"toneNotes"               jsonschema:"description=How the campaign tone guidelines apply to this specific post"`
+	PhaseID     string   `json:"phaseId"                 jsonschema:"description=Exact phase ID from the campaign phases list; every post must be assigned to one phase"`
+	PieceRefs   []string `json:"pieceRefs,omitempty"     jsonschema:"description=IDs of pieces whose facts or ideas were directly used in this post; omit if none"`
+}
+
+// ContentPlanResponse is returned by the handler and the flow.
+type ContentPlanResponse struct {
+	CampaignID  string      `json:"campaignId"`
+	GeneratedAt time.Time   `json:"generatedAt"`
+	Posts       []DraftPost `json:"posts"`
+	Warnings    []string    `json:"warnings,omitempty"`
+}
+
+// resolvedPiece is an internal type used to build the prompt context.
+type resolvedPiece struct {
+	ID      string
+	Title   string
+	Excerpt string
+}
+
+// resolvedPlatform is an internal type used to build the prompt context.
+type resolvedPlatform struct {
+	ID           string
+	Name         string
+	PostTypes    string   // comma-separated slugs shown in the prompt
+	AllowedSlugs []string // non-empty = hard-enforce these slugs in validateOutput; nil = allow all
+	Cadence      string   // e.g. "1–2 posts per week"
+	Constraints  string   // character limits, format notes
+}
+
+// resolvedPhase is an internal type used to build the prompt context.
+type resolvedPhase struct {
+	ID       string
+	Name     string
+	Purpose  string
+	Sequence int
+}
+
+// contentPlanTemplateData is the data passed to the user-prompt template.
+type contentPlanTemplateData struct {
+	Name                   string
+	Description            string
+	CampaignTypeLabel      string
+	CampaignTypeDescription string
+	Phases                 []resolvedPhase
+	TargetPersona          string
+	KeyMessages            string
+	ToneGuidelines         string
+	Language               string
+	StartDate              string
+	EndDate                string
+	DayCount               int
+	EstimatedPostCount     int
+	Platforms              []resolvedPlatform
+	Pieces                 []resolvedPiece
+}
+
+// ValidationError is returned by the flow when preconditions are not met.
+// Handlers map this to HTTP 400.
+type ValidationError struct{ Msg string }
+
+func (e *ValidationError) Error() string { return e.Msg }
+
+// AIError is returned when the Anthropic API call fails.
+// Handlers map this to HTTP 502.
+type AIError struct{ Msg string }
+
+func (e *AIError) Error() string { return e.Msg }
+
+// ── SSE types ─────────────────────────────────────────────────────────────────
+
+// SSEEventKind identifies the three SSE event types emitted by GenerateDraft.
+type SSEEventKind string
+
+const (
+	SSEEventStep     SSEEventKind = "step"
+	SSEEventPost     SSEEventKind = "post"
+	SSEEventComplete SSEEventKind = "complete"
+	SSEEventError    SSEEventKind = "error"
+)
+
+// StepEventPayload is the data payload for a "step" SSE event.
+type StepEventPayload struct {
+	Step   string `json:"step"`
+	Status string `json:"status"` // always "done"
+}
+
+// PostEventPayload is the data payload for a "post" SSE event.
+// Emitted incrementally during model generation for each draft post
+// as it is parsed from the streaming model response.
+type PostEventPayload struct {
+	Post  DraftPost `json:"post"`
+	Index int       `json:"index"` // 0-based order from the stream
+}
+
+// ErrorEventPayload is the data payload for an "error" SSE event.
+type ErrorEventPayload struct {
+	Message string `json:"message"`
+	Code    int    `json:"code"` // HTTP semantic: 400, 502, 500
+}
+
+// OnEventFunc is an optional callback invoked after each flow step completes.
+// name is one of the SSEEventKind constants; data is JSON-serialisable.
+// A nil OnEventFunc is valid — the flow runs silently.
+type OnEventFunc func(name SSEEventKind, data any)

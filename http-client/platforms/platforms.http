@@ -9,27 +9,27 @@ GET {{baseUrl}}/api/platforms
 Accept: application/json
 
 ### Get seeded platform — LinkedIn  [protected]
-GET {{baseUrl}}/api/platforms/linkedin
+GET {{baseUrl}}/api/platforms/AXqWG7U2qnpt
 Accept: application/json
 
 ### Get seeded platform — YouTube  [protected]
-GET {{baseUrl}}/api/platforms/youtube
+GET {{baseUrl}}/api/platforms/8S8bWQTG6qD
 Accept: application/json
 
 ### Get seeded platform — Facebook  [protected]
-GET {{baseUrl}}/api/platforms/facebook
+GET {{baseUrl}}/api/platforms/zBU1zqVICGfk
 Accept: application/json
 
 ### Get seeded platform — X (Twitter)  [protected]
-GET {{baseUrl}}/api/platforms/x-twitter
+GET {{baseUrl}}/api/platforms/81mUCmc2xsKd
 Accept: application/json
 
 ### Get seeded platform — Threads  [protected]
-GET {{baseUrl}}/api/platforms/threads
+GET {{baseUrl}}/api/platforms/pQ4yxT3SuE57
 Accept: application/json
 
 ### Get seeded platform — Instagram  [protected]
-GET {{baseUrl}}/api/platforms/instagram
+GET {{baseUrl}}/api/platforms/rzgpTkARLH0L
 Accept: application/json
 
 ### Create platform  [protected]
@@ -44,7 +44,9 @@ Content-Type: application/json
     "live": "Live stream",
     "story": "Story (24h ephemeral)",
     "duet": "Duet"
-  }
+  },
+  "cadence": "1–3 videos per day",
+  "constraints": "videos up to 10 min; captions up to 2200 chars; trending audio recommended"
 }
 
 > {% client.global.set("platformId", response.body.id) %}
@@ -87,7 +89,9 @@ Content-Type: application/json
     "story": "Story (24h ephemeral)",
     "duet": "Duet",
     "series": "Series"
-  }
+  },
+  "cadence": "1–3 videos per day",
+  "constraints": "videos up to 10 min; captions up to 2200 chars; trending audio recommended"
 }
 
 ### Update platform — missing name (expects 400)  [protected]
