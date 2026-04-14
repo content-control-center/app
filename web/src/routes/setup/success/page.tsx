@@ -5,13 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { useLogin } from "@/hooks/useAuth";
 import { invalidateSetupComplete, markSetupComplete } from "@/services/api/setup";
+import type { LoginPayload } from "@/types/session";
 
 function SetupSuccessPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { mutate: login, isPending, error } = useLogin();
 
-  const credentials = location.state.credentials!;
+  const credentials = (location.state as { credentials?: LoginPayload }).credentials!;
 
   const handleLogin = () => {
     login(credentials, {

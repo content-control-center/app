@@ -3,11 +3,12 @@ import { useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import type { Block } from "@blocknote/core";
 import "@blocknote/mantine/style.css";
-import "./blocknote-theme.css";
+import "@/blocknote-theme.css";
 
 type ContentPieceEditorProps = {
   initialContent: string;
   onContentChange: (content: string) => void;
+  onTitleChange?: (title: string) => void;
 };
 
 const DEFAULT_CONTENT: Block[] = [
@@ -29,9 +30,21 @@ function parseBlocks(raw: string): Block[] {
   return DEFAULT_CONTENT;
 }
 
+function extractFirstH1(blocks: Block[]): string {
+  const h1 = blocks.find(
+    (b) => b.type === "heading" && (b.props as { level?: number }).level === 1,
+  );
+  if (!h1 || !Array.isArray(h1.content)) return "";
+  return (h1.content as { type: string; text: string }[])
+    .filter((c) => c.type === "text")
+    .map((c) => c.text)
+    .join("");
+}
+
 export function ContentPieceEditor({
   initialContent,
   onContentChange,
+  onTitleChange,
 }: ContentPieceEditorProps) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -44,8 +57,13 @@ export function ContentPieceEditor({
     timerRef.current = setTimeout(() => {
       const blocks = editor.document;
       onContentChange(JSON.stringify(blocks));
+      onTitleChange?.(extractFirstH1(blocks));
     }, 500);
-  }, [editor, onContentChange]);
+  }, [editor, onContentChange, onTitleChange]);
+
+  useEffect(() => {
+    onTitleChange?.(extractFirstH1(editor.document));
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     return () => {

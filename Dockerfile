@@ -1,12 +1,14 @@
 # ─── Stage 1: build React ────────────────────────────────────────────────────
 FROM node:20-alpine AS web-builder
 
+RUN corepack enable
+
 WORKDIR /app/web
-COPY web/package.json web/package-lock.json* ./
-RUN npm ci
+COPY web/package.json web/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
 COPY web/ ./
-RUN npm run build
+RUN pnpm build
 
 # ─── Stage 2: build Go binary ────────────────────────────────────────────────
 FROM golang:1.26-alpine AS go-builder

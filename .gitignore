@@ -21,3 +21,7 @@ web/dist/
 # OS
 .DS_Store
 /.idea/
+
+# Claude
+CLAUDE.md
+**/CLAUDE.md
