@@ -16,6 +16,7 @@ import (
 type CampaignTypeRepository interface {
 	List(ctx context.Context) ([]models.CampaignType, error)
 	GetByID(ctx context.Context, id string) (*models.CampaignType, error)
+	GetByIDs(ctx context.Context, ids []string) (map[string]*models.CampaignType, error)
 	Create(ctx context.Context, ct *models.CampaignType) error
 	Update(ctx context.Context, ct *models.CampaignType) error
 	Delete(ctx context.Context, id string) (bool, error)
@@ -59,6 +60,24 @@ func (r *campaignTypeRepository) GetByID(ctx context.Context, id string) (*model
 		return nil, err
 	}
 	return &types[0], nil
+}
+
+func (r *campaignTypeRepository) GetByIDs(ctx context.Context, ids []string) (map[string]*models.CampaignType, error) {
+	if len(ids) == 0 {
+		return map[string]*models.CampaignType{}, nil
+	}
+	var types []models.CampaignType
+	if err := r.db.NewSelect().Model(&types).Where("ct.id IN (?)", bun.In(ids)).Scan(ctx); err != nil {
+		return nil, err
+	}
+	if err := r.hydratePhases(ctx, types); err != nil {
+		return nil, err
+	}
+	byID := make(map[string]*models.CampaignType, len(types))
+	for i := range types {
+		byID[types[i].ID] = &types[i]
+	}
+	return byID, nil
 }
 
 func (r *campaignTypeRepository) Create(ctx context.Context, ct *models.CampaignType) error {

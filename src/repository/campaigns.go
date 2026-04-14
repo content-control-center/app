@@ -119,7 +119,7 @@ func (r *campaignRepository) hydrateCampaignTypes(ctx context.Context, campaigns
 	for _, c := range campaigns {
 		ids = append(ids, c.CampaignTypeID)
 	}
-	byID, err := fetchByIDs(ctx, r.db, ids, func(ct *models.CampaignType) string { return ct.ID })
+	byID, err := r.campaignTypeRepo.GetByIDs(ctx, ids)
 	if err != nil {
 		return err
 	}

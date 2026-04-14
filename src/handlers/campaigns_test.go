@@ -289,7 +289,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 		})
 
 		Context("when authenticated", func() {
-			It("returns the campaign with hydrated campaign_type", func() {
+			It("returns the campaign with hydrated campaign_type and phases", func() {
 				c := createCampaign("Brand Awareness", "Uk")
 
 				req := httptest.NewRequest("GET", "/api/campaigns/"+c.ID, nil)
@@ -304,6 +304,8 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				Expect(got.Name).To(Equal("Brand Awareness"))
 				Expect(got.CampaignType).NotTo(BeNil())
 				Expect(got.CampaignType.Name).To(Equal("awareness"))
+				Expect(got.CampaignType.Phases).To(HaveLen(2))
+				Expect(got.CampaignType.Phases[0].Name).To(Equal("Launch & Distribution"))
 			})
 
 			It("returns hydrated platforms for known target_platforms", func() {

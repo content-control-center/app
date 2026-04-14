@@ -3,6 +3,9 @@
 # All campaign endpoints require authentication.
 # Run "Login" from sessions/sessions.http first — the HTTP client stores and
 # sends the cookie automatically on subsequent requests to the same host.
+#
+# Seeded campaign type IDs (see campaign_types/campaign_types.http for full list):
+#   Uk = Awareness   gb = Engagement   Ef = Conversion   Vq = Retention
 
 ### List all campaigns  [protected]
 GET {{baseUrl}}/api/campaigns
@@ -15,7 +18,7 @@ Content-Type: application/json
 
 {
   "name": "Summer Awareness Push",
-  "objective": "awareness"
+  "campaign_type_id": "Uk"
 }
 
 > {% client.global.set("campaignId", response.body.id) %}
@@ -26,11 +29,11 @@ Content-Type: application/json
 
 {
     "name": "Rust programming language in modern financial applications",
+    "campaign_type_id": "Uk",
     "description": "Educate financial technology professionals and engineering leaders on the advantages of Rust for building high-performance, memory-safe financial systems — from trading engines to risk modeling pipelines.",
     "target_persona": "Senior software engineers, tech leads, and CTOs at fintech companies and financial institutions, aged 28–45, evaluating systems-level languages for latency-sensitive and safety-critical workloads.",
     "key_messages": "Rust delivers C++-level performance with compile-time memory safety — no garbage collector pauses, no data races, no 3 AM crashes in production. The language the finance industry didn't know it was waiting for.",
     "tone_guidelines": "Technically credible yet accessible. Confident without being preachy. Speak peer-to-peer with engineers — show, don't sell. Use concrete benchmarks and real-world case studies over abstract claims.",
-    "objective": "awareness",
     "status": "scheduled",
     "use_pieces": true,
     "pieces_ids": [],
@@ -55,24 +58,24 @@ POST {{baseUrl}}/api/campaigns
 Content-Type: application/json
 
 {
-  "objective": "awareness"
+  "campaign_type_id": "Uk"
 }
 
-### Create campaign — missing objective (expects 400)  [protected]
+### Create campaign — missing campaign_type_id (expects 400)  [protected]
 POST {{baseUrl}}/api/campaigns
 Content-Type: application/json
 
 {
-  "name": "No Objective Campaign"
+  "name": "No Type Campaign"
 }
 
-### Create campaign — invalid objective (expects 400)  [protected]
+### Create campaign — invalid campaign_type_id (expects 400)  [protected]
 POST {{baseUrl}}/api/campaigns
 Content-Type: application/json
 
 {
-  "name": "Bad Objective",
-  "objective": "domination"
+  "name": "Bad Type",
+  "campaign_type_id": "nonexistent"
 }
 
 ### Create campaign — invalid status (expects 400)  [protected]
@@ -81,12 +84,12 @@ Content-Type: application/json
 
 {
   "name": "Bad Status",
-  "objective": "awareness",
+  "campaign_type_id": "Uk",
   "status": "unknown"
 }
 
 ### Get campaign by ID  [protected]
-GET {{baseUrl}}/api/campaigns/AWLjLyJpA9KR
+GET {{baseUrl}}/api/campaigns/XqhFjLOD1BTR
 Accept: application/json
 
 ### Get campaign — non-existent ID (expects 404)  [protected]
@@ -99,15 +102,18 @@ Content-Type: application/json
 
 {
   "name": "Q4 Conversion Drive — Revised",
+  "campaign_type_id": "Ef",
   "description": "Updated copy after stakeholder review.",
   "target_persona": "Tech-savvy millennials aged 25–35",
   "key_messages": "Fast, reliable, affordable — now with team plans.",
   "tone_guidelines": "Friendly, confident, and jargon-free.",
-  "objective": "conversion",
   "status": "active",
   "use_pieces": true,
   "pieces_ids": [],
-  "target_platform_ids": ["rzgpTkARLH0L", "AXqWG7U2qnpt"],
+  "target_platforms": [
+    {"id": "AXqWG7U2qnpt", "post_types": ["text-post", "article"]},
+    {"id": "zBU1zqVICGfk", "post_types": ["text-post"]}
+  ],
   "estimated_post_count": 25,
   "budget": 6000.00,
   "currency": "USD",
@@ -115,13 +121,13 @@ Content-Type: application/json
   "tag_ids": []
 }
 
-### Update campaign — invalid objective (expects 400)  [protected]
+### Update campaign — invalid campaign_type_id (expects 400)  [protected]
 PUT {{baseUrl}}/api/campaigns/{{campaignId}}
 Content-Type: application/json
 
 {
   "name": "Bad Update",
-  "objective": "domination"
+  "campaign_type_id": "nonexistent"
 }
 
 ### Update campaign — non-existent ID (expects 404)  [protected]
@@ -130,7 +136,7 @@ Content-Type: application/json
 
 {
   "name": "Ghost Campaign",
-  "objective": "awareness"
+  "campaign_type_id": "Uk"
 }
 
 ### Delete campaign  [protected]
