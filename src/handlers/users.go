@@ -23,6 +23,8 @@ func NewUsersHandler(repo repository.UserRepository, settingRepo repository.Sett
 }
 
 func (h *UsersHandler) Register(app *fiber.App) {
+	app.Get("/api/current_user", h.auth, h.CurrentUser) // always protected
+
 	g := app.Group("/api/users")
 	g.Post("/", h.conditionalAuth, h.Create)  // open while setup_complete=false, protected after
 	g.Get("/", h.auth, h.List)                // always protected
@@ -81,6 +83,27 @@ type updateUserRequest struct {
 	Email    string `json:"email"    validate:"required,email"`
 	// Password is optional on update; when provided it must be at least 8 characters.
 	Password string `json:"password" validate:"omitempty,min=8"`
+}
+
+// CurrentUser godoc
+// @Summary      Get current user
+// @Description  Returns the authenticated user derived from the active session cookie.
+// @Tags         users
+// @Produce      json
+// @Security     CookieAuth
+// @Success      200  {object}  models.User
+// @Failure      401  {object}  map[string]string
+// @Router       /api/current_user [get]
+func (h *UsersHandler) CurrentUser(c *fiber.Ctx) error {
+	session := c.Locals("session").(*models.Session)
+	user, err := h.repo.GetByID(c.Context(), session.UserID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusUnauthorized, "user not found")
+		}
+		return err
+	}
+	return c.JSON(user)
 }
 
 // List godoc

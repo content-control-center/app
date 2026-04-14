@@ -85,6 +85,53 @@ var _ = Describe("UsersHandler", Ordered, func() {
 		return cookies[0]
 	}
 
+	// ── CurrentUser ──────────────────────────────────────────────────────────
+
+	Describe("GET /api/current_user", func() {
+		Context("when not authenticated", func() {
+			It("returns 401", func() {
+				req := httptest.NewRequest("GET", "/api/current_user", nil)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+		})
+
+		Context("when authenticated", func() {
+			It("returns the authenticated user", func() {
+				u := createUser("Alice", "alice@example.com", "password-alice")
+				cookie := loginAs("alice@example.com", "password-alice")
+
+				req := httptest.NewRequest("GET", "/api/current_user", nil)
+				req.AddCookie(cookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+
+				var got models.User
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect(got.ID).To(Equal(u.ID))
+				Expect(got.Name).To(Equal("Alice"))
+				Expect(got.Email).To(Equal("alice@example.com"))
+			})
+
+			It("does not expose password_hash in the response", func() {
+				createUser("Alice", "alice@example.com", "password-alice")
+				cookie := loginAs("alice@example.com", "password-alice")
+
+				req := httptest.NewRequest("GET", "/api/current_user", nil)
+				req.AddCookie(cookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+
+				var raw map[string]any
+				Expect(json.NewDecoder(resp.Body).Decode(&raw)).To(Succeed())
+				Expect(raw).NotTo(HaveKey("password_hash"))
+				Expect(raw).NotTo(HaveKey("PasswordHash"))
+			})
+		})
+	})
+
 	// ── List ─────────────────────────────────────────────────────────────────
 
 	Describe("GET /api/users", func() {
