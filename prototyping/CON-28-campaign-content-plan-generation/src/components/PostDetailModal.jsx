@@ -1,9 +1,14 @@
 import { platformConfig } from "../lib/platform.jsx";
 
-export function PostDetailModal({ card, onClose }) {
+export function PostDetailModal({ card, onClose, campaignTypes = [] }) {
   if (!card) return null;
 
   const cfg = platformConfig(card.payload?.post?.platformId);
+
+  const phaseId = card.payload?.post?.phaseId;
+  const phase = phaseId
+    ? campaignTypes.flatMap((t) => t.phases ?? []).find((p) => p.id === phaseId)
+    : null;
 
   return (
     <div
@@ -46,8 +51,12 @@ export function PostDetailModal({ card, onClose }) {
               <p className="mt-0.5">{card.payload?.post?.publishDate || "-"}</p>
             </div>
             <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Index</p>
-              <p className="mt-0.5">{card.payload?.index ?? "-"}</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Phase</p>
+              <p className="mt-0.5">
+                {phase
+                  ? <span title={phaseId}>{phase.sequence}. {phase.name}</span>
+                  : phaseId ?? "-"}
+              </p>
             </div>
           </div>
           <div>

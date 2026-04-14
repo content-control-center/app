@@ -73,20 +73,27 @@ export function CreateCampaignTab({
             />
           )}
 
-          {selectedType && selectedType.phases && selectedType.phases.length > 0 && (
-            <div className="mt-1.5 rounded-[3px] border border-slate-200 bg-slate-50 px-3 py-2">
-              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Phases</p>
-              <ol className="space-y-0.5">
-                {selectedType.phases
-                  .slice()
-                  .sort((a, b) => a.sequence - b.sequence)
-                  .map((p) => (
-                    <li key={p.id} className="text-xs text-slate-600">
-                      <span className="font-medium text-slate-700">{p.sequence}. {p.name}</span>
-                      {p.purpose && <span className="text-slate-400"> — {p.purpose}</span>}
-                    </li>
-                  ))}
-              </ol>
+          {selectedType && (
+            <div className="mt-1.5 rounded-[3px] border border-slate-200 bg-slate-50 px-3 py-2 space-y-2">
+              {selectedType.description && (
+                <p className="text-xs text-slate-600">{selectedType.description}</p>
+              )}
+              {selectedType.phases && selectedType.phases.length > 0 && (
+                <>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Phases</p>
+                  <ol className="space-y-0.5">
+                    {selectedType.phases
+                      .slice()
+                      .sort((a, b) => a.sequence - b.sequence)
+                      .map((p) => (
+                        <li key={p.id} className="text-xs text-slate-600">
+                          <span className="font-medium text-slate-700">{p.sequence}. {p.name}</span>
+                          {p.purpose && <span className="text-slate-400"> — {p.purpose}</span>}
+                        </li>
+                      ))}
+                  </ol>
+                </>
+              )}
             </div>
           )}
         </div>

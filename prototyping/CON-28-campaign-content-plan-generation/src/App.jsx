@@ -46,6 +46,15 @@ function App() {
   const [createSuccess, setCreateSuccess] = useState("");
   const [isCreating, setIsCreating] = useState(false);
 
+  const [selectedPhase, setSelectedPhase] = useState(null);
+
+  const activePhases = useMemo(() => {
+    const type = campaignTypes.find((t) => t.id === createForm.campaign_type_id);
+    return type?.phases
+      ? [...type.phases].sort((a, b) => a.sequence - b.sequence)
+      : [];
+  }, [campaignTypes, createForm.campaign_type_id]);
+
   const [draftForm, setDraftForm] = useState(initialDraftForm);
   const [cards, setCards] = useState([]);
   const [draftError, setDraftError] = useState("");
@@ -247,6 +256,7 @@ function App() {
       const controller = new AbortController();
       abortRef.current = controller;
       setCards([]);
+      setSelectedPhase(null);
       setDraftError("");
       setIsStreaming(true);
 
@@ -377,12 +387,15 @@ function App() {
             setDragOverKey={setDragOverKey}
             onDrop={moveCard}
             onCardClick={setSelectedCard}
+            phases={activePhases}
+            selectedPhase={selectedPhase}
+            onSelectPhase={(id) => setSelectedPhase((prev) => (prev === id ? null : id))}
           />
           <SystemMessages systemCards={systemCards} />
         </section>
       </main>
 
-      <PostDetailModal card={selectedCard} onClose={() => setSelectedCard(null)} />
+      <PostDetailModal card={selectedCard} onClose={() => setSelectedCard(null)} campaignTypes={campaignTypes} />
     </div>
   );
 }
