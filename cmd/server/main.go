@@ -1,7 +1,7 @@
 // @title           Content Control Center API
 // @version         1.0
 // @description     REST API for the Content Control Center application.
-// @host            localhost:3000
+// @host            localhost:9001
 // @BasePath        /
 //
 // @securityDefinitions.apikey  CookieAuth
