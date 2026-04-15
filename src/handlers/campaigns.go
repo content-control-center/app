@@ -53,8 +53,8 @@ type campaignRequest struct {
 	TargetPersona      string                   `json:"target_persona"`
 	KeyMessages        string                   `json:"key_messages"`
 	ToneGuidelines     string                   `json:"tone_guidelines"`
-	UsePieces          bool                     `json:"use_pieces"`
-	PiecesIDs          models.StringSlice       `json:"pieces_ids"`
+	UseAssets          bool                     `json:"use_assets"`
+	AssetIDs          models.StringSlice       `json:"asset_ids"`
 	TargetPlatforms    models.CampaignPlatforms `json:"target_platforms"`
 	CampaignTypeID     string                   `json:"campaign_type_id"    validate:"required"`
 	Status             models.CampaignStatus    `json:"status"`
@@ -133,8 +133,8 @@ func (h *CampaignsHandler) Create(c *fiber.Ctx) error {
 		TargetPersona:      req.TargetPersona,
 		KeyMessages:        req.KeyMessages,
 		ToneGuidelines:     req.ToneGuidelines,
-		UsePieces:          req.UsePieces,
-		PiecesIDs:          nullSlice(req.PiecesIDs),
+		UseAssets:          req.UseAssets,
+		AssetIDs:          nullSlice(req.AssetIDs),
 		TargetPlatforms:    nullCampaignPlatforms(req.TargetPlatforms),
 		CampaignTypeID:     req.CampaignTypeID,
 		Status:             status,
@@ -219,8 +219,8 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 	campaign.TargetPersona = req.TargetPersona
 	campaign.KeyMessages = req.KeyMessages
 	campaign.ToneGuidelines = req.ToneGuidelines
-	campaign.UsePieces = req.UsePieces
-	campaign.PiecesIDs = nullSlice(req.PiecesIDs)
+	campaign.UseAssets = req.UseAssets
+	campaign.AssetIDs = nullSlice(req.AssetIDs)
 	campaign.TargetPlatforms = nullCampaignPlatforms(req.TargetPlatforms)
 	campaign.CampaignTypeID = req.CampaignTypeID
 	campaign.Status = status

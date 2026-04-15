@@ -132,7 +132,7 @@ func TestTrimBody(t *testing.T) {
 
 func TestParseAndTrimPost(t *testing.T) {
 	t.Run("valid JSON returns post", func(t *testing.T) {
-		raw := `{"title":"Hello","body":"World","platformId":"abc","contentType":"text-post","publishDate":"2026-05-01","toneNotes":"","pieceRefs":[]}`
+		raw := `{"title":"Hello","body":"World","platformId":"abc","contentType":"text-post","publishDate":"2026-05-01","toneNotes":"","assetRefs":[]}`
 		post, ok := parseAndTrimPost(raw)
 		if !ok {
 			t.Fatal("expected ok=true, got false")

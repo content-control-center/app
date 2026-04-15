@@ -37,8 +37,8 @@ var _ = Describe("Content plan flow", Ordered, func() {
 		db = mustOpenIntegrationDB()
 
 		tagRepo := repository.NewTagRepository(db)
-		pieceRepo := repository.NewPieceRepository(db, tagRepo)
-		embeddingRepo := repository.NewPiecesEmbeddingRepository(db)
+		assetRepo := repository.NewAssetRepository(db, tagRepo)
+		embeddingRepo := repository.NewAssetsEmbeddingRepository(db)
 		platformRepo := repository.NewPlatformRepository(db)
 		campaignTypeRepo := repository.NewCampaignTypeRepository(db)
 		campaignRepo := repository.NewCampaignRepository(db, tagRepo, platformRepo, campaignTypeRepo)
@@ -92,12 +92,12 @@ var _ = Describe("Content plan flow", Ordered, func() {
 		}
 		flowCfg := content_plan.ContentPlanFlowConfig{
 			ModelID:         modelID,
-			MaxPieces:       5,
+			MaxAssets:       5,
 			MaxOutputTokens: 8192,
 		}
 		repos := content_plan.ContentPlanRepos{
 			Campaigns:  campaignRepo,
-			Pieces:     pieceRepo,
+			Assets:     assetRepo,
 			Embeddings: embeddingRepo,
 			Platforms:  platformRepo,
 			Posts:      postRepo,
@@ -158,7 +158,7 @@ var _ = Describe("Content plan flow", Ordered, func() {
 			}
 			Expect(stepNames).To(ConsistOf(
 				"validateInput",
-				"resolvePieces",
+				"resolveAssets",
 				"resolvePlatforms",
 				"generatePosts",
 				"validateOutput",

@@ -9,7 +9,7 @@
     "cta_type": "link",
     "cta_url": "https://example.com/changelog/v2",
     "target_audience_notes": "Content marketing managers and team leads who are already customers or actively evaluating. Prioritize LinkedIn feed placement over InMail.",
-    "piece_indices": [4],
+    "asset_indices": [4],
     "scheduled_at": "2026-04-15T09:00:00Z"
   },
   {
@@ -22,7 +22,7 @@
     "cta_type": "link",
     "cta_url": "https://example.com/changelog/v2",
     "target_audience_notes": "Tech-adjacent marketers and content professionals on X. Conversational tone. The thread format performs best with this audience for product announcements.",
-    "piece_indices": [4],
+    "asset_indices": [4],
     "scheduled_at": "2026-04-15T10:30:00Z"
   },
   {
@@ -35,7 +35,7 @@
     "cta_type": "none",
     "cta_url": "",
     "target_audience_notes": "Senior marketers and content leaders who engage with long-form LinkedIn articles. This audience skews toward sharing over commenting. Target through organic reach and sponsored distribution to lookalike audiences.",
-    "piece_indices": [0, 3],
+    "asset_indices": [0, 3],
     "scheduled_at": null
   },
   {
@@ -48,7 +48,7 @@
     "cta_type": "link",
     "cta_url": "https://example.com/case-studies/techcorp",
     "target_audience_notes": "Existing customers 30–90 days post-onboarding and warm prospects in active sales cycles. High-intent audience — this post should appear in sponsored distribution targeting users who have visited the pricing page.",
-    "piece_indices": [2],
+    "asset_indices": [2],
     "scheduled_at": null
   },
   {
@@ -61,7 +61,7 @@
     "cta_type": "link",
     "cta_url": "https://example.com/holiday",
     "target_audience_notes": "Marketing managers and team leads with Q4 budget to allocate. Carousel format performs well on Instagram for list-style content. Target 28–45 age range, marketing and communications job titles.",
-    "piece_indices": [6],
+    "asset_indices": [6],
     "scheduled_at": "2026-11-28T12:00:00Z"
   },
   {
@@ -74,7 +74,7 @@
     "cta_type": "link",
     "cta_url": "https://example.com/developers",
     "target_audience_notes": "Software engineers and technical leads evaluating the platform. LinkedIn engineering audience responds to specificity and step-by-step breakdowns over abstract capability claims.",
-    "piece_indices": [7, 1],
+    "asset_indices": [7, 1],
     "scheduled_at": null
   }
 ]

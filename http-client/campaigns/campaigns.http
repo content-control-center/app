@@ -35,8 +35,8 @@ Content-Type: application/json
     "key_messages": "Rust delivers C++-level performance with compile-time memory safety — no garbage collector pauses, no data races, no 3 AM crashes in production. The language the finance industry didn't know it was waiting for.",
     "tone_guidelines": "Technically credible yet accessible. Confident without being preachy. Speak peer-to-peer with engineers — show, don't sell. Use concrete benchmarks and real-world case studies over abstract claims.",
     "status": "scheduled",
-    "use_pieces": true,
-    "pieces_ids": [],
+    "use_assets": true,
+    "asset_ids": [],
     "target_platforms": [
         {"id": "AXqWG7U2qnpt", "post_types": ["text-post", "article", "carousel"]},
         {"id": "zBU1zqVICGfk", "post_types": ["text-post", "image-post", "video"]},
@@ -108,8 +108,8 @@ Content-Type: application/json
   "key_messages": "Fast, reliable, affordable — now with team plans.",
   "tone_guidelines": "Friendly, confident, and jargon-free.",
   "status": "active",
-  "use_pieces": true,
-  "pieces_ids": [],
+  "use_assets": true,
+  "asset_ids": [],
   "target_platforms": [
     {"id": "AXqWG7U2qnpt", "post_types": ["text-post", "article"]},
     {"id": "zBU1zqVICGfk", "post_types": ["text-post"]}

@@ -99,12 +99,12 @@ func (r *postRepository) Delete(ctx context.Context, id string) (bool, error) {
 
 func (r *postRepository) hydrateRelations(ctx context.Context, posts []models.Post) error {
 	for i := range posts {
-		posts[i].UsedPieces = []models.Piece{}
+		posts[i].UsedAssets = []models.Asset{}
 	}
 
 	campaignIDs := collectIDs(posts, func(p models.Post) string { return p.CampaignID })
 	platformIDs := collectIDs(posts, func(p models.Post) string { return p.PlatformID })
-	pieceIDs := collectIDsFlat(posts, func(p models.Post) []string { return p.UsedPiecesIDs })
+	assetIDs := collectIDsFlat(posts, func(p models.Post) []string { return p.UsedAssetIDs })
 	phaseIDs := collectIDsPtr(posts, func(p models.Post) *string { return p.CampaignTypePhaseID })
 
 	campaignByID, err := fetchByIDs[models.Campaign](ctx, r.db, campaignIDs, func(c *models.Campaign) string { return c.ID })
@@ -120,11 +120,11 @@ func (r *postRepository) hydrateRelations(ctx context.Context, posts []models.Po
 		return err
 	}
 
-	pieceByID, err := fetchByIDs[models.Piece](ctx, r.db, pieceIDs, func(p *models.Piece) string { return p.ID })
+	assetByID, err := fetchByIDs[models.Asset](ctx, r.db, assetIDs, func(p *models.Asset) string { return p.ID })
 	if err != nil {
 		return err
 	}
-	for _, p := range pieceByID {
+	for _, p := range assetByID {
 		p.Tags = []models.Tag{}
 	}
 
@@ -136,9 +136,9 @@ func (r *postRepository) hydrateRelations(ctx context.Context, posts []models.Po
 	for i, p := range posts {
 		posts[i].Campaign = campaignByID[p.CampaignID]
 		posts[i].Platform = platformByID[p.PlatformID]
-		for _, id := range p.UsedPiecesIDs {
-			if piece, ok := pieceByID[id]; ok {
-				posts[i].UsedPieces = append(posts[i].UsedPieces, *piece)
+		for _, id := range p.UsedAssetIDs {
+			if asset, ok := assetByID[id]; ok {
+				posts[i].UsedAssets = append(posts[i].UsedAssets, *asset)
 			}
 		}
 		if p.CampaignTypePhaseID != nil {

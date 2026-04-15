@@ -23,10 +23,10 @@ Output format — respond with a raw JSON array only, no markdown fences, no oth
     "publishDate": "YYYY-MM-DD",
     "toneNotes": "string",
     "phaseId": "string",
-    "pieceRefs": ["id1", "id2"]
+    "assetRefs": ["id1", "id2"]
   }
 ]
-pieceRefs must list ONLY the IDs of pieces whose facts, ideas, or wording were directly drawn upon for this post's theses. Omit pieceRefs entirely (or leave it empty) when no reference material was used.{{end}}
+assetRefs must list ONLY the IDs of assets whose facts, ideas, or wording were directly drawn upon for this post's theses. Omit assetRefs entirely (or leave it empty) when no reference material was used.{{end}}
 
 {{define "user"}}Campaign: {{.Name}}
 Campaign Type: {{.CampaignTypeLabel}}
@@ -55,10 +55,10 @@ Target Platforms:
     Recommended cadence: {{.Cadence}}
     Content guidance: {{.Constraints}}
 {{- end}}
-{{- if .Pieces}}
+{{- if .Assets}}
 
-Reference Material — use only when directly relevant to a post's theses; list the IDs of pieces you actually drew from in that post's pieceRefs:
-{{- range .Pieces}}
+Reference Material — use only when directly relevant to a post's theses; list the IDs of assets you actually drew from in that post's assetRefs:
+{{- range .Assets}}
   [{{.ID}}] {{.Title}}
   {{.Excerpt}}
 {{- end}}

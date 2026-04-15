@@ -64,7 +64,7 @@ func initContentPlan(
 
 	flowCfg := content_plan.ContentPlanFlowConfig{
 		ModelID:         cfg.ModelID,
-		MaxPieces:       cfg.MaxPieceContext,
+		MaxAssets:       cfg.MaxAssetContext,
 		MaxOutputTokens: cfg.MaxOutputTokens,
 		Embedder:        embedder,
 	}

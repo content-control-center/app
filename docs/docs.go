@@ -114,7 +114,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Returns all posts for the given campaign ID, with campaign, platform, and pieces hydrated.",
+                "description": "Returns all posts for the given campaign ID, with campaign, platform, and assets hydrated.",
                 "produces": [
                     "application/json"
                 ],
@@ -387,7 +387,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/content-bank/pieces": {
+        "/api/assets": {
             "get": {
                 "security": [
                     {
@@ -479,7 +479,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/content-bank/pieces/{id}": {
+        "/api/assets/{id}": {
             "get": {
                 "security": [
                     {
@@ -1052,7 +1052,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Returns all posts ordered by creation date, with campaign, platform, and pieces hydrated.",
+                "description": "Returns all posts ordered by creation date, with campaign, platform, and assets hydrated.",
                 "produces": [
                     "application/json"
                 ],
@@ -1144,7 +1144,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Returns a single post by Sqid with campaign, platform, and pieces hydrated.",
+                "description": "Returns a single post by Sqid with campaign, platform, and assets hydrated.",
                 "produces": [
                     "application/json"
                 ],
