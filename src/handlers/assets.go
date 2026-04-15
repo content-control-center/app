@@ -159,6 +159,10 @@ func (h *AssetsHandler) Update(c *fiber.Ctx) error {
 		return err
 	}
 
+	// Detect whether the embedding inputs (title or content) actually changed,
+	// so we don't re-embed an asset when only a tag was toggled.
+	embedInputChanged := asset.Title != req.Title || asset.Content != req.Content
+
 	asset.Title = req.Title
 	asset.Content = req.Content
 	asset.TagIDs = nullSlice(req.TagIDs)
@@ -168,7 +172,7 @@ func (h *AssetsHandler) Update(c *fiber.Ctx) error {
 		return err
 	}
 
-	if h.onSave != nil {
+	if h.onSave != nil && embedInputChanged {
 		go h.onSave(asset.ID, asset.Title, asset.Content)
 	}
 
