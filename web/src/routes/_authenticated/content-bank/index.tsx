@@ -42,7 +42,7 @@ function ContentBank() {
   if (isError) {
     return (
       <PageContainer>
-        <PageError header="Failed to load content pieces" />
+        <PageError header="Failed to load content assets" />
       </PageContainer>
     );
   }
@@ -56,7 +56,7 @@ function ContentBank() {
         className={'pt-6'}
         actions={
           <Button onClick={handleCreate} disabled={createPiece.isPending} size="lg">
-            <Icon name={'plus'} className={'size-4'} /><span>ADD DOCUMENT</span>
+            <Icon name={'plus'} className={'size-4'} /><span>ADD ASSET</span>
           </Button>
         }
       />
@@ -65,18 +65,18 @@ function ContentBank() {
           <ContentPiecesTable
             pieces={pieces ?? []}
             onDelete={(id) => deletePiece.mutate(id)}
-            emptyStateMessage="No content pieces yet"
-            emptyStateActionLabel="Add Document"
+            emptyStateMessage="No content assets yet"
+            emptyStateActionLabel="Add Asset"
             onEmptyStateAction={handleCreate}
           />
         ) : (
           <PageGridEmptyState
-            title="No documents yet"
-            subtitle="Create your first document to start building your content bank"
+            title="No assets yet"
+            subtitle="Create your first asset to start building your content bank"
             actions={
               <Button onClick={handleCreate} disabled={createPiece.isPending} variant="defaultInverted">
                 <Icon name={'plus'} className={'size-4 stroke-[2px]'} />
-                <span>ADD DOCUMENT</span>
+                <span>ADD ASSET</span>
               </Button>
             }
           />

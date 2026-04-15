@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react'
 
-export type OverlayContainer = 'modal' | 'sheet'
+export type OverlayContainer = 'modal' | 'sheet' | 'secondary-navbar'
 
 export type OverlayContainerConfig =
   | {
@@ -12,6 +12,9 @@ export type OverlayContainerConfig =
       container: 'sheet'
       side?: 'top' | 'right' | 'bottom' | 'left' | 'fullscreen'
       mobileSide?: 'top' | 'right' | 'bottom' | 'left' | 'fullscreen'
+    }
+  | {
+      container: 'secondary-navbar'
     }
 
 export type OverlayEntry = OverlayContainerConfig & {

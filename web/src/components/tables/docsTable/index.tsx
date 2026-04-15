@@ -29,7 +29,7 @@ function formatDate(dateStr: string): string {
 function ContentPiecesTableComponent({
   pieces,
   onDelete,
-  emptyStateMessage = 'No content pieces',
+  emptyStateMessage = 'No content assets',
   emptyStateActionLabel,
   onEmptyStateAction,
 }: ContentPiecesTableProps) {
@@ -42,17 +42,18 @@ function ContentPiecesTableComponent({
         accessorKey: 'title',
         header: 'Title',
         isAutoSize: true,
-        cell: (_value, row) => (
-          <div className="h-[34px] border-b-2 border-background px-3 leading-8">
+        cell: (_value, row) => {
+          const displayTitle = row.title.trim() === '' ? 'Untitled' : row.title
+          return (
             <Link
               to="/content-bank/$pieceId"
               params={{ pieceId: row.id }}
-              className="hover:underline"
+              className="block h-[34px] border-b-2 border-background px-3 leading-8 hover:underline"
             >
-              <TextCell value={row.title} />
+              <TextCell value={displayTitle} />
             </Link>
-          </div>
-        ),
+          )
+        },
       },
       {
         id: 'created_at',
@@ -61,9 +62,13 @@ function ContentPiecesTableComponent({
         size: 140,
         minSize: 120,
         cell: (_value, row) => (
-          <div className="h-[34px] border-b-2 border-background px-3 leading-8">
+          <Link
+            to="/content-bank/$pieceId"
+            params={{ pieceId: row.id }}
+            className="block h-[34px] border-b-2 border-background px-3 leading-8"
+          >
             <TextCell value={formatDate(row.created_at)} />
-          </div>
+          </Link>
         ),
       },
       {
@@ -73,9 +78,13 @@ function ContentPiecesTableComponent({
         size: 140,
         minSize: 120,
         cell: (_value, row) => (
-          <div className="h-[34px] border-b-2 border-background px-3 leading-8">
+          <Link
+            to="/content-bank/$pieceId"
+            params={{ pieceId: row.id }}
+            className="block h-[34px] border-b-2 border-background px-3 leading-8"
+          >
             <TextCell value={formatDate(row.updated_at)} />
-          </div>
+          </Link>
         ),
       },
       {
