@@ -167,14 +167,14 @@ export function CreateCampaignTab({
 
         <div className="flex items-center">
           <label className="flex cursor-pointer items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-600">
-            <input type="checkbox" checked={createForm.use_pieces} onChange={setCreateField("use_pieces")} />
-            use_pieces
+            <input type="checkbox" checked={createForm.use_assets} onChange={setCreateField("use_assets")} />
+            use_assets
           </label>
         </div>
 
         <div>
-          <label className={labelClass} htmlFor="create_pieces_ids">pieces_ids (comma separated)</label>
-          <input id="create_pieces_ids" className={inputClass} value={createForm.pieces_ids} onChange={setCreateField("pieces_ids")} placeholder="piece_a,piece_b" />
+          <label className={labelClass} htmlFor="create_asset_ids">asset_ids (comma separated)</label>
+          <input id="create_asset_ids" className={inputClass} value={createForm.asset_ids} onChange={setCreateField("asset_ids")} placeholder="asset_a,asset_b" />
         </div>
 
         <div>

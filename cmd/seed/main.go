@@ -28,7 +28,7 @@ type seedTag struct {
 	Color string `json:"color"`
 }
 
-type seedPiece struct {
+type seedAsset struct {
 	Title   string          `json:"title"`
 	Content json.RawMessage `json:"content"` // BlockNote JSON array — stored as string in DB
 	Tags    []string        `json:"tags"`    // tag names, resolved to IDs at runtime
@@ -42,8 +42,8 @@ type seedCampaign struct {
 	ToneGuidelines     string   `json:"tone_guidelines"`
 	CampaignTypeID     string   `json:"campaign_type_id"`
 	Status             string   `json:"status"`
-	UsePieces          bool     `json:"use_pieces"`
-	PieceIndices       []int    `json:"piece_indices"`       // 0-based indices into pieces slice
+	UseAssets          bool     `json:"use_assets"`
+	AssetIndices       []int    `json:"asset_indices"`       // 0-based indices into assets slice
 	TargetPlatformIDs  []string `json:"target_platform_ids"` // literal platform IDs (seeded by migrations)
 	EstimatedPostCount *int     `json:"estimated_post_count"`
 	Budget             *float64 `json:"budget"`
@@ -64,7 +64,7 @@ type seedPost struct {
 	CTAType             string  `json:"cta_type"`
 	CTAUrl              string  `json:"cta_url"`
 	TargetAudienceNotes string  `json:"target_audience_notes"`
-	PieceIndices        []int   `json:"piece_indices"` // 0-based indices into pieces slice
+	AssetIndices        []int   `json:"asset_indices"` // 0-based indices into assets slice
 	ScheduledAt         *string `json:"scheduled_at"`
 }
 
@@ -102,7 +102,7 @@ func main() {
 
 	// ---------- load fixtures ----------
 	tags := mustLoad[[]seedTag]("tags.json")
-	pieces := mustLoad[[]seedPiece]("pieces.json")
+	assets := mustLoad[[]seedAsset]("assets.json")
 	campaigns := mustLoad[[]seedCampaign]("campaigns.json")
 	posts := mustLoad[[]seedPost]("posts.json")
 
@@ -142,27 +142,27 @@ func main() {
 	}
 	log.Printf("tags:     %d created", len(tags))
 
-	// ---------- seed pieces ----------
-	pieceRepo := repository.NewPieceRepository(db, tagRepo)
-	pieceIDs := make([]string, 0, len(pieces))
-	for _, sp := range pieces {
+	// ---------- seed assets ----------
+	assetRepo := repository.NewAssetRepository(db, tagRepo)
+	assetIDs := make([]string, 0, len(assets))
+	for _, sp := range assets {
 		id, err := models.NewID()
 		if err != nil {
-			log.Fatalf("generate piece id: %v", err)
+			log.Fatalf("generate asset id: %v", err)
 		}
-		p := &models.Piece{
+		p := &models.Asset{
 			ID:        id,
 			Title:     sp.Title,
 			Content:   string(sp.Content),
 			TagIDs:    resolveTagIDs(sp.Tags, tagIDs),
 			CreatedBy: userID,
 		}
-		if err := pieceRepo.Create(ctx, p); err != nil {
-			log.Fatalf("create piece %q: %v", sp.Title, err)
+		if err := assetRepo.Create(ctx, p); err != nil {
+			log.Fatalf("create asset %q: %v", sp.Title, err)
 		}
-		pieceIDs = append(pieceIDs, id)
+		assetIDs = append(assetIDs, id)
 	}
-	log.Printf("pieces:   %d created", len(pieces))
+	log.Printf("assets:   %d created", len(assets))
 
 	// ---------- seed campaigns ----------
 	campaignRepo := repository.NewCampaignRepository(db, tagRepo)
@@ -181,8 +181,8 @@ func main() {
 			ToneGuidelines:     sc.ToneGuidelines,
 			CampaignTypeID:     sc.CampaignTypeID,
 			Status:             models.CampaignStatus(sc.Status),
-			UsePieces:          sc.UsePieces,
-			PiecesIDs:          resolveIndices(sc.PieceIndices, pieceIDs, "piece"),
+			UseAssets:          sc.UseAssets,
+			AssetIDs:          resolveIndices(sc.AssetIndices, assetIDs, "asset"),
 			TargetPlatformIDs:  models.StringSlice(sc.TargetPlatformIDs),
 			EstimatedPostCount: sc.EstimatedPostCount,
 			Budget:             sc.Budget,
@@ -222,7 +222,7 @@ func main() {
 			CTAType:             models.PostCTAType(sp.CTAType),
 			CTAUrl:              sp.CTAUrl,
 			TargetAudienceNotes: sp.TargetAudienceNotes,
-			UsedPiecesIDs:       resolveIndices(sp.PieceIndices, pieceIDs, "piece"),
+			UsedAssetIDs:       resolveIndices(sp.AssetIndices, assetIDs, "asset"),
 			ScheduledAt:         parseTime(sp.ScheduledAt, sp.Title, "scheduled_at"),
 			CreatedBy:           userID,
 		}
@@ -235,7 +235,7 @@ func main() {
 	// ---------- embeddings ----------
 	// Use a short retry window so the seed command doesn't stall when the embed
 	// server is not running. Embeddings are optional — the seed succeeds either way.
-	embeddingRepo := repository.NewPiecesEmbeddingRepository(db)
+	embeddingRepo := repository.NewAssetsEmbeddingRepository(db)
 	onSave, _, err := embedding.InitWithOptions(ctx, cfg.EmbedServerURL, 2, 3*time.Second, embeddingRepo)
 	if err != nil {
 		log.Printf("embeddings: server unavailable (%v) — skipping", err)
@@ -243,10 +243,10 @@ func main() {
 	if onSave == nil {
 		log.Println("embeddings: skipped (set EMBED_SERVER_URL to generate)")
 	} else {
-		log.Printf("embeddings: generating for %d pieces...", len(pieces))
-		for i, sp := range pieces {
-			onSave(pieceIDs[i], sp.Title, string(sp.Content))
-			log.Printf("embeddings: [%d/%d] %s", i+1, len(pieces), sp.Title)
+		log.Printf("embeddings: generating for %d assets...", len(assets))
+		for i, sp := range assets {
+			onSave(assetIDs[i], sp.Title, string(sp.Content))
+			log.Printf("embeddings: [%d/%d] %s", i+1, len(assets), sp.Title)
 		}
 		log.Println("embeddings: done")
 	}

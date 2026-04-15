@@ -6,7 +6,7 @@ import (
 	"sort"
 )
 
-// rankByCosineSimilarity returns up to topN piece IDs ordered by descending
+// rankByCosineSimilarity returns up to topN asset IDs ordered by descending
 // cosine similarity to the query vector. Only IDs with a score >= minScore are
 // included. A zero or mismatched vector scores as 0.
 func rankByCosineSimilarity(query []float32, embeddings map[string][]float32, topN int, minScore float32) []string {
@@ -18,7 +18,7 @@ func rankByCosineSimilarity(query []float32, embeddings map[string][]float32, to
 	scores := make([]scored, 0, len(embeddings))
 	for id, vec := range embeddings {
 		s := cosineSimilarity(query, vec)
-		log.Printf("content_plan: piece %s similarity=%.4f (threshold=%.4f, pass=%v)", id, s, minScore, s >= minScore)
+		log.Printf("content_plan: asset %s similarity=%.4f (threshold=%.4f, pass=%v)", id, s, minScore, s >= minScore)
 		if s >= minScore {
 			scores = append(scores, scored{id: id, score: s})
 		}

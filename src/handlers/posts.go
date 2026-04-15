@@ -59,7 +59,7 @@ type postRequest struct {
 	CTAType             models.PostCTAType `json:"cta_type"`
 	CTAUrl              string             `json:"cta_url"`
 	TargetAudienceNotes string             `json:"target_audience_notes"`
-	UsedPiecesIDs       models.StringSlice `json:"used_pieces_ids"`
+	UsedAssetIDs       models.StringSlice `json:"used_asset_ids"`
 	CampaignTypePhaseID *string            `json:"campaign_type_phase_id"`
 }
 
@@ -79,7 +79,7 @@ func (r *postRequest) toCTAType() models.PostCTAType {
 
 // List godoc
 // @Summary      List posts
-// @Description  Returns all posts ordered by creation date, with campaign, platform, and pieces hydrated.
+// @Description  Returns all posts ordered by creation date, with campaign, platform, and assets hydrated.
 // @Tags         posts
 // @Produce      json
 // @Security     CookieAuth
@@ -96,7 +96,7 @@ func (h *PostsHandler) List(c *fiber.Ctx) error {
 
 // ListByCampaign godoc
 // @Summary      List posts by campaign
-// @Description  Returns all posts for the given campaign ID, with campaign, platform, and pieces hydrated.
+// @Description  Returns all posts for the given campaign ID, with campaign, platform, and assets hydrated.
 // @Tags         posts
 // @Produce      json
 // @Security     CookieAuth
@@ -162,10 +162,10 @@ func (h *PostsHandler) Create(c *fiber.Ctx) error {
 		CTAType:             ctaType,
 		CTAUrl:              req.CTAUrl,
 		TargetAudienceNotes: req.TargetAudienceNotes,
-		UsedPiecesIDs:       nullSlice(req.UsedPiecesIDs),
+		UsedAssetIDs:       nullSlice(req.UsedAssetIDs),
 		CampaignTypePhaseID: req.CampaignTypePhaseID,
 		CreatedBy:           session.UserID,
-		UsedPieces:          []models.Piece{},
+		UsedAssets:          []models.Asset{},
 	}
 	if err := h.repo.Create(c.Context(), post); err != nil {
 		return err
@@ -175,7 +175,7 @@ func (h *PostsHandler) Create(c *fiber.Ctx) error {
 
 // Get godoc
 // @Summary      Get post
-// @Description  Returns a single post by Sqid with campaign, platform, and pieces hydrated.
+// @Description  Returns a single post by Sqid with campaign, platform, and assets hydrated.
 // @Tags         posts
 // @Produce      json
 // @Security     CookieAuth
@@ -247,7 +247,7 @@ func (h *PostsHandler) Update(c *fiber.Ctx) error {
 	post.CTAUrl = req.CTAUrl
 	post.CampaignTypePhaseID = req.CampaignTypePhaseID
 	post.TargetAudienceNotes = req.TargetAudienceNotes
-	post.UsedPiecesIDs = nullSlice(req.UsedPiecesIDs)
+	post.UsedAssetIDs = nullSlice(req.UsedAssetIDs)
 	post.UpdatedAt = time.Now().UTC()
 
 	if err := h.repo.Update(c.Context(), post); err != nil {

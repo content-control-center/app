@@ -1,16 +1,16 @@
 @baseUrl = http://localhost:9001
 
-# All pieces endpoints require authentication.
+# All assets endpoints require authentication.
 # Run "Login" from sessions/sessions.http first — the HTTP client stores and
 # sends the cookie automatically on subsequent requests to the same host.
 
-### List all pieces  [protected]
-GET {{baseUrl}}/api/content-bank/pieces
+### List all assets  [protected]
+GET {{baseUrl}}/api/assets
 Accept: application/json
 
-### Create piece  [protected]
-# @name createPiece
-POST {{baseUrl}}/api/content-bank/pieces
+### Create asset  [protected]
+# @name createAsset
+POST {{baseUrl}}/api/assets
 Content-Type: application/json
 
 {
@@ -19,61 +19,61 @@ Content-Type: application/json
     "tag_ids": []
 }
 
-> {% client.global.set("pieceId", response.body.id) %}
+> {% client.global.set("assetId", response.body.id) %}
 
-### Create piece — missing title (expects 400)  [protected]
-POST {{baseUrl}}/api/content-bank/pieces
+### Create asset — missing title (expects 400)  [protected]
+POST {{baseUrl}}/api/assets
 Content-Type: application/json
 
 {
   "content": "[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"No title\",\"styles\":{}}]}]"
 }
 
-### Create piece — missing content (expects 400)  [protected]
-POST {{baseUrl}}/api/content-bank/pieces
+### Create asset — missing content (expects 400)  [protected]
+POST {{baseUrl}}/api/assets
 Content-Type: application/json
 
 {
   "title": "No Content"
 }
 
-### Get piece by ID  [protected]
-GET {{baseUrl}}/api/content-bank/pieces/{{pieceId}}
+### Get asset by ID  [protected]
+GET {{baseUrl}}/api/assets/{{assetId}}
 Accept: application/json
 
-### Get piece — non-existent ID (expects 404)  [protected]
-GET {{baseUrl}}/api/content-bank/pieces/nonexistent
+### Get asset — non-existent ID (expects 404)  [protected]
+GET {{baseUrl}}/api/assets/nonexistent
 Accept: application/json
 
-### Update piece  [protected]
-PUT {{baseUrl}}/api/content-bank/pieces/{{pieceId}}
+### Update asset  [protected]
+PUT {{baseUrl}}/api/assets/{{assetId}}
 Content-Type: application/json
 
 {
-  "title": "Updated Piece Title",
+  "title": "Updated Asset Title",
   "content": "[{\"id\":\"1\",\"type\":\"heading\",\"props\":{\"level\":1,\"textColor\":\"default\",\"backgroundColor\":\"default\",\"textAlignment\":\"left\"},\"content\":[{\"type\":\"text\",\"text\":\"Updated heading\",\"styles\":{}}],\"children\":[]},{\"id\":\"2\",\"type\":\"paragraph\",\"props\":{\"textColor\":\"default\",\"backgroundColor\":\"default\",\"textAlignment\":\"left\"},\"content\":[{\"type\":\"text\",\"text\":\"Updated body text.\",\"styles\":{}}],\"children\":[]}]",
   "tag_ids": []
 }
 
-### Update piece — missing content (expects 400)  [protected]
-PUT {{baseUrl}}/api/content-bank/pieces/{{pieceId}}
+### Update asset — missing content (expects 400)  [protected]
+PUT {{baseUrl}}/api/assets/{{assetId}}
 Content-Type: application/json
 
 {
   "title": "Title Only"
 }
 
-### Update piece — non-existent ID (expects 404)  [protected]
-PUT {{baseUrl}}/api/content-bank/pieces/nonexistent
+### Update asset — non-existent ID (expects 404)  [protected]
+PUT {{baseUrl}}/api/assets/nonexistent
 Content-Type: application/json
 
 {
-  "title": "Ghost Piece",
+  "title": "Ghost Asset",
   "content": "[]"
 }
 
-### Delete piece  [protected]
-DELETE {{baseUrl}}/api/content-bank/pieces/{{pieceId}}
+### Delete asset  [protected]
+DELETE {{baseUrl}}/api/assets/{{assetId}}
 
-### Delete piece — non-existent ID (expects 404)  [protected]
-DELETE {{baseUrl}}/api/content-bank/pieces/nonexistent
+### Delete asset — non-existent ID (expects 404)  [protected]
+DELETE {{baseUrl}}/api/assets/nonexistent

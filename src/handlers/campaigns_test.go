@@ -172,7 +172,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				Expect(c.CampaignTypeID).To(Equal("gb"))
 				Expect(c.Status).To(Equal(models.StatusDraft))
 				Expect(c.CreatedBy).NotTo(BeEmpty())
-				Expect(c.PiecesIDs).To(BeEmpty())
+				Expect(c.AssetIDs).To(BeEmpty())
 				Expect(c.TargetPlatforms).To(BeEmpty())
 				Expect(c.Tags).To(BeEmpty())
 			})
@@ -186,8 +186,8 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 					"target_persona":   "Tech-savvy millennials",
 					"key_messages":     "Fast, reliable, affordable",
 					"tone_guidelines":  "Friendly and professional",
-					"use_pieces":       true,
-					"pieces_ids":       []string{"abc", "def"},
+					"use_assets":       true,
+					"asset_ids":       []string{"abc", "def"},
 					"target_platforms": []fiber.Map{
 						{"id": "rzgpTkARLH0L", "post_types": []string{"image-post", "reel"}},
 						{"id": "tiktok", "post_types": []string{"video"}},
@@ -209,8 +209,8 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				var c models.Campaign
 				Expect(json.NewDecoder(resp.Body).Decode(&c)).To(Succeed())
 				Expect(c.Status).To(Equal(models.StatusScheduled))
-				Expect(c.UsePieces).To(BeTrue())
-				Expect(c.PiecesIDs).To(ConsistOf("abc", "def"))
+				Expect(c.UseAssets).To(BeTrue())
+				Expect(c.AssetIDs).To(ConsistOf("abc", "def"))
 				Expect(c.TagIDs).To(BeEmpty())
 				Expect(c.EstimatedPostCount).NotTo(BeNil())
 				Expect(*c.EstimatedPostCount).To(Equal(count))

@@ -17,7 +17,7 @@ import (
 	"github.com/content-control-center/app/src/repository"
 )
 
-var _ = Describe("PiecesHandler", Ordered, func() {
+var _ = Describe("AssetsHandler", Ordered, func() {
 	var (
 		app        *fiber.App
 		db         *bun.DB
@@ -42,11 +42,11 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 		sessionRepo := repository.NewSessionRepository(db)
 		settingRepo := repository.NewSettingRepository(db)
 		tagRepo := repository.NewTagRepository(db)
-		pieceRepo := repository.NewPieceRepository(db, tagRepo)
+		pieceRepo := repository.NewAssetRepository(db, tagRepo)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
-		handlers.NewPiecesHandler(pieceRepo, auth, nil).Register(app)
+		handlers.NewAssetsHandler(pieceRepo, auth, nil).Register(app)
 		handlers.NewTagsHandler(tagRepo, auth).Register(app)
 
 		// Seed an auth user and log in
@@ -69,7 +69,7 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 	})
 
 	AfterEach(func() {
-		_, err := db.NewDelete().TableExpr("pieces").Where("1 = 1").Exec(context.Background())
+		_, err := db.NewDelete().TableExpr("assets").Where("1 = 1").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		_, err = db.NewDelete().TableExpr("tags").Where("1 = 1").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
@@ -79,26 +79,26 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 	})
 
-	// helper: create a piece via the API and return it
-	createPiece := func(title, content string) models.Piece {
+	// helper: create a asset via the API and return it
+	createPiece := func(title, content string) models.Asset {
 		body, _ := json.Marshal(fiber.Map{"title": title, "content": content})
-		req := httptest.NewRequest("POST", "/api/content-bank/pieces", bytes.NewReader(body))
+		req := httptest.NewRequest("POST", "/api/content-bank/assets", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.AddCookie(authCookie)
 		resp, err := app.Test(req)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
-		var p models.Piece
+		var p models.Asset
 		Expect(json.NewDecoder(resp.Body).Decode(&p)).To(Succeed())
 		return p
 	}
 
 	// ── List ─────────────────────────────────────────────────────────────────
 
-	Describe("GET /api/content-bank/pieces", func() {
+	Describe("GET /api/content-bank/assets", func() {
 		Context("when not authenticated", func() {
 			It("returns 401", func() {
-				req := httptest.NewRequest("GET", "/api/content-bank/pieces", nil)
+				req := httptest.NewRequest("GET", "/api/content-bank/assets", nil)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(401))
@@ -106,42 +106,42 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 		})
 
 		Context("when authenticated", func() {
-			It("returns an empty list when no pieces exist", func() {
-				req := httptest.NewRequest("GET", "/api/content-bank/pieces", nil)
+			It("returns an empty list when no assets exist", func() {
+				req := httptest.NewRequest("GET", "/api/content-bank/assets", nil)
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(200))
 
-				var pieces []models.Piece
-				Expect(json.NewDecoder(resp.Body).Decode(&pieces)).To(Succeed())
-				Expect(pieces).To(BeEmpty())
+				var assets []models.Asset
+				Expect(json.NewDecoder(resp.Body).Decode(&assets)).To(Succeed())
+				Expect(assets).To(BeEmpty())
 			})
 
-			It("returns all pieces", func() {
+			It("returns all assets", func() {
 				createPiece("First", `[{"type":"paragraph"}]`)
 				createPiece("Second", `[{"type":"paragraph"}]`)
 
-				req := httptest.NewRequest("GET", "/api/content-bank/pieces", nil)
+				req := httptest.NewRequest("GET", "/api/content-bank/assets", nil)
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(200))
 
-				var pieces []models.Piece
-				Expect(json.NewDecoder(resp.Body).Decode(&pieces)).To(Succeed())
-				Expect(pieces).To(HaveLen(2))
+				var assets []models.Asset
+				Expect(json.NewDecoder(resp.Body).Decode(&assets)).To(Succeed())
+				Expect(assets).To(HaveLen(2))
 			})
 		})
 	})
 
 	// ── Create ───────────────────────────────────────────────────────────────
 
-	Describe("POST /api/content-bank/pieces", func() {
+	Describe("POST /api/content-bank/assets", func() {
 		Context("when not authenticated", func() {
 			It("returns 401", func() {
 				body, _ := json.Marshal(fiber.Map{"title": "Test", "content": `[]`})
-				req := httptest.NewRequest("POST", "/api/content-bank/pieces", bytes.NewReader(body))
+				req := httptest.NewRequest("POST", "/api/content-bank/assets", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
@@ -150,26 +150,26 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 		})
 
 		Context("when authenticated", func() {
-			It("creates a piece and returns 201 with the created_by from the session", func() {
-				body, _ := json.Marshal(fiber.Map{"title": "My Piece", "content": `[{"type":"paragraph"}]`})
-				req := httptest.NewRequest("POST", "/api/content-bank/pieces", bytes.NewReader(body))
+			It("creates a asset and returns 201 with the created_by from the session", func() {
+				body, _ := json.Marshal(fiber.Map{"title": "My Asset", "content": `[{"type":"paragraph"}]`})
+				req := httptest.NewRequest("POST", "/api/content-bank/assets", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(201))
 
-				var p models.Piece
+				var p models.Asset
 				Expect(json.NewDecoder(resp.Body).Decode(&p)).To(Succeed())
 				Expect(p.ID).NotTo(BeEmpty())
-				Expect(p.Title).To(Equal("My Piece"))
+				Expect(p.Title).To(Equal("My Asset"))
 				Expect(p.Content).To(Equal(`[{"type":"paragraph"}]`))
 				Expect(p.CreatedBy).NotTo(BeEmpty())
 			})
 
 			It("returns 400 when title is missing", func() {
 				body, _ := json.Marshal(fiber.Map{"content": `[]`})
-				req := httptest.NewRequest("POST", "/api/content-bank/pieces", bytes.NewReader(body))
+				req := httptest.NewRequest("POST", "/api/content-bank/assets", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
@@ -179,7 +179,7 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 
 			It("returns 400 when content is missing", func() {
 				body, _ := json.Marshal(fiber.Map{"title": "No Content"})
-				req := httptest.NewRequest("POST", "/api/content-bank/pieces", bytes.NewReader(body))
+				req := httptest.NewRequest("POST", "/api/content-bank/assets", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
@@ -191,10 +191,10 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 
 	// ── Get ──────────────────────────────────────────────────────────────────
 
-	Describe("GET /api/content-bank/pieces/:id", func() {
+	Describe("GET /api/content-bank/assets/:id", func() {
 		Context("when not authenticated", func() {
 			It("returns 401", func() {
-				req := httptest.NewRequest("GET", "/api/content-bank/pieces/someid", nil)
+				req := httptest.NewRequest("GET", "/api/content-bank/assets/someid", nil)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(401))
@@ -202,23 +202,23 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 		})
 
 		Context("when authenticated", func() {
-			It("returns the piece", func() {
+			It("returns the asset", func() {
 				p := createPiece("Hello", `[{"type":"paragraph"}]`)
 
-				req := httptest.NewRequest("GET", "/api/content-bank/pieces/"+p.ID, nil)
+				req := httptest.NewRequest("GET", "/api/content-bank/assets/"+p.ID, nil)
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(200))
 
-				var got models.Piece
+				var got models.Asset
 				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
 				Expect(got.ID).To(Equal(p.ID))
 				Expect(got.Title).To(Equal("Hello"))
 			})
 
 			It("returns 404 for an unknown id", func() {
-				req := httptest.NewRequest("GET", "/api/content-bank/pieces/nonexistent", nil)
+				req := httptest.NewRequest("GET", "/api/content-bank/assets/nonexistent", nil)
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
@@ -229,11 +229,11 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 
 	// ── Update ───────────────────────────────────────────────────────────────
 
-	Describe("PUT /api/content-bank/pieces/:id", func() {
+	Describe("PUT /api/content-bank/assets/:id", func() {
 		Context("when not authenticated", func() {
 			It("returns 401", func() {
 				body, _ := json.Marshal(fiber.Map{"title": "Updated", "content": `[]`})
-				req := httptest.NewRequest("PUT", "/api/content-bank/pieces/someid", bytes.NewReader(body))
+				req := httptest.NewRequest("PUT", "/api/content-bank/assets/someid", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
@@ -242,18 +242,18 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 		})
 
 		Context("when authenticated", func() {
-			It("updates the piece and returns the updated resource", func() {
+			It("updates the asset and returns the updated resource", func() {
 				p := createPiece("Original", `[{"type":"paragraph"}]`)
 
 				body, _ := json.Marshal(fiber.Map{"title": "Updated", "content": `[{"type":"heading"}]`})
-				req := httptest.NewRequest("PUT", "/api/content-bank/pieces/"+p.ID, bytes.NewReader(body))
+				req := httptest.NewRequest("PUT", "/api/content-bank/assets/"+p.ID, bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(200))
 
-				var got models.Piece
+				var got models.Asset
 				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
 				Expect(got.Title).To(Equal("Updated"))
 				Expect(got.Content).To(Equal(`[{"type":"heading"}]`))
@@ -261,7 +261,7 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 
 			It("returns 404 for an unknown id", func() {
 				body, _ := json.Marshal(fiber.Map{"title": "Updated", "content": `[]`})
-				req := httptest.NewRequest("PUT", "/api/content-bank/pieces/nonexistent", bytes.NewReader(body))
+				req := httptest.NewRequest("PUT", "/api/content-bank/assets/nonexistent", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
@@ -273,7 +273,7 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 				p := createPiece("Original", `[]`)
 
 				body, _ := json.Marshal(fiber.Map{"title": "No Content Field"})
-				req := httptest.NewRequest("PUT", "/api/content-bank/pieces/"+p.ID, bytes.NewReader(body))
+				req := httptest.NewRequest("PUT", "/api/content-bank/assets/"+p.ID, bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
@@ -285,7 +285,7 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 
 	// ── Tag hydration ────────────────────────────────────────────────────────
 
-	Describe("tag hydration on GET /api/content-bank/pieces and /:id", func() {
+	Describe("tag hydration on GET /api/content-bank/assets and /:id", func() {
 		var tagID string
 
 		BeforeEach(func() {
@@ -303,30 +303,30 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 
 		It("returns tags populated on List", func() {
 			body, _ := json.Marshal(fiber.Map{
-				"title":   "Tagged Piece",
+				"title":   "Tagged Asset",
 				"content": `[{"type":"paragraph"}]`,
 				"tag_ids": []string{tagID},
 			})
-			req := httptest.NewRequest("POST", "/api/content-bank/pieces", bytes.NewReader(body))
+			req := httptest.NewRequest("POST", "/api/content-bank/assets", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			req.AddCookie(authCookie)
 			resp, err := app.Test(req)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
 
-			listReq := httptest.NewRequest("GET", "/api/content-bank/pieces", nil)
+			listReq := httptest.NewRequest("GET", "/api/content-bank/assets", nil)
 			listReq.AddCookie(authCookie)
 			listResp, err := app.Test(listReq)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(listResp.StatusCode).To(Equal(200))
 
-			var pieces []models.Piece
-			Expect(json.NewDecoder(listResp.Body).Decode(&pieces)).To(Succeed())
-			Expect(pieces).To(HaveLen(1))
-			Expect(pieces[0].TagIDs).To(ConsistOf(tagID))
-			Expect(pieces[0].Tags).To(HaveLen(1))
-			Expect(pieces[0].Tags[0].ID).To(Equal(tagID))
-			Expect(pieces[0].Tags[0].Name).To(Equal("Featured"))
+			var assets []models.Asset
+			Expect(json.NewDecoder(listResp.Body).Decode(&assets)).To(Succeed())
+			Expect(assets).To(HaveLen(1))
+			Expect(assets[0].TagIDs).To(ConsistOf(tagID))
+			Expect(assets[0].Tags).To(HaveLen(1))
+			Expect(assets[0].Tags[0].ID).To(Equal(tagID))
+			Expect(assets[0].Tags[0].Name).To(Equal("Featured"))
 		})
 
 		It("returns tags populated on GetByID", func() {
@@ -337,19 +337,19 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 				"content": `[{"type":"paragraph"}]`,
 				"tag_ids": []string{tagID},
 			})
-			req := httptest.NewRequest("PUT", "/api/content-bank/pieces/"+p.ID, bytes.NewReader(body))
+			req := httptest.NewRequest("PUT", "/api/content-bank/assets/"+p.ID, bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			req.AddCookie(authCookie)
 			_, err := app.Test(req)
 			Expect(err).NotTo(HaveOccurred())
 
-			getReq := httptest.NewRequest("GET", "/api/content-bank/pieces/"+p.ID, nil)
+			getReq := httptest.NewRequest("GET", "/api/content-bank/assets/"+p.ID, nil)
 			getReq.AddCookie(authCookie)
 			getResp, err := app.Test(getReq)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(getResp.StatusCode).To(Equal(200))
 
-			var got models.Piece
+			var got models.Asset
 			Expect(json.NewDecoder(getResp.Body).Decode(&got)).To(Succeed())
 			Expect(got.Tags).To(HaveLen(1))
 			Expect(got.Tags[0].Name).To(Equal("Featured"))
@@ -358,12 +358,12 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 		It("returns empty tags array when no tag_ids set", func() {
 			p := createPiece("No Tags", `[{"type":"paragraph"}]`)
 
-			getReq := httptest.NewRequest("GET", "/api/content-bank/pieces/"+p.ID, nil)
+			getReq := httptest.NewRequest("GET", "/api/content-bank/assets/"+p.ID, nil)
 			getReq.AddCookie(authCookie)
 			getResp, err := app.Test(getReq)
 			Expect(err).NotTo(HaveOccurred())
 
-			var got models.Piece
+			var got models.Asset
 			Expect(json.NewDecoder(getResp.Body).Decode(&got)).To(Succeed())
 			Expect(got.Tags).NotTo(BeNil())
 			Expect(got.Tags).To(BeEmpty())
@@ -372,10 +372,10 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 
 	// ── Delete ───────────────────────────────────────────────────────────────
 
-	Describe("DELETE /api/content-bank/pieces/:id", func() {
+	Describe("DELETE /api/content-bank/assets/:id", func() {
 		Context("when not authenticated", func() {
 			It("returns 401", func() {
-				req := httptest.NewRequest("DELETE", "/api/content-bank/pieces/someid", nil)
+				req := httptest.NewRequest("DELETE", "/api/content-bank/assets/someid", nil)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(401))
@@ -383,10 +383,10 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 		})
 
 		Context("when authenticated", func() {
-			It("deletes the piece and returns 204", func() {
+			It("deletes the asset and returns 204", func() {
 				p := createPiece("To Delete", `[]`)
 
-				req := httptest.NewRequest("DELETE", "/api/content-bank/pieces/"+p.ID, nil)
+				req := httptest.NewRequest("DELETE", "/api/content-bank/assets/"+p.ID, nil)
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
@@ -394,7 +394,7 @@ var _ = Describe("PiecesHandler", Ordered, func() {
 			})
 
 			It("returns 404 for an unknown id", func() {
-				req := httptest.NewRequest("DELETE", "/api/content-bank/pieces/nonexistent", nil)
+				req := httptest.NewRequest("DELETE", "/api/content-bank/assets/nonexistent", nil)
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())

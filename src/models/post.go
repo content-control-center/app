@@ -43,7 +43,7 @@ type Post struct {
 	CTAType              PostCTAType `bun:"cta_type,notnull"                             json:"cta_type"`
 	CTAUrl               string      `bun:"cta_url,notnull"                              json:"cta_url"`
 	TargetAudienceNotes  string      `bun:"target_audience_notes,notnull"                json:"target_audience_notes"`
-	UsedPiecesIDs        StringSlice `bun:"used_pieces_ids,notnull"                      json:"used_pieces_ids"`
+	UsedAssetIDs        StringSlice `bun:"used_asset_ids,notnull"                      json:"used_asset_ids"`
 	CampaignTypePhaseID  *string     `bun:"campaign_type_phase_id"                       json:"campaign_type_phase_id"`
 	CreatedBy            string      `bun:"created_by,notnull"                           json:"created_by"`
 	CreatedAt            time.Time   `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
@@ -52,6 +52,6 @@ type Post struct {
 	// Hydrated relations — not stored in the database.
 	Campaign           *Campaign           `bun:"-" json:"campaign"`
 	Platform           *Platform           `bun:"-" json:"platform"`
-	UsedPieces         []Piece             `bun:"-" json:"used_pieces"`
+	UsedAssets         []Asset             `bun:"-" json:"used_assets"`
 	CampaignTypePhase  *CampaignTypePhase  `bun:"-" json:"campaign_type_phase,omitempty"`
 }

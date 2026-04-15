@@ -205,8 +205,8 @@ function App() {
         target_persona: createForm.target_persona.trim(),
         key_messages: createForm.key_messages.trim(),
         tone_guidelines: createForm.tone_guidelines.trim(),
-        use_pieces: createForm.use_pieces,
-        pieces_ids: normalizeList(createForm.pieces_ids),
+        use_assets: createForm.use_assets,
+        asset_ids: normalizeList(createForm.asset_ids),
         target_platforms: Object.entries(selectedPlatforms)
           .filter(([, types]) => types.length > 0)
           .map(([id, post_types]) => ({ id, post_types })),

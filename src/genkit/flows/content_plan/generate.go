@@ -78,7 +78,7 @@ func generatePosts(
 	g *genkit.Genkit,
 	campaign *models.Campaign,
 	platforms []resolvedPlatform,
-	pieces []resolvedPiece,
+	assets []resolvedPiece,
 	cfg ContentPlanFlowConfig,
 	onEvent OnEventFunc,
 ) ([]DraftPost, []string, error) {
@@ -114,7 +114,7 @@ func generatePosts(
 		DayCount:                dayCount,
 		EstimatedPostCount:      estCount,
 		Platforms:               platforms,
-		Pieces:                  pieces,
+		Assets:                  assets,
 	}
 
 	systemPrompt, err := renderTemplate(cfg.systemTmpl, data)
@@ -303,7 +303,7 @@ func persistDraftPosts(ctx context.Context, posts []DraftPost, campaign *models.
 			CTAType:             models.CTATypeNone,
 			CTAUrl:              "",
 			TargetAudienceNotes: dp.ToneNotes,
-			UsedPiecesIDs:       models.StringSlice(dp.PieceRefs),
+			UsedAssetIDs:       models.StringSlice(dp.AssetRefs),
 			CampaignTypePhaseID: phaseID,
 			ScheduledAt:         scheduledAt,
 			CreatedBy:           campaign.CreatedBy,
