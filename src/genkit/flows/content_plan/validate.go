@@ -10,7 +10,7 @@ import (
 	"github.com/content-control-center/app/src/repository"
 )
 
-func validateInput(ctx context.Context, campaignID string, campaignRepo repository.CampaignRepository, pieceRepo repository.PieceRepository) (*models.Campaign, error) {
+func validateInput(ctx context.Context, campaignID string, campaignRepo repository.CampaignRepository, pieceRepo repository.AssetRepository) (*models.Campaign, error) {
 	c, err := campaignRepo.GetByID(ctx, campaignID)
 	if err != nil {
 		return nil, err
@@ -58,11 +58,11 @@ func validateInput(ctx context.Context, campaignID string, campaignRepo reposito
 		return nil, &ValidationError{Msg: "date range must be at least 1 day"}
 	}
 
-	// Verify specific piece IDs exist when UsePieces is true and IDs are given.
-	if c.UsePieces && len(c.PiecesIDs) > 0 {
-		for _, id := range c.PiecesIDs {
+	// Verify specific asset IDs exist when UseAssets is true and IDs are given.
+	if c.UseAssets && len(c.AssetIDs) > 0 {
+		for _, id := range c.AssetIDs {
 			if _, err := pieceRepo.GetByID(ctx, id); err != nil {
-				return nil, &ValidationError{Msg: fmt.Sprintf("piece %q not found", id)}
+				return nil, &ValidationError{Msg: fmt.Sprintf("asset %q not found", id)}
 			}
 		}
 	}

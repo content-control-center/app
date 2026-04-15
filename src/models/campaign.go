@@ -29,8 +29,8 @@ type Campaign struct {
 	TargetPersona      string            `bun:"target_persona,notnull"                       json:"target_persona"`
 	KeyMessages        string            `bun:"key_messages,notnull"                         json:"key_messages"`
 	ToneGuidelines     string            `bun:"tone_guidelines,notnull"                      json:"tone_guidelines"`
-	UsePieces          bool              `bun:"use_pieces,notnull"                           json:"use_pieces"`
-	PiecesIDs          StringSlice       `bun:"pieces_ids,notnull"                           json:"pieces_ids"`
+	UseAssets          bool              `bun:"use_assets,notnull"                           json:"use_assets"`
+	AssetIDs           StringSlice       `bun:"asset_ids,notnull"                            json:"asset_ids"`
 	TargetPlatforms    CampaignPlatforms `bun:"target_platforms,notnull"                     json:"target_platforms"`
 	CampaignTypeID     string            `bun:"campaign_type_id,notnull"                     json:"campaign_type_id"`
 	StartDate          *time.Time        `bun:"start_date"                                   json:"start_date"`

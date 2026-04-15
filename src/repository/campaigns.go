@@ -27,8 +27,18 @@ type campaignRepository struct {
 }
 
 // NewCampaignRepository returns a Bun-backed CampaignRepository.
-func NewCampaignRepository(db *bun.DB, tagRepo TagRepository, platformRepo PlatformRepository, campaignTypeRepo CampaignTypeRepository) CampaignRepository {
-	return &campaignRepository{db: db, tagRepo: tagRepo, platformRepo: platformRepo, campaignTypeRepo: campaignTypeRepo}
+func NewCampaignRepository(
+	db *bun.DB,
+	tagRepo TagRepository,
+	platformRepo PlatformRepository,
+	campaignTypeRepo CampaignTypeRepository,
+) CampaignRepository {
+	return &campaignRepository{
+		db:               db,
+		tagRepo:          tagRepo,
+		platformRepo:     platformRepo,
+		campaignTypeRepo: campaignTypeRepo,
+	}
 }
 
 func (r *campaignRepository) List(ctx context.Context) ([]models.Campaign, error) {

@@ -13,18 +13,18 @@ import (
 	"github.com/content-control-center/app/src/repository"
 )
 
-func resolvePieces(ctx context.Context, campaign *models.Campaign, cfg ContentPlanFlowConfig, repos ContentPlanRepos) ([]resolvedPiece, []string, error) {
-	if !campaign.UsePieces {
+func resolveAssets(ctx context.Context, campaign *models.Campaign, cfg ContentPlanFlowConfig, repos ContentPlanRepos) ([]resolvedPiece, []string, error) {
+	if !campaign.UseAssets {
 		return nil, nil, nil
 	}
 
 	var warnings []string
 	var candidateIDs []string
 
-	if len(campaign.PiecesIDs) > 0 {
-		candidateIDs = campaign.PiecesIDs
+	if len(campaign.AssetIDs) > 0 {
+		candidateIDs = campaign.AssetIDs
 	} else {
-		all, err := repos.Pieces.List(ctx)
+		all, err := repos.Assets.List(ctx)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -38,50 +38,50 @@ func resolvePieces(ctx context.Context, campaign *models.Campaign, cfg ContentPl
 		ranked, skipped, err := semanticRank(ctx, campaign, candidateIDs, cfg, repos.Embeddings)
 		if err != nil {
 			log.Printf("content_plan: semantic ranking failed (%v) — using creation order", err)
-			warnings = append(warnings, "semantic ranking unavailable; using creation order for piece selection")
+			warnings = append(warnings, "semantic ranking unavailable; using creation order for asset selection")
 		} else {
 			if len(skipped) > 0 {
-				log.Printf("content_plan: excluded %d pieces due to context budget: %v", len(skipped), skipped)
-				warnings = append(warnings, fmt.Sprintf("%d pieces excluded due to context budget", len(skipped)))
+				log.Printf("content_plan: excluded %d assets due to context budget: %v", len(skipped), skipped)
+				warnings = append(warnings, fmt.Sprintf("%d assets excluded due to context budget", len(skipped)))
 			}
 			candidateIDs = ranked
 		}
 	}
 
 	// Truncate to budget.
-	if len(candidateIDs) > cfg.MaxPieces {
-		warnings = append(warnings, fmt.Sprintf("%d pieces excluded due to context budget", len(candidateIDs)-cfg.MaxPieces))
-		candidateIDs = candidateIDs[:cfg.MaxPieces]
+	if len(candidateIDs) > cfg.MaxAssets {
+		warnings = append(warnings, fmt.Sprintf("%d assets excluded due to context budget", len(candidateIDs)-cfg.MaxAssets))
+		candidateIDs = candidateIDs[:cfg.MaxAssets]
 	}
 
-	// Build resolved pieces with text excerpts.
-	pieces := make([]resolvedPiece, 0, len(candidateIDs))
+	// Build resolved assets with text excerpts.
+	assets := make([]resolvedPiece, 0, len(candidateIDs))
 	for _, id := range candidateIDs {
-		p, err := repos.Pieces.GetByID(ctx, id)
+		p, err := repos.Assets.GetByID(ctx, id)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("piece %q could not be loaded — skipped", id))
+			warnings = append(warnings, fmt.Sprintf("asset %q could not be loaded — skipped", id))
 			continue
 		}
 		excerpt, err := buildExcerpt(p.Content)
 		if err != nil {
 			excerpt = "(content unavailable)"
 		}
-		pieces = append(pieces, resolvedPiece{ID: p.ID, Title: p.Title, Excerpt: excerpt})
+		assets = append(assets, resolvedPiece{ID: p.ID, Title: p.Title, Excerpt: excerpt})
 	}
 
-	return pieces, warnings, nil
+	return assets, warnings, nil
 }
 
-// minPieceSimilarity is the minimum cosine similarity a piece must score
+// minAssetSimilarity is the minimum cosine similarity a asset must score
 // against the campaign query to be included in the prompt context.
 // Calibrated for the embeddinggemma-300m model: related content typically
 // scores 0.70–0.85; loosely related falls in 0.50–0.65.
-const minPieceSimilarity = 0.7
+const minAssetSimilarity = 0.7
 
 // semanticRank ranks candidateIDs by cosine similarity to the campaign's key
-// messages + description, filters out pieces below minPieceSimilarity, and
+// messages + description, filters out assets below minAssetSimilarity, and
 // returns the top-N IDs plus the excluded ones.
-func semanticRank(ctx context.Context, campaign *models.Campaign, candidateIDs []string, cfg ContentPlanFlowConfig, embeddingRepo repository.PiecesEmbeddingsRepository) (top []string, excluded []string, err error) {
+func semanticRank(ctx context.Context, campaign *models.Campaign, candidateIDs []string, cfg ContentPlanFlowConfig, embeddingRepo repository.AssetsEmbeddingsRepository) (top []string, excluded []string, err error) {
 	query := campaign.Name + "\n" + campaign.KeyMessages + "\n" + campaign.Description
 	qResp, err := cfg.Embedder.Embed(ctx, &ai.EmbedRequest{
 		Input: []*ai.Document{ai.DocumentFromText(query, nil)},
@@ -97,14 +97,14 @@ func semanticRank(ctx context.Context, campaign *models.Campaign, candidateIDs [
 	// Fetch stored embeddings for all candidates.
 	embeddings := make(map[string][]float32, len(candidateIDs))
 	for _, id := range candidateIDs {
-		vec, _, err := embeddingRepo.GetByPieceID(ctx, id)
+		vec, _, err := embeddingRepo.GetByAssetID(ctx, id)
 		if err != nil {
-			continue // piece has no embedding yet — it will sort last
+			continue // asset has no embedding yet — it will sort last
 		}
 		embeddings[id] = vec
 	}
 
-	ranked := rankByCosineSimilarity(queryVec, embeddings, cfg.MaxPieces, minPieceSimilarity)
+	ranked := rankByCosineSimilarity(queryVec, embeddings, cfg.MaxAssets, minAssetSimilarity)
 
 	// Collect excluded IDs.
 	rankedSet := make(map[string]bool, len(ranked))

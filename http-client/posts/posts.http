@@ -48,7 +48,7 @@ Content-Type: application/json
   "cta_type": "link",
   "cta_url": "https://example.com/signup",
   "target_audience_notes": "Tech-savvy decision-makers aged 28–45",
-  "used_pieces_ids": []
+  "used_asset_ids": []
 }
 
 > {% client.global.set("postId", response.body.id) %}
@@ -109,7 +109,7 @@ Content-Type: application/json
   "cta_type": "button",
   "cta_url": "https://example.com/signup",
   "target_audience_notes": "Tech-savvy decision-makers aged 28–45",
-  "used_pieces_ids": []
+  "used_asset_ids": []
 }
 
 ### Update post — non-existent ID (expects 404)  [protected]

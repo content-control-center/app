@@ -20,18 +20,18 @@ import (
 // embedServerURL points at the llama-embedserver exposed by docker-compose.integration.yml.
 const embedServerURL = "http://localhost:9003"
 
-var _ = Describe("Piece embedding flow", Ordered, func() {
+var _ = Describe("Asset embedding flow", Ordered, func() {
 	var (
 		ctx     context.Context
 		db      *bun.DB
-		repo    repository.PiecesEmbeddingsRepository
-		pieceID string
+		repo    repository.AssetsEmbeddingsRepository
+		assetID string
 	)
 
 	BeforeAll(func() {
 		ctx = context.Background()
 		db = mustOpenIntegrationDB()
-		repo = repository.NewPiecesEmbeddingRepository(db)
+		repo = repository.NewAssetsEmbeddingRepository(db)
 
 		// Initialise Genkit and the llama embedder once for the whole suite.
 		plugin := llama.New(llama.Config{LlamaEmbedServerAddress: embedServerURL})
@@ -40,7 +40,7 @@ var _ = Describe("Piece embedding flow", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred(), "llama-embedserver must be running at %s", embedServerURL)
 		flows.Init(g, embedder, repo)
 
-		// Seed a user and a piece to satisfy foreign-key constraints.
+		// Seed a user and a asset to satisfy foreign-key constraints.
 		userID, err := models.NewID()
 		Expect(err).NotTo(HaveOccurred())
 		user := &models.User{
@@ -52,36 +52,36 @@ var _ = Describe("Piece embedding flow", Ordered, func() {
 		_, err = db.NewInsert().Model(user).Exec(ctx)
 		Expect(err).NotTo(HaveOccurred())
 
-		pieceID, err = models.NewID()
+		assetID, err = models.NewID()
 		Expect(err).NotTo(HaveOccurred())
-		piece := &models.Piece{
-			ID:        pieceID,
-			Title:     "Integration Piece",
+		asset := &models.Asset{
+			ID:        assetID,
+			Title:     "Integration Asset",
 			Content:   blocknoteDoc("Hello, embedding world!"),
 			CreatedBy: userID,
 		}
-		_, err = db.NewInsert().Model(piece).Exec(ctx)
+		_, err = db.NewInsert().Model(asset).Exec(ctx)
 		Expect(err).NotTo(HaveOccurred())
 	})
 
 	AfterAll(func() {
-		_, _ = db.NewDelete().TableExpr("pieces_embeddings").Where("1 = 1").Exec(ctx)
-		_, _ = db.NewDelete().TableExpr("pieces").Where("1 = 1").Exec(ctx)
+		_, _ = db.NewDelete().TableExpr("assets_embeddings").Where("1 = 1").Exec(ctx)
+		_, _ = db.NewDelete().TableExpr("assets").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(ctx)
 	})
 
 	// ── Create ───────────────────────────────────────────────────────────────
 
-	Describe("on piece create", func() {
+	Describe("on asset create", func() {
 		It("stores a non-empty embedding vector", func() {
-			_, err := flows.EmbedPieceFlow.Run(ctx, flows.EmbedPieceInput{
-				PieceID: pieceID,
-				Title:   "Integration Piece",
+			_, err := flows.EmbedAssetFlow.Run(ctx, flows.EmbedAssetInput{
+				AssetID: assetID,
+				Title:   "Integration Asset",
 				Content: blocknoteDoc("Hello, embedding world!"),
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			vector, model, err := repo.GetByPieceID(ctx, pieceID)
+			vector, model, err := repo.GetByAssetID(ctx, assetID)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(vector).To(HaveLen(768))
 			Expect(model).NotTo(BeEmpty())
@@ -90,25 +90,25 @@ var _ = Describe("Piece embedding flow", Ordered, func() {
 
 	// ── Update ───────────────────────────────────────────────────────────────
 
-	Describe("on piece update", func() {
+	Describe("on asset update", func() {
 		It("replaces the embedding with a new vector", func() {
 			// Run the flow with updated content.
-			_, err := flows.EmbedPieceFlow.Run(ctx, flows.EmbedPieceInput{
-				PieceID: pieceID,
-				Title:   "Integration Piece — Revised",
+			_, err := flows.EmbedAssetFlow.Run(ctx, flows.EmbedAssetInput{
+				AssetID: assetID,
+				Title:   "Integration Asset — Revised",
 				Content: blocknoteDoc("The content has been updated."),
 			})
 			Expect(err).NotTo(HaveOccurred())
 
 			// Embedding row must still exist and be valid.
-			vector, model, err := repo.GetByPieceID(ctx, pieceID)
+			vector, model, err := repo.GetByAssetID(ctx, assetID)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(vector).NotTo(BeEmpty())
 			Expect(model).NotTo(BeEmpty())
 		})
 
-		It("returns sql.ErrNoRows for an unknown piece ID", func() {
-			_, _, err := repo.GetByPieceID(ctx, "nonexistent-id")
+		It("returns sql.ErrNoRows for an unknown asset ID", func() {
+			_, _, err := repo.GetByAssetID(ctx, "nonexistent-id")
 			Expect(err).To(MatchError(sql.ErrNoRows))
 		})
 	})

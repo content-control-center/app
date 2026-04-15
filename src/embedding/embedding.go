@@ -28,8 +28,8 @@ const (
 func Init(
 	ctx context.Context,
 	cfg *config.Config,
-	repo repository.PiecesEmbeddingsRepository,
-) (func(pieceID, title, content string), ai.Embedder, error) {
+	repo repository.AssetsEmbeddingsRepository,
+) (func(assetID, title, content string), ai.Embedder, error) {
 	return InitWithOptions(ctx, cfg.EmbedServerURL, DefaultMaxRetries, DefaultRetryInterval, repo)
 }
 
@@ -39,8 +39,8 @@ func InitWithOptions(
 	embedServerURL string,
 	maxRetries int,
 	retryInterval time.Duration,
-	repo repository.PiecesEmbeddingsRepository,
-) (func(pieceID, title, content string), ai.Embedder, error) {
+	repo repository.AssetsEmbeddingsRepository,
+) (func(assetID, title, content string), ai.Embedder, error) {
 	if embedServerURL == "" {
 		return nil, nil, nil
 	}
@@ -59,7 +59,7 @@ func InitWithOptions(
 
 	flows.Init(g, embedder, repo)
 
-	return flows.NewPieceOnSaveCallback(), embedder, nil
+	return flows.NewAssetOnSaveCallback(), embedder, nil
 }
 
 func waitForEmbedServer(ctx context.Context, baseURL string, maxRetries int, retryInterval time.Duration) error {

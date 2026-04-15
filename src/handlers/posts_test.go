@@ -45,13 +45,13 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		tagRepo := repository.NewTagRepository(db)
 		campaignTypeRepo := repository.NewCampaignTypeRepository(db)
 		campaignRepo := repository.NewCampaignRepository(db, tagRepo, repository.NewPlatformRepository(db), campaignTypeRepo)
-		pieceRepo := repository.NewPieceRepository(db, tagRepo)
+		pieceRepo := repository.NewAssetRepository(db, tagRepo)
 		postRepo := repository.NewPostRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil).Register(app)
-		handlers.NewPiecesHandler(pieceRepo, auth, nil).Register(app)
+		handlers.NewAssetsHandler(pieceRepo, auth, nil).Register(app)
 		handlers.NewPostsHandler(postRepo, auth).Register(app)
 
 		// Seed auth user and log in.
@@ -88,7 +88,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 	AfterEach(func() {
 		_, err := db.NewDelete().TableExpr("posts").Where("1 = 1").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
-		_, err = db.NewDelete().TableExpr("pieces").Where("1 = 1").Exec(context.Background())
+		_, err = db.NewDelete().TableExpr("assets").Where("1 = 1").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		_, err = db.NewDelete().TableExpr("campaigns").Where("1 = 1").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
@@ -240,7 +240,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				Expect(p.CTAType).To(Equal(models.CTATypeNone))
 				Expect(p.CreatedBy).NotTo(BeEmpty())
 				Expect(p.MediaURLs).To(BeEmpty())
-				Expect(p.UsedPieces).To(BeEmpty())
+				Expect(p.UsedAssets).To(BeEmpty())
 			})
 
 			It("creates a post with all optional fields", func() {
@@ -354,23 +354,23 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				Expect(got.Platform).NotTo(BeNil())
 				Expect(got.Platform.ID).To(Equal("AXqWG7U2qnpt"))
 				Expect(got.Platform.Name).To(Equal("LinkedIn"))
-				Expect(got.UsedPieces).To(BeEmpty())
+				Expect(got.UsedAssets).To(BeEmpty())
 			})
 
-			It("returns the post with hydrated used_pieces", func() {
-				// Create a piece to reference.
-				pBody, _ := json.Marshal(fiber.Map{"title": "Ref Piece", "content": `[]`})
-				pReq := httptest.NewRequest("POST", "/api/content-bank/pieces", bytes.NewReader(pBody))
+			It("returns the post with hydrated used_assets", func() {
+				// Create a asset to reference.
+				pBody, _ := json.Marshal(fiber.Map{"title": "Ref Asset", "content": `[]`})
+				pReq := httptest.NewRequest("POST", "/api/content-bank/assets", bytes.NewReader(pBody))
 				pReq.Header.Set("Content-Type", "application/json")
 				pReq.AddCookie(authCookie)
 				pResp, err := app.Test(pReq)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(pResp.StatusCode).To(Equal(fiber.StatusCreated))
-				var piece models.Piece
-				Expect(json.NewDecoder(pResp.Body).Decode(&piece)).To(Succeed())
+				var asset models.Asset
+				Expect(json.NewDecoder(pResp.Body).Decode(&asset)).To(Succeed())
 
-				post := createPost("Post With Piece", fiber.Map{
-					"used_pieces_ids": []string{piece.ID},
+				post := createPost("Post With Asset", fiber.Map{
+					"used_asset_ids": []string{asset.ID},
 				})
 
 				req := httptest.NewRequest("GET", "/api/posts/"+post.ID, nil)
@@ -381,9 +381,9 @@ var _ = Describe("PostsHandler", Ordered, func() {
 
 				var got models.Post
 				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
-				Expect(got.UsedPieces).To(HaveLen(1))
-				Expect(got.UsedPieces[0].ID).To(Equal(piece.ID))
-				Expect(got.UsedPieces[0].Title).To(Equal("Ref Piece"))
+				Expect(got.UsedAssets).To(HaveLen(1))
+				Expect(got.UsedAssets[0].ID).To(Equal(asset.ID))
+				Expect(got.UsedAssets[0].Title).To(Equal("Ref Asset"))
 			})
 
 			It("returns 404 for an unknown id", func() {

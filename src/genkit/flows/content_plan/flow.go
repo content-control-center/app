@@ -30,7 +30,7 @@ var contentPlanRunner func(ctx context.Context, req ContentPlanRequest, onEvent 
 // ContentPlanFlowConfig holds the settings for the content plan flow.
 type ContentPlanFlowConfig struct {
 	ModelID         string
-	MaxPieces       int
+	MaxAssets       int
 	MaxOutputTokens int64       // max_tokens sent to the model; 0 falls back to 8192
 	Embedder        ai.Embedder // nil = skip semantic ranking, fall back to creation order
 	systemTmpl      *template.Template
@@ -40,8 +40,8 @@ type ContentPlanFlowConfig struct {
 // ContentPlanRepos bundles all repository dependencies for the flow.
 type ContentPlanRepos struct {
 	Campaigns  repository.CampaignRepository
-	Pieces     repository.PieceRepository
-	Embeddings repository.PiecesEmbeddingsRepository
+	Assets     repository.AssetRepository
+	Embeddings repository.AssetsEmbeddingsRepository
 	Platforms  repository.PlatformRepository
 	Posts      repository.PostRepository
 }
@@ -107,7 +107,7 @@ func runContentPlan(
 
 	// ── Step 1: validateInput ─────────────────────────────────────────────────
 	log.Printf("content_plan[%s]: step 1/6 validateInput", req.CampaignID)
-	campaign, err := validateInput(ctx, req.CampaignID, repos.Campaigns, repos.Pieces)
+	campaign, err := validateInput(ctx, req.CampaignID, repos.Campaigns, repos.Assets)
 	if err != nil {
 		log.Printf("content_plan[%s]: validateInput failed after %s: %v", req.CampaignID, time.Since(start).Round(time.Millisecond), err)
 		return nil, err
@@ -115,16 +115,16 @@ func runContentPlan(
 	log.Printf("content_plan[%s]: validateInput done (campaign=%q platforms=%d)", req.CampaignID, campaign.Name, len(campaign.TargetPlatforms))
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "validateInput", Status: "done"})
 
-	// ── Step 2: resolvePieces ─────────────────────────────────────────────────
-	log.Printf("content_plan[%s]: step 2/6 resolvePieces (usePieces=%v)", req.CampaignID, campaign.UsePieces)
-	pieces, pieceWarnings, err := resolvePieces(ctx, campaign, cfg, repos)
+	// ── Step 2: resolveAssets ─────────────────────────────────────────────────
+	log.Printf("content_plan[%s]: step 2/6 resolveAssets (useAssets=%v)", req.CampaignID, campaign.UseAssets)
+	assets, assetWarnings, err := resolveAssets(ctx, campaign, cfg, repos)
 	if err != nil {
-		log.Printf("content_plan[%s]: resolvePieces failed after %s: %v", req.CampaignID, time.Since(start).Round(time.Millisecond), err)
+		log.Printf("content_plan[%s]: resolveAssets failed after %s: %v", req.CampaignID, time.Since(start).Round(time.Millisecond), err)
 		return nil, err
 	}
-	log.Printf("content_plan[%s]: resolvePieces done (%d pieces, %d warnings)", req.CampaignID, len(pieces), len(pieceWarnings))
-	emit(onEvent, SSEEventStep, StepEventPayload{Step: "resolvePieces", Status: "done"})
-	warnings := pieceWarnings
+	log.Printf("content_plan[%s]: resolveAssets done (%d assets, %d warnings)", req.CampaignID, len(assets), len(assetWarnings))
+	emit(onEvent, SSEEventStep, StepEventPayload{Step: "resolveAssets", Status: "done"})
+	warnings := assetWarnings
 
 	// ── Step 3: resolvePlatforms ──────────────────────────────────────────────
 	log.Printf("content_plan[%s]: step 3/6 resolvePlatforms", req.CampaignID)
@@ -144,7 +144,7 @@ func runContentPlan(
 
 	// ── Step 4: generatePosts ─────────────────────────────────────────────────
 	log.Printf("content_plan[%s]: step 4/6 generatePosts (model=%s estimatedCount=%d)", req.CampaignID, cfg.ModelID, campaign.EstimatedPostCount)
-	posts, genWarnings, err := generatePosts(ctx, g, campaign, platforms, pieces, cfg, onEvent)
+	posts, genWarnings, err := generatePosts(ctx, g, campaign, platforms, assets, cfg, onEvent)
 	if err != nil {
 		log.Printf("content_plan[%s]: generatePosts failed after %s: %v", req.CampaignID, time.Since(start).Round(time.Millisecond), err)
 		return nil, err

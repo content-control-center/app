@@ -17,7 +17,7 @@ type DraftPost struct {
 	PublishDate string   `json:"publishDate"             jsonschema:"description=ISO 8601 date YYYY-MM-DD within the campaign date range"`
 	ToneNotes   string   `json:"toneNotes"               jsonschema:"description=How the campaign tone guidelines apply to this specific post"`
 	PhaseID     string   `json:"phaseId"                 jsonschema:"description=Exact phase ID from the campaign phases list; every post must be assigned to one phase"`
-	PieceRefs   []string `json:"pieceRefs,omitempty"     jsonschema:"description=IDs of pieces whose facts or ideas were directly used in this post; omit if none"`
+	AssetRefs   []string `json:"assetRefs,omitempty"     jsonschema:"description=IDs of assets whose facts or ideas were directly used in this post; omit if none"`
 }
 
 // ContentPlanResponse is returned by the handler and the flow.
@@ -69,7 +69,7 @@ type contentPlanTemplateData struct {
 	DayCount               int
 	EstimatedPostCount     int
 	Platforms              []resolvedPlatform
-	Pieces                 []resolvedPiece
+	Assets                 []resolvedPiece
 }
 
 // ValidationError is returned by the flow when preconditions are not met.

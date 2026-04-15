@@ -6,8 +6,8 @@ import (
 	"github.com/uptrace/bun"
 )
 
-type Piece struct {
-	bun.BaseModel `bun:"table:pieces,alias:p" swaggerignore:"true"`
+type Asset struct {
+	bun.BaseModel `bun:"table:assets,alias:a" swaggerignore:"true"`
 
 	ID        string      `bun:"id,pk"                                        json:"id"`
 	Title     string      `bun:"title,notnull"                                json:"title"`
