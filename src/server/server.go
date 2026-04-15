@@ -36,7 +36,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	settingRepo := repository.NewSettingRepository(db)
 	tagRepo := repository.NewTagRepository(db)
 	pieceRepo := repository.NewAssetRepository(db, tagRepo)
-	embeddingRepo := repository.NewAssetsEmbeddingRepository(db)
+	chunksRepo := repository.NewAssetChunksRepository(db)
 	platformRepo := repository.NewPlatformRepository(db)
 	campaignTypeRepo := repository.NewCampaignTypeRepository(db)
 	campaignRepo := repository.NewCampaignRepository(db, tagRepo, platformRepo, campaignTypeRepo)
@@ -50,7 +50,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	handlers.NewSessionsHandler(userRepo, sessionRepo, cfg.SessionCookieName, !cfg.Debug).Register(app)
 	handlers.NewSettingsHandler(settingRepo, auth).Register(app)
 
-	onSave, embedder, err := initEmbedding(ctx, cfg, embeddingRepo)
+	onSave, embedder, err := initEmbedding(ctx, cfg, chunksRepo)
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +59,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	contentPlanRepos := content_plan.ContentPlanRepos{
 		Campaigns:  campaignRepo,
 		Assets:     pieceRepo,
-		Embeddings: embeddingRepo,
+		Chunks:     chunksRepo,
 		Platforms:  platformRepo,
 		Posts:      postRepo,
 	}

@@ -28,7 +28,7 @@ const (
 func Init(
 	ctx context.Context,
 	cfg *config.Config,
-	repo repository.AssetsEmbeddingsRepository,
+	repo repository.AssetChunksRepository,
 ) (func(assetID, title, content string), ai.Embedder, error) {
 	return InitWithOptions(ctx, cfg.EmbedServerURL, DefaultMaxRetries, DefaultRetryInterval, repo)
 }
@@ -39,7 +39,7 @@ func InitWithOptions(
 	embedServerURL string,
 	maxRetries int,
 	retryInterval time.Duration,
-	repo repository.AssetsEmbeddingsRepository,
+	repo repository.AssetChunksRepository,
 ) (func(assetID, title, content string), ai.Embedder, error) {
 	if embedServerURL == "" {
 		return nil, nil, nil

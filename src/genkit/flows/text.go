@@ -40,7 +40,7 @@ func writeBlock(sb *strings.Builder, b blocknoteBlock) {
 		writeInline(sb, ic)
 	}
 	if sb.Len() > before {
-		sb.WriteByte('\n')
+		sb.WriteString("\n\n") // paragraph separator consumed by ChunkText
 	}
 	for _, child := range b.Children {
 		writeBlock(sb, child)
