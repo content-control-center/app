@@ -38,7 +38,7 @@ var _ = Describe("Content plan flow", Ordered, func() {
 
 		tagRepo := repository.NewTagRepository(db)
 		assetRepo := repository.NewAssetRepository(db, tagRepo)
-		embeddingRepo := repository.NewAssetsEmbeddingRepository(db)
+		chunksRepo := repository.NewAssetChunksRepository(db)
 		platformRepo := repository.NewPlatformRepository(db)
 		campaignTypeRepo := repository.NewCampaignTypeRepository(db)
 		campaignRepo := repository.NewCampaignRepository(db, tagRepo, platformRepo, campaignTypeRepo)
@@ -92,13 +92,14 @@ var _ = Describe("Content plan flow", Ordered, func() {
 		}
 		flowCfg := content_plan.ContentPlanFlowConfig{
 			ModelID:         modelID,
-			MaxAssets:       5,
+			MaxContextAssets: 5,
+			MaxContextChars:  3000,
 			MaxOutputTokens: 8192,
 		}
 		repos := content_plan.ContentPlanRepos{
 			Campaigns:  campaignRepo,
 			Assets:     assetRepo,
-			Embeddings: embeddingRepo,
+			Chunks:     chunksRepo,
 			Platforms:  platformRepo,
 			Posts:      postRepo,
 		}

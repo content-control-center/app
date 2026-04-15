@@ -4,7 +4,6 @@ package integration_test
 
 import (
 	"context"
-	"database/sql"
 
 	"github.com/alephbet-ai/llama-genkit-embedder/llama"
 	"github.com/firebase/genkit/go/genkit"
@@ -24,14 +23,14 @@ var _ = Describe("Asset embedding flow", Ordered, func() {
 	var (
 		ctx     context.Context
 		db      *bun.DB
-		repo    repository.AssetsEmbeddingsRepository
+		repo    repository.AssetChunksRepository
 		assetID string
 	)
 
 	BeforeAll(func() {
 		ctx = context.Background()
 		db = mustOpenIntegrationDB()
-		repo = repository.NewAssetsEmbeddingRepository(db)
+		repo = repository.NewAssetChunksRepository(db)
 
 		// Initialise Genkit and the llama embedder once for the whole suite.
 		plugin := llama.New(llama.Config{LlamaEmbedServerAddress: embedServerURL})
@@ -40,7 +39,7 @@ var _ = Describe("Asset embedding flow", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred(), "llama-embedserver must be running at %s", embedServerURL)
 		flows.Init(g, embedder, repo)
 
-		// Seed a user and a asset to satisfy foreign-key constraints.
+		// Seed a user and an asset to satisfy foreign-key constraints.
 		userID, err := models.NewID()
 		Expect(err).NotTo(HaveOccurred())
 		user := &models.User{
@@ -65,7 +64,7 @@ var _ = Describe("Asset embedding flow", Ordered, func() {
 	})
 
 	AfterAll(func() {
-		_, _ = db.NewDelete().TableExpr("assets_embeddings").Where("1 = 1").Exec(ctx)
+		_, _ = db.NewDelete().TableExpr("assets_chunks").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("assets").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(ctx)
 	})
@@ -73,7 +72,7 @@ var _ = Describe("Asset embedding flow", Ordered, func() {
 	// ── Create ───────────────────────────────────────────────────────────────
 
 	Describe("on asset create", func() {
-		It("stores a non-empty embedding vector", func() {
+		It("stores one or more chunks with non-empty embedding vectors", func() {
 			_, err := flows.EmbedAssetFlow.Run(ctx, flows.EmbedAssetInput{
 				AssetID: assetID,
 				Title:   "Integration Asset",
@@ -81,18 +80,23 @@ var _ = Describe("Asset embedding flow", Ordered, func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			vector, model, err := repo.GetByAssetID(ctx, assetID)
+			chunks, err := repo.GetByAssetID(ctx, assetID)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(vector).To(HaveLen(768))
-			Expect(model).NotTo(BeEmpty())
+			Expect(chunks).NotTo(BeEmpty())
+			Expect(chunks[0].Embedding).NotTo(BeEmpty())
+			Expect(chunks[0].Model).NotTo(BeEmpty())
+			Expect(chunks[0].ChunkIndex).To(Equal(0))
+
+			// Verify the embedding decodes to the expected dimension (768 for embeddinggemma-300m).
+			vec := flows.DecodeVector(chunks[0].Embedding)
+			Expect(vec).To(HaveLen(768))
 		})
 	})
 
 	// ── Update ───────────────────────────────────────────────────────────────
 
 	Describe("on asset update", func() {
-		It("replaces the embedding with a new vector", func() {
-			// Run the flow with updated content.
+		It("replaces the chunks with fresh vectors", func() {
 			_, err := flows.EmbedAssetFlow.Run(ctx, flows.EmbedAssetInput{
 				AssetID: assetID,
 				Title:   "Integration Asset — Revised",
@@ -100,16 +104,17 @@ var _ = Describe("Asset embedding flow", Ordered, func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			// Embedding row must still exist and be valid.
-			vector, model, err := repo.GetByAssetID(ctx, assetID)
+			chunks, err := repo.GetByAssetID(ctx, assetID)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(vector).NotTo(BeEmpty())
-			Expect(model).NotTo(BeEmpty())
+			Expect(chunks).NotTo(BeEmpty())
+			Expect(flows.DecodeVector(chunks[0].Embedding)).NotTo(BeEmpty())
+			Expect(chunks[0].Model).NotTo(BeEmpty())
 		})
 
-		It("returns sql.ErrNoRows for an unknown asset ID", func() {
-			_, _, err := repo.GetByAssetID(ctx, "nonexistent-id")
-			Expect(err).To(MatchError(sql.ErrNoRows))
+		It("returns an empty slice for an unknown asset ID", func() {
+			chunks, err := repo.GetByAssetID(ctx, "nonexistent-id")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(chunks).To(BeEmpty())
 		})
 	})
 })
