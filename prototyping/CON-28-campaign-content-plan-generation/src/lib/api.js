@@ -8,8 +8,8 @@ export const initialCreateForm = {
     "Modern Haskell enables correctness-by-construction, expressive abstractions for model workflows, and maintainable AI infrastructure with fewer runtime surprises.",
   tone_guidelines:
     "Clear, technically grounded, and pragmatic. Emphasize engineering trade-offs, concrete examples, and practical adoption paths.",
-  use_pieces: false,
-  pieces_ids: "",
+  use_assets: false,
+  asset_ids: "",
   campaign_type_id: "",
   status: "draft",
   start_date: "2026-05-01",
