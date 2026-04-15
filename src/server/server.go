@@ -25,6 +25,8 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 		// WriteTimeout 0 disables the per-response write deadline so that SSE
 		// streams (e.g. /generate-draft) are not forcibly closed mid-flight.
 		WriteTimeout: 0,
+		// Allow batched markdown uploads (up to 10 MB per file).
+		BodyLimit: 100 << 20,
 	})
 
 	app.Use(recover.New())
@@ -50,7 +52,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	handlers.NewSessionsHandler(userRepo, sessionRepo, cfg.SessionCookieName, !cfg.Debug).Register(app)
 	handlers.NewSettingsHandler(settingRepo, auth).Register(app)
 
-	onSave, embedder, err := initEmbedding(ctx, cfg, chunksRepo)
+	onSave, embedder, err := initEmbedding(ctx, cfg, chunksRepo, pieceRepo)
 	if err != nil {
 		return nil, err
 	}

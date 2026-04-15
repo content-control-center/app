@@ -29,8 +29,9 @@ func Init(
 	ctx context.Context,
 	cfg *config.Config,
 	repo repository.AssetChunksRepository,
+	assetRepo repository.AssetRepository,
 ) (func(assetID, title, content string), ai.Embedder, error) {
-	return InitWithOptions(ctx, cfg.EmbedServerURL, DefaultMaxRetries, DefaultRetryInterval, repo)
+	return InitWithOptions(ctx, cfg.EmbedServerURL, DefaultMaxRetries, DefaultRetryInterval, repo, assetRepo)
 }
 
 // InitWithOptions is like Init but lets the caller control retry behaviour.
@@ -40,6 +41,7 @@ func InitWithOptions(
 	maxRetries int,
 	retryInterval time.Duration,
 	repo repository.AssetChunksRepository,
+	assetRepo repository.AssetRepository,
 ) (func(assetID, title, content string), ai.Embedder, error) {
 	if embedServerURL == "" {
 		return nil, nil, nil
@@ -57,7 +59,7 @@ func InitWithOptions(
 		return nil, nil, fmt.Errorf("init embedder: %w", err)
 	}
 
-	flows.Init(g, embedder, repo)
+	flows.Init(g, embedder, repo, assetRepo)
 
 	return flows.NewAssetOnSaveCallback(), embedder, nil
 }

@@ -16,6 +16,7 @@ type AssetRepository interface {
 	Create(ctx context.Context, asset *models.Asset) error
 	GetByID(ctx context.Context, id string) (*models.Asset, error)
 	Update(ctx context.Context, asset *models.Asset) error
+	UpdateStatus(ctx context.Context, id, status string) error
 	Delete(ctx context.Context, id string) (bool, error)
 }
 
@@ -63,6 +64,15 @@ func (r *assetRepository) GetByID(ctx context.Context, id string) (*models.Asset
 
 func (r *assetRepository) Update(ctx context.Context, asset *models.Asset) error {
 	_, err := r.db.NewUpdate().Model(asset).WherePK().Exec(ctx)
+	return err
+}
+
+func (r *assetRepository) UpdateStatus(ctx context.Context, id, status string) error {
+	_, err := r.db.NewUpdate().
+		Model((*models.Asset)(nil)).
+		Set("status = ?", status).
+		Where("id = ?", id).
+		Exec(ctx)
 	return err
 }
 
