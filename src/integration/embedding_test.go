@@ -37,7 +37,7 @@ var _ = Describe("Asset embedding flow", Ordered, func() {
 		g := genkit.Init(ctx, genkit.WithPlugins(plugin))
 		embedder, err := plugin.DefineEmbedder(g)
 		Expect(err).NotTo(HaveOccurred(), "llama-embedserver must be running at %s", embedServerURL)
-		flows.Init(g, embedder, repo)
+		flows.Init(g, embedder, repo, nil)
 
 		// Seed a user and an asset to satisfy foreign-key constraints.
 		userID, err := models.NewID()

@@ -77,3 +77,71 @@ DELETE {{baseUrl}}/api/assets/{{assetId}}
 
 ### Delete asset — non-existent ID (expects 404)  [protected]
 DELETE {{baseUrl}}/api/assets/nonexistent
+
+### Upload Markdown — single file  [protected]
+# @name uploadMarkdown
+POST {{baseUrl}}/api/content-bank/assets/upload
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary
+Content-Disposition: form-data; name="files"; filename="rust-learning-plan.md"
+Content-Type: text/markdown
+
+< ./rust-learning-plan.md
+--boundary--
+
+> {% client.global.set("mdAssetId", response.body.results[0].asset_id) %}
+
+### Upload Markdown — multiple files (batch)  [protected]
+POST {{baseUrl}}/api/content-bank/assets/upload
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary
+Content-Disposition: form-data; name="files"; filename="sample.md"
+Content-Type: text/markdown
+
+< ./sample.md
+--boundary
+Content-Disposition: form-data; name="files"; filename="sample2.md"
+Content-Type: text/markdown
+
+< ./sample2.md
+--boundary
+Content-Disposition: form-data; name="files"; filename="rust-learning-plan.md"
+Content-Type: text/markdown
+
+< ./rust-learning-plan.md
+--boundary--
+
+### Upload Markdown — mixed valid + non-.md (per-file failure, 201)  [protected]
+POST {{baseUrl}}/api/content-bank/assets/upload
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary
+Content-Disposition: form-data; name="files"; filename="sample.md"
+Content-Type: text/markdown
+
+< ./sample.md
+--boundary
+Content-Disposition: form-data; name="files"; filename="notes.txt"
+Content-Type: text/plain
+
+just plain text, not markdown
+--boundary--
+
+### Upload Markdown — no files (expects 400)  [protected]
+POST {{baseUrl}}/api/content-bank/assets/upload
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary--
+
+### Upload Markdown — unauthenticated (expects 401)
+POST {{baseUrl}}/api/content-bank/assets/upload
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary
+Content-Disposition: form-data; name="files"; filename="sample.md"
+Content-Type: text/markdown
+
+< ./sample.md
+--boundary--

@@ -36,7 +36,7 @@ var _ = Describe("Asset chunking", Ordered, func() {
 		g := genkit.Init(ctx, genkit.WithPlugins(plugin))
 		embedder, err := plugin.DefineEmbedder(g)
 		Expect(err).NotTo(HaveOccurred(), "llama-embedserver must be running at %s", embedServerURL)
-		flows.Init(g, embedder, repo)
+		flows.Init(g, embedder, repo, nil)
 
 		userID, err = models.NewID()
 		Expect(err).NotTo(HaveOccurred())

@@ -36,9 +36,10 @@ var EmbedAssetFlow *core.Flow[EmbedAssetInput, struct{}, struct{}]
 // latest content. This prevents concurrent embeds of the same asset from
 // flooding the embedserver and contending for the same SQLite rows.
 type embedScheduler struct {
-	mu      sync.Mutex
-	pending map[string]EmbedAssetInput
-	running map[string]bool
+	mu        sync.Mutex
+	pending   map[string]EmbedAssetInput
+	running   map[string]bool
+	assetRepo repository.AssetRepository // optional; when set, used to flip asset.status
 }
 
 func newEmbedScheduler() *embedScheduler {
@@ -76,10 +77,24 @@ func (s *embedScheduler) run(assetID string) {
 		s.mu.Unlock()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-		if _, err := EmbedAssetFlow.Run(ctx, in); err != nil {
+		s.setStatus(ctx, in.AssetID, models.AssetStatusProcessing)
+		_, err := EmbedAssetFlow.Run(ctx, in)
+		if err != nil {
 			log.Printf("embed asset %s: %v", in.AssetID, err)
+			s.setStatus(ctx, in.AssetID, models.AssetStatusFailed)
+		} else {
+			s.setStatus(ctx, in.AssetID, models.AssetStatusReady)
 		}
 		cancel()
+	}
+}
+
+func (s *embedScheduler) setStatus(ctx context.Context, assetID, status string) {
+	if s.assetRepo == nil {
+		return
+	}
+	if err := s.assetRepo.UpdateStatus(ctx, assetID, status); err != nil {
+		log.Printf("embed asset %s: update status %s: %v", assetID, status, err)
 	}
 }
 
@@ -101,7 +116,10 @@ func NewAssetOnSaveCallback() func(assetID, title, content string) {
 
 // Init registers all Genkit flows. It must be called once during server
 // startup, after the Genkit instance and embedder have been initialised.
-func Init(g *genkit.Genkit, embedder ai.Embedder, repo repository.AssetChunksRepository) {
+// assetRepo is optional — when non-nil, the scheduler flips asset.status as
+// embeds run.
+func Init(g *genkit.Genkit, embedder ai.Embedder, repo repository.AssetChunksRepository, assetRepo repository.AssetRepository) {
+	defaultEmbedScheduler.assetRepo = assetRepo
 	EmbedAssetFlow = genkit.DefineFlow(g, "embedAsset",
 		func(ctx context.Context, in EmbedAssetInput) (struct{}, error) {
 			return struct{}{}, embedAsset(ctx, embedder, repo, in)
