@@ -1,0 +1,69 @@
+# syntax=docker/dockerfile:1
+# ─── Stage 1: build React ────────────────────────────────────────────────────
+FROM node:20-alpine AS web-builder
+
+RUN corepack enable
+
+WORKDIR /app/web
+COPY web/package.json web/pnpm-lock.yaml ./
+
+RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
+
+COPY web/ ./
+RUN pnpm build
+
+# ─── Stage 2: build Go binary ────────────────────────────────────────────────
+FROM golang:1.26-alpine AS go-builder
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN --mount=type=cache,id=go-mod,target=/go/pkg/mod \
+    go mod download
+
+COPY . .
+COPY --from=web-builder /app/web/dist ./web/dist
+
+RUN --mount=type=cache,id=go-mod,target=/go/pkg/mod \
+    --mount=type=cache,id=go-build,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build -p 4 -trimpath -ldflags="-s -w" -o /server ./cmd/server
+
+# ─── Stage 3: Debian slim runtime with Genkit Dev UI ────────────────────────
+# Genkit CLI is a Bun-compiled glibc binary — Alpine (musl) cannot run it.
+FROM debian:bookworm-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates tzdata poppler-utils curl procps && \
+    rm -rf /var/lib/apt/lists/* && \
+    groupadd --system appgroup && useradd --system -g appgroup -d /home/appuser appuser && \
+    mkdir -p /data /home/appuser /.genkit && chown appuser:appgroup /data /home/appuser /.genkit
+
+# Install genkit CLI binary directly.
+RUN curl -sL -o /usr/local/bin/genkit \
+      https://storage.googleapis.com/genkit-assets-cli/prod/linux-x64/latest && \
+    chmod +x /usr/local/bin/genkit
+
+COPY --from=go-builder /server /server
+
+# Project root markers so both Go SDK (looks for go.mod) and Genkit CLI
+# (looks for package.json) agree on the project root for runtime file discovery.
+RUN mkdir -p /app/.genkit/runtimes && \
+    echo 'module genkit-runtime' > /app/go.mod && \
+    echo '{}' > /app/package.json && \
+    chown -R appuser:appgroup /app
+
+USER appuser
+
+WORKDIR /app
+
+ENV ADDR=":9001"
+ENV HOME="/home/appuser"
+# Ensure the Go SDK starts the reflection server and writes the runtime file.
+ENV GENKIT_ENV="dev"
+
+EXPOSE 9001 3100 4000
+
+ENTRYPOINT ["genkit", "start", "--non-interactive", "--port", "4000", "--"]
+CMD ["/server"]

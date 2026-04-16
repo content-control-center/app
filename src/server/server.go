@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"log"
 	"net/http"
+	"os"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/filesystem"
@@ -12,7 +14,12 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/uptrace/bun"
 
+	"github.com/firebase/genkit/go/core/api"
+	"github.com/firebase/genkit/go/genkit"
+	"github.com/firebase/genkit/go/plugins/anthropic"
+
 	"github.com/content-control-center/app/src/config"
+	"github.com/content-control-center/app/src/embedding"
 	"github.com/content-control-center/app/src/genkit/flows/content_plan"
 	"github.com/content-control-center/app/src/genkit/flows/post_assistant"
 	"github.com/content-control-center/app/src/handlers"
@@ -61,35 +68,55 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 		return nil, err
 	}
 
-	callbacks, embedder, err := initEmbedding(ctx, cfg, chunksRepo, pieceRepo, assetFileRepo, store)
+	// Single shared Genkit instance so all flows are discoverable by the
+	// Genkit Dev UI. The Anthropic plugin is loaded when the API key is set;
+	// the llama embedding plugin is registered onto the same instance.
+	var generateDraft func(context.Context, string, content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)
+	var assistantCallback func(context.Context, post_assistant.PostAssistantRequest) (*post_assistant.PostAssistantResponse, error)
+
+	log.Printf("genkit: initialising (GENKIT_ENV=%s)", os.Getenv("GENKIT_ENV"))
+	var plugins []api.Plugin
+	if cfg.AnthropicAPIKey != "" {
+		plugins = append(plugins, &anthropic.Anthropic{})
+	}
+	g := genkit.Init(ctx, genkit.WithPlugins(plugins...))
+
+	// Register embedding flows on the shared instance.
+	callbacks, embedder, err := embedding.InitOnInstance(ctx, g, cfg.EmbedServerURL,
+		embedding.DefaultMaxRetries, embedding.DefaultRetryInterval,
+		chunksRepo, pieceRepo, assetFileRepo, store)
 	if err != nil {
 		return nil, err
 	}
 	handlers.NewAssetsHandler(pieceRepo, assetFileRepo, store, auth, callbacks.OnMarkdownSave, callbacks.OnPDFProcess).Register(app)
 
-	contentPlanRepos := content_plan.ContentPlanRepos{
-		Campaigns:  campaignRepo,
-		Assets:     pieceRepo,
-		Chunks:     chunksRepo,
-		Platforms:  platformRepo,
-		Posts:      postRepo,
+	if cfg.AnthropicAPIKey != "" {
+		contentPlanRepos := content_plan.ContentPlanRepos{
+			Campaigns:  campaignRepo,
+			Assets:     pieceRepo,
+			Chunks:     chunksRepo,
+			Platforms:  platformRepo,
+			Posts:      postRepo,
+		}
+		generateDraft, err = initContentPlan(g, cfg, embedder, contentPlanRepos)
+		if err != nil {
+			return nil, err
+		}
+
+		postAssistantRepos := post_assistant.PostAssistantRepos{
+			Posts:     postRepo,
+			Assets:    pieceRepo,
+			Chunks:    chunksRepo,
+			Campaigns: campaignRepo,
+			Versions:  postVersionRepo,
+			Messages:  postMessageRepo,
+		}
+		assistantCallback, err = initPostAssistant(g, cfg, embedder, postAssistantRepos)
+		if err != nil {
+			return nil, err
+		}
 	}
-	generateDraft, err := initContentPlan(ctx, cfg, embedder, contentPlanRepos)
-	if err != nil {
-		return nil, err
-	}
-	postAssistantRepos := post_assistant.PostAssistantRepos{
-		Posts:    postRepo,
-		Assets:   pieceRepo,
-		Chunks:   chunksRepo,
-		Campaigns: campaignRepo,
-		Versions: postVersionRepo,
-		Messages: postMessageRepo,
-	}
-	assistantCallback, err := initPostAssistant(ctx, cfg, embedder, postAssistantRepos)
-	if err != nil {
-		return nil, err
-	}
+	log.Println("genkit: all flows registered")
 
 	handlers.NewCampaignTypesHandler(campaignTypeRepo, auth).Register(app)
 	handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, generateDraft).Register(app)

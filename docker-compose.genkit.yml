@@ -1,0 +1,30 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.genkit
+    platform: linux/amd64
+    environment:
+      ADDR: ":9001"
+      DATABASE_DSN: "file:/data/app.db?cache=shared&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+      EMBED_SERVER_URL: "http://llama-embedserver:8080"
+      STORAGE_ENDPOINT: ""
+      STORAGE_REGION: ""
+      STORAGE_ACCESS_KEY: ""
+      STORAGE_SECRET_KEY: ""
+      STORAGE_BUCKET: ""
+      STORAGE_PUBLIC_URL: ""
+      ANTHROPIC_API_KEY: ""
+    volumes:
+      - ./data:/data
+    ports:
+      - "9001:9001"
+      - "4000:4000"   # Genkit Dev UI
+    depends_on:
+      - llama-embedserver
+
+  llama-embedserver:
+    image: alephbetai/llama-embedserver:latest
+    platform: linux/amd64
+    ports:
+      - "9003:8080"

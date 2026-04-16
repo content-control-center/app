@@ -81,6 +81,48 @@ func InitWithOptions(
 	}, embedder, nil
 }
 
+// InitOnInstance registers embedding flows on an existing Genkit instance
+// instead of creating a new one. Use this when a shared Genkit instance
+// is needed (e.g. so all flows are discoverable by the Genkit Dev UI).
+func InitOnInstance(
+	ctx context.Context,
+	g *genkit.Genkit,
+	embedServerURL string,
+	maxRetries int,
+	retryInterval time.Duration,
+	chunksRepo repository.AssetChunksRepository,
+	assetRepo repository.AssetRepository,
+	fileRepo repository.AssetFileRepository,
+	store storage.Storage,
+) (Callbacks, ai.Embedder, error) {
+	if embedServerURL == "" {
+		return Callbacks{}, nil, nil
+	}
+
+	if err := waitForEmbedServer(ctx, embedServerURL, maxRetries, retryInterval); err != nil {
+		return Callbacks{}, nil, fmt.Errorf("embed server unavailable: %w", err)
+	}
+
+	plugin := llama.New(llama.Config{LlamaEmbedServerAddress: embedServerURL})
+	// Register the plugin's actions on the shared instance.
+	for _, action := range plugin.Init(ctx) {
+		genkit.RegisterAction(g, action)
+	}
+
+	embedder, err := plugin.DefineEmbedder(g)
+	if err != nil {
+		return Callbacks{}, nil, fmt.Errorf("init embedder: %w", err)
+	}
+
+	flows.Init(g, embedder, chunksRepo, assetRepo)
+	flows.InitPDF(g, embedder, chunksRepo, assetRepo, fileRepo, store)
+
+	return Callbacks{
+		OnMarkdownSave: flows.NewAssetOnSaveCallback(),
+		OnPDFProcess:   flows.NewPDFProcessCallback(),
+	}, embedder, nil
+}
+
 func waitForEmbedServer(ctx context.Context, baseURL string, maxRetries int, retryInterval time.Duration) error {
 	healthURL := baseURL + "/health"
 	client := &http.Client{Timeout: retryInterval}
