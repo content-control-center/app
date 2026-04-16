@@ -23,6 +23,9 @@ type AssetChunksRepository interface {
 	GetAllEmbedded(ctx context.Context) ([]models.AssetChunk, error)
 	// DeleteByAssetID removes all chunks for an asset.
 	DeleteByAssetID(ctx context.Context, assetID string) error
+	// GetByIDs returns chunks matching the given primary-key IDs, ordered by
+	// asset_id then chunk_index.
+	GetByIDs(ctx context.Context, ids []string) ([]models.AssetChunk, error)
 }
 
 type assetChunksRepository struct {
@@ -137,4 +140,17 @@ func (r *assetChunksRepository) DeleteByAssetID(ctx context.Context, assetID str
 		Where("asset_id = ?", assetID).
 		Exec(ctx)
 	return err
+}
+
+func (r *assetChunksRepository) GetByIDs(ctx context.Context, ids []string) ([]models.AssetChunk, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var chunks []models.AssetChunk
+	err := r.db.NewSelect().
+		Model(&chunks).
+		Where("ac.id IN (?)", bun.In(ids)).
+		OrderExpr("ac.asset_id ASC, ac.chunk_index ASC").
+		Scan(ctx)
+	return chunks, err
 }

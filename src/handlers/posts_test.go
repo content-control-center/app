@@ -47,12 +47,13 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		campaignRepo := repository.NewCampaignRepository(db, tagRepo, repository.NewPlatformRepository(db), campaignTypeRepo)
 		pieceRepo := repository.NewAssetRepository(db, tagRepo, repository.NewAssetFileRepository(db))
 		postRepo := repository.NewPostRepository(db)
+		postVersionRepo := repository.NewPostVersionRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil).Register(app)
 		handlers.NewAssetsHandler(pieceRepo, repository.NewAssetFileRepository(db), nil, auth, nil, nil).Register(app)
-		handlers.NewPostsHandler(postRepo, auth).Register(app)
+		handlers.NewPostsHandler(postRepo, postVersionRepo, auth, nil).Register(app)
 
 		// Seed auth user and log in.
 		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "admin@example.com", "password": "admin-password"})
@@ -86,7 +87,11 @@ var _ = Describe("PostsHandler", Ordered, func() {
 	})
 
 	AfterEach(func() {
-		_, err := db.NewDelete().TableExpr("posts").Where("1 = 1").Exec(context.Background())
+		_, err := db.NewDelete().TableExpr("post_assistant_messages").Where("1 = 1").Exec(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		_, err = db.NewDelete().TableExpr("post_versions").Where("1 = 1").Exec(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		_, err = db.NewDelete().TableExpr("posts").Where("1 = 1").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		_, err = db.NewDelete().TableExpr("assets").Where("1 = 1").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
@@ -570,6 +575,146 @@ var _ = Describe("PostsHandler", Ordered, func() {
 
 			It("returns 404 for an unknown id", func() {
 				req := httptest.NewRequest("DELETE", "/api/posts/nonexistent", nil)
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(404))
+			})
+		})
+	})
+
+	// ── Assistant ────────────────────────────────────────────────────────────
+
+	Describe("POST /api/posts/:id/assistant", func() {
+		Context("when not authenticated", func() {
+			It("returns 401", func() {
+				body, _ := json.Marshal(fiber.Map{"instruction": "make it shorter"})
+				req := httptest.NewRequest("POST", "/api/posts/someid/assistant", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+		})
+
+		Context("when authenticated", func() {
+			It("returns 503 when assistant callback is nil", func() {
+				p := createPost("Assist Me", nil)
+				body, _ := json.Marshal(fiber.Map{"instruction": "make it shorter"})
+				req := httptest.NewRequest("POST", "/api/posts/"+p.ID+"/assistant", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(503))
+			})
+		})
+	})
+
+	// ── Versions ─────────────────────────────────────────────────────────────
+
+	Describe("GET /api/posts/:id/versions", func() {
+		Context("when not authenticated", func() {
+			It("returns 401", func() {
+				req := httptest.NewRequest("GET", "/api/posts/someid/versions", nil)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+		})
+
+		Context("when authenticated", func() {
+			It("returns an empty list when no versions exist", func() {
+				p := createPost("No Versions", nil)
+				req := httptest.NewRequest("GET", "/api/posts/"+p.ID+"/versions", nil)
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+
+				var versions []models.PostVersion
+				Expect(json.NewDecoder(resp.Body).Decode(&versions)).To(Succeed())
+				Expect(versions).To(BeEmpty())
+			})
+		})
+	})
+
+	Describe("POST /api/posts/:id/versions", func() {
+		Context("when not authenticated", func() {
+			It("returns 401", func() {
+				body, _ := json.Marshal(fiber.Map{"note": "manual save"})
+				req := httptest.NewRequest("POST", "/api/posts/someid/versions", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+		})
+
+		Context("when authenticated", func() {
+			It("creates a version and returns 201", func() {
+				p := createPost("Versioned Post", fiber.Map{"content": "Original content"})
+
+				body, _ := json.Marshal(fiber.Map{"note": "First manual save"})
+				req := httptest.NewRequest("POST", "/api/posts/"+p.ID+"/versions", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(201))
+
+				var v models.PostVersion
+				Expect(json.NewDecoder(resp.Body).Decode(&v)).To(Succeed())
+				Expect(v.PostID).To(Equal(p.ID))
+				Expect(v.VersionNumber).To(Equal(1))
+				Expect(v.Description).To(Equal("Original content"))
+				Expect(v.Note).To(Equal("First manual save"))
+				Expect(v.Creator).To(Equal("user"))
+			})
+
+			It("increments version number", func() {
+				p := createPost("Multi Version", fiber.Map{"content": "Some content"})
+
+				// Version 1
+				body, _ := json.Marshal(fiber.Map{"note": "v1"})
+				req := httptest.NewRequest("POST", "/api/posts/"+p.ID+"/versions", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(201))
+
+				// Version 2
+				body, _ = json.Marshal(fiber.Map{"note": "v2"})
+				req = httptest.NewRequest("POST", "/api/posts/"+p.ID+"/versions", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err = app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(201))
+
+				var v models.PostVersion
+				Expect(json.NewDecoder(resp.Body).Decode(&v)).To(Succeed())
+				Expect(v.VersionNumber).To(Equal(2))
+
+				// List should show both
+				listReq := httptest.NewRequest("GET", "/api/posts/"+p.ID+"/versions", nil)
+				listReq.AddCookie(authCookie)
+				listResp, err := app.Test(listReq)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(listResp.StatusCode).To(Equal(200))
+
+				var versions []models.PostVersion
+				Expect(json.NewDecoder(listResp.Body).Decode(&versions)).To(Succeed())
+				Expect(versions).To(HaveLen(2))
+				Expect(versions[0].VersionNumber).To(Equal(1))
+				Expect(versions[1].VersionNumber).To(Equal(2))
+			})
+
+			It("returns 404 for an unknown post", func() {
+				body, _ := json.Marshal(fiber.Map{"note": "ghost"})
+				req := httptest.NewRequest("POST", "/api/posts/nonexistent/versions", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())

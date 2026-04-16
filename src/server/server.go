@@ -14,6 +14,7 @@ import (
 
 	"github.com/content-control-center/app/src/config"
 	"github.com/content-control-center/app/src/genkit/flows/content_plan"
+	"github.com/content-control-center/app/src/genkit/flows/post_assistant"
 	"github.com/content-control-center/app/src/handlers"
 	"github.com/content-control-center/app/src/repository"
 	"github.com/content-control-center/app/src/storage"
@@ -44,6 +45,8 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	campaignTypeRepo := repository.NewCampaignTypeRepository(db)
 	campaignRepo := repository.NewCampaignRepository(db, tagRepo, platformRepo, campaignTypeRepo)
 	postRepo := repository.NewPostRepository(db)
+	postVersionRepo := repository.NewPostVersionRepository(db)
+	postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
 
 	handlers.NewHealthHandler(db).Register(app)
@@ -75,11 +78,24 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	if err != nil {
 		return nil, err
 	}
+	postAssistantRepos := post_assistant.PostAssistantRepos{
+		Posts:    postRepo,
+		Assets:   pieceRepo,
+		Chunks:   chunksRepo,
+		Campaigns: campaignRepo,
+		Versions: postVersionRepo,
+		Messages: postMessageRepo,
+	}
+	assistantCallback, err := initPostAssistant(ctx, cfg, postAssistantRepos)
+	if err != nil {
+		return nil, err
+	}
+
 	handlers.NewCampaignTypesHandler(campaignTypeRepo, auth).Register(app)
 	handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, generateDraft).Register(app)
 	handlers.NewPlatformsHandler(platformRepo, auth).Register(app)
 	handlers.NewTagsHandler(tagRepo, auth).Register(app)
-	handlers.NewPostsHandler(postRepo, auth).Register(app)
+	handlers.NewPostsHandler(postRepo, postVersionRepo, auth, assistantCallback).Register(app)
 
 	handlers.NewImagesHandler(store, auth).Register(app)
 

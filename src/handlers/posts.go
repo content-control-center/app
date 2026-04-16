@@ -5,8 +5,11 @@ import (
 	"errors"
 	"time"
 
+	"context"
+
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/content-control-center/app/src/genkit/flows/post_assistant"
 	"github.com/content-control-center/app/src/models"
 	"github.com/content-control-center/app/src/repository"
 )
@@ -28,12 +31,19 @@ var validCTATypes = map[models.PostCTAType]bool{
 }
 
 type PostsHandler struct {
-	repo repository.PostRepository
-	auth fiber.Handler
+	repo        repository.PostRepository
+	versionRepo repository.PostVersionRepository
+	auth        fiber.Handler
+	assistant   func(ctx context.Context, req post_assistant.PostAssistantRequest) (*post_assistant.PostAssistantResponse, error)
 }
 
-func NewPostsHandler(repo repository.PostRepository, auth fiber.Handler) *PostsHandler {
-	return &PostsHandler{repo: repo, auth: auth}
+func NewPostsHandler(
+	repo repository.PostRepository,
+	versionRepo repository.PostVersionRepository,
+	auth fiber.Handler,
+	assistant func(ctx context.Context, req post_assistant.PostAssistantRequest) (*post_assistant.PostAssistantResponse, error),
+) *PostsHandler {
+	return &PostsHandler{repo: repo, versionRepo: versionRepo, auth: auth, assistant: assistant}
 }
 
 func (h *PostsHandler) Register(app *fiber.App) {
@@ -43,6 +53,9 @@ func (h *PostsHandler) Register(app *fiber.App) {
 	g.Get("/:id", h.auth, h.Get)
 	g.Put("/:id", h.auth, h.Update)
 	g.Delete("/:id", h.auth, h.Delete)
+	g.Post("/:id/assistant", h.auth, h.Assistant)
+	g.Get("/:id/versions", h.auth, h.ListVersions)
+	g.Post("/:id/versions", h.auth, h.CreateVersion)
 
 	app.Get("/api/campaigns/:campaign_id/posts", h.auth, h.ListByCampaign)
 }
@@ -286,4 +299,134 @@ func (h *PostsHandler) Delete(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "post not found")
 	}
 	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// ── Assistant ────────────────────────────────────────────────────────────────
+
+type assistantRequest struct {
+	Instruction string `json:"instruction" validate:"required"`
+}
+
+// Assistant godoc
+// @Summary      Post assistant
+// @Description  Sends an instruction to the AI assistant to enhance the post description.
+// @Tags         posts
+// @Accept       json
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id    path      string           true  "Post Sqid"
+// @Param        body  body      assistantRequest true  "Instruction payload"
+// @Success      200   {object}  post_assistant.PostAssistantResponse
+// @Failure      400   {object}  map[string]string
+// @Failure      401   {object}  map[string]string
+// @Failure      404   {object}  map[string]string
+// @Failure      503   {object}  map[string]string
+// @Router       /api/posts/{id}/assistant [post]
+func (h *PostsHandler) Assistant(c *fiber.Ctx) error {
+	if h.assistant == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "post assistant is not available")
+	}
+	var req assistantRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	if err := validate.Struct(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	}
+
+	resp, err := h.assistant(c.Context(), post_assistant.PostAssistantRequest{
+		PostID:      c.Params("id"),
+		Instruction: req.Instruction,
+	})
+	if err != nil {
+		var ve *post_assistant.ValidationError
+		var ae *post_assistant.AIError
+		switch {
+		case errors.As(err, &ve):
+			return fiber.NewError(fiber.StatusBadRequest, ve.Msg)
+		case errors.As(err, &ae):
+			return fiber.NewError(fiber.StatusBadGateway, ae.Msg)
+		}
+		return err
+	}
+	return c.JSON(resp)
+}
+
+// ── Versions ─────────────────────────────────────────────────────────────────
+
+// ListVersions godoc
+// @Summary      List post versions
+// @Description  Returns all version snapshots for a post.
+// @Tags         posts
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id   path      string  true  "Post Sqid"
+// @Success      200  {array}   models.PostVersion
+// @Failure      401  {object}  map[string]string
+// @Router       /api/posts/{id}/versions [get]
+func (h *PostsHandler) ListVersions(c *fiber.Ctx) error {
+	versions, err := h.versionRepo.ListByPostID(c.Context(), c.Params("id"))
+	if err != nil {
+		return err
+	}
+	return c.JSON(versions)
+}
+
+type createVersionRequest struct {
+	Note string `json:"note"`
+}
+
+// CreateVersion godoc
+// @Summary      Create post version
+// @Description  Manually creates a version snapshot of the current post description.
+// @Tags         posts
+// @Accept       json
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id    path      string               true  "Post Sqid"
+// @Param        body  body      createVersionRequest true  "Version payload"
+// @Success      201   {object}  models.PostVersion
+// @Failure      401   {object}  map[string]string
+// @Failure      404   {object}  map[string]string
+// @Router       /api/posts/{id}/versions [post]
+func (h *PostsHandler) CreateVersion(c *fiber.Ctx) error {
+	var req createVersionRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+
+	post, err := h.repo.GetByID(c.Context(), c.Params("id"))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "post not found")
+		}
+		return err
+	}
+
+	latest, err := h.versionRepo.GetLatestByPostID(c.Context(), post.ID)
+	if err != nil {
+		return err
+	}
+	nextNum := 1
+	if latest != nil {
+		nextNum = latest.VersionNumber + 1
+	}
+
+	id, err := models.NewID()
+	if err != nil {
+		return err
+	}
+
+	version := &models.PostVersion{
+		ID:            id,
+		PostID:        post.ID,
+		VersionNumber: nextNum,
+		Description:   post.Content,
+		Note:          req.Note,
+		Creator:       "user",
+	}
+	if err := h.versionRepo.Create(c.Context(), version); err != nil {
+		return err
+	}
+	return c.Status(fiber.StatusCreated).JSON(version)
 }
