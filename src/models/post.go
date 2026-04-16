@@ -19,6 +19,30 @@ const (
 	PostStatusNotPublished               PostStatus = "not_published"
 )
 
+// ValidPostTransitions defines the allowed state-machine edges.
+// The key is the current status; the value lists statuses it may move to.
+var ValidPostTransitions = map[PostStatus][]PostStatus{
+	PostStatusDraft:                     {PostStatusReadyForPublish},
+	PostStatusReadyForPublish:           {PostStatusScheduled, PostStatusScheduledForManualPublish, PostStatusDraft},
+	PostStatusScheduled:                 {PostStatusFailed, PostStatusPublished},
+	PostStatusScheduledForManualPublish: {PostStatusPublished, PostStatusNotPublished},
+	PostStatusFailed:                    {PostStatusReadyForPublish},
+	PostStatusNotPublished:              {PostStatusReadyForPublish, PostStatusScheduledForManualPublish},
+}
+
+// CanTransition reports whether moving from the current status to next is allowed.
+func (s PostStatus) CanTransition(next PostStatus) bool {
+	if s == next {
+		return true
+	}
+	for _, allowed := range ValidPostTransitions[s] {
+		if allowed == next {
+			return true
+		}
+	}
+	return false
+}
+
 // PostCTAType represents the call-to-action type attached to a post.
 type PostCTAType string
 

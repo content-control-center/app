@@ -235,6 +235,10 @@ func (h *PostsHandler) Update(c *fiber.Ctx) error {
 		return err
 	}
 
+	if !post.Status.CanTransition(status) {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid status transition from "+string(post.Status)+" to "+string(status))
+	}
+
 	post.CampaignID = req.CampaignID
 	post.PlatformID = req.PlatformID
 	post.PlatformPostType = req.PlatformPostType

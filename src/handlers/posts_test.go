@@ -456,6 +456,71 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				Expect(resp.StatusCode).To(Equal(404))
 			})
 
+			It("returns 400 for an invalid status transition", func() {
+				p := createPost("Draft Post", nil) // status = draft
+
+				body, _ := json.Marshal(fiber.Map{
+					"campaign_id":        campaignID,
+					"platform_id":        "AXqWG7U2qnpt",
+					"platform_post_type": "text-post",
+					"title":              "Skip To Published",
+					"status":             "published",
+				})
+				req := httptest.NewRequest("PUT", "/api/posts/"+p.ID, bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(400))
+			})
+
+			It("allows a valid status transition chain", func() {
+				p := createPost("Lifecycle Post", nil) // draft
+
+				// draft -> ready_for_publish
+				body, _ := json.Marshal(fiber.Map{
+					"campaign_id": campaignID, "platform_id": "AXqWG7U2qnpt",
+					"platform_post_type": "text-post", "title": "Lifecycle Post",
+					"status": "ready_for_publish",
+				})
+				req := httptest.NewRequest("PUT", "/api/posts/"+p.ID, bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+
+				// ready_for_publish -> scheduled
+				body, _ = json.Marshal(fiber.Map{
+					"campaign_id": campaignID, "platform_id": "AXqWG7U2qnpt",
+					"platform_post_type": "text-post", "title": "Lifecycle Post",
+					"status": "scheduled",
+				})
+				req = httptest.NewRequest("PUT", "/api/posts/"+p.ID, bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err = app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+
+				// scheduled -> published
+				body, _ = json.Marshal(fiber.Map{
+					"campaign_id": campaignID, "platform_id": "AXqWG7U2qnpt",
+					"platform_post_type": "text-post", "title": "Lifecycle Post",
+					"status": "published",
+				})
+				req = httptest.NewRequest("PUT", "/api/posts/"+p.ID, bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err = app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+
+				var got models.Post
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect(got.Status).To(Equal(models.PostStatusPublished))
+			})
+
 			It("returns 400 when title is missing", func() {
 				p := createPost("Has Title", nil)
 
