@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sync"
 	"text/template"
 	"unicode/utf8"
 
+	"github.com/content-control-center/app/src/genkit/flows"
 	"github.com/content-control-center/app/src/models"
 )
 
@@ -57,6 +59,13 @@ func assembleContext(
 		return nil, err
 	}
 
+	// Extract plain text from BlockNote JSON so the model sees readable
+	// content rather than raw JSON. Falls back to raw content on error.
+	postDescription := post.Content
+	if plainText, err := flows.ExtractText(post.Content); err == nil && plainText != "" {
+		postDescription = plainText
+	}
+
 	data := contextTemplateData{
 		CampaignName:        campaign.Name,
 		CampaignDescription: campaign.Description,
@@ -66,7 +75,7 @@ func assembleContext(
 		Language:            campaign.Language,
 		PhaseName:           phaseName,
 		PhaseDescription:    phaseDescription,
-		PostDescription:     post.Content,
+		PostDescription:     postDescription,
 		Assets:              summaries,
 	}
 
@@ -103,35 +112,54 @@ func buildAssetSummaries(ctx context.Context, assetIDs []string, repos PostAssis
 		return nil, nil
 	}
 
+	// Fetch all assets in parallel.
+	type result struct {
+		index   int
+		summary assetSummary
+		ok      bool
+	}
+	results := make([]result, len(assetIDs))
+	var wg sync.WaitGroup
+	for i, id := range assetIDs {
+		wg.Add(1)
+		go func(idx int, assetID string) {
+			defer wg.Done()
+			asset, err := repos.Assets.GetByID(ctx, assetID)
+			if err != nil {
+				return
+			}
+			chunks, err := repos.Chunks.GetByAssetID(ctx, assetID)
+			if err != nil {
+				return
+			}
+			preview := ""
+			if len(chunks) > 0 {
+				preview = truncateRunes(chunks[0].Content, previewChars)
+			}
+			assetType := ""
+			if asset.Type != nil {
+				assetType = *asset.Type
+			}
+			results[idx] = result{
+				index: idx,
+				summary: assetSummary{
+					ID:         asset.ID,
+					Name:       asset.Title,
+					Type:       assetType,
+					ChunkCount: len(chunks),
+					Preview:    preview,
+				},
+				ok: true,
+			}
+		}(i, id)
+	}
+	wg.Wait()
+
 	summaries := make([]assetSummary, 0, len(assetIDs))
-	for _, id := range assetIDs {
-		asset, err := repos.Assets.GetByID(ctx, id)
-		if err != nil {
-			continue // skip missing assets
+	for _, r := range results {
+		if r.ok {
+			summaries = append(summaries, r.summary)
 		}
-
-		chunks, err := repos.Chunks.GetByAssetID(ctx, id)
-		if err != nil {
-			continue
-		}
-
-		preview := ""
-		if len(chunks) > 0 {
-			preview = truncateRunes(chunks[0].Content, previewChars)
-		}
-
-		assetType := ""
-		if asset.Type != nil {
-			assetType = *asset.Type
-		}
-
-		summaries = append(summaries, assetSummary{
-			ID:         asset.ID,
-			Name:       asset.Title,
-			Type:       assetType,
-			ChunkCount: len(chunks),
-			Preview:    preview,
-		})
 	}
 
 	// Shorten previews proportionally if combined size exceeds budget.

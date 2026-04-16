@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
+	"github.com/content-control-center/app/src/markdown"
 	"github.com/content-control-center/app/src/models"
 )
 
@@ -66,25 +68,42 @@ func runPostAssistant(
 		log.Printf("post_assistant[%s]: created initial version snapshot", req.PostID)
 	}
 
-	// ── Assemble context ─────────────────────────────────────────────────────
-	actx, err := assembleContext(ctx, post, repos, systemTmpl, contextTmpl)
-	if err != nil {
-		return nil, fmt.Errorf("assemble context: %w", err)
-	}
+	// ── Assemble context + load history in parallel ─────────────────────────
+	var actx *assistantContext
+	var ctxErr error
+	var history []*ai.Message
+	var histErr error
 
-	// ── Load conversation history ────────────────────────────────────────────
-	msgs, err := repos.Messages.ListRecentByPostID(ctx, req.PostID, 20)
-	if err != nil {
-		return nil, fmt.Errorf("load history: %w", err)
-	}
-	history := make([]*ai.Message, 0, len(msgs))
-	for _, m := range msgs {
-		switch m.Role {
-		case "user":
-			history = append(history, ai.NewUserTextMessage(m.Content))
-		case "model":
-			history = append(history, ai.NewModelTextMessage(m.Content))
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		actx, ctxErr = assembleContext(ctx, post, repos, systemTmpl, contextTmpl)
+	}()
+	go func() {
+		defer wg.Done()
+		msgs, err := repos.Messages.ListRecentByPostID(ctx, req.PostID, 20)
+		if err != nil {
+			histErr = err
+			return
 		}
+		history = make([]*ai.Message, 0, len(msgs))
+		for _, m := range msgs {
+			switch m.Role {
+			case "user":
+				history = append(history, ai.NewUserTextMessage(m.Content))
+			case "model":
+				history = append(history, ai.NewModelTextMessage(m.Content))
+			}
+		}
+	}()
+	wg.Wait()
+
+	if ctxErr != nil {
+		return nil, fmt.Errorf("assemble context: %w", ctxErr)
+	}
+	if histErr != nil {
+		return nil, fmt.Errorf("load history: %w", histErr)
 	}
 
 	// ── Inject per-request state for tools ───────────────────────────────────
@@ -96,9 +115,11 @@ func runPostAssistant(
 	})
 
 	// ── Call model ───────────────────────────────────────────────────────────
+	// Assistant responses are short (description + explanation), so cap
+	// output tokens well below the content-plan default.
 	maxTokens := cfg.MaxOutputTokens
-	if maxTokens == 0 {
-		maxTokens = 8192
+	if maxTokens == 0 || maxTokens > 4096 {
+		maxTokens = 4096
 	}
 
 	modelName := "anthropic/" + cfg.ModelID
@@ -115,7 +136,7 @@ func runPostAssistant(
 		ai.WithMessages(history...),
 		ai.WithPrompt(req.Instruction),
 		ai.WithTools(tools.listAssets, tools.getAssetChunks, tools.searchAssetChunks, tools.getCurrentDesc),
-		ai.WithMaxTurns(5),
+		ai.WithMaxTurns(3),
 		ai.WithOutputType(PostAssistantResponse{}),
 		ai.WithStreaming(func(_ context.Context, _ *ai.ModelResponseChunk) error { return nil }),
 		ai.WithConfig(anthropic.MessageNewParams{
@@ -147,6 +168,11 @@ func runPostAssistant(
 	var result PostAssistantResponse
 	if err := json.Unmarshal([]byte(text), &result); err != nil {
 		return nil, &AIError{Msg: fmt.Sprintf("failed to parse model response as JSON: %v\nraw: %.300s", err, text)}
+	}
+
+	// Convert Markdown description to BlockNote JSON for storage.
+	if result.Action == "edited" && result.UpdatedDescription != "" {
+		result.UpdatedDescription = markdown.ToBlocks([]byte(result.UpdatedDescription))
 	}
 
 	// ── Persist conversation turn ────────────────────────────────────────────
