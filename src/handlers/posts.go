@@ -12,12 +12,13 @@ import (
 )
 
 var validPostStatuses = map[models.PostStatus]bool{
-	models.PostStatusDraft:     true,
-	models.PostStatusInReview:  true,
-	models.PostStatusApproved:  true,
-	models.PostStatusScheduled: true,
-	models.PostStatusPublished: true,
-	models.PostStatusFailed:    true,
+	models.PostStatusDraft:                     true,
+	models.PostStatusReadyForPublish:           true,
+	models.PostStatusScheduled:                 true,
+	models.PostStatusScheduledForManualPublish: true,
+	models.PostStatusFailed:                    true,
+	models.PostStatusPublished:                 true,
+	models.PostStatusNotPublished:              true,
 }
 
 var validCTATypes = map[models.PostCTAType]bool{

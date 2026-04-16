@@ -246,13 +246,13 @@ var _ = Describe("PostsHandler", Ordered, func() {
 			It("creates a post with all optional fields", func() {
 				p := createPost("Full Post", fiber.Map{
 					"content":               "Post body text.",
-					"status":                "in_review",
+					"status":                "ready_for_publish",
 					"cta_type":              "link",
 					"cta_url":               "https://example.com",
 					"target_audience_notes": "Developers aged 25-40",
 					"media_urls":            []string{"https://example.com/image.png"},
 				})
-				Expect(p.Status).To(Equal(models.PostStatusInReview))
+				Expect(p.Status).To(Equal(models.PostStatusReadyForPublish))
 				Expect(p.CTAType).To(Equal(models.CTATypeLink))
 				Expect(p.CTAUrl).To(Equal("https://example.com"))
 				Expect(p.MediaURLs).To(ConsistOf("https://example.com/image.png"))
@@ -422,7 +422,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 					"platform_id":        "AXqWG7U2qnpt",
 					"platform_post_type": "image-post",
 					"title":              "Updated Title",
-					"status":             "approved",
+					"status":             "ready_for_publish",
 					"cta_type":           "button",
 					"cta_url":            "https://example.com/cta",
 				})
@@ -437,7 +437,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
 				Expect(got.Title).To(Equal("Updated Title"))
 				Expect(got.PlatformPostType).To(Equal("image-post"))
-				Expect(got.Status).To(Equal(models.PostStatusApproved))
+				Expect(got.Status).To(Equal(models.PostStatusReadyForPublish))
 				Expect(got.CTAType).To(Equal(models.CTATypeButton))
 				Expect(got.Campaign).NotTo(BeNil())
 				Expect(got.Platform).NotTo(BeNil())

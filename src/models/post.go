@@ -10,12 +10,13 @@ import (
 type PostStatus string
 
 const (
-	PostStatusDraft     PostStatus = "draft"
-	PostStatusInReview  PostStatus = "in_review"
-	PostStatusApproved  PostStatus = "approved"
-	PostStatusScheduled PostStatus = "scheduled"
-	PostStatusPublished PostStatus = "published"
-	PostStatusFailed    PostStatus = "failed"
+	PostStatusDraft                      PostStatus = "draft"
+	PostStatusReadyForPublish            PostStatus = "ready_for_publish"
+	PostStatusScheduled                  PostStatus = "scheduled"
+	PostStatusScheduledForManualPublish  PostStatus = "scheduled_for_manual_publishing"
+	PostStatusFailed                     PostStatus = "failed"
+	PostStatusPublished                  PostStatus = "published"
+	PostStatusNotPublished               PostStatus = "not_published"
 )
 
 // PostCTAType represents the call-to-action type attached to a post.
