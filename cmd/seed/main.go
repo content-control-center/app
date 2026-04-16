@@ -143,7 +143,7 @@ func main() {
 	log.Printf("tags:     %d created", len(tags))
 
 	// ---------- seed assets ----------
-	assetRepo := repository.NewAssetRepository(db, tagRepo)
+	assetRepo := repository.NewAssetRepository(db, tagRepo, repository.NewAssetFileRepository(db))
 	assetIDs := make([]string, 0, len(assets))
 	for _, sp := range assets {
 		id, err := models.NewID()
