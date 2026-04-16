@@ -4,15 +4,14 @@ import { CampaignBriefForm } from '@/components/forms/campaignBriefForm'
 import { useCampaign } from '@/hooks/useCampaigns'
 import { PageLoader } from '@/components/page-primitives/PageLoader'
 import { PageHeader } from '@/components/page-primitives/PageHeader.tsx'
+import { useOverlayStore } from '@/stores/overlayStore'
 
 type CampaignSettingsOverlayProps = {
   campaignId: string
-  onClose: () => void
 }
 
 export function CampaignSettingsOverlay({
   campaignId,
-  onClose: _onClose,
 }: CampaignSettingsOverlayProps) {
   const { data: campaign, isLoading } = useCampaign(campaignId)
   const flushRef = useRef<(() => void) | null>(null)
@@ -22,8 +21,10 @@ export function CampaignSettingsOverlay({
   }, [])
 
   useEffect(() => {
+    const flush = () => flushRef.current?.()
+    useOverlayStore.getState().registerBeforeClose('campaign-settings', flush)
     return () => {
-      flushRef.current?.()
+      useOverlayStore.getState().unregisterBeforeClose('campaign-settings')
     }
   }, [])
 

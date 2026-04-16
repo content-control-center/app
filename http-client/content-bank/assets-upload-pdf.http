@@ -1,0 +1,80 @@
+@baseUrl = http://localhost:9001
+
+# PDF (.pdf) upload cases for POST /api/content-bank/assets/upload.
+# All requests require authentication — run "Login" from sessions/sessions.http first.
+#
+# Limit: 50 MB per .pdf file. Files must start with the `%PDF` magic bytes.
+# PDF processing (S3 upload, text extraction, chunk/embed, thumbnail) runs
+# asynchronously — the response returns status=pending; poll GET to observe
+# the transition to ready / partial / failed and the eventual thumbnail_url.
+# Fixture: sample.pdf (tiny 2-page PDF for smoke tests).
+
+### Upload PDF — single file  [protected]
+# @name uploadPDF
+POST {{baseUrl}}/api/content-bank/assets/upload
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary
+Content-Disposition: form-data; name="files"; filename="sample.pdf"
+Content-Type: application/pdf
+
+< ./sample.pdf
+--boundary--
+
+> {% client.global.set("pdfAssetId", response.body.results[0].asset_id) %}
+
+### Get PDF asset (poll until status=ready to see file metadata + thumbnail_url)  [protected]
+GET {{baseUrl}}/api/content-bank/assets/{{pdfAssetId}}
+Accept: application/json
+
+### Upload PDF + Markdown in a single batch  [protected]
+POST {{baseUrl}}/api/content-bank/assets/upload
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary
+Content-Disposition: form-data; name="files"; filename="sample.pdf"
+Content-Type: application/pdf
+
+< ./sample.pdf
+--boundary
+Content-Disposition: form-data; name="files"; filename="sample.md"
+Content-Type: text/markdown
+
+< ./sample.md
+--boundary--
+
+### Upload PDF — bad magic bytes (expects per-file "failed")  [protected]
+POST {{baseUrl}}/api/content-bank/assets/upload
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary
+Content-Disposition: form-data; name="files"; filename="fake.pdf"
+Content-Type: application/pdf
+
+this is plain text pretending to be a PDF
+--boundary--
+
+### Upload unknown extension (expects per-file "failed")  [protected]
+POST {{baseUrl}}/api/content-bank/assets/upload
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary
+Content-Disposition: form-data; name="files"; filename="notes.txt"
+Content-Type: text/plain
+
+plain text, not markdown or pdf
+--boundary--
+
+### Upload PDF — unauthenticated (expects 401)
+POST {{baseUrl}}/api/content-bank/assets/upload
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary
+Content-Disposition: form-data; name="files"; filename="sample.pdf"
+Content-Type: application/pdf
+
+< ./sample.pdf
+--boundary--
+
+### Delete PDF asset (should clean up S3 objects)  [protected]
+DELETE {{baseUrl}}/api/content-bank/assets/{{pdfAssetId}}

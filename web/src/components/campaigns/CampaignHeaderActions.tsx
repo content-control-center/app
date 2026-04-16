@@ -5,20 +5,24 @@ import { cn } from '@/lib'
 
 const STATUS_LABEL: Record<CampaignStatus, string> = {
   draft: 'Draft',
-  scheduled: 'Scheduled',
   active: 'Active',
-  paused: 'Paused',
-  completed: 'Completed',
-  archived: 'Archived',
 }
 
 const STATUS_COLOR: Record<CampaignStatus, string> = {
   draft: 'text-tertiary-foreground',
-  scheduled: 'text-primary-foreground',
   active: 'text-positive',
-  paused: 'text-tertiary-foreground',
-  completed: 'text-primary-foreground',
-  archived: 'text-tertiary-foreground',
+}
+
+function isBriefComplete(campaign: Campaign): boolean {
+  const required = [
+    campaign.name,
+    campaign.campaign_type_id,
+    campaign.description,
+    campaign.target_persona,
+    campaign.key_messages,
+    campaign.tone_guidelines,
+  ]
+  return required.every((v) => v != null && v.trim() !== '')
 }
 
 function toPayload(campaign: Campaign, overrides: Partial<UpdateCampaignPayload>): UpdateCampaignPayload {
@@ -51,10 +55,7 @@ export function CampaignHeaderActions({ campaign }: { campaign: Campaign }) {
     update({ id: campaign.id, payload: toPayload(campaign, { status }) })
   }
 
-  const startInFuture =
-    campaign.start_date != null && new Date(campaign.start_date).getTime() > Date.now()
-
-  const primary = renderPrimary(campaign.status, startInFuture, setStatus, isPending)
+  const settingsComplete = isBriefComplete(campaign)
 
   return (
     <div className="flex items-center gap-3">
@@ -66,57 +67,23 @@ export function CampaignHeaderActions({ campaign }: { campaign: Campaign }) {
       >
         {STATUS_LABEL[campaign.status]}
       </span>
-      {primary}
-    </div>
-  )
-}
-
-function renderPrimary(
-  status: CampaignStatus,
-  startInFuture: boolean,
-  setStatus: (s: CampaignStatus) => void,
-  busy: boolean,
-): React.ReactNode {
-  switch (status) {
-    case 'draft':
-      return startInFuture ? (
-        <Button variant="defaultInverted" onClick={() => setStatus('scheduled')} loading={busy}>
-          SCHEDULE
+      {campaign.status === 'draft' ? (
+        <Button
+          variant={settingsComplete ? "defaultInverted" : "default" }
+          onClick={() => setStatus('active')}
+          loading={isPending}
+        >
+          ACTIVATE
         </Button>
       ) : (
-        <Button variant="defaultInverted" onClick={() => setStatus('active')} loading={busy}>
-          ACTIVATE
+        <Button
+          variant="default"
+          onClick={() => setStatus('draft')}
+          loading={isPending}
+        >
+          DEACTIVATE
         </Button>
-      )
-    case 'scheduled':
-      return (
-        <Button variant="defaultInverted" onClick={() => setStatus('draft')} loading={busy}>
-          UNPUBLISH
-        </Button>
-      )
-    case 'active':
-      return (
-        <Button variant="defaultInverted" onClick={() => setStatus('paused')} loading={busy}>
-          PAUSE
-        </Button>
-      )
-    case 'paused':
-      return (
-        <Button variant="defaultInverted" onClick={() => setStatus('active')} loading={busy}>
-          ACTIVATE
-        </Button>
-      )
-    case 'completed':
-      return (
-        <Button variant="defaultInverted" onClick={() => setStatus('archived')} loading={busy}>
-          ARCHIVE
-        </Button>
-      )
-    case 'archived':
-      return (
-        <Button variant="defaultInverted" onClick={() => {/* TODO: duplicate */}} loading={busy}>
-          DUPLICATE
-        </Button>
-      )
-  }
+      )}
+    </div>
+  )
 }

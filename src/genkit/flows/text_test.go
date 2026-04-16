@@ -26,7 +26,7 @@ func TestExtractText(t *testing.T) {
 				{"type":"paragraph","content":[{"type":"text","text":"First","styles":{}}],"children":[]},
 				{"type":"paragraph","content":[{"type":"text","text":"Second","styles":{}}],"children":[]}
 			]`,
-			want: "First\nSecond",
+			want:  "First\n\nSecond",
 		},
 		{
 			name:  "heading block",
@@ -43,7 +43,7 @@ func TestExtractText(t *testing.T) {
 			input: `[{"type":"bulletListItem","content":[{"type":"text","text":"Parent","styles":{}}],"children":[
 				{"type":"bulletListItem","content":[{"type":"text","text":"Child","styles":{}}],"children":[]}
 			]}]`,
-			want: "Parent\nChild",
+			want: "Parent\n\nChild",
 		},
 		{
 			name: "mixed block types",
@@ -51,7 +51,7 @@ func TestExtractText(t *testing.T) {
 				{"type":"heading","props":{"level":2},"content":[{"type":"text","text":"Section","styles":{}}],"children":[]},
 				{"type":"paragraph","content":[{"type":"text","text":"Body text.","styles":{}}],"children":[]}
 			]`,
-			want: "Section\nBody text.",
+			want: "Section\n\nBody text.",
 		},
 		{
 			name:  "block with no content",

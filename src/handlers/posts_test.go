@@ -45,13 +45,13 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		tagRepo := repository.NewTagRepository(db)
 		campaignTypeRepo := repository.NewCampaignTypeRepository(db)
 		campaignRepo := repository.NewCampaignRepository(db, tagRepo, repository.NewPlatformRepository(db), campaignTypeRepo)
-		pieceRepo := repository.NewAssetRepository(db, tagRepo)
+		pieceRepo := repository.NewAssetRepository(db, tagRepo, repository.NewAssetFileRepository(db))
 		postRepo := repository.NewPostRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil).Register(app)
-		handlers.NewAssetsHandler(pieceRepo, auth, nil).Register(app)
+		handlers.NewAssetsHandler(pieceRepo, repository.NewAssetFileRepository(db), nil, auth, nil, nil).Register(app)
 		handlers.NewPostsHandler(postRepo, auth).Register(app)
 
 		// Seed auth user and log in.
@@ -246,13 +246,13 @@ var _ = Describe("PostsHandler", Ordered, func() {
 			It("creates a post with all optional fields", func() {
 				p := createPost("Full Post", fiber.Map{
 					"content":               "Post body text.",
-					"status":                "in_review",
+					"status":                "ready_for_publish",
 					"cta_type":              "link",
 					"cta_url":               "https://example.com",
 					"target_audience_notes": "Developers aged 25-40",
 					"media_urls":            []string{"https://example.com/image.png"},
 				})
-				Expect(p.Status).To(Equal(models.PostStatusInReview))
+				Expect(p.Status).To(Equal(models.PostStatusReadyForPublish))
 				Expect(p.CTAType).To(Equal(models.CTATypeLink))
 				Expect(p.CTAUrl).To(Equal("https://example.com"))
 				Expect(p.MediaURLs).To(ConsistOf("https://example.com/image.png"))
@@ -283,7 +283,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				Expect(resp.StatusCode).To(Equal(400))
 			})
 
-			It("returns 400 when title is missing", func() {
+			It("creates a post without a title", func() {
 				body, _ := json.Marshal(fiber.Map{
 					"campaign_id": campaignID, "platform_id": "AXqWG7U2qnpt", "platform_post_type": "text-post",
 				})
@@ -292,7 +292,11 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(resp.StatusCode).To(Equal(400))
+				Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+
+				var p models.Post
+				Expect(json.NewDecoder(resp.Body).Decode(&p)).To(Succeed())
+				Expect(p.Title).To(BeEmpty())
 			})
 
 			It("returns 400 when status is invalid", func() {
@@ -422,7 +426,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 					"platform_id":        "AXqWG7U2qnpt",
 					"platform_post_type": "image-post",
 					"title":              "Updated Title",
-					"status":             "approved",
+					"status":             "ready_for_publish",
 					"cta_type":           "button",
 					"cta_url":            "https://example.com/cta",
 				})
@@ -437,7 +441,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
 				Expect(got.Title).To(Equal("Updated Title"))
 				Expect(got.PlatformPostType).To(Equal("image-post"))
-				Expect(got.Status).To(Equal(models.PostStatusApproved))
+				Expect(got.Status).To(Equal(models.PostStatusReadyForPublish))
 				Expect(got.CTAType).To(Equal(models.CTATypeButton))
 				Expect(got.Campaign).NotTo(BeNil())
 				Expect(got.Platform).NotTo(BeNil())
@@ -456,7 +460,72 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				Expect(resp.StatusCode).To(Equal(404))
 			})
 
-			It("returns 400 when title is missing", func() {
+			It("returns 400 for an invalid status transition", func() {
+				p := createPost("Draft Post", nil) // status = draft
+
+				body, _ := json.Marshal(fiber.Map{
+					"campaign_id":        campaignID,
+					"platform_id":        "AXqWG7U2qnpt",
+					"platform_post_type": "text-post",
+					"title":              "Skip To Published",
+					"status":             "published",
+				})
+				req := httptest.NewRequest("PUT", "/api/posts/"+p.ID, bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(400))
+			})
+
+			It("allows a valid status transition chain", func() {
+				p := createPost("Lifecycle Post", nil) // draft
+
+				// draft -> ready_for_publish
+				body, _ := json.Marshal(fiber.Map{
+					"campaign_id": campaignID, "platform_id": "AXqWG7U2qnpt",
+					"platform_post_type": "text-post", "title": "Lifecycle Post",
+					"status": "ready_for_publish",
+				})
+				req := httptest.NewRequest("PUT", "/api/posts/"+p.ID, bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+
+				// ready_for_publish -> scheduled
+				body, _ = json.Marshal(fiber.Map{
+					"campaign_id": campaignID, "platform_id": "AXqWG7U2qnpt",
+					"platform_post_type": "text-post", "title": "Lifecycle Post",
+					"status": "scheduled",
+				})
+				req = httptest.NewRequest("PUT", "/api/posts/"+p.ID, bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err = app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+
+				// scheduled -> published
+				body, _ = json.Marshal(fiber.Map{
+					"campaign_id": campaignID, "platform_id": "AXqWG7U2qnpt",
+					"platform_post_type": "text-post", "title": "Lifecycle Post",
+					"status": "published",
+				})
+				req = httptest.NewRequest("PUT", "/api/posts/"+p.ID, bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err = app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+
+				var got models.Post
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect(got.Status).To(Equal(models.PostStatusPublished))
+			})
+
+			It("clears the title when omitted", func() {
 				p := createPost("Has Title", nil)
 
 				body, _ := json.Marshal(fiber.Map{
@@ -467,7 +536,11 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(resp.StatusCode).To(Equal(400))
+				Expect(resp.StatusCode).To(Equal(200))
+
+				var got models.Post
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect(got.Title).To(BeEmpty())
 			})
 		})
 	})

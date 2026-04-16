@@ -3,6 +3,10 @@
 # All assets endpoints require authentication.
 # Run "Login" from sessions/sessions.http first — the HTTP client stores and
 # sends the cookie automatically on subsequent requests to the same host.
+#
+# This file covers JSON CRUD only. For file uploads see:
+#   - assets-upload-markdown.http  (.md imports)
+#   - assets-upload-pdf.http       (.pdf imports)
 
 ### List all assets  [protected]
 GET {{baseUrl}}/api/assets

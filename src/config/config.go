@@ -12,7 +12,8 @@ type Config struct {
 	// Anthropic config.
 	AnthropicAPIKey string `envconfig:"ANTHROPIC_API_KEY"     default:""`
 	ModelID         string `envconfig:"MODEL_ID"              default:"claude-sonnet-4-5-20250929"` // claude-haiku-4-5-20251001 for testing
-	MaxAssetContext int    `envconfig:"MAX_PIECE_CONTEXT"     default:"15"`
+	MaxContextAssets int   `envconfig:"MAX_ASSET_CONTEXT"     default:"15"`
+	MaxContextChars  int   `envconfig:"MAX_CONTEXT_CHARS"     default:"10000"`
 
 	// Token math: 30 posts × ~200 tokens/post = ~6,000 tokens. The default of 8,192 comfortably covers that. If you
 	// switch to Sonnet (which supports 64K output), set MAX_OUTPUT_TOKENS=32768 in the app environment.

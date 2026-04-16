@@ -4,3 +4,8 @@ web/dist
 *.db
 *.db-shm
 *.db-wal
+data/
+prototyping/
+.agent/
+.claude/
+coverage.out

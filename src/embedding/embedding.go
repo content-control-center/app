@@ -15,7 +15,16 @@ import (
 	"github.com/content-control-center/app/src/config"
 	"github.com/content-control-center/app/src/genkit/flows"
 	"github.com/content-control-center/app/src/repository"
+	"github.com/content-control-center/app/src/storage"
 )
+
+// Callbacks bundles the fire-and-forget callbacks registered by Init.
+// Either field may be nil when embeddings are disabled or the corresponding
+// dependency (e.g. asset file repo) is nil.
+type Callbacks struct {
+	OnMarkdownSave func(assetID, title, content string)
+	OnPDFProcess   func(flows.ProcessPDFInput)
+}
 
 const (
 	DefaultRetryInterval = 5 * time.Second
@@ -28,9 +37,12 @@ const (
 func Init(
 	ctx context.Context,
 	cfg *config.Config,
-	repo repository.AssetsEmbeddingsRepository,
-) (func(assetID, title, content string), ai.Embedder, error) {
-	return InitWithOptions(ctx, cfg.EmbedServerURL, DefaultMaxRetries, DefaultRetryInterval, repo)
+	chunksRepo repository.AssetChunksRepository,
+	assetRepo repository.AssetRepository,
+	fileRepo repository.AssetFileRepository,
+	store storage.Storage,
+) (Callbacks, ai.Embedder, error) {
+	return InitWithOptions(ctx, cfg.EmbedServerURL, DefaultMaxRetries, DefaultRetryInterval, chunksRepo, assetRepo, fileRepo, store)
 }
 
 // InitWithOptions is like Init but lets the caller control retry behaviour.
@@ -39,14 +51,17 @@ func InitWithOptions(
 	embedServerURL string,
 	maxRetries int,
 	retryInterval time.Duration,
-	repo repository.AssetsEmbeddingsRepository,
-) (func(assetID, title, content string), ai.Embedder, error) {
+	chunksRepo repository.AssetChunksRepository,
+	assetRepo repository.AssetRepository,
+	fileRepo repository.AssetFileRepository,
+	store storage.Storage,
+) (Callbacks, ai.Embedder, error) {
 	if embedServerURL == "" {
-		return nil, nil, nil
+		return Callbacks{}, nil, nil
 	}
 
 	if err := waitForEmbedServer(ctx, embedServerURL, maxRetries, retryInterval); err != nil {
-		return nil, nil, fmt.Errorf("embed server unavailable: %w", err)
+		return Callbacks{}, nil, fmt.Errorf("embed server unavailable: %w", err)
 	}
 
 	plugin := llama.New(llama.Config{LlamaEmbedServerAddress: embedServerURL})
@@ -54,12 +69,16 @@ func InitWithOptions(
 
 	embedder, err := plugin.DefineEmbedder(g)
 	if err != nil {
-		return nil, nil, fmt.Errorf("init embedder: %w", err)
+		return Callbacks{}, nil, fmt.Errorf("init embedder: %w", err)
 	}
 
-	flows.Init(g, embedder, repo)
+	flows.Init(g, embedder, chunksRepo, assetRepo)
+	flows.InitPDF(g, embedder, chunksRepo, assetRepo, fileRepo, store)
 
-	return flows.NewAssetOnSaveCallback(), embedder, nil
+	return Callbacks{
+		OnMarkdownSave: flows.NewAssetOnSaveCallback(),
+		OnPDFProcess:   flows.NewPDFProcessCallback(),
+	}, embedder, nil
 }
 
 func waitForEmbedServer(ctx context.Context, baseURL string, maxRetries int, retryInterval time.Duration) error {
