@@ -283,7 +283,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				Expect(resp.StatusCode).To(Equal(400))
 			})
 
-			It("returns 400 when title is missing", func() {
+			It("creates a post without a title", func() {
 				body, _ := json.Marshal(fiber.Map{
 					"campaign_id": campaignID, "platform_id": "AXqWG7U2qnpt", "platform_post_type": "text-post",
 				})
@@ -292,7 +292,11 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(resp.StatusCode).To(Equal(400))
+				Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+
+				var p models.Post
+				Expect(json.NewDecoder(resp.Body).Decode(&p)).To(Succeed())
+				Expect(p.Title).To(BeEmpty())
 			})
 
 			It("returns 400 when status is invalid", func() {
@@ -521,7 +525,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				Expect(got.Status).To(Equal(models.PostStatusPublished))
 			})
 
-			It("returns 400 when title is missing", func() {
+			It("clears the title when omitted", func() {
 				p := createPost("Has Title", nil)
 
 				body, _ := json.Marshal(fiber.Map{
@@ -532,7 +536,11 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(resp.StatusCode).To(Equal(400))
+				Expect(resp.StatusCode).To(Equal(200))
+
+				var got models.Post
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect(got.Title).To(BeEmpty())
 			})
 		})
 	})

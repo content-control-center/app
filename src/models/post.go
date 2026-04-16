@@ -59,7 +59,7 @@ type Post struct {
 	CampaignID           string      `bun:"campaign_id,notnull"                          json:"campaign_id"`
 	PlatformID           string      `bun:"platform_id,notnull"                          json:"platform_id"`
 	PlatformPostType     string      `bun:"platform_post_type,notnull"                   json:"platform_post_type"`
-	Title                string      `bun:"title,notnull"                                json:"title"`
+	Title                string      `bun:"title"                                        json:"title"`
 	Content              string      `bun:"content,notnull"                              json:"content"`
 	MediaURLs            StringSlice `bun:"media_urls,notnull"                           json:"media_urls"`
 	ScheduledAt          *time.Time  `bun:"scheduled_at"                                 json:"scheduled_at"`

@@ -51,7 +51,7 @@ type postRequest struct {
 	CampaignID          string             `json:"campaign_id"             validate:"required"`
 	PlatformID          string             `json:"platform_id"             validate:"required"`
 	PlatformPostType    string             `json:"platform_post_type"      validate:"required"`
-	Title               string             `json:"title"                   validate:"required"`
+	Title               string             `json:"title"`
 	Content             string             `json:"content"`
 	MediaURLs           models.StringSlice `json:"media_urls"`
 	ScheduledAt         *time.Time         `json:"scheduled_at"`
