@@ -14,6 +14,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/uptrace/bun"
 
+	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/core/api"
 	"github.com/firebase/genkit/go/genkit"
 	"github.com/firebase/genkit/go/plugins/anthropic"
@@ -68,25 +69,37 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 		return nil, err
 	}
 
-	// Single shared Genkit instance so all flows are discoverable by the
-	// Genkit Dev UI. The Anthropic plugin is loaded when the API key is set;
-	// the llama embedding plugin is registered onto the same instance.
+	// Single shared Genkit instance with all plugins so every flow is
+	// discoverable by the Genkit Dev UI. Plugins are collected first, then
+	// passed to a single genkit.Init() call.
 	var generateDraft func(context.Context, string, content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)
 	var assistantCallback func(context.Context, post_assistant.PostAssistantRequest) (*post_assistant.PostAssistantResponse, error)
 
 	log.Printf("genkit: initialising (GENKIT_ENV=%s)", os.Getenv("GENKIT_ENV"))
+
 	var plugins []api.Plugin
 	if cfg.AnthropicAPIKey != "" {
 		plugins = append(plugins, &anthropic.Anthropic{})
 	}
-	g := genkit.Init(ctx, genkit.WithPlugins(plugins...))
-
-	// Register embedding flows on the shared instance.
-	callbacks, embedder, err := embedding.InitOnInstance(ctx, g, cfg.EmbedServerURL,
-		embedding.DefaultMaxRetries, embedding.DefaultRetryInterval,
-		chunksRepo, pieceRepo, assetFileRepo, store)
+	llamaPlugin, err := embedding.WaitAndNewPlugin(ctx, cfg.EmbedServerURL,
+		embedding.DefaultMaxRetries, embedding.DefaultRetryInterval)
 	if err != nil {
 		return nil, err
+	}
+	if llamaPlugin != nil {
+		plugins = append(plugins, llamaPlugin)
+	}
+
+	g := genkit.Init(ctx, genkit.WithPlugins(plugins...))
+
+	// Register embedding flows (no-op when llama plugin is nil).
+	var callbacks embedding.Callbacks
+	var embedder ai.Embedder
+	if llamaPlugin != nil {
+		callbacks, embedder, err = embedding.RegisterFlows(g, llamaPlugin, chunksRepo, pieceRepo, assetFileRepo, store)
+		if err != nil {
+			return nil, err
+		}
 	}
 	handlers.NewAssetsHandler(pieceRepo, assetFileRepo, store, auth, callbacks.OnMarkdownSave, callbacks.OnPDFProcess).Register(app)
 
