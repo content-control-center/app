@@ -12,12 +12,13 @@ import (
 )
 
 var validPostStatuses = map[models.PostStatus]bool{
-	models.PostStatusDraft:     true,
-	models.PostStatusInReview:  true,
-	models.PostStatusApproved:  true,
-	models.PostStatusScheduled: true,
-	models.PostStatusPublished: true,
-	models.PostStatusFailed:    true,
+	models.PostStatusDraft:                     true,
+	models.PostStatusReadyForPublish:           true,
+	models.PostStatusScheduled:                 true,
+	models.PostStatusScheduledForManualPublish: true,
+	models.PostStatusFailed:                    true,
+	models.PostStatusPublished:                 true,
+	models.PostStatusNotPublished:              true,
 }
 
 var validCTATypes = map[models.PostCTAType]bool{
@@ -50,7 +51,7 @@ type postRequest struct {
 	CampaignID          string             `json:"campaign_id"             validate:"required"`
 	PlatformID          string             `json:"platform_id"             validate:"required"`
 	PlatformPostType    string             `json:"platform_post_type"      validate:"required"`
-	Title               string             `json:"title"                   validate:"required"`
+	Title               string             `json:"title"`
 	Content             string             `json:"content"`
 	MediaURLs           models.StringSlice `json:"media_urls"`
 	ScheduledAt         *time.Time         `json:"scheduled_at"`
@@ -232,6 +233,10 @@ func (h *PostsHandler) Update(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusNotFound, "post not found")
 		}
 		return err
+	}
+
+	if !post.Status.CanTransition(status) {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid status transition from "+string(post.Status)+" to "+string(status))
 	}
 
 	post.CampaignID = req.CampaignID
