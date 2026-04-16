@@ -4,7 +4,7 @@ export type Tag = {
   color: string;
 };
 
-export type Piece = {
+export type Asset = {
   id: string;
   title: string;
   content: string;
@@ -15,13 +15,13 @@ export type Piece = {
   updated_at: string;
 };
 
-export type CreatePiecePayload = {
+export type CreateAssetPayload = {
   title: string;
   content: string;
   tag_ids?: string[];
 };
 
-export type UpdatePiecePayload = {
+export type UpdateAssetPayload = {
   title: string;
   content: string;
   tag_ids?: string[];

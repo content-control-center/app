@@ -391,6 +391,42 @@
     animation: spinner-line 0.7s cubic-bezier(0, 0, 0.03, 0.9) infinite;
   }
 
+  @keyframes logo-line-dash {
+    0% {
+      stroke-dashoffset: 0;
+    }
+    38% {
+      stroke-dashoffset: 0;
+    }
+    69% {
+      stroke-dashoffset: 1;
+    }
+    69.001% {
+      stroke-dashoffset: -1;
+    }
+    100% {
+      stroke-dashoffset: 0;
+    }
+  }
+
+  @keyframes logo-line-pulse {
+    0% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.75;
+    }
+    100% {
+      opacity: 1;
+    }
+  }
+
+  .logo-line-loading {
+    animation:
+      logo-line-dash 2.6s ease-in-out infinite,
+      logo-line-pulse 0.8s ease-in-out infinite;
+  }
+
   /* Table row checkbox visibility */
   .group .opacity-0 {
     transition: opacity 0.15s ease-in-out;

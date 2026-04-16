@@ -38,7 +38,7 @@ const numericString = z
   .refine((v) => v === '' || Number.isFinite(Number(v)), 'Must be a number')
 
 const briefSchema = z.object({
-  name: z.string().trim().min(1, 'Name is required'),
+  name: z.string(),
   campaign_type_id: z.string().min(1, 'Campaign type is required'),
   description: z.string(),
   target_persona: z.string(),
@@ -50,8 +50,8 @@ const briefSchema = z.object({
   budget: numericString,
   currency: z.string(),
   language: z.string(),
-  use_pieces: z.boolean(),
-  pieces_ids: z.string(),
+  use_assets: z.boolean(),
+  asset_ids: z.string(),
   tag_ids: z.array(z.string()),
 })
 
@@ -72,9 +72,9 @@ function defaultValues(campaign: Campaign): BriefFormValues {
     budget: campaign.budget == null ? '' : String(campaign.budget),
     currency: campaign.currency,
     language: campaign.language,
-    use_pieces: campaign.use_pieces,
-    pieces_ids: campaign.pieces_ids.join(', '),
-    tag_ids: campaign.tag_ids,
+    use_assets: campaign.use_assets,
+    asset_ids: (campaign.asset_ids ?? []).join(', '),
+    tag_ids: campaign.tag_ids ?? [],
   }
 }
 
@@ -95,11 +95,13 @@ type BriefFormProps = {
   campaign: Campaign
   onTitleChange?: (title: string) => void
   onDirtyChange?: (dirty: boolean) => void
+  onFlushRef?: (flush: () => void) => void
 }
 
 function toPayload(values: BriefFormValues, campaign: Campaign): UpdateCampaignPayload {
+  const name = values.name.trim() === '' ? ' ' : values.name
   return {
-    name: values.name.trim(),
+    name,
     campaign_type_id: values.campaign_type_id,
     description: values.description,
     target_persona: values.target_persona,
@@ -112,14 +114,14 @@ function toPayload(values: BriefFormValues, campaign: Campaign): UpdateCampaignP
     budget: toNumberOrNull(values.budget),
     currency: values.currency,
     language: values.language,
-    use_pieces: values.use_pieces,
-    pieces_ids: parseCsv(values.pieces_ids),
+    use_assets: values.use_assets,
+    asset_ids: parseCsv(values.asset_ids),
     tag_ids: values.tag_ids,
     target_platforms: campaign.target_platforms,
   }
 }
 
-export function BriefForm({ campaign, onTitleChange, onDirtyChange }: BriefFormProps) {
+export function BriefForm({ campaign, onTitleChange, onDirtyChange, onFlushRef }: BriefFormProps) {
   const form = useForm<BriefFormValues>({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolver: zodResolver(briefSchema as any),
@@ -129,7 +131,7 @@ export function BriefForm({ campaign, onTitleChange, onDirtyChange }: BriefFormP
   const { data: types, isLoading: typesLoading } = useCampaignTypes()
   const { mutate: updateCampaign, error, reset } = useUpdateCampaign()
 
-  const usePieces = form.watch('use_pieces')
+  const useAssets = form.watch('use_assets')
 
   const editVersionRef = useRef(0)
   const [editVersion, setEditVersion] = useState(0)
@@ -147,21 +149,35 @@ export function BriefForm({ campaign, onTitleChange, onDirtyChange }: BriefFormP
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campaign.id])
 
+  const saveNow = useCallback(() => {
+    const v = editVersionRef.current
+    void form.handleSubmit((values) => {
+      const payload = toPayload(values, campaign)
+      updateCampaign(
+        { id: campaign.id, payload },
+        {
+          onSuccess: () => setSavedVersion(v),
+        }
+      )
+    })()
+  }, [campaign, form, updateCampaign])
+
   const scheduleSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-    const v = editVersionRef.current
-    saveTimerRef.current = setTimeout(() => {
-      void form.handleSubmit((values) => {
-        const payload = toPayload(values, campaign)
-        updateCampaign(
-          { id: campaign.id, payload },
-          {
-            onSuccess: () => setSavedVersion(v),
-          }
-        )
-      })()
-    }, 500)
-  }, [campaign, form, updateCampaign])
+    saveTimerRef.current = setTimeout(saveNow, 500)
+  }, [saveNow])
+
+  const flushSave = useCallback(() => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+      saveNow()
+    }
+  }, [saveNow])
+
+  useEffect(() => {
+    onFlushRef?.(flushSave)
+  }, [onFlushRef, flushSave])
 
   useEffect(() => {
     const sub = form.watch((values, info) => {
@@ -436,7 +452,7 @@ export function BriefForm({ campaign, onTitleChange, onDirtyChange }: BriefFormP
             <Card>
               <FormField
                 control={form.control}
-                name="use_pieces"
+                name="use_assets"
                 render={({ field }) => (
                   <FormItem>
                     <label className="flex items-center gap-2 cursor-pointer select-none">
@@ -446,23 +462,23 @@ export function BriefForm({ campaign, onTitleChange, onDirtyChange }: BriefFormP
                         disabled={disabled}
                       />
                       <span className="text-[13px] text-input-label">
-                        Use content bank pieces
+                        Use content bank assets
                       </span>
                     </label>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-              {usePieces && (
+              {useAssets && (
                 <FormField
                   control={form.control}
-                  name="pieces_ids"
+                  name="asset_ids"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Piece IDs</FormLabel>
+                      <FormLabel>Asset IDs</FormLabel>
                       <FormControl>
                         <Input
-                          placeholder="piece-1, piece-2"
+                          placeholder="asset-1, asset-2"
                           {...field}
                           disabled={disabled}
                         />

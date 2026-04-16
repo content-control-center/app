@@ -11,7 +11,7 @@ import type { CreateCampaignPayload, UpdateCampaignPayload } from "@/types/campa
 
 const CAMPAIGNS_KEY = ["campaigns"] as const;
 const campaignKey = (id: string) => ["campaigns", id] as const;
-const CAMPAIGN_TYPES_KEY = ["campaign-types"] as const;
+export const CAMPAIGN_TYPES_KEY = ["campaign-types"] as const;
 
 export function useCampaigns() {
   return useQuery({
@@ -64,5 +64,6 @@ export function useCampaignTypes() {
   return useQuery({
     queryKey: CAMPAIGN_TYPES_KEY,
     queryFn: listCampaignTypes,
+    staleTime: Infinity,
   });
 }

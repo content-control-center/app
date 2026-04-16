@@ -47,8 +47,8 @@ export type Campaign = {
   target_persona: string;
   key_messages: string;
   tone_guidelines: string;
-  use_pieces: boolean;
-  pieces_ids: string[];
+  use_assets: boolean;
+  asset_ids: string[];
   target_platforms: CampaignPlatform[];
   campaign_type_id: string;
   status: CampaignStatus;
@@ -74,8 +74,8 @@ export type CreateCampaignPayload = {
   target_persona?: string;
   key_messages?: string;
   tone_guidelines?: string;
-  use_pieces?: boolean;
-  pieces_ids?: string[];
+  use_assets?: boolean;
+  asset_ids?: string[];
   target_platforms?: CampaignPlatform[];
   status?: CampaignStatus;
   start_date?: string | null;

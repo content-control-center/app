@@ -4,8 +4,8 @@ import { PageHeader } from "@/components/page-primitives/PageHeader.tsx";
 import { PageLoader } from "@/components/page-primitives/PageLoader.tsx";
 import { PageError } from "@/components/page-primitives/PageError.tsx";
 import { Button } from "@/components/ui/button.tsx";
-import { usePieces, useCreatePiece, useDeletePiece } from "@/hooks/useContent.ts";
-import { ContentPiecesTable } from "@/components/tables/docsTable/index.tsx";
+import { useAssets, useCreateAsset, useDeleteAsset } from "@/hooks/useContent.ts";
+import { AssetsTable } from "@/components/tables/docsTable/index.tsx";
 import {Icon} from "@/components/ui/icon.tsx";
 import {PageGridEmptyState} from "@/components/page-primitives/PageGridEmptyState.tsx";
 
@@ -14,18 +14,18 @@ export const Route = createFileRoute("/_authenticated/content-bank/")({
 });
 
 function ContentBank() {
-  const { data: pieces, isLoading, isError } = usePieces();
-  const createPiece = useCreatePiece();
-  const deletePiece = useDeletePiece();
+  const { data: assets, isLoading, isError } = useAssets();
+  const createAsset = useCreateAsset();
+  const deleteAsset = useDeleteAsset();
   const navigate = useNavigate();
-  const hasPieces = !!(pieces && pieces?.length > 0);
+  const hasAssets = !!(assets && assets?.length > 0);
 
   const handleCreate = () => {
-    createPiece.mutate(
+    createAsset.mutate(
       { title: " ", content: " " },
       {
-        onSuccess: (piece) => {
-          navigate({ to: "/content-bank/$pieceId", params: { pieceId: piece.id } });
+        onSuccess: (asset) => {
+          navigate({ to: "/content-bank/$assetId", params: { assetId: asset.id } });
         },
       },
     );
@@ -55,16 +55,16 @@ function ContentBank() {
         title={"Content Bank"}
         className={'pt-6'}
         actions={
-          <Button onClick={handleCreate} disabled={createPiece.isPending} size="lg">
+          <Button onClick={handleCreate} disabled={createAsset.isPending} size="lg">
             <Icon name={'plus'} className={'size-4'} /><span>ADD ASSET</span>
           </Button>
         }
       />
       <div className={'grid overflow-hidden h-full mt-1 px-3 lg:mt-2 lg:px-6'}>
-        {hasPieces ? (
-          <ContentPiecesTable
-            pieces={pieces ?? []}
-            onDelete={(id) => deletePiece.mutate(id)}
+        {hasAssets ? (
+          <AssetsTable
+            assets={assets ?? []}
+            onDelete={(id) => deleteAsset.mutate(id)}
             emptyStateMessage="No content assets yet"
             emptyStateActionLabel="Add Asset"
             onEmptyStateAction={handleCreate}
@@ -74,7 +74,7 @@ function ContentBank() {
             title="No assets yet"
             subtitle="Create your first asset to start building your content bank"
             actions={
-              <Button onClick={handleCreate} disabled={createPiece.isPending} variant="defaultInverted">
+              <Button onClick={handleCreate} disabled={createAsset.isPending} variant="defaultInverted">
                 <Icon name={'plus'} className={'size-4 stroke-[2px]'} />
                 <span>ADD ASSET</span>
               </Button>

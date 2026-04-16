@@ -1,34 +1,33 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useState } from "react";
+import { useState } from "react";
 import { PageContainer } from "@/components/page-primitives/PageContainer.tsx";
 import { PageLoader } from "@/components/page-primitives/PageLoader.tsx";
 import { PageError } from "@/components/page-primitives/PageError.tsx";
 import { PageHeader } from "@/components/page-primitives/PageHeader.tsx";
+import { PageGridEmptyState } from "@/components/page-primitives/PageGridEmptyState.tsx";
 import { RightRail } from "@/components/page-primitives/RightRail.tsx";
-import { ScrollArea } from "@/components/ui/scroll-area.tsx";
-import { CampaignTabBar } from "@/components/campaigns/CampaignTabBar.tsx";
-import { BriefForm } from "@/components/campaigns/BriefForm.tsx";
+import { Button } from "@/components/ui/button.tsx";
+import { Icon } from "@/components/ui/icon.tsx";
+import { CampaignSettingsButton } from "@/components/ui/campaign-settings-button.tsx";
 import { CampaignHeaderActions } from "@/components/campaigns/CampaignHeaderActions.tsx";
+import { CampaignTabBar } from "@/components/campaigns/CampaignTabBar.tsx";
 import { useCampaign } from "@/hooks/useCampaigns.ts";
+import { useOverlayStore } from "@/stores/overlayStore.ts";
 
 export const Route = createFileRoute("/_authenticated/campaigns/$campaignId")({
   component: CampaignPage,
 });
 
 const TABS = [
-  { id: "brief", label: "BRIEF" },
-  { id: "schedule", label: "SCHEDULE" },
+  { id: "calendar", label: "CALENDAR" },
+  { id: "list", label: "LIST" },
 ];
 
 function CampaignPage() {
   const { campaignId } = Route.useParams();
   const { data: campaign, isLoading, isError } = useCampaign(campaignId);
-  const [activeTab, setActiveTab] = useState<string>("brief");
-  const [briefTitle, setBriefTitle] = useState<string | null>(null);
-  const [briefDirty, setBriefDirty] = useState(false);
-
-  const handleTitleChange = useCallback((t: string) => setBriefTitle(t), []);
-  const handleDirtyChange = useCallback((d: boolean) => setBriefDirty(d), []);
+  const [activeTab, setActiveTab] = useState<string>("calendar");
+  const openOverlay = useOverlayStore((s) => s.open);
 
   if (isLoading) {
     return (
@@ -46,8 +45,23 @@ function CampaignPage() {
     );
   }
 
-  const displayName = (briefTitle ?? campaign.name).trim();
+  const displayName = campaign.name.trim();
   const title = displayName === "" ? "Untitled campaign" : displayName;
+
+  const handleOpenSettings = () => {
+    openOverlay("campaign-settings", { campaignId: campaign.id });
+  };
+
+  const handleAddPost = () => {
+    // TODO: wire to post creation flow
+  };
+
+  const addPostButton = (
+    <Button variant="default" size="sm" onClick={handleAddPost}>
+      <Icon name="plus" className="size-4 stroke-[2px]" />
+      <span>ADD POST</span>
+    </Button>
+  );
 
   return (
     <PageContainer variant={"fullFlex"}>
@@ -57,33 +71,37 @@ function CampaignPage() {
             title={title}
             overlay={"campaign-selector"}
             className={"pt-6"}
-            unsaved={briefDirty}
-            actions={<CampaignHeaderActions campaign={campaign} />}
+            actions={
+              <div className="flex items-center gap-3">
+                <CampaignHeaderActions campaign={campaign} />
+                <CampaignSettingsButton
+                  campaign={campaign}
+                  onOpen={handleOpenSettings}
+                />
+              </div>
+            }
           />
           <CampaignTabBar
             activeTab={activeTab}
             tabs={TABS}
             onTabSelect={setActiveTab}
+            action={addPostButton}
           />
-          <ScrollArea className={"flex-1 min-h-0 mx-6 mt-2"} type={"scroll"} scrollHideDelay={350}>
-              {activeTab === "brief" && (
-                  <BriefForm
-                    campaign={campaign}
-                    onTitleChange={handleTitleChange}
-                    onDirtyChange={handleDirtyChange}
-                  />
-              )}
-              {activeTab === "schedule" && <div>Schedule coming soon</div>}
-          </ScrollArea>
+          <div className={"grid overflow-hidden h-full mt-1 px-3 lg:mt-2 lg:px-6"}>
+            <PageGridEmptyState
+              title="No posts yet"
+              subtitle="Add your first post to start building this campaign"
+              actions={
+                <Button variant="defaultInverted" onClick={handleAddPost}>
+                  <Icon name="plus" className="size-4 stroke-[2px]" />
+                  <span>ADD POST</span>
+                </Button>
+              }
+            />
+          </div>
         </div>
         <RightRail
           buttons={[
-            {
-              id: "settings",
-              icon: "settings",
-              ariaLabel: "Settings",
-              panel: <div className="text-sm">Settings panel</div>,
-            },
             {
               id: "ai",
               icon: "strategy",

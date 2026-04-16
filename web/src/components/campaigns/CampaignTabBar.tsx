@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useIsMobile } from '@/hooks/use-mobile'
 
@@ -11,12 +11,14 @@ type CampaignTabBarProps = {
   activeTab: string
   tabs: CampaignTab[]
   onTabSelect: (tabId: string) => void
+  action?: ReactNode
 }
 
 export function CampaignTabBar({
   activeTab,
   tabs,
   onTabSelect,
+  action,
 }: CampaignTabBarProps) {
   const isMobile = useIsMobile()
   const activeTriggerRef = useRef<HTMLButtonElement>(null)
@@ -59,6 +61,7 @@ export function CampaignTabBar({
             </TabsList>
           </Tabs>
         </div>
+        {action && <div className="shrink-0">{action}</div>}
       </div>
     )
   }
@@ -84,6 +87,7 @@ export function CampaignTabBar({
           </TabsList>
         </Tabs>
       </div>
+      {action && <div className="shrink-0">{action}</div>}
     </div>
   )
 }

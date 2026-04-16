@@ -21,7 +21,7 @@ import { Route as AuthLoginIndexRouteImport } from './routes/auth/login/index'
 import { Route as AuthForgotIndexRouteImport } from './routes/auth/forgot/index'
 import { Route as AuthenticatedContentBankIndexRouteImport } from './routes/_authenticated/content-bank/index'
 import { Route as AuthenticatedCampaignsIndexRouteImport } from './routes/_authenticated/campaigns/index'
-import { Route as AuthenticatedContentBankPieceIdRouteImport } from './routes/_authenticated/content-bank/$pieceId'
+import { Route as AuthenticatedContentBankAssetIdRouteImport } from './routes/_authenticated/content-bank/$assetId'
 import { Route as AuthenticatedCampaignsCampaignIdRouteImport } from './routes/_authenticated/campaigns/$campaignId'
 
 const AuthenticatedRoute = AuthenticatedRouteImport.update({
@@ -85,10 +85,10 @@ const AuthenticatedCampaignsIndexRoute =
     path: '/campaigns/',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
-const AuthenticatedContentBankPieceIdRoute =
-  AuthenticatedContentBankPieceIdRouteImport.update({
-    id: '/content-bank/$pieceId',
-    path: '/content-bank/$pieceId',
+const AuthenticatedContentBankAssetIdRoute =
+  AuthenticatedContentBankAssetIdRouteImport.update({
+    id: '/content-bank/$assetId',
+    path: '/content-bank/$assetId',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
 const AuthenticatedCampaignsCampaignIdRoute =
@@ -103,7 +103,7 @@ export interface FileRoutesByFullPath {
   '/auth/': typeof AuthIndexRoute
   '/setup/': typeof SetupIndexRoute
   '/campaigns/$campaignId': typeof AuthenticatedCampaignsCampaignIdRoute
-  '/content-bank/$pieceId': typeof AuthenticatedContentBankPieceIdRoute
+  '/content-bank/$assetId': typeof AuthenticatedContentBankAssetIdRoute
   '/campaigns/': typeof AuthenticatedCampaignsIndexRoute
   '/content-bank/': typeof AuthenticatedContentBankIndexRoute
   '/auth/forgot/': typeof AuthForgotIndexRoute
@@ -118,7 +118,7 @@ export interface FileRoutesByTo {
   '/auth': typeof AuthIndexRoute
   '/setup': typeof SetupIndexRoute
   '/campaigns/$campaignId': typeof AuthenticatedCampaignsCampaignIdRoute
-  '/content-bank/$pieceId': typeof AuthenticatedContentBankPieceIdRoute
+  '/content-bank/$assetId': typeof AuthenticatedContentBankAssetIdRoute
   '/campaigns': typeof AuthenticatedCampaignsIndexRoute
   '/content-bank': typeof AuthenticatedContentBankIndexRoute
   '/auth/forgot': typeof AuthForgotIndexRoute
@@ -135,7 +135,7 @@ export interface FileRoutesById {
   '/auth/': typeof AuthIndexRoute
   '/setup/': typeof SetupIndexRoute
   '/_authenticated/campaigns/$campaignId': typeof AuthenticatedCampaignsCampaignIdRoute
-  '/_authenticated/content-bank/$pieceId': typeof AuthenticatedContentBankPieceIdRoute
+  '/_authenticated/content-bank/$assetId': typeof AuthenticatedContentBankAssetIdRoute
   '/_authenticated/campaigns/': typeof AuthenticatedCampaignsIndexRoute
   '/_authenticated/content-bank/': typeof AuthenticatedContentBankIndexRoute
   '/auth/forgot/': typeof AuthForgotIndexRoute
@@ -152,7 +152,7 @@ export interface FileRouteTypes {
     | '/auth/'
     | '/setup/'
     | '/campaigns/$campaignId'
-    | '/content-bank/$pieceId'
+    | '/content-bank/$assetId'
     | '/campaigns/'
     | '/content-bank/'
     | '/auth/forgot/'
@@ -167,7 +167,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/setup'
     | '/campaigns/$campaignId'
-    | '/content-bank/$pieceId'
+    | '/content-bank/$assetId'
     | '/campaigns'
     | '/content-bank'
     | '/auth/forgot'
@@ -183,7 +183,7 @@ export interface FileRouteTypes {
     | '/auth/'
     | '/setup/'
     | '/_authenticated/campaigns/$campaignId'
-    | '/_authenticated/content-bank/$pieceId'
+    | '/_authenticated/content-bank/$assetId'
     | '/_authenticated/campaigns/'
     | '/_authenticated/content-bank/'
     | '/auth/forgot/'
@@ -292,11 +292,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCampaignsIndexRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/_authenticated/content-bank/$pieceId': {
-      id: '/_authenticated/content-bank/$pieceId'
-      path: '/content-bank/$pieceId'
-      fullPath: '/content-bank/$pieceId'
-      preLoaderRoute: typeof AuthenticatedContentBankPieceIdRouteImport
+    '/_authenticated/content-bank/$assetId': {
+      id: '/_authenticated/content-bank/$assetId'
+      path: '/content-bank/$assetId'
+      fullPath: '/content-bank/$assetId'
+      preLoaderRoute: typeof AuthenticatedContentBankAssetIdRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/campaigns/$campaignId': {
@@ -312,7 +312,7 @@ declare module '@tanstack/react-router' {
 interface AuthenticatedRouteChildren {
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
   AuthenticatedCampaignsCampaignIdRoute: typeof AuthenticatedCampaignsCampaignIdRoute
-  AuthenticatedContentBankPieceIdRoute: typeof AuthenticatedContentBankPieceIdRoute
+  AuthenticatedContentBankAssetIdRoute: typeof AuthenticatedContentBankAssetIdRoute
   AuthenticatedCampaignsIndexRoute: typeof AuthenticatedCampaignsIndexRoute
   AuthenticatedContentBankIndexRoute: typeof AuthenticatedContentBankIndexRoute
 }
@@ -320,7 +320,7 @@ interface AuthenticatedRouteChildren {
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
   AuthenticatedCampaignsCampaignIdRoute: AuthenticatedCampaignsCampaignIdRoute,
-  AuthenticatedContentBankPieceIdRoute: AuthenticatedContentBankPieceIdRoute,
+  AuthenticatedContentBankAssetIdRoute: AuthenticatedContentBankAssetIdRoute,
   AuthenticatedCampaignsIndexRoute: AuthenticatedCampaignsIndexRoute,
   AuthenticatedContentBankIndexRoute: AuthenticatedContentBankIndexRoute,
 }

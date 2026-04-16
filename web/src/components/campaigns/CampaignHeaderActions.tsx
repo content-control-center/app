@@ -1,13 +1,5 @@
 import { Button } from '@/components/ui/button'
-import { Icon } from '@/components/ui/icon'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import { useDeleteCampaign, useUpdateCampaign } from '@/hooks/useCampaigns'
+import { useUpdateCampaign } from '@/hooks/useCampaigns'
 import type { Campaign, CampaignStatus, UpdateCampaignPayload } from '@/types/campaigns'
 import { cn } from '@/lib'
 
@@ -29,8 +21,6 @@ const STATUS_COLOR: Record<CampaignStatus, string> = {
   archived: 'text-tertiary-foreground',
 }
 
-type PrimaryVariant = 'default' | 'outline'
-
 function toPayload(campaign: Campaign, overrides: Partial<UpdateCampaignPayload>): UpdateCampaignPayload {
   return {
     name: campaign.name,
@@ -39,8 +29,8 @@ function toPayload(campaign: Campaign, overrides: Partial<UpdateCampaignPayload>
     target_persona: campaign.target_persona,
     key_messages: campaign.key_messages,
     tone_guidelines: campaign.tone_guidelines,
-    use_pieces: campaign.use_pieces,
-    pieces_ids: campaign.pieces_ids,
+    use_assets: campaign.use_assets,
+    asset_ids: campaign.asset_ids,
     target_platforms: campaign.target_platforms,
     status: campaign.status,
     start_date: campaign.start_date,
@@ -55,8 +45,7 @@ function toPayload(campaign: Campaign, overrides: Partial<UpdateCampaignPayload>
 }
 
 export function CampaignHeaderActions({ campaign }: { campaign: Campaign }) {
-  const { mutate: update, isPending: isUpdating } = useUpdateCampaign()
-  const { mutate: remove, isPending: isDeleting } = useDeleteCampaign()
+  const { mutate: update, isPending } = useUpdateCampaign()
 
   const setStatus = (status: CampaignStatus) => {
     update({ id: campaign.id, payload: toPayload(campaign, { status }) })
@@ -65,14 +54,7 @@ export function CampaignHeaderActions({ campaign }: { campaign: Campaign }) {
   const startInFuture =
     campaign.start_date != null && new Date(campaign.start_date).getTime() > Date.now()
 
-  const busy = isUpdating || isDeleting
-
-  const { node: primary, variant: primaryVariant } = renderPrimary(
-    campaign.status,
-    startInFuture,
-    setStatus,
-    busy,
-  )
+  const primary = renderPrimary(campaign.status, startInFuture, setStatus, isPending)
 
   return (
     <div className="flex items-center gap-3">
@@ -85,36 +67,6 @@ export function CampaignHeaderActions({ campaign }: { campaign: Campaign }) {
         {STATUS_LABEL[campaign.status]}
       </span>
       {primary}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant={primaryVariant}
-            size="defaultIcon"
-            aria-label="More actions"
-            disabled={busy}
-          >
-            <Icon name="dots_2_vertical" className="size-4" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuGroup>
-            {campaign.status !== 'archived' && (
-              <DropdownMenuItem onSelect={() => setStatus('archived')}>
-                ARCHIVE
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuItem onSelect={() => {/* TODO: duplicate */}}>
-              DUPLICATE
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              variant="destructive"
-              onSelect={() => remove(campaign.id)}
-            >
-              DELETE
-            </DropdownMenuItem>
-          </DropdownMenuGroup>
-        </DropdownMenuContent>
-      </DropdownMenu>
     </div>
   )
 }
@@ -124,77 +76,47 @@ function renderPrimary(
   startInFuture: boolean,
   setStatus: (s: CampaignStatus) => void,
   busy: boolean,
-): { node: React.ReactNode; variant: PrimaryVariant } {
+): React.ReactNode {
   switch (status) {
-    case 'draft': {
-      const variant: PrimaryVariant = 'default'
-      return {
-        variant,
-        node: startInFuture ? (
-          <Button variant={variant} onClick={() => setStatus('scheduled')} loading={busy}>
-            SCHEDULE
-          </Button>
-        ) : (
-          <Button variant={variant} onClick={() => setStatus('active')} loading={busy}>
-            ACTIVATE
-          </Button>
-        ),
-      }
-    }
-    case 'scheduled': {
-      const variant: PrimaryVariant = 'outline'
-      return {
-        variant,
-        node: (
-          <Button variant={variant} onClick={() => setStatus('draft')} loading={busy}>
-            UNPUBLISH
-          </Button>
-        ),
-      }
-    }
-    case 'active': {
-      const variant: PrimaryVariant = 'outline'
-      return {
-        variant,
-        node: (
-          <Button variant={variant} onClick={() => setStatus('paused')} loading={busy}>
-            PAUSE
-          </Button>
-        ),
-      }
-    }
-    case 'paused': {
-      const variant: PrimaryVariant = 'default'
-      return {
-        variant,
-        node: (
-          <Button variant={variant} onClick={() => setStatus('active')} loading={busy}>
-            ACTIVATE
-          </Button>
-        ),
-      }
-    }
-    case 'completed': {
-      const variant: PrimaryVariant = 'outline'
-      return {
-        variant,
-        node: (
-          <Button variant={variant} onClick={() => setStatus('archived')} loading={busy}>
-            ARCHIVE
-          </Button>
-        ),
-      }
-    }
-    case 'archived': {
-      const variant: PrimaryVariant = 'outline'
-      return {
-        variant,
-        node: (
-          <Button variant={variant} onClick={() => {/* TODO: duplicate */}} loading={busy}>
-            DUPLICATE
-          </Button>
-        ),
-      }
-    }
+    case 'draft':
+      return startInFuture ? (
+        <Button variant="defaultInverted" onClick={() => setStatus('scheduled')} loading={busy}>
+          SCHEDULE
+        </Button>
+      ) : (
+        <Button variant="defaultInverted" onClick={() => setStatus('active')} loading={busy}>
+          ACTIVATE
+        </Button>
+      )
+    case 'scheduled':
+      return (
+        <Button variant="defaultInverted" onClick={() => setStatus('draft')} loading={busy}>
+          UNPUBLISH
+        </Button>
+      )
+    case 'active':
+      return (
+        <Button variant="defaultInverted" onClick={() => setStatus('paused')} loading={busy}>
+          PAUSE
+        </Button>
+      )
+    case 'paused':
+      return (
+        <Button variant="defaultInverted" onClick={() => setStatus('active')} loading={busy}>
+          ACTIVATE
+        </Button>
+      )
+    case 'completed':
+      return (
+        <Button variant="defaultInverted" onClick={() => setStatus('archived')} loading={busy}>
+          ARCHIVE
+        </Button>
+      )
+    case 'archived':
+      return (
+        <Button variant="defaultInverted" onClick={() => {/* TODO: duplicate */}} loading={busy}>
+          DUPLICATE
+        </Button>
+      )
   }
 }

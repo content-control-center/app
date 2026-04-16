@@ -2,21 +2,21 @@ import { createFileRoute } from "@tanstack/react-router";
 import { PageContainer } from "@/components/page-primitives/PageContainer.tsx";
 import { PageLoader } from "@/components/page-primitives/PageLoader.tsx";
 import { PageError } from "@/components/page-primitives/PageError.tsx";
-import { usePiece, useUpdatePiece } from "@/hooks/useContent.ts";
+import { useAsset, useUpdateAsset } from "@/hooks/useContent.ts";
 import { useCallback, useRef, useState } from "react";
-import { ContentPieceEditor } from "@/components/content-bank/ContentPieceEditor.tsx";
+import { AssetEditor } from "@/components/content-bank/AssetEditor.tsx";
 import {EditPageHeader} from "@/components/page-primitives/EditPageHeader.tsx";
 import { RightRail } from "@/components/page-primitives/RightRail.tsx";
 import { ScrollArea } from "@/components/ui/scroll-area.tsx";
 
-export const Route = createFileRoute("/_authenticated/content-bank/$pieceId")({
-  component: ContentPiecePage,
+export const Route = createFileRoute("/_authenticated/content-bank/$assetId")({
+  component: AssetPage,
 });
 
-function ContentPiecePage() {
-  const { pieceId } = Route.useParams();
-  const { data: piece, isLoading, isError } = usePiece(pieceId);
-  const updatePiece = useUpdatePiece();
+function AssetPage() {
+  const { assetId } = Route.useParams();
+  const { data: asset, isLoading, isError } = useAsset(assetId);
+  const updateAsset = useUpdateAsset();
   const [title, setTitle] = useState<string | null>(null);
   const editVersionRef = useRef(0);
   const [editVersion, setEditVersion] = useState(0);
@@ -31,32 +31,32 @@ function ContentPiecePage() {
   const handleTitleChange = useCallback(
     (nextTitle: string) => {
       setTitle(nextTitle);
-      if (!piece) return;
+      if (!asset) return;
       const v = editVersionRef.current;
-      updatePiece.mutate(
+      updateAsset.mutate(
         {
-          id: pieceId,
-          payload: { title: nextTitle, content: piece.content },
+          id: assetId,
+          payload: { title: nextTitle, content: asset.content },
         },
         { onSuccess: () => setSavedVersion(v) },
       );
     },
-    [piece, pieceId, updatePiece],
+    [asset, assetId, updateAsset],
   );
 
   const handleContentChange = useCallback(
     (content: string) => {
-      if (!piece) return;
+      if (!asset) return;
       const v = editVersionRef.current;
-      updatePiece.mutate(
+      updateAsset.mutate(
         {
-          id: pieceId,
-          payload: { title: title ?? piece.title, content },
+          id: assetId,
+          payload: { title: title ?? asset.title, content },
         },
         { onSuccess: () => setSavedVersion(v) },
       );
     },
-    [piece, pieceId, title, updatePiece],
+    [asset, assetId, title, updateAsset],
   );
 
   if (isLoading) {
@@ -67,10 +67,10 @@ function ContentPiecePage() {
     );
   }
 
-  if (isError || !piece) {
+  if (isError || !asset) {
     return (
       <PageContainer>
-        <PageError header="Content asset not found" />
+        <PageError header="Asset not found" />
       </PageContainer>
     );
   }
@@ -80,15 +80,15 @@ function ContentPiecePage() {
       <div className={'flex-1 min-h-0 flex flex-row'}>
         <ScrollArea className={'flex-1 min-h-0 lg:px-6'} type={'scroll'} scrollHideDelay={350}>
           <EditPageHeader
-            title={((title ?? piece.title).trim() === '' ? 'untitled' : (title ?? piece.title))}
+            title={((title ?? asset.title).trim() === '' ? 'untitled' : (title ?? asset.title))}
             breadcrumbs={[{ label: 'Content Bank', to: '/content-bank' }]}
             unsaved={isDirty}
           />
           <div className={'flex flex-col items-center gap-0 relative z-0'}>
             <div className={'w-[740px] bg-white px-16 py-8 mt-2 mb-8'}>
-              <ContentPieceEditor
-                initialTitle={piece.title}
-                initialContent={piece.content}
+              <AssetEditor
+                initialTitle={asset.title}
+                initialContent={asset.content}
                 onTitleChange={handleTitleChange}
                 onContentChange={handleContentChange}
                 onDirty={markDirty}

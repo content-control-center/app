@@ -1,12 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createTag, listTags } from '@/services/api/tags'
 
-const TAGS_KEY = ['tags'] as const
+export const TAGS_KEY = ['tags'] as const
+
+const FIVE_MINUTES = 1000 * 60 * 5;
 
 export function useTags() {
   return useQuery({
     queryKey: TAGS_KEY,
     queryFn: listTags,
+    staleTime: FIVE_MINUTES,
   })
 }
 

@@ -1,59 +1,59 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  listPieces,
-  getPiece,
-  createPiece,
-  updatePiece,
-  deletePiece,
+  listAssets,
+  getAsset,
+  createAsset,
+  updateAsset,
+  deleteAsset,
 } from "@/services/api/content";
-import type { CreatePiecePayload, UpdatePiecePayload } from "@/types/content";
+import type { CreateAssetPayload, UpdateAssetPayload } from "@/types/content";
 
-const PIECES_KEY = ["pieces"] as const;
-const pieceKey = (id: string) => ["pieces", id] as const;
+const ASSETS_KEY = ["assets"] as const;
+const assetKey = (id: string) => ["assets", id] as const;
 
-export function usePieces() {
+export function useAssets() {
   return useQuery({
-    queryKey: PIECES_KEY,
-    queryFn: listPieces,
+    queryKey: ASSETS_KEY,
+    queryFn: listAssets,
   });
 }
 
-export function usePiece(id: string) {
+export function useAsset(id: string) {
   return useQuery({
-    queryKey: pieceKey(id),
-    queryFn: () => getPiece(id),
+    queryKey: assetKey(id),
+    queryFn: () => getAsset(id),
     enabled: !!id,
   });
 }
 
-export function useCreatePiece() {
+export function useCreateAsset() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (payload: CreatePiecePayload) => createPiece(payload),
+    mutationFn: (payload: CreateAssetPayload) => createAsset(payload),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: PIECES_KEY });
+      qc.invalidateQueries({ queryKey: ASSETS_KEY });
     },
   });
 }
 
-export function useUpdatePiece() {
+export function useUpdateAsset() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, payload }: { id: string; payload: UpdatePiecePayload }) =>
-      updatePiece(id, payload),
+    mutationFn: ({ id, payload }: { id: string; payload: UpdateAssetPayload }) =>
+      updateAsset(id, payload),
     onSuccess: (_data, { id }) => {
-      qc.invalidateQueries({ queryKey: PIECES_KEY });
-      qc.invalidateQueries({ queryKey: pieceKey(id) });
+      qc.invalidateQueries({ queryKey: ASSETS_KEY });
+      qc.invalidateQueries({ queryKey: assetKey(id) });
     },
   });
 }
 
-export function useDeletePiece() {
+export function useDeleteAsset() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => deletePiece(id),
+    mutationFn: (id: string) => deleteAsset(id),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: PIECES_KEY });
+      qc.invalidateQueries({ queryKey: ASSETS_KEY });
     },
   });
 }
