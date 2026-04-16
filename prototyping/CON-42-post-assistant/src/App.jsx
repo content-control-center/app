@@ -178,6 +178,31 @@ function App() {
     });
   };
 
+  const handleDeleteCampaign = async (id) => {
+    try {
+      const base = baseUrl ? baseUrl.replace(/\/+$/, "") : "";
+      const res = await fetch(`${base}/api/campaigns/${id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`Failed (${res.status})`);
+      setCampaigns((prev) => prev.filter((c) => c.id !== id));
+      if (campaign?.id === id) {
+        setCampaign(null);
+        setPost(null);
+        setDescription("");
+        setVersions([]);
+        setMessages([]);
+        const params = new URLSearchParams(window.location.search);
+        params.delete("campaignId");
+        params.delete("postId");
+        window.history.replaceState(null, "", params.toString() ? `?${params.toString()}` : window.location.pathname);
+      }
+    } catch {
+      // silent
+    }
+  };
+
   const handleSelectCampaign = (c) => {
     setCampaign(c);
     setPost(null);
@@ -289,7 +314,7 @@ function App() {
           className="flex h-full flex-col overflow-hidden transition-[width] duration-200"
           style={{ width: sidebarCollapsed ? "40px" : "15%", minWidth: sidebarCollapsed ? "40px" : "160px" }}
         >
-          <div className="flex items-center border-b border-slate-200 bg-slate-50 px-2 py-2.5">
+          <div className="flex shrink-0 items-center border-b border-slate-200 bg-slate-50 px-2 py-2.5">
             <button
               type="button"
               onClick={toggleSidebar}
@@ -326,7 +351,7 @@ function App() {
               </span>
             </div>
           ) : (
-            <CampaignSidebar campaigns={campaigns} loading={campaignsLoading} selectedId={campaign?.id} onSelect={handleSelectCampaign} />
+            <CampaignSidebar campaigns={campaigns} loading={campaignsLoading} selectedId={campaign?.id} onSelect={handleSelectCampaign} onDelete={handleDeleteCampaign} />
           )}
         </section>
 
@@ -335,7 +360,7 @@ function App() {
           className="flex h-full flex-col overflow-hidden transition-[width] duration-200"
           style={{ width: postsCollapsed ? "40px" : "15%", minWidth: postsCollapsed ? "40px" : "160px" }}
         >
-          <div className="flex items-center border-b border-slate-200 bg-slate-50 px-2 py-2.5">
+          <div className="flex shrink-0 items-center border-b border-slate-200 bg-slate-50 px-2 py-2.5">
             <button
               type="button"
               onClick={togglePosts}
@@ -395,16 +420,16 @@ function App() {
         </section>
 
         {/* Post Content */}
-        <section className="flex h-full flex-col overflow-hidden flex-1">
+        <section className="flex h-full flex-1 flex-col overflow-hidden" style={{ minWidth: "200px" }}>
           <PostContent post={post} description={description} />
         </section>
 
         {/* Assistant — collapsible to the right */}
         <section
-          className="flex h-full flex-col overflow-hidden transition-[width] duration-200"
+          className="flex h-full min-h-0 shrink-0 flex-col overflow-hidden transition-[width] duration-200"
           style={{ width: chatCollapsed ? "40px" : "30%", minWidth: chatCollapsed ? "40px" : "280px" }}
         >
-          <div className="flex items-center border-b border-slate-200 bg-slate-50 px-2 py-2.5">
+          <div className="flex shrink-0 items-center border-b border-slate-200 bg-slate-50 px-2 py-2.5">
             <button
               type="button"
               onClick={toggleChat}
