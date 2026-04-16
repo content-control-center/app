@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	. "github.com/onsi/ginkgo/v2"
@@ -42,11 +43,11 @@ var _ = Describe("AssetsHandler", Ordered, func() {
 		sessionRepo := repository.NewSessionRepository(db)
 		settingRepo := repository.NewSettingRepository(db)
 		tagRepo := repository.NewTagRepository(db)
-		pieceRepo := repository.NewAssetRepository(db, tagRepo)
+		pieceRepo := repository.NewAssetRepository(db, tagRepo, repository.NewAssetFileRepository(db))
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
-		handlers.NewAssetsHandler(pieceRepo, auth, nil).Register(app)
+		handlers.NewAssetsHandler(pieceRepo, repository.NewAssetFileRepository(db), nil, auth, nil, nil).Register(app)
 		handlers.NewTagsHandler(tagRepo, auth).Register(app)
 
 		// Seed an auth user and log in
@@ -401,5 +402,158 @@ var _ = Describe("AssetsHandler", Ordered, func() {
 				Expect(resp.StatusCode).To(Equal(404))
 			})
 		})
+	})
+})
+
+// ── onSave (embed trigger) ───────────────────────────────────────────────────
+
+var _ = Describe("AssetsHandler onSave embed trigger", Ordered, func() {
+	var (
+		app        *fiber.App
+		db         *bun.DB
+		authCookie *http.Cookie
+		onSaveCh   chan string // receives asset IDs whenever onSave fires
+	)
+
+	BeforeAll(func() {
+		db = mustOpenTestDBWithMigrations()
+	})
+
+	BeforeEach(func() {
+		onSaveCh = make(chan string, 16)
+
+		app = fiber.New(fiber.Config{
+			ErrorHandler: func(c *fiber.Ctx, err error) error {
+				code := fiber.StatusInternalServerError
+				if e, ok := err.(*fiber.Error); ok {
+					code = e.Code
+				}
+				return c.Status(code).JSON(fiber.Map{"error": err.Error()})
+			},
+		})
+		userRepo := repository.NewUserRepository(db)
+		sessionRepo := repository.NewSessionRepository(db)
+		settingRepo := repository.NewSettingRepository(db)
+		tagRepo := repository.NewTagRepository(db)
+		assetRepo := repository.NewAssetRepository(db, tagRepo, repository.NewAssetFileRepository(db))
+		auth := handlers.RequireAuth(sessionRepo, testCookieName)
+		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
+		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
+		handlers.NewTagsHandler(tagRepo, auth).Register(app)
+		handlers.NewAssetsHandler(assetRepo, repository.NewAssetFileRepository(db), nil, auth, func(assetID, _, _ string) {
+			onSaveCh <- assetID
+		}, nil).Register(app)
+
+		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "admin@example.com", "password": "admin-password"})
+		req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := app.Test(req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+
+		loginBody, _ := json.Marshal(fiber.Map{"email": "admin@example.com", "password": "admin-password"})
+		loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
+		loginReq.Header.Set("Content-Type", "application/json")
+		loginResp, err := app.Test(loginReq)
+		Expect(err).NotTo(HaveOccurred())
+		cookies := loginResp.Cookies()
+		Expect(cookies).To(HaveLen(1))
+		authCookie = cookies[0]
+	})
+
+	AfterEach(func() {
+		_, err := db.NewDelete().TableExpr("assets").Where("1 = 1").Exec(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		_, err = db.NewDelete().TableExpr("tags").Where("1 = 1").Exec(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		_, err = db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		_, err = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	// waitForSave returns true if an onSave event arrived within the timeout.
+	waitForSave := func() bool {
+		select {
+		case <-onSaveCh:
+			return true
+		case <-time.After(200 * time.Millisecond):
+			return false
+		}
+	}
+
+	createAsset := func(title, content string) models.Asset {
+		body, _ := json.Marshal(fiber.Map{"title": title, "content": content})
+		req := httptest.NewRequest("POST", "/api/content-bank/assets", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(authCookie)
+		resp, err := app.Test(req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+		var a models.Asset
+		Expect(json.NewDecoder(resp.Body).Decode(&a)).To(Succeed())
+		return a
+	}
+
+	updateAsset := func(id, title, content string, extra map[string]any) {
+		body := fiber.Map{"title": title, "content": content}
+		for k, v := range extra {
+			body[k] = v
+		}
+		buf, _ := json.Marshal(body)
+		req := httptest.NewRequest("PUT", "/api/content-bank/assets/"+id, bytes.NewReader(buf))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(authCookie)
+		resp, err := app.Test(req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(Equal(200))
+	}
+
+	It("fires onSave on create", func() {
+		createAsset("Title", "Content body")
+		Expect(waitForSave()).To(BeTrue(), "expected onSave to fire on create")
+	})
+
+	It("fires onSave when content changes", func() {
+		asset := createAsset("Title", "Original content")
+		Expect(waitForSave()).To(BeTrue()) // drain create event
+
+		updateAsset(asset.ID, "Title", "Updated content", nil)
+		Expect(waitForSave()).To(BeTrue(), "expected onSave to fire on content change")
+	})
+
+	It("fires onSave when title changes", func() {
+		asset := createAsset("Original Title", "Content")
+		Expect(waitForSave()).To(BeTrue()) // drain create event
+
+		updateAsset(asset.ID, "New Title", "Content", nil)
+		Expect(waitForSave()).To(BeTrue(), "expected onSave to fire on title change")
+	})
+
+	It("does NOT fire onSave when title and content are unchanged", func() {
+		asset := createAsset("Title", "Unchanged content")
+		Expect(waitForSave()).To(BeTrue()) // drain create event
+
+		updateAsset(asset.ID, "Title", "Unchanged content", nil)
+		Expect(waitForSave()).To(BeFalse(), "onSave must not fire when embed inputs are unchanged")
+	})
+
+	It("does NOT fire onSave on a tag-only update", func() {
+		// Seed a tag.
+		tagBody, _ := json.Marshal(fiber.Map{"name": "Q4", "color": "#3498DB"})
+		tagReq := httptest.NewRequest("POST", "/api/tags", bytes.NewReader(tagBody))
+		tagReq.Header.Set("Content-Type", "application/json")
+		tagReq.AddCookie(authCookie)
+		tagResp, err := app.Test(tagReq)
+		Expect(err).NotTo(HaveOccurred())
+		var t map[string]any
+		Expect(json.NewDecoder(tagResp.Body).Decode(&t)).To(Succeed())
+		tagID := t["id"].(string)
+
+		asset := createAsset("Title", "Body")
+		Expect(waitForSave()).To(BeTrue()) // drain create event
+
+		updateAsset(asset.ID, "Title", "Body", map[string]any{"tag_ids": []string{tagID}})
+		Expect(waitForSave()).To(BeFalse(), "onSave must not fire for a tag-only change")
 	})
 })

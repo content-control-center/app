@@ -1,0 +1,25 @@
+package models
+
+import (
+	"time"
+
+	"github.com/uptrace/bun"
+)
+
+// AssetChunk stores one chunk of an Asset's text content together with its
+// embedding vector. A short asset produces a single chunk (chunk_index = 0).
+// Longer assets are split into multiple overlapping chunks.
+type AssetChunk struct {
+	bun.BaseModel `bun:"table:assets_chunks,alias:ac" swaggerignore:"true"`
+
+	ID         string    `bun:"id,pk"                                        json:"id"`
+	AssetID    string    `bun:"asset_id,notnull"                             json:"asset_id"`
+	ChunkIndex int       `bun:"chunk_index,notnull"                          json:"chunk_index"`
+	PageStart  *int      `bun:"page_start"                                   json:"page_start"`
+	PageEnd    *int      `bun:"page_end"                                     json:"page_end"`
+	Content    string    `bun:"content,notnull"                              json:"content"`
+	TokenCount int       `bun:"token_count,notnull"                          json:"token_count"`
+	Embedding  []byte    `bun:"embedding"                                    json:"-"`
+	Model      string    `bun:"model"                                        json:"model"`
+	CreatedAt  time.Time `bun:"created_at,notnull,default:current_timestamp" json:"-"`
+}

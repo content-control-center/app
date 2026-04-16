@@ -29,19 +29,20 @@ var contentPlanRunner func(ctx context.Context, req ContentPlanRequest, onEvent 
 
 // ContentPlanFlowConfig holds the settings for the content plan flow.
 type ContentPlanFlowConfig struct {
-	ModelID         string
-	MaxAssets       int
-	MaxOutputTokens int64       // max_tokens sent to the model; 0 falls back to 8192
-	Embedder        ai.Embedder // nil = skip semantic ranking, fall back to creation order
-	systemTmpl      *template.Template
-	userTmpl        *template.Template
+	ModelID          string
+	MaxContextAssets int         // max assets when no embedder (creation-order fallback)
+	MaxContextChars  int         // character budget for asset context in the prompt
+	MaxOutputTokens  int64       // max_tokens sent to the model; 0 falls back to 8192
+	Embedder         ai.Embedder // nil = skip semantic ranking, fall back to creation order
+	systemTmpl       *template.Template
+	userTmpl         *template.Template
 }
 
 // ContentPlanRepos bundles all repository dependencies for the flow.
 type ContentPlanRepos struct {
 	Campaigns  repository.CampaignRepository
 	Assets     repository.AssetRepository
-	Embeddings repository.AssetsEmbeddingsRepository
+	Chunks     repository.AssetChunksRepository
 	Platforms  repository.PlatformRepository
 	Posts      repository.PostRepository
 }

@@ -25,6 +25,8 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 		// WriteTimeout 0 disables the per-response write deadline so that SSE
 		// streams (e.g. /generate-draft) are not forcibly closed mid-flight.
 		WriteTimeout: 0,
+		// Allow batched markdown uploads (up to 10 MB per file).
+		BodyLimit: 100 << 20,
 	})
 
 	app.Use(recover.New())
@@ -35,8 +37,9 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	sessionRepo := repository.NewSessionRepository(db)
 	settingRepo := repository.NewSettingRepository(db)
 	tagRepo := repository.NewTagRepository(db)
-	pieceRepo := repository.NewAssetRepository(db, tagRepo)
-	embeddingRepo := repository.NewAssetsEmbeddingRepository(db)
+	chunksRepo := repository.NewAssetChunksRepository(db)
+	assetFileRepo := repository.NewAssetFileRepository(db)
+	pieceRepo := repository.NewAssetRepository(db, tagRepo, assetFileRepo)
 	platformRepo := repository.NewPlatformRepository(db)
 	campaignTypeRepo := repository.NewCampaignTypeRepository(db)
 	campaignRepo := repository.NewCampaignRepository(db, tagRepo, platformRepo, campaignTypeRepo)
@@ -50,16 +53,21 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	handlers.NewSessionsHandler(userRepo, sessionRepo, cfg.SessionCookieName, !cfg.Debug).Register(app)
 	handlers.NewSettingsHandler(settingRepo, auth).Register(app)
 
-	onSave, embedder, err := initEmbedding(ctx, cfg, embeddingRepo)
+	store, err := storage.New(cfg)
 	if err != nil {
 		return nil, err
 	}
-	handlers.NewAssetsHandler(pieceRepo, auth, onSave).Register(app)
+
+	callbacks, embedder, err := initEmbedding(ctx, cfg, chunksRepo, pieceRepo, assetFileRepo, store)
+	if err != nil {
+		return nil, err
+	}
+	handlers.NewAssetsHandler(pieceRepo, assetFileRepo, store, auth, callbacks.OnMarkdownSave, callbacks.OnPDFProcess).Register(app)
 
 	contentPlanRepos := content_plan.ContentPlanRepos{
 		Campaigns:  campaignRepo,
 		Assets:     pieceRepo,
-		Embeddings: embeddingRepo,
+		Chunks:     chunksRepo,
 		Platforms:  platformRepo,
 		Posts:      postRepo,
 	}
@@ -73,10 +81,6 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	handlers.NewTagsHandler(tagRepo, auth).Register(app)
 	handlers.NewPostsHandler(postRepo, auth).Register(app)
 
-	store, err := storage.New(cfg)
-	if err != nil {
-		return nil, err
-	}
 	handlers.NewImagesHandler(store, auth).Register(app)
 
 	// Serve the embedded React SPA for all non-API routes.

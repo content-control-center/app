@@ -7,6 +7,14 @@
 # Prerequisites:
 #   - A campaign ID stored in {{campaignId}} (run campaigns/campaigns.http → createCampaign)
 #   - The seeded LinkedIn platform ID: "linkedin"
+#
+# Post status state machine:
+#   draft → ready_for_publish
+#   ready_for_publish → scheduled | scheduled_for_manual_publishing | draft
+#   scheduled → failed | published
+#   scheduled_for_manual_publishing → published | not_published
+#   failed → ready_for_publish
+#   not_published → ready_for_publish | scheduled_for_manual_publishing
 
 @platformId = linkedin
 
@@ -18,7 +26,7 @@ Accept: application/json
 GET {{baseUrl}}/api/campaigns/{{campaignId}}/posts
 Accept: application/json
 
-### Create post — minimal  [protected]
+### Create post — minimal (no title)  [protected]
 # @name createPost
 POST {{baseUrl}}/api/posts
 Content-Type: application/json
@@ -26,8 +34,7 @@ Content-Type: application/json
 {
   "campaign_id": "{{campaignId}}",
   "platform_id": "{{platformId}}",
-  "platform_post_type": "article",
-  "title": "Introducing Our New Feature"
+  "platform_post_type": "article"
 }
 
 > {% client.global.set("postId", response.body.id) %}
@@ -44,7 +51,7 @@ Content-Type: application/json
   "content": "Whether you're a startup or an enterprise, here's why teams love us.",
   "media_urls": ["https://cdn.example.com/hero.png"],
   "scheduled_at": "2026-05-01T09:00:00Z",
-  "status": "scheduled",
+  "status": "draft",
   "cta_type": "link",
   "cta_url": "https://example.com/signup",
   "target_audience_notes": "Tech-savvy decision-makers aged 28–45",
@@ -93,7 +100,7 @@ Accept: application/json
 GET {{baseUrl}}/api/posts/nonexistent
 Accept: application/json
 
-### Update post  [protected]
+### Update post — draft → ready_for_publish  [protected]
 PUT {{baseUrl}}/api/posts/{{postId}}
 Content-Type: application/json
 
@@ -101,15 +108,55 @@ Content-Type: application/json
   "campaign_id": "{{campaignId}}",
   "platform_id": "{{platformId}}",
   "platform_post_type": "article",
-  "title": "5 Reasons to Try Our Platform — Updated",
+  "title": "5 Reasons to Try Our Platform — Reviewed",
   "content": "Updated body copy after editorial review.",
   "media_urls": ["https://cdn.example.com/hero-v2.png"],
-  "scheduled_at": "2026-05-02T09:00:00Z",
-  "status": "approved",
+  "status": "ready_for_publish",
   "cta_type": "button",
   "cta_url": "https://example.com/signup",
   "target_audience_notes": "Tech-savvy decision-makers aged 28–45",
   "used_asset_ids": []
+}
+
+### Update post — ready_for_publish → scheduled  [protected]
+PUT {{baseUrl}}/api/posts/{{postId}}
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{platformId}}",
+  "platform_post_type": "article",
+  "title": "5 Reasons to Try Our Platform — Reviewed",
+  "scheduled_at": "2026-05-02T09:00:00Z",
+  "status": "scheduled",
+  "cta_type": "button",
+  "cta_url": "https://example.com/signup",
+  "used_asset_ids": []
+}
+
+### Update post — ready_for_publish → scheduled_for_manual_publishing  [protected]
+PUT {{baseUrl}}/api/posts/{{postId}}
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{platformId}}",
+  "platform_post_type": "article",
+  "title": "Manual Publish Post",
+  "status": "scheduled_for_manual_publishing",
+  "used_asset_ids": []
+}
+
+### Update post — invalid transition (draft → published, expects 400)  [protected]
+PUT {{baseUrl}}/api/posts/{{postId}}
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{platformId}}",
+  "platform_post_type": "article",
+  "title": "Skip Ahead",
+  "status": "published"
 }
 
 ### Update post — non-existent ID (expects 404)  [protected]
