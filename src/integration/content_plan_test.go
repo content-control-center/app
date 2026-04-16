@@ -37,7 +37,7 @@ var _ = Describe("Content plan flow", Ordered, func() {
 		db = mustOpenIntegrationDB()
 
 		tagRepo := repository.NewTagRepository(db)
-		assetRepo := repository.NewAssetRepository(db, tagRepo)
+		assetRepo := repository.NewAssetRepository(db, tagRepo, repository.NewAssetFileRepository(db))
 		chunksRepo := repository.NewAssetChunksRepository(db)
 		platformRepo := repository.NewPlatformRepository(db)
 		campaignTypeRepo := repository.NewCampaignTypeRepository(db)

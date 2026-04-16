@@ -35,6 +35,10 @@ func (s *stubStorage) Upload(_ context.Context, key string, _ io.Reader, _ int64
 	return s.returnURL, s.returnErr
 }
 
+func (s *stubStorage) Delete(_ context.Context, _ string) error { return nil }
+
+func (s *stubStorage) PublicURL(key string) string { return "https://pub.example.com/" + key }
+
 // minimalPNG returns the bytes of a tiny valid 1×1 PNG image.
 func minimalPNG() []byte {
 	img := image.NewRGBA(image.Rect(0, 0, 1, 1))

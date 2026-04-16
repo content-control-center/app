@@ -17,6 +17,10 @@ import (
 type Storage interface {
 	// Upload writes r to the bucket under key and returns the public URL.
 	Upload(ctx context.Context, key string, r io.Reader, size int64, contentType string) (string, error)
+	// Delete removes the object at key. Returns nil when the object does not exist.
+	Delete(ctx context.Context, key string) error
+	// PublicURL returns the public URL for an object at key.
+	PublicURL(key string) string
 }
 
 type s3Storage struct {
@@ -58,5 +62,20 @@ func (s *s3Storage) Upload(ctx context.Context, key string, r io.Reader, size in
 	if err != nil {
 		return "", fmt.Errorf("storage: upload %s: %w", key, err)
 	}
-	return s.publicURL + "/" + key, nil
+	return s.PublicURL(key), nil
+}
+
+func (s *s3Storage) Delete(ctx context.Context, key string) error {
+	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return fmt.Errorf("storage: delete %s: %w", key, err)
+	}
+	return nil
+}
+
+func (s *s3Storage) PublicURL(key string) string {
+	return s.publicURL + "/" + key
 }

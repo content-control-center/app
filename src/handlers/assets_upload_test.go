@@ -46,11 +46,11 @@ var _ = Describe("AssetsHandler upload", Ordered, func() {
 		sessionRepo := repository.NewSessionRepository(db)
 		settingRepo := repository.NewSettingRepository(db)
 		tagRepo := repository.NewTagRepository(db)
-		assetRepo := repository.NewAssetRepository(db, tagRepo)
+		assetRepo := repository.NewAssetRepository(db, tagRepo, repository.NewAssetFileRepository(db))
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
-		handlers.NewAssetsHandler(assetRepo, auth, nil).Register(app)
+		handlers.NewAssetsHandler(assetRepo, repository.NewAssetFileRepository(db), nil, auth, nil, nil).Register(app)
 
 		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "up@example.com", "password": "pw-password"})
 		req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
@@ -171,6 +171,57 @@ var _ = Describe("AssetsHandler upload", Ordered, func() {
 		body, ct := buildMultipart(nil)
 		resp := post(body, ct)
 		Expect(resp.StatusCode).To(Equal(fiber.StatusBadRequest))
+	})
+
+	It("creates a PDF asset with type=PDF, status=pending (async processing deferred)", func() {
+		// Minimal valid PDF magic header followed by plausible body. The handler
+		// only checks the `%PDF` prefix and size; the async flow is not fired
+		// because onPDF is nil in this suite.
+		body, ct := buildMultipart([]struct{ Name, Body string }{
+			{"report.pdf", "%PDF-1.4\n%...dummy body..."},
+		})
+		resp := post(body, ct)
+		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+		results := decode(resp)
+		Expect(results).To(HaveLen(1))
+		Expect(results[0]["status"]).To(Equal("created"))
+		asset := results[0]["asset"].(map[string]any)
+		Expect(asset["type"]).To(Equal(models.AssetTypePDF))
+		Expect(asset["status"]).To(Equal(models.AssetStatusPending))
+		Expect(asset["title"]).To(Equal("report"))
+	})
+
+	It("rejects .pdf files failing the magic-byte sniff", func() {
+		body, ct := buildMultipart([]struct{ Name, Body string }{
+			{"fake.pdf", "this is not a PDF"},
+		})
+		resp := post(body, ct)
+		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+		results := decode(resp)
+		Expect(results).To(HaveLen(1))
+		Expect(results[0]["status"]).To(Equal("failed"))
+		Expect(results[0]["error"]).To(ContainSubstring("PDF"))
+	})
+
+	It("rejects .pdf files over 50 MB", func() {
+		big := "%PDF-1.4\n" + strings.Repeat("x", (50<<20)+1)
+		body, ct := buildMultipart([]struct{ Name, Body string }{{"huge.pdf", big}})
+		resp := post(body, ct)
+		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+		results := decode(resp)
+		Expect(results).To(HaveLen(1))
+		Expect(results[0]["status"]).To(Equal("failed"))
+		Expect(results[0]["error"]).To(ContainSubstring("exceeds"))
+	})
+
+	It("rejects unknown extensions with a clear message", func() {
+		body, ct := buildMultipart([]struct{ Name, Body string }{{"notes.txt", "plain text"}})
+		resp := post(body, ct)
+		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+		results := decode(resp)
+		Expect(results).To(HaveLen(1))
+		Expect(results[0]["status"]).To(Equal("failed"))
+		Expect(results[0]["error"]).To(ContainSubstring(".pdf"))
 	})
 
 	It("requires authentication", func() {
