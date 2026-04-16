@@ -1,12 +1,6 @@
 import type { Tag } from "@/types/content";
 
-export type CampaignStatus =
-  | "draft"
-  | "scheduled"
-  | "active"
-  | "paused"
-  | "completed"
-  | "archived";
+export type CampaignStatus = "draft" | "active";
 
 export type CampaignPlatform = {
   id: string;

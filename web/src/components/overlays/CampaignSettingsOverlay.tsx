@@ -4,15 +4,14 @@ import { CampaignBriefForm } from '@/components/forms/campaignBriefForm'
 import { useCampaign } from '@/hooks/useCampaigns'
 import { PageLoader } from '@/components/page-primitives/PageLoader'
 import { PageHeader } from '@/components/page-primitives/PageHeader.tsx'
+import { useOverlayStore } from '@/stores/overlayStore'
 
 type CampaignSettingsOverlayProps = {
   campaignId: string
-  onClose: () => void
 }
 
 export function CampaignSettingsOverlay({
   campaignId,
-  onClose,
 }: CampaignSettingsOverlayProps) {
   const { data: campaign, isLoading } = useCampaign(campaignId)
   const flushRef = useRef<(() => void) | null>(null)
@@ -21,14 +20,11 @@ export function CampaignSettingsOverlay({
     flushRef.current = flush
   }, [])
 
-  const handleClose = useCallback(() => {
-    flushRef.current?.()
-    onClose()
-  }, [onClose])
-
   useEffect(() => {
+    const flush = () => flushRef.current?.()
+    useOverlayStore.getState().registerBeforeClose('campaign-settings', flush)
     return () => {
-      flushRef.current?.()
+      useOverlayStore.getState().unregisterBeforeClose('campaign-settings')
     }
   }, [])
 
@@ -43,15 +39,6 @@ export function CampaignSettingsOverlay({
       <PageHeader
         title={`${displayName} — Settings`}
         className={"pt-6"}
-        actions={
-          <button
-            onClick={handleClose}
-            className="text-sm text-tertiary-foreground hover:text-foreground transition-colors cursor-pointer"
-            aria-label="Close settings"
-          >
-            CLOSE
-          </button>
-        }
       />
       <div className="px-6 py-6">
         <CampaignBriefForm campaign={campaign} onFlushRef={handleFlushRef} />
