@@ -37,8 +37,9 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	sessionRepo := repository.NewSessionRepository(db)
 	settingRepo := repository.NewSettingRepository(db)
 	tagRepo := repository.NewTagRepository(db)
-	pieceRepo := repository.NewAssetRepository(db, tagRepo)
 	chunksRepo := repository.NewAssetChunksRepository(db)
+	assetFileRepo := repository.NewAssetFileRepository(db)
+	pieceRepo := repository.NewAssetRepository(db, tagRepo, assetFileRepo)
 	platformRepo := repository.NewPlatformRepository(db)
 	campaignTypeRepo := repository.NewCampaignTypeRepository(db)
 	campaignRepo := repository.NewCampaignRepository(db, tagRepo, platformRepo, campaignTypeRepo)
@@ -52,11 +53,16 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	handlers.NewSessionsHandler(userRepo, sessionRepo, cfg.SessionCookieName, !cfg.Debug).Register(app)
 	handlers.NewSettingsHandler(settingRepo, auth).Register(app)
 
-	onSave, embedder, err := initEmbedding(ctx, cfg, chunksRepo, pieceRepo)
+	store, err := storage.New(cfg)
 	if err != nil {
 		return nil, err
 	}
-	handlers.NewAssetsHandler(pieceRepo, auth, onSave).Register(app)
+
+	callbacks, embedder, err := initEmbedding(ctx, cfg, chunksRepo, pieceRepo, assetFileRepo, store)
+	if err != nil {
+		return nil, err
+	}
+	handlers.NewAssetsHandler(pieceRepo, assetFileRepo, store, auth, callbacks.OnMarkdownSave, callbacks.OnPDFProcess).Register(app)
 
 	contentPlanRepos := content_plan.ContentPlanRepos{
 		Campaigns:  campaignRepo,
@@ -75,10 +81,6 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	handlers.NewTagsHandler(tagRepo, auth).Register(app)
 	handlers.NewPostsHandler(postRepo, auth).Register(app)
 
-	store, err := storage.New(cfg)
-	if err != nil {
-		return nil, err
-	}
 	handlers.NewImagesHandler(store, auth).Register(app)
 
 	// Serve the embedded React SPA for all non-API routes.

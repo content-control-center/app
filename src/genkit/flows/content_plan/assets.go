@@ -23,18 +23,18 @@ func resolveAssets(ctx context.Context, campaign *models.Campaign, cfg ContentPl
 
 	var warnings []string
 
-	// Determine the candidate asset IDs.
-	var candidateIDs []string
-	if len(campaign.AssetIDs) > 0 {
-		candidateIDs = campaign.AssetIDs
-	} else {
-		all, err := repos.Assets.List(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-		for _, a := range all {
-			candidateIDs = append(candidateIDs, a.ID)
-		}
+	// Determine the candidate asset IDs. Assets in `failed` or `partial`
+	// status are excluded — per CON-38, only fully embedded assets contribute
+	// context.
+	candidateIDs, skipWarnings, err := collectReadyCandidateIDs(ctx, campaign, repos)
+	if err != nil {
+		return nil, nil, err
+	}
+	warnings = append(warnings, skipWarnings...)
+
+	if len(candidateIDs) == 0 {
+		warnings = append(warnings, "no ready assets available for this campaign — proceeding without asset context")
+		return nil, warnings, nil
 	}
 
 	if cfg.MaxContextChars == 0 {
@@ -78,6 +78,50 @@ func resolveAssets(ctx context.Context, campaign *models.Campaign, cfg ContentPl
 		result = append(result, resolvedPiece{ID: a.ID, Title: a.Title, Excerpt: excerpt})
 	}
 	return result, warnings, nil
+}
+
+// collectReadyCandidateIDs returns the set of asset IDs eligible for context
+// injection, filtering out assets whose status is `failed` or `partial`. If
+// the campaign has an explicit AssetIDs list, unknown/unready IDs produce
+// warnings. If it does not, all `ready`/`processing`/`pending` assets are
+// returned (pending/processing assets still contribute any chunks they
+// already have — only definitive failure states are skipped).
+func collectReadyCandidateIDs(ctx context.Context, campaign *models.Campaign, repos ContentPlanRepos) ([]string, []string, error) {
+	var warnings []string
+
+	isBad := func(status string) bool {
+		return status == models.AssetStatusFailed || status == models.AssetStatusPartial
+	}
+
+	if len(campaign.AssetIDs) > 0 {
+		out := make([]string, 0, len(campaign.AssetIDs))
+		for _, id := range campaign.AssetIDs {
+			a, err := repos.Assets.GetByID(ctx, id)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("asset %q could not be loaded — skipped", id))
+				continue
+			}
+			if isBad(a.Status) {
+				warnings = append(warnings, fmt.Sprintf("asset %q skipped: processing status=%s", id, a.Status))
+				continue
+			}
+			out = append(out, a.ID)
+		}
+		return out, warnings, nil
+	}
+
+	all, err := repos.Assets.List(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := make([]string, 0, len(all))
+	for _, a := range all {
+		if isBad(a.Status) {
+			continue
+		}
+		out = append(out, a.ID)
+	}
+	return out, warnings, nil
 }
 
 // rankAndPackChunks fetches all embedded chunks, scores them against the
@@ -177,16 +221,21 @@ func rankAndPackChunks(
 			return entry.chunks[i].ChunkIndex < entry.chunks[j].ChunkIndex
 		})
 
-		var parts []string
+		parts := make([]chunkPart, 0, len(entry.chunks))
 		for _, c := range entry.chunks {
-			if c.Content != "" {
-				parts = append(parts, c.Content)
+			if c.Content == "" {
+				continue
 			}
+			parts = append(parts, chunkPart{
+				Content:   c.Content,
+				PageStart: c.PageStart,
+				PageEnd:   c.PageEnd,
+			})
 		}
 		result = append(result, resolvedPiece{
 			ID:      assetID,
 			Title:   entry.title,
-			Excerpt: joinChunks(parts),
+			Excerpt: joinPagedChunks(parts),
 		})
 	}
 
@@ -208,14 +257,34 @@ func buildExcerpt(content string) (string, error) {
 	return string(runes[:maxChars]) + "…", nil
 }
 
-// joinChunks concatenates chunk texts with a visual separator.
-func joinChunks(parts []string) string {
+// chunkPart carries a chunk's text plus its optional source page range,
+// used to produce page-attributed excerpts in the prompt.
+type chunkPart struct {
+	Content   string
+	PageStart *int
+	PageEnd   *int
+}
+
+// joinPagedChunks concatenates chunk texts with a visual separator, prefixing
+// each chunk with its page citation when page info is available (e.g.
+// "[p. 4]" for a single page, "[pp. 3–5]" for a range). Chunks without
+// page info are rendered without a prefix.
+func joinPagedChunks(parts []chunkPart) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	result := parts[0]
+	render := func(p chunkPart) string {
+		if p.PageStart == nil || *p.PageStart <= 0 {
+			return p.Content
+		}
+		if p.PageEnd == nil || *p.PageEnd == *p.PageStart {
+			return fmt.Sprintf("[p. %d] %s", *p.PageStart, p.Content)
+		}
+		return fmt.Sprintf("[pp. %d–%d] %s", *p.PageStart, *p.PageEnd, p.Content)
+	}
+	result := render(parts[0])
 	for _, p := range parts[1:] {
-		result += "\n\n[...]\n\n" + p
+		result += "\n\n[...]\n\n" + render(p)
 	}
 	return result
 }

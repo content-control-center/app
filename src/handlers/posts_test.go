@@ -45,13 +45,13 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		tagRepo := repository.NewTagRepository(db)
 		campaignTypeRepo := repository.NewCampaignTypeRepository(db)
 		campaignRepo := repository.NewCampaignRepository(db, tagRepo, repository.NewPlatformRepository(db), campaignTypeRepo)
-		pieceRepo := repository.NewAssetRepository(db, tagRepo)
+		pieceRepo := repository.NewAssetRepository(db, tagRepo, repository.NewAssetFileRepository(db))
 		postRepo := repository.NewPostRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil).Register(app)
-		handlers.NewAssetsHandler(pieceRepo, auth, nil).Register(app)
+		handlers.NewAssetsHandler(pieceRepo, repository.NewAssetFileRepository(db), nil, auth, nil, nil).Register(app)
 		handlers.NewPostsHandler(postRepo, auth).Register(app)
 
 		// Seed auth user and log in.

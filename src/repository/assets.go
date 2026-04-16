@@ -21,13 +21,15 @@ type AssetRepository interface {
 }
 
 type assetRepository struct {
-	db      *bun.DB
-	tagRepo TagRepository
+	db       *bun.DB
+	tagRepo  TagRepository
+	fileRepo AssetFileRepository
 }
 
-// NewAssetRepository returns a Bun-backed AssetRepository.
-func NewAssetRepository(db *bun.DB, tagRepo TagRepository) AssetRepository {
-	return &assetRepository{db: db, tagRepo: tagRepo}
+// NewAssetRepository returns a Bun-backed AssetRepository. fileRepo may be
+// nil, in which case asset.File hydration is skipped.
+func NewAssetRepository(db *bun.DB, tagRepo TagRepository, fileRepo AssetFileRepository) AssetRepository {
+	return &assetRepository{db: db, tagRepo: tagRepo, fileRepo: fileRepo}
 }
 
 func (r *assetRepository) List(ctx context.Context) ([]models.Asset, error) {
@@ -36,6 +38,9 @@ func (r *assetRepository) List(ctx context.Context) ([]models.Asset, error) {
 		return nil, err
 	}
 	if err := r.hydrateTags(ctx, assets); err != nil {
+		return nil, err
+	}
+	if err := r.hydrateFiles(ctx, assets); err != nil {
 		return nil, err
 	}
 	return assets, nil
@@ -57,6 +62,9 @@ func (r *assetRepository) GetByID(ctx context.Context, id string) (*models.Asset
 	}
 	assets := []models.Asset{*asset}
 	if err := r.hydrateTags(ctx, assets); err != nil {
+		return nil, err
+	}
+	if err := r.hydrateFiles(ctx, assets); err != nil {
 		return nil, err
 	}
 	return &assets[0], nil
@@ -90,4 +98,24 @@ func (r *assetRepository) hydrateTags(ctx context.Context, assets []models.Asset
 		func(p models.Asset) []string { return p.TagIDs },
 		func(p *models.Asset) *[]models.Tag { return &p.Tags },
 	)
+}
+
+func (r *assetRepository) hydrateFiles(ctx context.Context, assets []models.Asset) error {
+	if r.fileRepo == nil || len(assets) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(assets))
+	for _, a := range assets {
+		ids = append(ids, a.ID)
+	}
+	byAsset, err := r.fileRepo.ListByAssetIDs(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for i := range assets {
+		if f, ok := byAsset[assets[i].ID]; ok {
+			assets[i].File = f
+		}
+	}
+	return nil
 }

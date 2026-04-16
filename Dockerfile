@@ -34,28 +34,18 @@ RUN --mount=type=cache,id=go-mod,target=/go/pkg/mod \
     --mount=type=cache,id=go-build,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux go build -p 4 -trimpath -ldflags="-s -w" -o /server ./cmd/server
 
-# ─── Stage 3: certs + tz data + non-root user ────────────────────────────────
-FROM alpine:3.20 AS certs
+# ─── Stage 3: Alpine runtime with poppler-utils ──────────────────────────────
+# Alpine is used (not scratch) so the server can exec `pdftotext` and
+# `pdftoppm` from poppler-utils — required by the PDF asset ingestion path
+# (text extraction fallback + thumbnail rendering).
+FROM alpine:3.20
+
 RUN --mount=type=cache,id=apk-cache,sharing=locked,target=/var/cache/apk \
-    apk add --no-cache ca-certificates tzdata && \
+    apk add --no-cache ca-certificates tzdata poppler-utils && \
     addgroup -S appgroup && adduser -S -G appgroup appuser && \
     mkdir -p /data && chown appuser:appgroup /data
 
-# ─── Stage 4: scratch runtime ────────────────────────────────────────────────
-FROM scratch
-
-# TLS root certificates and timezone database.
-COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --from=certs /usr/share/zoneinfo                 /usr/share/zoneinfo
-
-# Non-root user created in the certs stage.
-COPY --from=certs /etc/passwd /etc/passwd
-COPY --from=certs /etc/group  /etc/group
-
-# Pre-created /data directory owned by appuser so it works with named volumes.
-COPY --from=certs --chown=appuser:appgroup /data /data
-
-# Statically-linked binary (CGO_ENABLED=0 in the build stage).
+# Statically-linked Go binary (CGO_ENABLED=0 in the build stage).
 COPY --from=go-builder /server /server
 
 USER appuser

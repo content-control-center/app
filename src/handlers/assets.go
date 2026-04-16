@@ -12,21 +12,46 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/content-control-center/app/src/genkit/flows"
 	"github.com/content-control-center/app/src/markdown"
 	"github.com/content-control-center/app/src/models"
 	"github.com/content-control-center/app/src/repository"
+	"github.com/content-control-center/app/src/storage"
 )
 
-const maxMarkdownUploadSize = 10 << 20 // 10 MB
+const (
+	maxMarkdownUploadSize = 10 << 20  // 10 MB
+	maxPDFUploadSize      = 50 << 20  // 50 MB
+)
 
 type AssetsHandler struct {
-	repo   repository.AssetRepository
-	auth   fiber.Handler
-	onSave func(assetID, title, content string) // async embedding trigger; nil = disabled
+	repo     repository.AssetRepository
+	fileRepo repository.AssetFileRepository
+	storage  storage.Storage
+	auth     fiber.Handler
+
+	// onSave triggers async embedding for text-based Asset saves (JSON create/update + MD upload).
+	onSave func(assetID, title, content string)
+	// onPDF triggers async PDF ingestion (upload + extract + chunk + embed + thumbnail).
+	onPDF func(flows.ProcessPDFInput)
 }
 
-func NewAssetsHandler(repo repository.AssetRepository, auth fiber.Handler, onSave func(assetID, title, content string)) *AssetsHandler {
-	return &AssetsHandler{repo: repo, auth: auth, onSave: onSave}
+func NewAssetsHandler(
+	repo repository.AssetRepository,
+	fileRepo repository.AssetFileRepository,
+	store storage.Storage,
+	auth fiber.Handler,
+	onSave func(assetID, title, content string),
+	onPDF func(flows.ProcessPDFInput),
+) *AssetsHandler {
+	return &AssetsHandler{
+		repo:     repo,
+		fileRepo: fileRepo,
+		storage:  store,
+		auth:     auth,
+		onSave:   onSave,
+		onPDF:    onPDF,
+	}
 }
 
 func (h *AssetsHandler) Register(app *fiber.App) {
@@ -65,7 +90,23 @@ func (h *AssetsHandler) List(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	for i := range assets {
+		h.decorateFile(&assets[i])
+	}
 	return c.JSON(assets)
+}
+
+// decorateFile fills File.ThumbnailURL from its s3_key using the public
+// storage URL, when both are present.
+func (h *AssetsHandler) decorateFile(asset *models.Asset) {
+	if asset == nil || asset.File == nil || h.storage == nil {
+		return
+	}
+	if asset.File.ThumbnailS3Key == nil || *asset.File.ThumbnailS3Key == "" {
+		return
+	}
+	u := h.storage.PublicURL(*asset.File.ThumbnailS3Key)
+	asset.File.ThumbnailURL = &u
 }
 
 // Create godoc
@@ -126,13 +167,13 @@ type uploadResult struct {
 }
 
 // Upload godoc
-// @Summary      Upload Markdown file(s)
-// @Description  Accepts one or more `.md` files (max 10 MB each), converts each to BlockNote JSON, and creates one Asset per file. Files are processed independently — one failure does not block others. Original `.md` files are not stored.
+// @Summary      Upload Markdown or PDF file(s)
+// @Description  Accepts one or more `.md` (max 10 MB) or `.pdf` (max 50 MB) files. Markdown files are converted to BlockNote JSON synchronously; PDFs are uploaded to object storage and processed asynchronously (text extraction, page-aware chunking, embedding, thumbnail). Files are processed independently — one failure does not block others.
 // @Tags         content-bank
 // @Accept       multipart/form-data
 // @Produce      json
 // @Security     CookieAuth
-// @Param        files  formData  file  true  "Markdown file(s)"
+// @Param        files  formData  file  true  "Markdown or PDF file(s)"
 // @Success      201    {object}  map[string]any
 // @Failure      400    {object}  map[string]string
 // @Failure      401    {object}  map[string]string
@@ -148,86 +189,166 @@ func (h *AssetsHandler) Upload(c *fiber.Ctx) error {
 	}
 
 	session := c.Locals("session").(*models.Session)
-	mdType := models.AssetTypeMarkdown
 
 	results := make([]uploadResult, 0, len(files))
 	for _, fh := range files {
 		res := uploadResult{Filename: fh.Filename}
 
-		if !strings.EqualFold(filepath.Ext(fh.Filename), ".md") {
+		switch detectUploadKind(fh.Filename) {
+		case uploadKindMarkdown:
+			res = h.processMarkdownUpload(c, fh, session)
+		case uploadKindPDF:
+			res = h.processPDFUpload(c, fh, session)
+		default:
 			res.Status = "failed"
-			res.Error = "only .md files are accepted"
-			results = append(results, res)
-			continue
+			res.Error = "only .md and .pdf files are accepted"
 		}
-		if fh.Size > maxMarkdownUploadSize {
-			res.Status = "failed"
-			res.Error = fmt.Sprintf("file exceeds maximum size of %d MB", maxMarkdownUploadSize>>20)
-			results = append(results, res)
-			continue
-		}
-
-		raw, err := readFormFile(fh)
-		if err != nil {
-			res.Status = "failed"
-			res.Error = "could not read file"
-			results = append(results, res)
-			continue
-		}
-
-		var content string
-		if len(raw) == 0 {
-			content = "[]"
-		} else {
-			content = markdown.ToBlocks(raw)
-		}
-
-		title := strings.TrimSuffix(filepath.Base(fh.Filename), filepath.Ext(fh.Filename))
-
-		id, err := models.NewID()
-		if err != nil {
-			res.Status = "failed"
-			res.Error = "could not generate id"
-			results = append(results, res)
-			continue
-		}
-		asset := &models.Asset{
-			ID:        id,
-			Title:     title,
-			Content:   content,
-			Status:    models.AssetStatusPending,
-			Type:      &mdType,
-			TagIDs:    models.StringSlice{},
-			Tags:      []models.Tag{},
-			CreatedBy: session.UserID,
-		}
-		if err := h.repo.Create(c.Context(), asset); err != nil {
-			res.Status = "failed"
-			res.Error = "could not create asset"
-			results = append(results, res)
-			continue
-		}
-
-		if h.onSave != nil {
-			go h.onSave(asset.ID, asset.Title, asset.Content)
-		}
-
-		res.AssetID = asset.ID
-		res.Status = "created"
-		res.Asset = asset
 		results = append(results, res)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"results": results})
 }
 
-func readFormFile(fh *multipart.FileHeader) ([]byte, error) {
+type uploadKind int
+
+const (
+	uploadKindUnknown uploadKind = iota
+	uploadKindMarkdown
+	uploadKindPDF
+)
+
+func detectUploadKind(filename string) uploadKind {
+	switch strings.ToLower(filepath.Ext(filename)) {
+	case ".md":
+		return uploadKindMarkdown
+	case ".pdf":
+		return uploadKindPDF
+	}
+	return uploadKindUnknown
+}
+
+func (h *AssetsHandler) processMarkdownUpload(c *fiber.Ctx, fh *multipart.FileHeader, session *models.Session) uploadResult {
+	res := uploadResult{Filename: fh.Filename}
+
+	if fh.Size > maxMarkdownUploadSize {
+		res.Status = "failed"
+		res.Error = fmt.Sprintf("file exceeds maximum size of %d MB", maxMarkdownUploadSize>>20)
+		return res
+	}
+
+	raw, err := readFormFile(fh, maxMarkdownUploadSize)
+	if err != nil {
+		res.Status = "failed"
+		res.Error = "could not read file"
+		return res
+	}
+
+	content := "[]"
+	if len(raw) > 0 {
+		content = markdown.ToBlocks(raw)
+	}
+	title := strings.TrimSuffix(filepath.Base(fh.Filename), filepath.Ext(fh.Filename))
+
+	id, err := models.NewID()
+	if err != nil {
+		res.Status = "failed"
+		res.Error = "could not generate id"
+		return res
+	}
+	mdType := models.AssetTypeMarkdown
+	asset := &models.Asset{
+		ID:        id,
+		Title:     title,
+		Content:   content,
+		Status:    models.AssetStatusPending,
+		Type:      &mdType,
+		TagIDs:    models.StringSlice{},
+		Tags:      []models.Tag{},
+		CreatedBy: session.UserID,
+	}
+	if err := h.repo.Create(c.Context(), asset); err != nil {
+		res.Status = "failed"
+		res.Error = "could not create asset"
+		return res
+	}
+
+	if h.onSave != nil {
+		go h.onSave(asset.ID, asset.Title, asset.Content)
+	}
+
+	res.AssetID = asset.ID
+	res.Status = "created"
+	res.Asset = asset
+	return res
+}
+
+func (h *AssetsHandler) processPDFUpload(c *fiber.Ctx, fh *multipart.FileHeader, session *models.Session) uploadResult {
+	res := uploadResult{Filename: fh.Filename}
+
+	if fh.Size > maxPDFUploadSize {
+		res.Status = "failed"
+		res.Error = fmt.Sprintf("file exceeds maximum size of %d MB", maxPDFUploadSize>>20)
+		return res
+	}
+
+	raw, err := readFormFile(fh, maxPDFUploadSize)
+	if err != nil {
+		res.Status = "failed"
+		res.Error = "could not read file"
+		return res
+	}
+	if len(raw) < 4 || string(raw[:4]) != "%PDF" {
+		res.Status = "failed"
+		res.Error = "file is not a valid PDF"
+		return res
+	}
+
+	title := strings.TrimSuffix(filepath.Base(fh.Filename), filepath.Ext(fh.Filename))
+	id, err := models.NewID()
+	if err != nil {
+		res.Status = "failed"
+		res.Error = "could not generate id"
+		return res
+	}
+	pdfType := models.AssetTypePDF
+	asset := &models.Asset{
+		ID:        id,
+		Title:     title,
+		Content:   "[]",
+		Status:    models.AssetStatusPending,
+		Type:      &pdfType,
+		TagIDs:    models.StringSlice{},
+		Tags:      []models.Tag{},
+		CreatedBy: session.UserID,
+	}
+	if err := h.repo.Create(c.Context(), asset); err != nil {
+		res.Status = "failed"
+		res.Error = "could not create asset"
+		return res
+	}
+
+	if h.onPDF != nil {
+		h.onPDF(flows.ProcessPDFInput{
+			AssetID:      asset.ID,
+			Data:         raw,
+			OriginalName: fh.Filename,
+			MimeType:     "application/pdf",
+		})
+	}
+
+	res.AssetID = asset.ID
+	res.Status = "created"
+	res.Asset = asset
+	return res
+}
+
+func readFormFile(fh *multipart.FileHeader, limit int64) ([]byte, error) {
 	f, err := fh.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	return io.ReadAll(io.LimitReader(f, maxMarkdownUploadSize+1))
+	return io.ReadAll(io.LimitReader(f, limit+1))
 }
 
 // Get godoc
@@ -249,6 +370,7 @@ func (h *AssetsHandler) Get(c *fiber.Ctx) error {
 		}
 		return err
 	}
+	h.decorateFile(asset)
 	return c.JSON(asset)
 }
 
@@ -300,6 +422,7 @@ func (h *AssetsHandler) Update(c *fiber.Ctx) error {
 		go h.onSave(asset.ID, asset.Title, asset.Content)
 	}
 
+	h.decorateFile(asset)
 	return c.JSON(asset)
 }
 
@@ -314,12 +437,42 @@ func (h *AssetsHandler) Update(c *fiber.Ctx) error {
 // @Failure      404  {object}  map[string]string
 // @Router       /api/content-bank/assets/{id} [delete]
 func (h *AssetsHandler) Delete(c *fiber.Ctx) error {
-	deleted, err := h.repo.Delete(c.Context(), c.Params("id"))
+	id := c.Params("id")
+
+	// Collect S3 keys to clean up before deleting the row; DB cascade will
+	// drop the asset_files row when we delete the asset, so capture now.
+	var keysToDelete []string
+	if h.fileRepo != nil {
+		if f, err := h.fileRepo.GetByAssetID(c.Context(), id); err == nil && f != nil {
+			if f.S3Key != "" {
+				keysToDelete = append(keysToDelete, f.S3Key)
+			}
+			if f.ThumbnailS3Key != nil && *f.ThumbnailS3Key != "" {
+				keysToDelete = append(keysToDelete, *f.ThumbnailS3Key)
+			}
+		} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+	}
+
+	deleted, err := h.repo.Delete(c.Context(), id)
 	if err != nil {
 		return err
 	}
 	if !deleted {
 		return fiber.NewError(fiber.StatusNotFound, "asset not found")
 	}
+
+	// Best-effort S3 cleanup. Logged but not surfaced — the row is gone
+	// and orphaned objects are tolerable.
+	if h.storage != nil {
+		for _, k := range keysToDelete {
+			if err := h.storage.Delete(c.Context(), k); err != nil {
+				// Fiber has no handler-level logger dependency here; swallow.
+				_ = err
+			}
+		}
+	}
+
 	return c.SendStatus(fiber.StatusNoContent)
 }
