@@ -12,7 +12,7 @@ type CampaignSettingsOverlayProps = {
 
 export function CampaignSettingsOverlay({
   campaignId,
-  onClose,
+  onClose: _onClose,
 }: CampaignSettingsOverlayProps) {
   const { data: campaign, isLoading } = useCampaign(campaignId)
   const flushRef = useRef<(() => void) | null>(null)
@@ -20,11 +20,6 @@ export function CampaignSettingsOverlay({
   const handleFlushRef = useCallback((flush: () => void) => {
     flushRef.current = flush
   }, [])
-
-  const handleClose = useCallback(() => {
-    flushRef.current?.()
-    onClose()
-  }, [onClose])
 
   useEffect(() => {
     return () => {
@@ -43,15 +38,6 @@ export function CampaignSettingsOverlay({
       <PageHeader
         title={`${displayName} — Settings`}
         className={"pt-6"}
-        actions={
-          <button
-            onClick={handleClose}
-            className="text-sm text-tertiary-foreground hover:text-foreground transition-colors cursor-pointer"
-            aria-label="Close settings"
-          >
-            CLOSE
-          </button>
-        }
       />
       <div className="px-6 py-6">
         <CampaignBriefForm campaign={campaign} onFlushRef={handleFlushRef} />
