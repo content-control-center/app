@@ -11,9 +11,9 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
-	"github.com/openai/openai-go"
 
 	"github.com/content-control-center/app/src/models"
 )
@@ -106,6 +106,9 @@ func runPostAssistant(
 	// System + context block forms the stable cached prefix.
 	systemBlock := actx.SystemPrompt + "\n\n" + actx.ContextBlock
 
+	// Use streaming mode — the Anthropic API requires it for requests
+	// that may involve tool calls (which can exceed the 10-minute timeout
+	// for non-streaming requests).
 	resp, err := genkit.Generate(ctx, g,
 		ai.WithModelName(modelName),
 		ai.WithSystem(systemBlock),
@@ -113,8 +116,10 @@ func runPostAssistant(
 		ai.WithPrompt(req.Instruction),
 		ai.WithTools(tools.listAssets, tools.getAssetChunks, tools.searchAssetChunks, tools.getCurrentDesc),
 		ai.WithMaxTurns(5),
-		ai.WithConfig(openai.ChatCompletionNewParams{
-			MaxTokens: openai.Int(maxTokens),
+		ai.WithOutputType(PostAssistantResponse{}),
+		ai.WithStreaming(func(_ context.Context, _ *ai.ModelResponseChunk) error { return nil }),
+		ai.WithConfig(anthropic.MessageNewParams{
+			MaxTokens: maxTokens,
 		}),
 	)
 	if err != nil {

@@ -86,7 +86,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 		Versions: postVersionRepo,
 		Messages: postMessageRepo,
 	}
-	assistantCallback, err := initPostAssistant(ctx, cfg, postAssistantRepos)
+	assistantCallback, err := initPostAssistant(ctx, cfg, embedder, postAssistantRepos)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, generateDraft).Register(app)
 	handlers.NewPlatformsHandler(platformRepo, auth).Register(app)
 	handlers.NewTagsHandler(tagRepo, auth).Register(app)
-	handlers.NewPostsHandler(postRepo, postVersionRepo, auth, assistantCallback).Register(app)
+	handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, auth, assistantCallback).Register(app)
 
 	handlers.NewImagesHandler(store, auth).Register(app)
 

@@ -33,6 +33,7 @@ var validCTATypes = map[models.PostCTAType]bool{
 type PostsHandler struct {
 	repo        repository.PostRepository
 	versionRepo repository.PostVersionRepository
+	messageRepo repository.PostAssistantMessageRepository
 	auth        fiber.Handler
 	assistant   func(ctx context.Context, req post_assistant.PostAssistantRequest) (*post_assistant.PostAssistantResponse, error)
 }
@@ -40,10 +41,11 @@ type PostsHandler struct {
 func NewPostsHandler(
 	repo repository.PostRepository,
 	versionRepo repository.PostVersionRepository,
+	messageRepo repository.PostAssistantMessageRepository,
 	auth fiber.Handler,
 	assistant func(ctx context.Context, req post_assistant.PostAssistantRequest) (*post_assistant.PostAssistantResponse, error),
 ) *PostsHandler {
-	return &PostsHandler{repo: repo, versionRepo: versionRepo, auth: auth, assistant: assistant}
+	return &PostsHandler{repo: repo, versionRepo: versionRepo, messageRepo: messageRepo, auth: auth, assistant: assistant}
 }
 
 func (h *PostsHandler) Register(app *fiber.App) {
@@ -54,6 +56,7 @@ func (h *PostsHandler) Register(app *fiber.App) {
 	g.Put("/:id", h.auth, h.Update)
 	g.Delete("/:id", h.auth, h.Delete)
 	g.Post("/:id/assistant", h.auth, h.Assistant)
+	g.Get("/:id/messages", h.auth, h.ListMessages)
 	g.Get("/:id/versions", h.auth, h.ListVersions)
 	g.Post("/:id/versions", h.auth, h.CreateVersion)
 
@@ -350,6 +353,26 @@ func (h *PostsHandler) Assistant(c *fiber.Ctx) error {
 		return err
 	}
 	return c.JSON(resp)
+}
+
+// ── Messages ─────────────────────────────────────────────────────────────────
+
+// ListMessages godoc
+// @Summary      List assistant messages
+// @Description  Returns the most recent assistant conversation messages for a post.
+// @Tags         posts
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id   path      string  true  "Post Sqid"
+// @Success      200  {array}   models.PostAssistantMessage
+// @Failure      401  {object}  map[string]string
+// @Router       /api/posts/{id}/messages [get]
+func (h *PostsHandler) ListMessages(c *fiber.Ctx) error {
+	msgs, err := h.messageRepo.ListRecentByPostID(c.Context(), c.Params("id"), 50)
+	if err != nil {
+		return err
+	}
+	return c.JSON(msgs)
 }
 
 // ── Versions ─────────────────────────────────────────────────────────────────

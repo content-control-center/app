@@ -53,7 +53,8 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil).Register(app)
 		handlers.NewAssetsHandler(pieceRepo, repository.NewAssetFileRepository(db), nil, auth, nil, nil).Register(app)
-		handlers.NewPostsHandler(postRepo, postVersionRepo, auth, nil).Register(app)
+		postMessageRepo := repository.NewPostAssistantMessageRepository(db)
+		handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, auth, nil).Register(app)
 
 		// Seed auth user and log in.
 		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "admin@example.com", "password": "admin-password"})

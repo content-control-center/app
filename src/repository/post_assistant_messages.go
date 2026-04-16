@@ -33,7 +33,7 @@ func (r *postAssistantMessageRepository) ListRecentByPostID(ctx context.Context,
 	err := r.db.NewSelect().
 		Model(&msgs).
 		Where("pam.post_id = ?", postID).
-		OrderExpr("pam.created_at DESC").
+		OrderExpr("pam.created_at DESC, pam.rowid DESC").
 		Limit(limit).
 		Scan(ctx)
 	if err != nil {
