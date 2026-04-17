@@ -78,11 +78,11 @@ func runPostAssistant(
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		actx, ctxErr = assembleContext(ctx, post, repos, systemTmpl, contextTmpl)
+		actx, ctxErr = assembleContextCached(ctx, post, repos, systemTmpl, contextTmpl)
 	}()
 	go func() {
 		defer wg.Done()
-		msgs, err := repos.Messages.ListRecentByPostID(ctx, req.PostID, 20)
+		msgs, err := repos.Messages.ListRecentByPostID(ctx, req.PostID, 10)
 		if err != nil {
 			histErr = err
 			return
@@ -118,8 +118,8 @@ func runPostAssistant(
 	// Assistant responses are short (description + explanation), so cap
 	// output tokens well below the content-plan default.
 	maxTokens := cfg.MaxOutputTokens
-	if maxTokens == 0 || maxTokens > 4096 {
-		maxTokens = 4096
+	if maxTokens == 0 || maxTokens > 2048 {
+		maxTokens = 2048
 	}
 
 	modelName := "anthropic/" + cfg.ModelID
@@ -189,15 +189,18 @@ func runPostAssistant(
 		return nil, fmt.Errorf("persist user message: %w", err)
 	}
 
+	// Store only the explanation (not the full JSON with updatedDescription)
+	// to keep conversation history lightweight for subsequent turns.
 	modelMsgID, err := models.NewID()
 	if err != nil {
 		return nil, err
 	}
+	modelSummary := result.Action + ": " + result.Explanation
 	if err := repos.Messages.Create(ctx, &models.PostAssistantMessage{
 		ID:      modelMsgID,
 		PostID:  req.PostID,
 		Role:    "model",
-		Content: text,
+		Content: modelSummary,
 	}); err != nil {
 		return nil, fmt.Errorf("persist model message: %w", err)
 	}

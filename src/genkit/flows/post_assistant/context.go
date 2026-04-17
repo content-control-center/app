@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"text/template"
+	"time"
 	"unicode/utf8"
 
 	"github.com/content-control-center/app/src/genkit/flows"
@@ -17,6 +18,9 @@ const maxSummaryChars = 4000
 
 // previewChars is the target length for a single asset preview.
 const previewChars = 200
+
+// contextCacheTTL controls how long a cached context block stays valid.
+const contextCacheTTL = 5 * time.Minute
 
 // assetSummary is a lightweight representation of an attached asset.
 type assetSummary struct {
@@ -31,6 +35,53 @@ type assetSummary struct {
 type assistantContext struct {
 	SystemPrompt string // system instructions (stable across turns)
 	ContextBlock string // campaign + phase + assets (stable across turns)
+}
+
+// contextCacheEntry is a cached assistantContext keyed by post ID.
+type contextCacheEntry struct {
+	ctx       *assistantContext
+	contentAt string // post.Content snapshot used to build this entry
+	expiresAt time.Time
+}
+
+var (
+	contextCache   = map[string]*contextCacheEntry{}
+	contextCacheMu sync.Mutex
+)
+
+// assembleContextCached returns the cached context for the given post if it
+// exists, the post content hasn't changed, and the TTL hasn't expired.
+// Otherwise it assembles a fresh context, caches it, and returns it.
+func assembleContextCached(
+	ctx context.Context,
+	post *models.Post,
+	repos PostAssistantRepos,
+	systemTmpl, contextTmpl *template.Template,
+) (*assistantContext, error) {
+	contextCacheMu.Lock()
+	if entry, ok := contextCache[post.ID]; ok {
+		if time.Now().Before(entry.expiresAt) && entry.contentAt == post.Content {
+			contextCacheMu.Unlock()
+			return entry.ctx, nil
+		}
+		delete(contextCache, post.ID)
+	}
+	contextCacheMu.Unlock()
+
+	actx, err := assembleContext(ctx, post, repos, systemTmpl, contextTmpl)
+	if err != nil {
+		return nil, err
+	}
+
+	contextCacheMu.Lock()
+	contextCache[post.ID] = &contextCacheEntry{
+		ctx:       actx,
+		contentAt: post.Content,
+		expiresAt: time.Now().Add(contextCacheTTL),
+	}
+	contextCacheMu.Unlock()
+
+	return actx, nil
 }
 
 func assembleContext(
