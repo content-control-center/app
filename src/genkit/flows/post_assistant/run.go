@@ -118,8 +118,8 @@ func runPostAssistant(
 	// Assistant responses are short (description + explanation), so cap
 	// output tokens well below the content-plan default.
 	maxTokens := cfg.MaxOutputTokens
-	if maxTokens == 0 || maxTokens > 2048 {
-		maxTokens = 2048
+	if maxTokens == 0 || maxTokens > 8192 {
+		maxTokens = 8192
 	}
 
 	modelName := "anthropic/" + cfg.ModelID
