@@ -1,30 +1,30 @@
-import type { Piece, CreatePiecePayload, UpdatePiecePayload } from "@/types/content";
+import type { Asset, CreateAssetPayload, UpdateAssetPayload } from "@/types/content";
 
-const BASE = "/api/content-bank/pieces";
+const BASE = "/api/content-bank/assets";
 
-export async function listPieces(): Promise<Piece[]> {
+export async function listAssets(): Promise<Asset[]> {
   const res = await fetch(BASE, {
     method: "GET",
     credentials: "include",
   });
   if (!res.ok) {
-    throw new Error(await errorMessage(res, "Unable to fetch content pieces"));
+    throw new Error(await errorMessage(res, "Unable to fetch assets"));
   }
-  return (await res.json()) as Piece[];
+  return (await res.json()) as Asset[];
 }
 
-export async function getPiece(id: string): Promise<Piece> {
+export async function getAsset(id: string): Promise<Asset> {
   const res = await fetch(`${BASE}/${id}`, {
     method: "GET",
     credentials: "include",
   });
   if (!res.ok) {
-    throw new Error(await errorMessage(res, "Unable to fetch content piece"));
+    throw new Error(await errorMessage(res, "Unable to fetch asset"));
   }
-  return (await res.json()) as Piece;
+  return (await res.json()) as Asset;
 }
 
-export async function createPiece(payload: CreatePiecePayload): Promise<Piece> {
+export async function createAsset(payload: CreateAssetPayload): Promise<Asset> {
   const res = await fetch(BASE, {
     method: "POST",
     credentials: "include",
@@ -32,12 +32,12 @@ export async function createPiece(payload: CreatePiecePayload): Promise<Piece> {
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    throw new Error(await errorMessage(res, "Unable to create content piece"));
+    throw new Error(await errorMessage(res, "Unable to create asset"));
   }
-  return (await res.json()) as Piece;
+  return (await res.json()) as Asset;
 }
 
-export async function updatePiece(id: string, payload: UpdatePiecePayload): Promise<Piece> {
+export async function updateAsset(id: string, payload: UpdateAssetPayload): Promise<Asset> {
   const res = await fetch(`${BASE}/${id}`, {
     method: "PUT",
     credentials: "include",
@@ -45,18 +45,18 @@ export async function updatePiece(id: string, payload: UpdatePiecePayload): Prom
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    throw new Error(await errorMessage(res, "Unable to update content piece"));
+    throw new Error(await errorMessage(res, "Unable to update asset"));
   }
-  return (await res.json()) as Piece;
+  return (await res.json()) as Asset;
 }
 
-export async function deletePiece(id: string): Promise<void> {
+export async function deleteAsset(id: string): Promise<void> {
   const res = await fetch(`${BASE}/${id}`, {
     method: "DELETE",
     credentials: "include",
   });
   if (!res.ok) {
-    throw new Error(await errorMessage(res, "Unable to delete content piece"));
+    throw new Error(await errorMessage(res, "Unable to delete asset"));
   }
 }
 

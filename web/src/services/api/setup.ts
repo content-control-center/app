@@ -17,12 +17,8 @@ const settingResponseSchema = z.object({
 let cached: Promise<boolean> | null = null;
 
 export function isSetupComplete(): Promise<boolean> {
-  console.log("[setup] isSetupComplete called", { cached: cached !== null });
   if (cached === null) {
-    cached = fetchSetupComplete().then((result) => {
-      console.log("[setup] isSetupComplete resolved", result);
-      return result;
-    });
+    cached = fetchSetupComplete();
   }
   return cached;
 }

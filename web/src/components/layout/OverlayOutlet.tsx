@@ -5,6 +5,7 @@ import type { OverlayEntry } from '@/types/overlay'
 import { ModalContainer } from '@/components/ui/modal'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { getOverlayZIndex } from '@/config/zIndex'
+import { SecondaryNavbarContainer } from '@/components/layout/SecondaryNavbar'
 import { useEffect } from 'react'
 import { useRouter } from '@tanstack/react-router'
 
@@ -61,6 +62,14 @@ export function OverlayOutlet() {
     const Component = config.component
     const close = () => useOverlayStore.getState().close(id)
     const zIndex = getOverlayZIndex(index)
+
+    if (config.container === 'secondary-navbar') {
+      return (
+        <SecondaryNavbarContainer key={id} open={!isClosing}>
+          <Component {...props} onClose={close} />
+        </SecondaryNavbarContainer>
+      )
+    }
 
     if (config.container === 'sheet') {
       const side = (isMobile && config.mobileSide) ? config.mobileSide : (config.side ?? 'right')

@@ -6,7 +6,7 @@ import type { Block } from "@blocknote/core";
 import "@blocknote/mantine/style.css";
 import "@/blocknote-theme.css";
 
-type ContentPieceEditorProps = {
+type AssetEditorProps = {
   initialTitle: string;
   initialContent: string;
   onTitleChange: (title: string) => void;
@@ -33,13 +33,13 @@ function parseBlocks(raw: string): Block[] {
   return DEFAULT_CONTENT;
 }
 
-export function ContentPieceEditor({
+export function AssetEditor({
   initialTitle,
   initialContent,
   onTitleChange,
   onContentChange,
   onDirty,
-}: ContentPieceEditorProps) {
+}: AssetEditorProps) {
   const [title, setTitle] = useState(initialTitle);
   const titleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
