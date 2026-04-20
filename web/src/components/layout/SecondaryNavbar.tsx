@@ -7,18 +7,19 @@ import { cn } from '@/lib'
 type SecondaryNavbarContainerProps = {
   children: React.ReactNode
   width?: string
+  open?: boolean
 }
 
 /**
  * Container for the secondary navbar content
  * Handles positioning, animations, and responsive behavior
  */
-export function SecondaryNavbarContainer({ children }: SecondaryNavbarContainerProps) {
+export function SecondaryNavbarContainer({ children, open }: SecondaryNavbarContainerProps) {
   const { state: mainSidebarState } = useSidebar()
   const { isSecondaryNavbarOpen } = useSettingsStore()
 
-  // Combine main sidebar state (expanded/collapsed) and secondary navbar state (open/collapsed)
-  const secondaryState = isSecondaryNavbarOpen ? 'open' : 'collapsed'
+  const isOpen = open ?? isSecondaryNavbarOpen
+  const secondaryState = isOpen ? 'open' : 'collapsed'
 
   return (
     <div

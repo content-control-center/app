@@ -22,7 +22,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useNavigate } from '@tanstack/react-router'
 import {LogOut} from 'lucide-react'
-import Logo from '@/assets/logo.svg?react'
+import { Logo } from '@/components/Logo'
 import { cn } from '@/lib'
 import {
   AppSidebarButtonMenu,

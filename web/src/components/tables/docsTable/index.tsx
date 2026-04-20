@@ -4,13 +4,13 @@ import { Trash2 } from 'lucide-react'
 import { VirtualTable } from '../VirtualTable'
 import { TextCell } from '../TableCells'
 import type { ColumnConfig } from '../types'
-import type { Piece } from '@/types/content'
+import type { Asset } from '@/types/content'
 import { Button } from '@/components/ui/button'
 
-type PieceRow = Piece & Record<string, unknown>
+type AssetRow = Asset & Record<string, unknown>
 
-type ContentPiecesTableProps = {
-  pieces: Piece[]
+type AssetsTableProps = {
+  assets: Asset[]
   onDelete: (id: string) => void
   emptyStateMessage?: string
   emptyStateActionLabel?: string
@@ -26,33 +26,34 @@ function formatDate(dateStr: string): string {
   })
 }
 
-function ContentPiecesTableComponent({
-  pieces,
+function AssetsTableComponent({
+  assets,
   onDelete,
-  emptyStateMessage = 'No content pieces',
+  emptyStateMessage = 'No content assets',
   emptyStateActionLabel,
   onEmptyStateAction,
-}: ContentPiecesTableProps) {
-  const data = pieces as PieceRow[]
+}: AssetsTableProps) {
+  const data = assets as AssetRow[]
 
-  const columnConfigs = useMemo<ColumnConfig<PieceRow>[]>(
+  const columnConfigs = useMemo<ColumnConfig<AssetRow>[]>(
     () => [
       {
         id: 'title',
         accessorKey: 'title',
         header: 'Title',
         isAutoSize: true,
-        cell: (_value, row) => (
-          <div className="h-[34px] border-b-2 border-background px-3 leading-8">
+        cell: (_value, row) => {
+          const displayTitle = row.title.trim() === '' ? 'Untitled' : row.title
+          return (
             <Link
-              to="/content-bank/$pieceId"
-              params={{ pieceId: row.id }}
-              className="hover:underline"
+              to="/content-bank/$assetId"
+              params={{ assetId: row.id }}
+              className="block h-[34px] border-b-2 border-background px-3 leading-8 hover:underline"
             >
-              <TextCell value={row.title} />
+              <TextCell value={displayTitle} />
             </Link>
-          </div>
-        ),
+          )
+        },
       },
       {
         id: 'created_at',
@@ -61,9 +62,13 @@ function ContentPiecesTableComponent({
         size: 140,
         minSize: 120,
         cell: (_value, row) => (
-          <div className="h-[34px] border-b-2 border-background px-3 leading-8">
+          <Link
+            to="/content-bank/$assetId"
+            params={{ assetId: row.id }}
+            className="block h-[34px] border-b-2 border-background px-3 leading-8"
+          >
             <TextCell value={formatDate(row.created_at)} />
-          </div>
+          </Link>
         ),
       },
       {
@@ -73,9 +78,13 @@ function ContentPiecesTableComponent({
         size: 140,
         minSize: 120,
         cell: (_value, row) => (
-          <div className="h-[34px] border-b-2 border-background px-3 leading-8">
+          <Link
+            to="/content-bank/$assetId"
+            params={{ assetId: row.id }}
+            className="block h-[34px] border-b-2 border-background px-3 leading-8"
+          >
             <TextCell value={formatDate(row.updated_at)} />
-          </div>
+          </Link>
         ),
       },
       {
@@ -125,4 +134,4 @@ function ContentPiecesTableComponent({
   )
 }
 
-export const ContentPiecesTable = memo(ContentPiecesTableComponent)
+export const AssetsTable = memo(AssetsTableComponent)

@@ -21,7 +21,8 @@ import { Route as AuthLoginIndexRouteImport } from './routes/auth/login/index'
 import { Route as AuthForgotIndexRouteImport } from './routes/auth/forgot/index'
 import { Route as AuthenticatedContentBankIndexRouteImport } from './routes/_authenticated/content-bank/index'
 import { Route as AuthenticatedCampaignsIndexRouteImport } from './routes/_authenticated/campaigns/index'
-import { Route as AuthenticatedContentBankPieceIdRouteImport } from './routes/_authenticated/content-bank/$pieceId'
+import { Route as AuthenticatedContentBankAssetIdRouteImport } from './routes/_authenticated/content-bank/$assetId'
+import { Route as AuthenticatedCampaignsCampaignIdRouteImport } from './routes/_authenticated/campaigns/$campaignId'
 
 const AuthenticatedRoute = AuthenticatedRouteImport.update({
   id: '/_authenticated',
@@ -84,10 +85,16 @@ const AuthenticatedCampaignsIndexRoute =
     path: '/campaigns/',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
-const AuthenticatedContentBankPieceIdRoute =
-  AuthenticatedContentBankPieceIdRouteImport.update({
-    id: '/content-bank/$pieceId',
-    path: '/content-bank/$pieceId',
+const AuthenticatedContentBankAssetIdRoute =
+  AuthenticatedContentBankAssetIdRouteImport.update({
+    id: '/content-bank/$assetId',
+    path: '/content-bank/$assetId',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedCampaignsCampaignIdRoute =
+  AuthenticatedCampaignsCampaignIdRouteImport.update({
+    id: '/campaigns/$campaignId',
+    path: '/campaigns/$campaignId',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
 
@@ -95,7 +102,8 @@ export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
   '/auth/': typeof AuthIndexRoute
   '/setup/': typeof SetupIndexRoute
-  '/content-bank/$pieceId': typeof AuthenticatedContentBankPieceIdRoute
+  '/campaigns/$campaignId': typeof AuthenticatedCampaignsCampaignIdRoute
+  '/content-bank/$assetId': typeof AuthenticatedContentBankAssetIdRoute
   '/campaigns/': typeof AuthenticatedCampaignsIndexRoute
   '/content-bank/': typeof AuthenticatedContentBankIndexRoute
   '/auth/forgot/': typeof AuthForgotIndexRoute
@@ -109,7 +117,8 @@ export interface FileRoutesByTo {
   '/': typeof AuthenticatedIndexRoute
   '/auth': typeof AuthIndexRoute
   '/setup': typeof SetupIndexRoute
-  '/content-bank/$pieceId': typeof AuthenticatedContentBankPieceIdRoute
+  '/campaigns/$campaignId': typeof AuthenticatedCampaignsCampaignIdRoute
+  '/content-bank/$assetId': typeof AuthenticatedContentBankAssetIdRoute
   '/campaigns': typeof AuthenticatedCampaignsIndexRoute
   '/content-bank': typeof AuthenticatedContentBankIndexRoute
   '/auth/forgot': typeof AuthForgotIndexRoute
@@ -125,7 +134,8 @@ export interface FileRoutesById {
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/auth/': typeof AuthIndexRoute
   '/setup/': typeof SetupIndexRoute
-  '/_authenticated/content-bank/$pieceId': typeof AuthenticatedContentBankPieceIdRoute
+  '/_authenticated/campaigns/$campaignId': typeof AuthenticatedCampaignsCampaignIdRoute
+  '/_authenticated/content-bank/$assetId': typeof AuthenticatedContentBankAssetIdRoute
   '/_authenticated/campaigns/': typeof AuthenticatedCampaignsIndexRoute
   '/_authenticated/content-bank/': typeof AuthenticatedContentBankIndexRoute
   '/auth/forgot/': typeof AuthForgotIndexRoute
@@ -141,7 +151,8 @@ export interface FileRouteTypes {
     | '/'
     | '/auth/'
     | '/setup/'
-    | '/content-bank/$pieceId'
+    | '/campaigns/$campaignId'
+    | '/content-bank/$assetId'
     | '/campaigns/'
     | '/content-bank/'
     | '/auth/forgot/'
@@ -155,7 +166,8 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/setup'
-    | '/content-bank/$pieceId'
+    | '/campaigns/$campaignId'
+    | '/content-bank/$assetId'
     | '/campaigns'
     | '/content-bank'
     | '/auth/forgot'
@@ -170,7 +182,8 @@ export interface FileRouteTypes {
     | '/_authenticated/'
     | '/auth/'
     | '/setup/'
-    | '/_authenticated/content-bank/$pieceId'
+    | '/_authenticated/campaigns/$campaignId'
+    | '/_authenticated/content-bank/$assetId'
     | '/_authenticated/campaigns/'
     | '/_authenticated/content-bank/'
     | '/auth/forgot/'
@@ -279,11 +292,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCampaignsIndexRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/_authenticated/content-bank/$pieceId': {
-      id: '/_authenticated/content-bank/$pieceId'
-      path: '/content-bank/$pieceId'
-      fullPath: '/content-bank/$pieceId'
-      preLoaderRoute: typeof AuthenticatedContentBankPieceIdRouteImport
+    '/_authenticated/content-bank/$assetId': {
+      id: '/_authenticated/content-bank/$assetId'
+      path: '/content-bank/$assetId'
+      fullPath: '/content-bank/$assetId'
+      preLoaderRoute: typeof AuthenticatedContentBankAssetIdRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/campaigns/$campaignId': {
+      id: '/_authenticated/campaigns/$campaignId'
+      path: '/campaigns/$campaignId'
+      fullPath: '/campaigns/$campaignId'
+      preLoaderRoute: typeof AuthenticatedCampaignsCampaignIdRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
   }
@@ -291,14 +311,16 @@ declare module '@tanstack/react-router' {
 
 interface AuthenticatedRouteChildren {
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
-  AuthenticatedContentBankPieceIdRoute: typeof AuthenticatedContentBankPieceIdRoute
+  AuthenticatedCampaignsCampaignIdRoute: typeof AuthenticatedCampaignsCampaignIdRoute
+  AuthenticatedContentBankAssetIdRoute: typeof AuthenticatedContentBankAssetIdRoute
   AuthenticatedCampaignsIndexRoute: typeof AuthenticatedCampaignsIndexRoute
   AuthenticatedContentBankIndexRoute: typeof AuthenticatedContentBankIndexRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
-  AuthenticatedContentBankPieceIdRoute: AuthenticatedContentBankPieceIdRoute,
+  AuthenticatedCampaignsCampaignIdRoute: AuthenticatedCampaignsCampaignIdRoute,
+  AuthenticatedContentBankAssetIdRoute: AuthenticatedContentBankAssetIdRoute,
   AuthenticatedCampaignsIndexRoute: AuthenticatedCampaignsIndexRoute,
   AuthenticatedContentBankIndexRoute: AuthenticatedContentBankIndexRoute,
 }
