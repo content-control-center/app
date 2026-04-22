@@ -84,7 +84,7 @@ function Campaigns() {
       />
       <div className={'grid overflow-hidden h-full mt-1 px-3 lg:mt-2 lg:px-6'}>
         {hasCampaigns ? (
-          <ul className="flex flex-col gap-2 overflow-auto py-2">
+          <ul className="flex flex-col gap-6 overflow-auto py-2">
             {campaigns!.map((campaign) => (
               <li key={campaign.id}>
                 <CampaignCard

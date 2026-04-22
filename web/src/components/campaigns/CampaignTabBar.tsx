@@ -10,6 +10,7 @@ export type CampaignTab = {
 type CampaignTabBarProps = {
   activeTab: string
   tabs: CampaignTab[]
+  rightTabs?: CampaignTab[]
   onTabSelect: (tabId: string) => void
   action?: ReactNode
 }
@@ -17,11 +18,13 @@ type CampaignTabBarProps = {
 export function CampaignTabBar({
   activeTab,
   tabs,
+  rightTabs,
   onTabSelect,
   action,
 }: CampaignTabBarProps) {
   const isMobile = useIsMobile()
   const activeTriggerRef = useRef<HTMLButtonElement>(null)
+  const allTabs = [...tabs, ...(rightTabs ?? [])]
 
   useEffect(() => {
     if (isMobile) {
@@ -38,6 +41,21 @@ export function CampaignTabBar({
     onTabSelect(tabId)
   }
 
+  const renderTrigger = (tab: CampaignTab) => (
+    <TabsTrigger
+      variant="underline"
+      key={tab.id}
+      value={tab.id}
+      ref={isMobile && tab.id === activeTab ? activeTriggerRef : undefined}
+      onClick={(e) => {
+        if (tab.id === activeTab) e.preventDefault()
+        handleTabClick(tab.id)
+      }}
+    >
+      {tab.label}
+    </TabsTrigger>
+  )
+
   if (isMobile) {
     return (
       <div className="flex items-center mx-3 mt-1 mb-0.5 gap-1 shrink-0">
@@ -47,17 +65,7 @@ export function CampaignTabBar({
         >
           <Tabs value={activeTab} className="-mb-px">
             <TabsList variant="underline" size="lg">
-              {tabs.map((tab) => (
-                <TabsTrigger
-                  variant="underline"
-                  key={tab.id}
-                  value={tab.id}
-                  ref={tab.id === activeTab ? activeTriggerRef : undefined}
-                  onClick={() => handleTabClick(tab.id)}
-                >
-                  {tab.label}
-                </TabsTrigger>
-              ))}
+              {allTabs.map(renderTrigger)}
             </TabsList>
           </Tabs>
         </div>
@@ -68,24 +76,19 @@ export function CampaignTabBar({
 
   return (
     <div className="flex items-center justify-between mx-3 lg:mx-6 mt-2 mb-0.5 gap-4 shrink-0">
-      <div className="flex-1 border-b border-border">
+      <div className="flex-1 border-b border-border flex items-end justify-between">
         <Tabs value={activeTab} className="-mb-px">
           <TabsList variant="underline" size="lg">
-            {tabs.map((tab) => (
-              <TabsTrigger
-                variant="underline"
-                key={tab.id}
-                value={tab.id}
-                onClick={(e) => {
-                  if (tab.id === activeTab) e.preventDefault()
-                  handleTabClick(tab.id)
-                }}
-              >
-                {tab.label}
-              </TabsTrigger>
-            ))}
+            {tabs.map(renderTrigger)}
           </TabsList>
         </Tabs>
+        {rightTabs && rightTabs.length > 0 && (
+          <Tabs value={activeTab} className="-mb-px">
+            <TabsList variant="underline" size="lg">
+              {rightTabs.map(renderTrigger)}
+            </TabsList>
+          </Tabs>
+        )}
       </div>
       {action && <div className="shrink-0">{action}</div>}
     </div>

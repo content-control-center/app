@@ -105,33 +105,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               to="/content-bank"
               onClick={closeSecondaryNavbar}
             />
-            <div
-              className={cn(
-                'relative h-8 px-1.5 outline-none ring-inset bg-transparent w-full',
-                'lg:px-2.5 lg:h-10',
-                'shrink-0 gap-3',
-                'text-[11px] whitespace-nowrap font-medium tracking-[0.03em] truncate',
-                'text-sidebar-primary-foreground overflow-hidden',
-                isCollapsed && 'opacity-0 pointer-events-none'
-              )}
-            >
-              <div className={'absolute top-1/2 h-px w-full bg-sidebar-border'}></div>
-              <div
-                className={
-                  'absolute top-2 lg:top-3 px-3 h-4 ml-5 lg:ml-4.5 text-sidebar-secondary-foreground bg-sidebar'
-                }
-              >
-                COMING SOON
-              </div>
-            </div>
-
             <AppSidebarButtonMenu
               iconName="nav_settings"
               text="Instance Settings"
               isActive={location.pathname.startsWith('/instance-settings')}
               to="/instance-settings"
               onClick={closeSecondaryNavbar}
-              className={cn(isCollapsed && 'opacity-0 pointer-events-none')}
             />
           </nav>
         </SidebarContent>

@@ -5,6 +5,7 @@ import { Backdrop } from "@/components/ui/backdrop";
 import { SecondaryNavbarContainer } from "@/components/layout/SecondaryNavbar";
 import { CampaignsListContent } from "@/components/layout/CampaignsListContent";
 import { OverlayOutlet } from "@/components/layout/OverlayOutlet";
+import { RightRail } from "@/components/page-primitives/RightRail";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { ZIndex } from "@/config/zIndex";
 
@@ -27,6 +28,7 @@ function AuthenticatedLayout() {
       <SidebarInset>
         <Outlet />
       </SidebarInset>
+      <RightRail />
       <Backdrop
         open={isSecondaryNavbarOpen}
         onClick={closeSecondaryNavbar}

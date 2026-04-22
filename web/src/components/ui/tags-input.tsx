@@ -148,7 +148,7 @@ export function TagsInput({
         {selected.map((t, i) => (
           <span
             key={t.id}
-            className="inline-flex items-center gap-1.5 rounded-full bg-foreground text-background text-[12px] font-medium pl-2.5 pr-1 py-0.5"
+            className="inline-flex items-center gap-1.5 rounded-full bg-quaternary text-primary-foreground text-[12px] font-medium pl-2.5 pr-1 py-0.5"
           >
             {t.name}
             <button
@@ -157,7 +157,7 @@ export function TagsInput({
                 e.stopPropagation()
                 removeAt(i)
               }}
-              className="flex items-center justify-center size-4 rounded-full cursor-pointer hover:bg-background/20"
+              className="flex items-center justify-center size-4 rounded-full cursor-pointer hover:bg-foreground/10"
               aria-label={`Remove ${t.name}`}
               disabled={disabled}
             >

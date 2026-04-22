@@ -16,6 +16,7 @@ type EditPageHeaderProps = {
   breadcrumbs?: Breadcrumb[]
   className?: string
   actions?: ReactNode
+  breadcrumbTrailing?: ReactNode
   unsaved?: boolean
 }
 
@@ -24,6 +25,7 @@ export function EditPageHeader({
   breadcrumbs = [],
   className,
   actions,
+  breadcrumbTrailing,
   unsaved = false,
 }: EditPageHeaderProps) {
   const isMobile = useIsMobile()
@@ -63,6 +65,9 @@ export function EditPageHeader({
               unsaved ? 'opacity-100 animate-pulse' : 'opacity-0',
             )}
           />
+          {breadcrumbTrailing && (
+            <div className="flex items-center shrink-0">{breadcrumbTrailing}</div>
+          )}
         </div>
         {actions && <div className="flex shrink-0 items-start gap-2">{actions}</div>}
       </div>
