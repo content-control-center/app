@@ -191,6 +191,12 @@ func runPostAssistant(
 	// that may involve tool calls (which can exceed the 10-minute timeout
 	// for non-streaming requests). The streaming callback fans chunks out
 	// as SSE events for the UI.
+	// NB: we deliberately do NOT pass ai.WithOutputType — genkit's
+	// post-generation schema validator parses the raw text strictly and
+	// returns (nil, err) on any blemish (trailing comma, stray char, etc.),
+	// discarding the full response. Dropping the constraint lets us do the
+	// parse ourselves with a tolerant preprocessor below. Format discipline
+	// is enforced via the prompt, which is already explicit.
 	resp, err := genkit.Generate(ctx, g,
 		ai.WithModelName(modelName),
 		ai.WithSystem(systemBlock),
@@ -198,7 +204,6 @@ func runPostAssistant(
 		ai.WithPrompt(req.Instruction),
 		ai.WithTools(tools.listAssets, tools.getAssetChunks, tools.searchAssetChunks, tools.getCurrentContent),
 		ai.WithMaxTurns(3),
-		ai.WithOutputType(PostAssistantResponse{}),
 		ai.WithStreaming(streamCb),
 		ai.WithConfig(anthropic.MessageNewParams{
 			MaxTokens: maxTokens,
@@ -225,9 +230,14 @@ func runPostAssistant(
 		text = strings.TrimSuffix(strings.TrimSpace(text), "```")
 		text = strings.TrimSpace(text)
 	}
+	// Strip trailing commas Claude occasionally emits before closing braces
+	// or brackets. This is a quote-aware scan so commas inside string values
+	// are preserved.
+	text = stripTrailingCommas(text)
 
 	var result PostAssistantResponse
 	if err := json.Unmarshal([]byte(text), &result); err != nil {
+		log.Printf("post_assistant[%s]: unparseable model response (len=%d): %.500s", req.PostID, len(text), text)
 		return nil, &AIError{Msg: fmt.Sprintf("failed to parse model response as JSON: %v\nraw: %.300s", err, text)}
 	}
 
