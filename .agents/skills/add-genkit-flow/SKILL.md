@@ -28,7 +28,7 @@ Do not proceed until 1–4 and 6 are clear. Streaming granularity (3) drives hal
 
 ---
 
-## Step 1: Package layout
+## Step 1: Package layout 
 
 ```
 src/genkit/flows/<flow_name>/
@@ -357,15 +357,44 @@ func defineTools(g *genkit.Genkit) *toolSet {
 
 ---
 
-## Step 6: Scanner (`scanner.go` + `scanner_test.go`) — only if streaming per-field deltas
+## Step 6: JSON parser (`scanner.go` + `scanner_test.go`) — use this for every flow
 
-Use the post_assistant scanner verbatim. It's 250 LOC of state machine that tracks which top-level JSON string key is currently streaming and emits decoded deltas across chunk boundaries. Copy from `src/genkit/flows/post_assistant/scanner.go` and change the watched keys.
+`JSONStringScanner` from `src/genkit/flows/post_assistant/scanner.go` is the canonical JSON parser for Anthropic structured output in this codebase. **Use it for every flow that consumes JSON from the model**, even non-streaming ones — it replaces `json.Unmarshal` and removes a whole class of production bugs.
 
-Do NOT write your own JSON-streaming parser. The edge cases (escape splits across chunks, partial `\uXXXX`, UTF-8 multi-byte splits, surrogate pairs, markdown fence preamble) are covered by the existing one.
+Copy the file (`scanner.go` + `scanner_test.go`) verbatim into your flow package. The two `_test.go` groups travel with it: `TestScanner_*` covers streaming-delta behaviour and `TestValues_*` covers the drift patterns below.
 
-Usage:
+### Why not `json.Unmarshal`?
+
+Claude's JSON output drifts in production. We hit at least two distinct failures within hours of rolling out the obvious "ask for JSON, parse with `json.Unmarshal`" approach. The drift comes in many shapes; this table is the inventory we built up across post_assistant:
+
+| Drift pattern | Example | `json.Unmarshal` | Scanner via `Values()` |
+|---|---|---|---|
+| Trailing comma | `{"a":"b",}` | ❌ hard fail | ✅ structural commas ignored at separator boundaries |
+| Preamble / postamble prose | `Sure: {...}. Let me know!` | ❌ | ✅ `stPreamble` skips before `{`, `stDone` after `}` |
+| Markdown code fence | ` ```json\n{...}\n``` ` | ❌ | ✅ same as above |
+| Missing comma between string pairs | `{"a":"b" "c":"d"}` | ❌ | ✅ `stAfterValue` treats `"` as next-key start |
+| Missing comma after bool/number | `{"saveVersion":true "note":"x"}` | ❌ | ✅ `stCollectLiteral` recovery |
+| Literal newline inside string value | `{"x":"line1<LF>line2"}` (raw `\x0a`, not `\\n`) | ❌ | ✅ non-structural bytes are content |
+| Unescaped tab / CR inside string | `"foo\x09bar"` | ❌ | ✅ same |
+| Smart / curly quotes around strings | `{"a":"text"}` (`U+201C`/`U+201D`) | ❌ | partial — string treated as literal, raw fallback |
+| Truncation mid-string | `{"a":"hel` (max_tokens hit) | ❌ | ✅ partial value returned |
+| Truncation mid-literal | `{"saveVersion":tru` | ❌ | raw `"tru"` returned — caller treats as missing |
+| Duplicate keys | `{"a":"first","a":"second"}` | last-wins | last-wins (same) |
+| Nested objects | `{"meta":{...},"a":"b"}` | parsed | top-level only — nested values are absent from `Values()` |
+
+The scanner's tolerance comes from walking the grammar character-by-character with explicit recovery states, not from regex post-processing. We tried the "tolerant pre-processor" approach (`stripTrailingCommas` + `extractJSONObject` + `insertMissingCommas` + `json.Unmarshal`) — it covered three patterns at the cost of fragile regex-on-JSON, and missed several others. The scanner is one piece of code that handles every row above; adding the next pattern (when one inevitably appears) is a state-machine tweak, not another regex.
+
+### Why not `ai.WithOutputType(<Response>{})`?
+
+Genkit's `WithOutputType` enables Anthropic's native structured output **and** a post-generation strict schema validator on the genkit side. The validator returns `(nil, err)` and discards the entire response on any blemish — meaning a single trailing comma takes down the whole turn, and we can't recover the raw text to repair it. The structured-output _hint_ (the schema attached to the request) does nudge the model, but in practice Claude 4.x with a clear "respond ONLY with the JSON object" prompt + scanner-based extraction is sufficient and dramatically more resilient.
+
+If you observe systematic prose-drift in the wild (the model returning narrative instead of JSON for a specific flow), revisit the trade-off — but reach for prompt strengthening before reintroducing `WithOutputType`.
+
+### Scanner API
 
 ```go
+// watched determines which keys fire onDelta during streaming. Pass nil
+// for both args if the flow doesn't stream — Values() still works.
 scanner := NewJSONStringScanner(
     []string{"explanation", "updatedContent"},
     func(key, delta string) {
@@ -377,9 +406,51 @@ scanner := NewJSONStringScanner(
         }
     },
 )
+
+// Feed every text chunk inside the WithStreaming callback.
+scanner.Push(part.Text)
+
+// After genkit.Generate returns, snapshot the parsed values.
+vals := scanner.Values()
+
+// Optional: the full raw text, for debugging.
+raw := scanner.FullText()
 ```
 
-Run the tests: `go test ./src/genkit/flows/<flow_name>/...`.
+`Values()` returns `map[string]any` with these typed values:
+
+| Stored kind | Returned Go type | Notes |
+|---|---|---|
+| string literal | `string` | JSON escapes resolved (`\n`, `\uXXXX`, surrogate pairs) |
+| `true` / `false` | `bool` | |
+| `null` | `nil` | Map key still present |
+| numeric literal | `float64` | `strconv.ParseFloat` — covers ints and floats |
+| unparseable literal | `string` (raw trimmed) | E.g. truncated `"tru"` — caller decides if missing |
+| nested object / array | absent from map | We don't extract these — keys are silently skipped |
+| key never seen | absent from map | E.g. when the model omits an optional field |
+
+### Sanity-check the extraction
+
+The scanner returns whatever it saw. If the model produced something so broken that no top-level keys were observed, `Values()` returns an empty map and you'd silently persist garbage. After populating your response struct, **always verify your required fields are non-empty** and bail with a logged `AIError` otherwise:
+
+```go
+if result.RequiredField1 == "" || result.RequiredField2 == "" {
+    log.Printf("<flow>[%s]: scanner failed to extract required fields (len=%d): %.500s",
+        req.<ID>, len(scanner.FullText()), scanner.FullText())
+    return nil, &AIError{Msg: "model response did not contain the expected fields"}
+}
+```
+
+This is the only way the user sees an `AIError` from the parse path under the scanner approach — and it means the model's output didn't even resemble the expected JSON. Log captures the raw text so you can diagnose new drift shapes from production.
+
+### What still needs your attention per flow
+
+The scanner is verbatim-portable, but two things are flow-specific:
+
+1. **`watched` list** — which keys do you want streaming-delta callbacks for. Typically the user-visible long-text fields (an `explanation`, a `body`, a `commentary`).
+2. **The unpacking from `Values()` into your `<FlowName>Response`** — type-asserted per field, with a sanity check on required fields.
+
+Everything else (state machine, escape decoding, UTF-8 carry, recovery states) is the same across every flow and shouldn't need touching.
 
 ---
 
@@ -511,26 +582,35 @@ func run<FlowName>(
         ai.WithPrompt(req.<Prompt>),
         ai.WithTools(tools.listAssets /* , ... */), // omit if no tools
         ai.WithMaxTurns(3),                       // tool-use round-trips cap
-        ai.WithOutputType(<FlowName>Response{}),
         ai.WithStreaming(streamCb),
         ai.WithConfig(anthropic.MessageNewParams{
             MaxTokens: maxTokens,
         }),
+        // NB: do NOT add ai.WithOutputType — see Step 6 "Why not ai.WithOutputType"
     )
     if err != nil {
         return nil, &AIError{Msg: fmt.Sprintf("model call failed: %v", err)}
     }
 
-    // ── Parse response ──────────────────────────────────────────────────────
-    text := strings.TrimSpace(resp.Text())
-    if strings.HasPrefix(text, "```") {
-        if i := strings.Index(text, "\n"); i >= 0 { text = text[i+1:] }
-        text = strings.TrimSuffix(strings.TrimSpace(text), "```")
-        text = strings.TrimSpace(text)
-    }
-    var result <FlowName>Response
-    if err := json.Unmarshal([]byte(text), &result); err != nil {
-        return nil, &AIError{Msg: fmt.Sprintf("failed to parse model response: %v\nraw: %.300s", err, text)}
+    // ── Assemble response from scanner ──────────────────────────────────────
+    // The scanner has been processing every chunk in the streaming callback
+    // above. Values() returns the parsed top-level fields without going
+    // through encoding/json — see Step 6 for the drift patterns this fixes.
+    vals := scanner.Values()
+    result := <FlowName>Response{}
+    if s, ok := vals["explanation"].(string); ok    { result.Explanation = s }
+    if s, ok := vals["updatedContent"].(string); ok { result.UpdatedContent = s }
+    if s, ok := vals["action"].(string); ok         { result.Action = s }
+    if b, ok := vals["saveVersion"].(bool); ok      { result.SaveVersion = b }
+    if s, ok := vals["versionNote"].(string); ok    { result.VersionNote = s }
+
+    // Required-field sanity check. If the scanner saw nothing recognisable,
+    // we'd otherwise silently persist a zero-valued struct.
+    if result.Explanation == "" || result.Action == "" {
+        raw := scanner.FullText()
+        log.Printf("<flow>[%s]: scanner failed to extract required fields (len=%d): %.500s",
+            req.<ID>, len(raw), raw)
+        return nil, &AIError{Msg: "model response did not contain the expected fields"}
     }
 
     // ── Apply domain conversions + persist ──────────────────────────────────
@@ -548,9 +628,11 @@ func run<FlowName>(
 
 **Rules:**
 - `genkit.Generate` + `WithStreaming` callback, NOT `genkit.GenerateStream`. The former preserves tool round-tripping naturally; the latter is just a wrapper that yields chunks via an iterator (less control).
+- **No `ai.WithOutputType`.** It enables a strict post-generation validator that hard-fails on common Claude drift (trailing comma, etc.) and discards the response. See Step 6 for the rationale and the comprehensive drift table.
+- **Use `scanner.Values()` instead of `json.Unmarshal`.** Same reason — full character-level tolerance, partial response support on truncation, and one less moving part. Sanity-check required fields after extraction.
 - Skip chunks where `Aggregated == true` — those are recap frames that would double-feed the scanner.
 - Dedupe tool events by `Ref` with a local map. Emit tool_call only when `!Partial` (complete request).
-- Log the full prompt once per call for debugging: `log.Printf("<flow>: system prompt:\n%s", systemPrompt)`. Do NOT log the response — it may contain user data.
+- Log the full prompt once per call for debugging: `log.Printf("<flow>: system prompt:\n%s", systemPrompt)`. Do NOT log the response — it may contain user data. Exception: log raw text (truncated to ~500 chars) when the required-field sanity check trips, so new drift shapes are diagnosable.
 - Wrap `sql.ErrNoRows` as `ValidationError{Msg: "<resource> not found"}`. Wrap model errors as `AIError`. Never return raw `errors.New` from the top level — the handler won't know the HTTP code.
 
 ---
@@ -942,7 +1024,7 @@ flushFrames();
 
 1. **Native Anthropic plugin, not compat.** `import "github.com/firebase/genkit/go/plugins/anthropic"`. The `plugins/compat_oai/anthropic` shim rejects `anthropic.MessageNewParams` as an unknown config type — the error is `unexpected config type: anthropic.MessageNewParams` which is misleading because the type name in the error matches the supported type (different package with the same short name).
 
-2. **Response field ordering controls streaming order.** Anthropic's structured-output decoding emits JSON keys in the order declared by `jsonschema:"description=..."` tags — which is the Go struct's declaration order. Put user-visible fields first. Reordering after the fact is a prompt change (template example ordering also matters).
+2. **Prompt example ordering controls streaming order.** Without `WithOutputType` (see #11) the model isn't constrained to a server-side schema — it tracks the JSON object example you put in the prompt. Put user-visible fields (explanation, content) before metadata (flags, enums) in the example so they start streaming first. Struct field order in `<FlowName>Response` only affects how Go marshals the response when persisting to history — it does NOT affect the model's emission order anymore.
 
 3. **Fingerprint every prompt field.** The context cache keyed only on one field (e.g. `post.Content`) silently returns stale data when any other prompt-affecting field changes. Use the unit-separator fingerprint pattern. When adding a new prompt field, update the fingerprint helper in the same commit.
 
@@ -960,7 +1042,9 @@ flushFrames();
 
 10. **Real DB in tests.** No mocks. `mustOpenTestDBWithMigrations()`. Tests at the handler layer, stubbing only the flow callback.
 
-11. **Authorization before lookup.** If the flow operates on a user-owned resource, check ownership BEFORE returning 404 — never reveal whether an id exists to an unauthorized caller. The handler should 403 for "exists but not yours" and 404 for "doesn't exist or not yours" (whichever the project convention dictates — check `CLAUDE.md` / memory).
+11. **`ai.WithOutputType` and `json.Unmarshal` are both traps.** They look like the obvious tools and they hard-fail on common Claude JSON drift. Use the `JSONStringScanner` for parsing — every flow, streaming or not. See Step 6 for the full table of drift patterns the scanner handles vs. what `json.Unmarshal` chokes on.
+
+12. **Authorization before lookup.** If the flow operates on a user-owned resource, check ownership BEFORE returning 404 — never reveal whether an id exists to an unauthorized caller. The handler should 403 for "exists but not yours" and 404 for "doesn't exist or not yours" (whichever the project convention dictates — check `CLAUDE.md` / memory).
 
 ---
 
@@ -979,12 +1063,12 @@ Fix any compile or test errors before reporting success. Do not claim success wi
 
 ## Checklist (complete in order)
 
-- Prompt template created (`src/genkit/flows/<flow_name>/prompts/<flow_name>.tmpl`) with `system` + `context` blocks
-- `types.go` created — request, response (correct field order), config, repos, errors, SSE events (if streaming)
-- `scanner.go` + `scanner_test.go` copied and adapted (if per-field streaming) — tests passing
+- Prompt template created (`src/genkit/flows/<flow_name>/prompts/<flow_name>.tmpl`) with `system` + `context` blocks; user-visible fields appear first in the example JSON
+- `types.go` created — request, response, config, repos, errors, SSE events (if streaming)
+- **`scanner.go` + `scanner_test.go` copied verbatim** from `src/genkit/flows/post_assistant/` — every flow uses the scanner, even non-streaming ones
 - `tools.go` created (if tools needed) — tool names match regex, descriptions written for LLM audience
 - `context.go` created with `fingerprint` cache (if static context) — every prompt field in the fingerprint
-- `run.go` created — streaming callback, scanner feed, tool dedup, error mapping
+- `run.go` created — streaming callback feeds the scanner, **no `ai.WithOutputType`**, response struct populated from `scanner.Values()` with required-field sanity check, tool dedup, error mapping
 - `flow.go` created — `InitX`, `NewXCallback`, `emit` helper
 - `src/server/<flow_name>.go` adapter created
 - `src/server/server.go` edited — callback var + `initX` call + handler registration gated on API key
@@ -994,4 +1078,4 @@ Fix any compile or test errors before reporting success. Do not claim success wi
 - (Optional) Integration test added under `src/integration/` with `//go:build integration` tag
 - (Optional) React prototype wiring — SSE reader, per-chunk render, tool chips, spinner
 - `go build ./src/...` clean
-- `go test -count=1 ./src/...` green
+- `go test -count=1 ./src/...` green — including all `TestScanner_*`, `TestValues_*`, and `TestTrimIncompleteUTF8`
