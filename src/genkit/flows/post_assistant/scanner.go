@@ -2,18 +2,26 @@ package post_assistant
 
 import (
 	"strconv"
+	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
 )
 
 // JSONStringScanner is an incremental parser for a single top-level JSON
-// object. It watches a set of top-level string keys and invokes onDelta
-// with a decoded fragment each time new bytes of a watched value arrive.
-// Non-watched keys and non-string values are skipped without emission.
-// The raw text is also buffered so the complete JSON can be retrieved and
-// unmarshaled once the stream finishes.
+// object. It serves two purposes:
 //
-// The scanner is forgiving of preamble (e.g. markdown fences) before the
+//   - During a stream, it invokes onDelta with decoded fragments of watched
+//     top-level string keys so the UI can preview text as it arrives.
+//
+//   - After the stream finishes, Values() returns a map of every top-level
+//     key's parsed value — strings decoded, literals (true/false/null and
+//     numbers) coerced to their Go equivalents. This is the authoritative
+//     extraction path; it bypasses encoding/json entirely and therefore
+//     tolerates trailing commas, missing separators, preamble/postamble
+//     prose, literal newlines inside strings, and truncation. Only keys
+//     whose values the scanner actually observed are present in the map.
+//
+// The scanner is forgiving of preamble (markdown fences, prose) before the
 // opening `{` and of trailing text after the closing `}`.
 type JSONStringScanner struct {
 	watched map[string]bool
@@ -36,20 +44,39 @@ type JSONStringScanner struct {
 	// be prepended to deltaBuf before the next flush.
 	carry []byte
 
-	// fullText accumulates the raw input bytes for final unmarshaling.
+	// fullText accumulates the raw input bytes — useful for debugging but
+	// not used by the authoritative extraction (which goes via accumulators).
 	fullText []byte
+
+	// accumulators stores per-key complete values. Populated as values
+	// stream in (strings decoded, literals captured raw); snapshotted by
+	// Values() into a typed map[string]any.
+	accumulators map[string]*valueAcc
+}
+
+type valueKind int
+
+const (
+	valKindString valueKind = iota
+	valKindLiteral
+)
+
+type valueAcc struct {
+	kind valueKind
+	buf  []byte
 }
 
 type scannerState int
 
 const (
-	stPreamble scannerState = iota
-	stTop                   // between keys at the top level
+	stPreamble       scannerState = iota
+	stTop                          // between keys at the top level
 	stInKey
 	stAfterKey
 	stAwaitValue
 	stInString
-	stInLiteral
+	stCollectLiteral // inside a non-string value (bool / number / null) — accumulate bytes
+	stAfterValue     // value just closed, looking for "," or "}"
 	stInNested
 	stDone
 )
@@ -63,13 +90,18 @@ const (
 )
 
 // NewJSONStringScanner returns a scanner that calls onDelta whenever new
-// decoded bytes of a watched string key are available.
+// decoded bytes of a watched string key are available. watched may be nil
+// if callers only need Values() (no streaming preview).
 func NewJSONStringScanner(watched []string, onDelta func(key, delta string)) *JSONStringScanner {
 	m := make(map[string]bool, len(watched))
 	for _, k := range watched {
 		m[k] = true
 	}
-	return &JSONStringScanner{watched: m, onDelta: onDelta}
+	return &JSONStringScanner{
+		watched:      m,
+		onDelta:      onDelta,
+		accumulators: make(map[string]*valueAcc),
+	}
 }
 
 // Push feeds a chunk of raw text from the model stream. It appends the
@@ -86,6 +118,41 @@ func (s *JSONStringScanner) Push(chunk string) {
 // FullText returns every byte pushed into the scanner so far.
 func (s *JSONStringScanner) FullText() string {
 	return string(s.fullText)
+}
+
+// Values snapshots the scanner's per-key accumulators into a typed map.
+// Strings are decoded; "true"/"false"/"null" become bool/nil; other
+// literals are parsed as float64 or returned as the raw trimmed string
+// on parse failure. Keys that the scanner did not see (including those
+// whose value was a nested object/array, which is skipped) are absent.
+func (s *JSONStringScanner) Values() map[string]any {
+	out := make(map[string]any, len(s.accumulators))
+	for key, acc := range s.accumulators {
+		if acc == nil {
+			continue
+		}
+		switch acc.kind {
+		case valKindString:
+			out[key] = string(acc.buf)
+		case valKindLiteral:
+			raw := strings.TrimSpace(string(acc.buf))
+			switch raw {
+			case "true":
+				out[key] = true
+			case "false":
+				out[key] = false
+			case "null":
+				out[key] = nil
+			default:
+				if n, err := strconv.ParseFloat(raw, 64); err == nil {
+					out[key] = n
+				} else {
+					out[key] = raw
+				}
+			}
+		}
+	}
+	return out
 }
 
 func (s *JSONStringScanner) step(c byte) {
@@ -132,23 +199,56 @@ func (s *JSONStringScanner) step(c byte) {
 			s.esc = escNone
 			s.hexBuf = s.hexBuf[:0]
 			s.pendHigh = 0
+			s.resetAccumulator(s.curKey, valKindString)
 			s.state = stInString
 		case '{', '[':
+			// Nested structure — we don't extract these, but still skip
+			// cleanly so following keys are parsed.
 			s.nestedDepth = 1
 			s.state = stInNested
 		default:
-			// bool / number / null literal
-			s.state = stInLiteral
+			// bool / number / null literal — accumulate from the first byte.
+			s.resetAccumulator(s.curKey, valKindLiteral)
+			s.appendToAccumulator(c)
+			s.state = stCollectLiteral
 		}
 	case stInString:
 		s.stringByte(c)
-	case stInLiteral:
+	case stCollectLiteral:
 		switch c {
 		case ',':
 			s.resetKey()
 			s.state = stTop
 		case '}':
 			s.state = stDone
+		case '"':
+			// Missing comma recovery: a quote mid-literal-tail is
+			// almost certainly the start of the next key. Terminate the
+			// literal and jump into key-parsing.
+			s.resetKey()
+			s.keyBuf = s.keyBuf[:0]
+			s.esc = escNone
+			s.state = stInKey
+		case ' ', '\t', '\n', '\r':
+			// Whitespace ends the literal; wait for the separator
+			// (or a missing-comma quote) in stAfterValue.
+			s.state = stAfterValue
+		default:
+			s.appendToAccumulator(c)
+		}
+	case stAfterValue:
+		switch c {
+		case ',':
+			s.resetKey()
+			s.state = stTop
+		case '}':
+			s.state = stDone
+		case '"':
+			// Missing comma recovery: next key starts here.
+			s.resetKey()
+			s.keyBuf = s.keyBuf[:0]
+			s.esc = escNone
+			s.state = stInKey
 		}
 	case stInNested:
 		switch c {
@@ -171,6 +271,26 @@ func (s *JSONStringScanner) resetKey() {
 	s.watching = false
 }
 
+// resetAccumulator initialises or overwrites the accumulator for key.
+// Overwrite semantics give "last-wins" behaviour for duplicate keys.
+func (s *JSONStringScanner) resetAccumulator(key string, kind valueKind) {
+	if key == "" {
+		return
+	}
+	s.accumulators[key] = &valueAcc{kind: kind}
+}
+
+// appendToAccumulator writes a raw byte to the current key's accumulator.
+// Used by the literal-collection path.
+func (s *JSONStringScanner) appendToAccumulator(c byte) {
+	if s.curKey == "" {
+		return
+	}
+	if acc := s.accumulators[s.curKey]; acc != nil {
+		acc.buf = append(acc.buf, c)
+	}
+}
+
 func (s *JSONStringScanner) stringByte(c byte) {
 	switch s.esc {
 	case escNone:
@@ -181,7 +301,7 @@ func (s *JSONStringScanner) stringByte(c byte) {
 			// End of string value. Transition state first so flushDelta
 			// treats this as "no more bytes coming for this key" and emits
 			// any dangling partial-UTF-8 carry instead of retaining it.
-			s.state = stInLiteral // drives the comma/brace skip
+			s.state = stAfterValue
 			s.flushDelta()
 			s.resetKey()
 			s.carry = s.carry[:0]
@@ -254,19 +374,33 @@ func (s *JSONStringScanner) stringByte(c byte) {
 	}
 }
 
+// appendByte writes a decoded byte to (a) the current key's accumulator
+// and (b) — only for watched keys — the streaming delta buffer.
 func (s *JSONStringScanner) appendByte(c byte) {
+	if s.curKey != "" {
+		if acc := s.accumulators[s.curKey]; acc != nil {
+			acc.buf = append(acc.buf, c)
+		}
+	}
 	if !s.watching {
 		return
 	}
 	s.deltaBuf = append(s.deltaBuf, c)
 }
 
+// appendRune writes a decoded rune's UTF-8 bytes to accumulator and
+// (for watched keys) delta buffer.
 func (s *JSONStringScanner) appendRune(r rune) {
+	var buf [4]byte
+	n := utf8.EncodeRune(buf[:], r)
+	if s.curKey != "" {
+		if acc := s.accumulators[s.curKey]; acc != nil {
+			acc.buf = append(acc.buf, buf[:n]...)
+		}
+	}
 	if !s.watching {
 		return
 	}
-	var buf [4]byte
-	n := utf8.EncodeRune(buf[:], r)
 	s.deltaBuf = append(s.deltaBuf, buf[:n]...)
 }
 

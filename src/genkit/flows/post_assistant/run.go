@@ -220,25 +220,41 @@ func runPostAssistant(
 			resp.Usage.InputTokens+resp.Usage.OutputTokens)
 	}
 
-	// ── Parse response ───────────────────────────────────────────────────────
-	text := strings.TrimSpace(resp.Text())
-	// Strip markdown code fences if present.
-	if strings.HasPrefix(text, "```") {
-		if i := strings.Index(text, "\n"); i >= 0 {
-			text = text[i+1:]
-		}
-		text = strings.TrimSuffix(strings.TrimSpace(text), "```")
-		text = strings.TrimSpace(text)
+	// ── Assemble response from scanner ───────────────────────────────────────
+	// The scanner has been processing every chunk in the streaming callback
+	// above. Its Values() method returns the parsed top-level fields —
+	// strings decoded, literals coerced — without going through
+	// encoding/json. This bypasses the whole class of Claude JSON-drift
+	// bugs (trailing commas, missing separators, preamble prose, literal
+	// newlines inside strings, truncation) that would otherwise hard-fail
+	// the final Unmarshal. See scanner_test.go TestValues_* for coverage.
+	vals := scanner.Values()
+	result := PostAssistantResponse{}
+	if s, ok := vals["explanation"].(string); ok {
+		result.Explanation = s
 	}
-	// Strip trailing commas Claude occasionally emits before closing braces
-	// or brackets. This is a quote-aware scan so commas inside string values
-	// are preserved.
-	text = stripTrailingCommas(text)
+	if s, ok := vals["updatedContent"].(string); ok {
+		result.UpdatedContent = s
+	}
+	if s, ok := vals["action"].(string); ok {
+		result.Action = s
+	}
+	if b, ok := vals["saveVersion"].(bool); ok {
+		result.SaveVersion = b
+	}
+	if s, ok := vals["versionNote"].(string); ok {
+		result.VersionNote = s
+	}
 
-	var result PostAssistantResponse
-	if err := json.Unmarshal([]byte(text), &result); err != nil {
-		log.Printf("post_assistant[%s]: unparseable model response (len=%d): %.500s", req.PostID, len(text), text)
-		return nil, &AIError{Msg: fmt.Sprintf("failed to parse model response as JSON: %v\nraw: %.300s", err, text)}
+	// Sanity check: if the scanner couldn't extract the two required
+	// fields (explanation + action), the response is unusable — log the
+	// raw text and surface a model-error. This shouldn't happen in
+	// practice; if it does, the log is the evidence.
+	if result.Explanation == "" || result.Action == "" {
+		raw := strings.TrimSpace(resp.Text())
+		log.Printf("post_assistant[%s]: scanner failed to extract required fields (len=%d): %.500s",
+			req.PostID, len(raw), raw)
+		return nil, &AIError{Msg: "model response did not contain the expected fields"}
 	}
 
 	// Content is persisted and returned as Markdown. The frontend is the
