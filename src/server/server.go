@@ -73,7 +73,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	// discoverable by the Genkit Dev UI. Plugins are collected first, then
 	// passed to a single genkit.Init() call.
 	var generateDraft func(context.Context, string, content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)
-	var assistantCallback func(context.Context, post_assistant.PostAssistantRequest) (*post_assistant.PostAssistantResponse, error)
+	var assistantCallback func(context.Context, post_assistant.PostAssistantRequest, post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error)
 
 	log.Printf("genkit: initialising (GENKIT_ENV=%s)", os.Getenv("GENKIT_ENV"))
 

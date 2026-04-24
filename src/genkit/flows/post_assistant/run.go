@@ -28,6 +28,7 @@ func runPostAssistant(
 	repos PostAssistantRepos,
 	systemTmpl, contextTmpl *template.Template,
 	tools *toolSet,
+	onEvent OnEventFunc,
 ) (*PostAssistantResponse, error) {
 	start := time.Now()
 	log.Printf("post_assistant[%s]: starting instruction=%.80s", req.PostID, req.Instruction)
@@ -127,9 +128,70 @@ func runPostAssistant(
 	// System + context block forms the stable cached prefix.
 	systemBlock := actx.SystemPrompt + "\n\n" + actx.ContextBlock
 
+	// Set up an incremental JSON scanner that watches the two string-valued
+	// fields whose deltas we surface to the client. The scanner decodes
+	// JSON escapes as they arrive, so the client never sees raw \n / \uXXXX.
+	scanner := NewJSONStringScanner(
+		[]string{"explanation", "updatedContent"},
+		func(key, delta string) {
+			switch key {
+			case "explanation":
+				emit(onEvent, SSEEventExplanationDelta, DeltaEventPayload{Delta: delta})
+			case "updatedContent":
+				emit(onEvent, SSEEventContentDelta, DeltaEventPayload{Delta: delta})
+			}
+		},
+	)
+
+	// Tool calls arrive in many partial streaming fragments as the model
+	// builds the input JSON; we only surface the final complete request.
+	// Tool responses are small and emitted once. Both are deduped by Ref
+	// since genkit may replay the same part in later chunks.
+	emittedToolCalls := map[string]bool{}
+	emittedToolResults := map[string]bool{}
+
+	streamCb := func(_ context.Context, chunk *ai.ModelResponseChunk) error {
+		if chunk == nil || chunk.Aggregated {
+			return nil
+		}
+		for _, part := range chunk.Content {
+			switch {
+			case part.IsText():
+				scanner.Push(part.Text)
+			case part.IsToolRequest():
+				tr := part.ToolRequest
+				if tr == nil || tr.Partial {
+					continue
+				}
+				if emittedToolCalls[tr.Ref] {
+					continue
+				}
+				emittedToolCalls[tr.Ref] = true
+				emit(onEvent, SSEEventToolCall, ToolCallEventPayload{
+					Name:  tr.Name,
+					Input: tr.Input,
+					Ref:   tr.Ref,
+				})
+			case part.IsToolResponse():
+				tr := part.ToolResponse
+				if tr == nil || emittedToolResults[tr.Ref] {
+					continue
+				}
+				emittedToolResults[tr.Ref] = true
+				emit(onEvent, SSEEventToolResult, ToolResultEventPayload{
+					Name: tr.Name,
+					Ref:  tr.Ref,
+					OK:   true,
+				})
+			}
+		}
+		return nil
+	}
+
 	// Use streaming mode — the Anthropic API requires it for requests
 	// that may involve tool calls (which can exceed the 10-minute timeout
-	// for non-streaming requests).
+	// for non-streaming requests). The streaming callback fans chunks out
+	// as SSE events for the UI.
 	resp, err := genkit.Generate(ctx, g,
 		ai.WithModelName(modelName),
 		ai.WithSystem(systemBlock),
@@ -138,7 +200,7 @@ func runPostAssistant(
 		ai.WithTools(tools.listAssets, tools.getAssetChunks, tools.searchAssetChunks, tools.getCurrentContent),
 		ai.WithMaxTurns(3),
 		ai.WithOutputType(PostAssistantResponse{}),
-		ai.WithStreaming(func(_ context.Context, _ *ai.ModelResponseChunk) error { return nil }),
+		ai.WithStreaming(streamCb),
 		ai.WithConfig(anthropic.MessageNewParams{
 			MaxTokens: maxTokens,
 		}),
@@ -244,6 +306,10 @@ func runPostAssistant(
 
 	log.Printf("post_assistant[%s]: done in %s action=%s saveVersion=%v",
 		req.PostID, time.Since(start).Round(time.Millisecond), result.Action, result.SaveVersion)
+
+	// Emit the final structured response. The client treats this as the
+	// canonical result; delta events before this are preview-only.
+	emit(onEvent, SSEEventComplete, &result)
 
 	return &result, nil
 }

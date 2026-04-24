@@ -18,7 +18,7 @@ func initPostAssistant(
 	cfg *config.Config,
 	embedder ai.Embedder,
 	repos post_assistant.PostAssistantRepos,
-) (func(ctx context.Context, req post_assistant.PostAssistantRequest) (*post_assistant.PostAssistantResponse, error), error) {
+) (func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error), error) {
 	flowCfg := post_assistant.PostAssistantFlowConfig{
 		ModelID:         cfg.ModelID,
 		MaxOutputTokens: cfg.MaxOutputTokens,

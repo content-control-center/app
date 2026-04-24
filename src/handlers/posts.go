@@ -1,13 +1,16 @@
 package handlers
 
 import (
+	"bufio"
+	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
-	"context"
-
 	"github.com/gofiber/fiber/v2"
+	"github.com/valyala/fasthttp"
 
 	"github.com/content-control-center/app/src/genkit/flows/post_assistant"
 	"github.com/content-control-center/app/src/models"
@@ -35,7 +38,7 @@ type PostsHandler struct {
 	versionRepo repository.PostVersionRepository
 	messageRepo repository.PostAssistantMessageRepository
 	auth        fiber.Handler
-	assistant   func(ctx context.Context, req post_assistant.PostAssistantRequest) (*post_assistant.PostAssistantResponse, error)
+	assistant   func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error)
 }
 
 func NewPostsHandler(
@@ -43,7 +46,7 @@ func NewPostsHandler(
 	versionRepo repository.PostVersionRepository,
 	messageRepo repository.PostAssistantMessageRepository,
 	auth fiber.Handler,
-	assistant func(ctx context.Context, req post_assistant.PostAssistantRequest) (*post_assistant.PostAssistantResponse, error),
+	assistant func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error),
 ) *PostsHandler {
 	return &PostsHandler{repo: repo, versionRepo: versionRepo, messageRepo: messageRepo, auth: auth, assistant: assistant}
 }
@@ -311,15 +314,19 @@ type assistantRequest struct {
 }
 
 // Assistant godoc
-// @Summary      Post assistant
-// @Description  Sends an instruction to the AI assistant to enhance the post content.
+// @Summary      Post assistant (SSE)
+// @Description  Sends an instruction to the AI assistant and streams progress via Server-Sent Events.
+// @Description  Events: "explanation_delta" and "content_delta" carry {"delta":"..."} fragments as the
+// @Description  model generates the explanation and updated content. "tool_call" and "tool_result" signal
+// @Description  asset-retrieval tool invocations. "complete" carries the final PostAssistantResponse.
+// @Description  "error" carries {"message":"...","code":<http_code>}.
 // @Tags         posts
 // @Accept       json
-// @Produce      json
+// @Produce      text/event-stream
 // @Security     CookieAuth
 // @Param        id    path      string           true  "Post Sqid"
 // @Param        body  body      assistantRequest true  "Instruction payload"
-// @Success      200   {object}  post_assistant.PostAssistantResponse
+// @Success      200  "SSE stream: delta / tool_call / tool_result / complete / error events"
 // @Failure      400   {object}  map[string]string
 // @Failure      401   {object}  map[string]string
 // @Failure      404   {object}  map[string]string
@@ -337,22 +344,50 @@ func (h *PostsHandler) Assistant(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
 	}
 
-	resp, err := h.assistant(c.Context(), post_assistant.PostAssistantRequest{
-		PostID:      c.Params("id"),
-		Instruction: req.Instruction,
-	})
-	if err != nil {
-		var ve *post_assistant.ValidationError
-		var ae *post_assistant.AIError
-		switch {
-		case errors.As(err, &ve):
-			return fiber.NewError(fiber.StatusBadRequest, ve.Msg)
-		case errors.As(err, &ae):
-			return fiber.NewError(fiber.StatusBadGateway, ae.Msg)
+	c.Set("Content-Type", "text/event-stream")
+	c.Set("Cache-Control", "no-cache")
+	c.Set("Connection", "keep-alive")
+	c.Set("X-Accel-Buffering", "no")
+
+	postID := c.Params("id")
+	instruction := req.Instruction
+	assistant := h.assistant
+
+	c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
+		writeEvent := func(event string, data any) {
+			b, _ := json.Marshal(data)
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
+			_ = w.Flush()
 		}
-		return err
-	}
-	return c.JSON(resp)
+
+		onEvent := post_assistant.OnEventFunc(func(name post_assistant.SSEEventKind, data any) {
+			writeEvent(string(name), data)
+		})
+
+		_, err := assistant(context.Background(), post_assistant.PostAssistantRequest{
+			PostID:      postID,
+			Instruction: instruction,
+		}, onEvent)
+		if err != nil {
+			code := fiber.StatusInternalServerError
+			msg := err.Error()
+			var ve *post_assistant.ValidationError
+			var ae *post_assistant.AIError
+			switch {
+			case errors.As(err, &ve):
+				code = fiber.StatusBadRequest
+				msg = ve.Msg
+			case errors.As(err, &ae):
+				code = fiber.StatusBadGateway
+				msg = ae.Msg
+			}
+			writeEvent(string(post_assistant.SSEEventError), post_assistant.ErrorEventPayload{Message: msg, Code: code})
+			return
+		}
+		// "complete" is emitted by the runner itself; nothing to write here.
+	}))
+
+	return nil
 }
 
 // ── Messages ─────────────────────────────────────────────────────────────────

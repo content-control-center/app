@@ -31,11 +31,14 @@ Set saveVersion to false for:
 - Iterative refinements within the same editing intent
 
 ## Response format
-You MUST respond with a single JSON object matching this exact schema:
+You MUST respond with a single JSON object matching this exact schema.
+Field order matters — emit keys in exactly the sequence shown so the
+user-visible fields (`explanation`, then `updatedContent`) start streaming
+before the smaller metadata fields:
 {
-  "action": "edited" or "declined",
-  "updatedContent": "the full updated post content as Markdown (empty string if declined)",
   "explanation": "what you changed or why you declined",
+  "updatedContent": "the full updated post content as Markdown (empty string if declined)",
+  "action": "edited" or "declined",
   "saveVersion": true or false,
   "versionNote": "short note describing the version (only when saveVersion is true)"
 }
