@@ -128,15 +128,14 @@ func Init(g *genkit.Genkit, embedder ai.Embedder, repo repository.AssetChunksRep
 }
 
 func embedAsset(ctx context.Context, embedder ai.Embedder, repo repository.AssetChunksRepository, in EmbedAssetInput) error {
-	plainText, err := ExtractText(in.Content)
-	if err != nil {
-		return fmt.Errorf("extract text from asset %s: %w", in.AssetID, err)
-	}
+	// Asset content is stored as Markdown — feed it directly to the
+	// chunker/embedder. Markdown is readable enough for embeddings; stripping
+	// syntax wasn't worth its complexity cost.
 
 	// Prepend title so every chunk carries the asset's identity.
 	fullText := in.Title
-	if plainText != "" {
-		fullText += "\n" + plainText
+	if in.Content != "" {
+		fullText += "\n" + in.Content
 	}
 
 	chunkTexts := ChunkText(fullText)

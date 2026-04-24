@@ -16,7 +16,6 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
-	"github.com/content-control-center/app/src/markdown"
 	"github.com/content-control-center/app/src/models"
 )
 
@@ -232,10 +231,8 @@ func runPostAssistant(
 		return nil, &AIError{Msg: fmt.Sprintf("failed to parse model response as JSON: %v\nraw: %.300s", err, text)}
 	}
 
-	// Convert Markdown content to BlockNote JSON for storage.
-	if result.Action == "edited" && result.UpdatedContent != "" {
-		result.UpdatedContent = markdown.ToBlocks([]byte(result.UpdatedContent))
-	}
+	// Content is persisted and returned as Markdown. The frontend is the
+	// only layer that converts to/from BlockNote JSON for editor rendering.
 
 	// ── Persist conversation turn ────────────────────────────────────────────
 	userMsgID, err := models.NewID()

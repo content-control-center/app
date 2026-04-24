@@ -711,7 +711,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 			It("streams delta and complete events with text/event-stream content-type", func() {
 				final := &post_assistant.PostAssistantResponse{
 					Explanation:    "shortened it",
-					UpdatedContent: "[]",
+					UpdatedContent: "# Shorter body",
 					Action:         "edited",
 				}
 				stub := func(_ context.Context, _ post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error) {

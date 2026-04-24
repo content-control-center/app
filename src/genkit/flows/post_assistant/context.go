@@ -10,7 +10,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/content-control-center/app/src/genkit/flows"
 	"github.com/content-control-center/app/src/models"
 )
 
@@ -133,13 +132,6 @@ func assembleContext(
 		return nil, err
 	}
 
-	// Extract plain text from BlockNote JSON so the model sees readable
-	// content rather than raw JSON. Falls back to raw content on error.
-	postContent := post.Content
-	if plainText, err := flows.ExtractText(post.Content); err == nil && plainText != "" {
-		postContent = plainText
-	}
-
 	data := contextTemplateData{
 		CampaignName:        campaign.Name,
 		CampaignDescription: campaign.Description,
@@ -149,7 +141,7 @@ func assembleContext(
 		Language:            campaign.Language,
 		PhaseName:           phaseName,
 		PhaseDescription:    phaseDescription,
-		PostContent:         postContent,
+		PostContent:         post.Content,
 		Assets:              summaries,
 	}
 

@@ -5,22 +5,11 @@ import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
 
 /**
- * Try to parse content as BlockNote JSON first, fall back to Markdown.
+ * Parse Markdown content into BlockNote blocks. The server always returns
+ * Markdown now — this layer is the sole producer of BlockNote JSON.
  */
 function parseContent(content) {
   if (!content) return undefined;
-
-  // Try BlockNote JSON
-  try {
-    const parsed = JSON.parse(content);
-    if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].type) {
-      return parsed;
-    }
-  } catch {
-    // not JSON
-  }
-
-  // Fall back to Markdown parsing
   try {
     const tmp = BlockNoteEditor.create();
     return tmp.tryParseMarkdownToBlocks(content);

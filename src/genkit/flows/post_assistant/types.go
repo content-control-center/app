@@ -18,7 +18,7 @@ type PostAssistantRequest struct {
 // client before the smaller metadata fields are generated.
 type PostAssistantResponse struct {
 	Explanation    string `json:"explanation"                  jsonschema:"description=Human-readable explanation of what was changed or why the request was declined"`
-	UpdatedContent string `json:"updatedContent"               jsonschema:"description=The full updated post content; empty when action is declined"`
+	UpdatedContent string `json:"updatedContent"               jsonschema:"description=The full updated post content as Markdown; empty when action is declined"`
 	Action         string `json:"action"                       jsonschema:"description=edited when content was changed or declined when the request is out of scope,enum=edited,enum=declined"`
 	SaveVersion    bool   `json:"saveVersion"                  jsonschema:"description=True when a new version snapshot should be created"`
 	VersionNote    string `json:"versionNote,omitempty"        jsonschema:"description=Short note describing the version; only present when saveVersion is true"`

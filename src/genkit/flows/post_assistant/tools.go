@@ -216,10 +216,6 @@ func toolGetCurrentContent(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("fetch post: %w", err)
 	}
-	// Return plain text so the model can read the content.
-	if plainText, err := flows.ExtractText(post.Content); err == nil && plainText != "" {
-		return plainText, nil
-	}
 	return post.Content, nil
 }
 

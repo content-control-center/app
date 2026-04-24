@@ -13,7 +13,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/content-control-center/app/src/genkit/flows"
-	"github.com/content-control-center/app/src/markdown"
 	"github.com/content-control-center/app/src/models"
 	"github.com/content-control-center/app/src/repository"
 	"github.com/content-control-center/app/src/storage"
@@ -243,10 +242,7 @@ func (h *AssetsHandler) processMarkdownUpload(c *fiber.Ctx, fh *multipart.FileHe
 		return res
 	}
 
-	content := "[]"
-	if len(raw) > 0 {
-		content = markdown.ToBlocks(raw)
-	}
+	content := string(raw)
 	title := strings.TrimSuffix(filepath.Base(fh.Filename), filepath.Ext(fh.Filename))
 
 	id, err := models.NewID()

@@ -135,6 +135,7 @@ func (h *PostsHandler) ListByCampaign(c *fiber.Ctx) error {
 // Create godoc
 // @Summary      Create post
 // @Description  Creates a new post. The created_by field is set from the authenticated session.
+// @Description  The `content` field is a Markdown string; the frontend renders it via BlockNote.
 // @Tags         posts
 // @Accept       json
 // @Produce      json
@@ -218,6 +219,7 @@ func (h *PostsHandler) Get(c *fiber.Ctx) error {
 // Update godoc
 // @Summary      Update post
 // @Description  Replaces all mutable fields of an existing post.
+// @Description  The `content` field is a Markdown string; the frontend renders it via BlockNote.
 // @Tags         posts
 // @Accept       json
 // @Produce      json
@@ -316,9 +318,10 @@ type assistantRequest struct {
 // Assistant godoc
 // @Summary      Post assistant (SSE)
 // @Description  Sends an instruction to the AI assistant and streams progress via Server-Sent Events.
-// @Description  Events: "explanation_delta" and "content_delta" carry {"delta":"..."} fragments as the
-// @Description  model generates the explanation and updated content. "tool_call" and "tool_result" signal
-// @Description  asset-retrieval tool invocations. "complete" carries the final PostAssistantResponse.
+// @Description  Events: "explanation_delta" and "content_delta" carry {"delta":"..."} fragments (Markdown)
+// @Description  as the model generates the explanation and updated content. "tool_call" and "tool_result"
+// @Description  signal asset-retrieval tool invocations. "complete" carries the final PostAssistantResponse
+// @Description  whose updatedContent is a Markdown string.
 // @Description  "error" carries {"message":"...","code":<http_code>}.
 // @Tags         posts
 // @Accept       json
