@@ -5,14 +5,14 @@ import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
 
 /**
- * Try to parse description as BlockNote JSON first, fall back to Markdown.
+ * Try to parse content as BlockNote JSON first, fall back to Markdown.
  */
-function parseContent(description) {
-  if (!description) return undefined;
+function parseContent(content) {
+  if (!content) return undefined;
 
   // Try BlockNote JSON
   try {
-    const parsed = JSON.parse(description);
+    const parsed = JSON.parse(content);
     if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].type) {
       return parsed;
     }
@@ -23,7 +23,7 @@ function parseContent(description) {
   // Fall back to Markdown parsing
   try {
     const tmp = BlockNoteEditor.create();
-    return tmp.tryParseMarkdownToBlocks(description);
+    return tmp.tryParseMarkdownToBlocks(content);
   } catch {
     return undefined;
   }
@@ -66,8 +66,8 @@ function EditorView({ initialContent, onChange, onWordCount }) {
   return <BlockNoteView editor={editor} theme="light" />;
 }
 
-export function PostContent({ post, description, onContentChange }) {
-  const blocks = useMemo(() => parseContent(description), [description]);
+export function PostContent({ post, content, onContentChange }) {
+  const blocks = useMemo(() => parseContent(content), [content]);
   const [wordCount, setWordCount] = useState(0);
 
   if (!post) {
@@ -93,7 +93,7 @@ export function PostContent({ post, description, onContentChange }) {
           <div className="py-4">
             {blocks ? (
               <EditorView
-                key={description}
+                key={content}
                 initialContent={blocks}
                 onChange={onContentChange}
                 onWordCount={setWordCount}

@@ -25,7 +25,7 @@ function App() {
   const [campaignsLoading, setCampaignsLoading] = useState(false);
   const [campaign, setCampaign] = useState(null);
   const [post, setPost] = useState(null);
-  const [description, setDescription] = useState("");
+  const [content, setContent] = useState("");
   const [versions, setVersions] = useState([]);
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -61,7 +61,7 @@ function App() {
                 const postData = await postRes.json();
                 if (!cancelled) {
                   setPost(postData);
-                  setDescription(postData.content || postData.description || "");
+                  setContent(postData.content || "");
                   // Also fetch versions and messages
                   const [verRes, msgRes] = await Promise.all([
                     fetch(`${base}/api/posts/${urlPostId}/versions`, { credentials: "include" }),
@@ -147,7 +147,7 @@ function App() {
       if (res.ok) {
         const data = await res.json();
         setPost(data);
-        setDescription(data.content || data.description || "");
+        setContent(data.content || "");
       }
     } catch {
       // silent
@@ -190,7 +190,7 @@ function App() {
       if (campaign?.id === id) {
         setCampaign(null);
         setPost(null);
-        setDescription("");
+        setContent("");
         setVersions([]);
         setMessages([]);
         const params = new URLSearchParams(window.location.search);
@@ -206,7 +206,7 @@ function App() {
   const handleSelectCampaign = (c) => {
     setCampaign(c);
     setPost(null);
-    setDescription("");
+    setContent("");
     setVersions([]);
     setMessages([]);
     const params = new URLSearchParams(window.location.search);
@@ -217,7 +217,7 @@ function App() {
 
   const handleSelectPost = (p) => {
     setPost(p);
-    setDescription(p.content || p.description || "");
+    setContent(p.content || "");
     setMessages([]);
     setVersions([]);
     fetchMessages(p.id);
@@ -261,8 +261,8 @@ function App() {
         },
       ]);
 
-      if (data.action === "edited" && data.updatedDescription) {
-        setDescription(data.updatedDescription);
+      if (data.action === "edited" && data.updatedContent) {
+        setContent(data.updatedContent);
       }
 
       await Promise.all([fetchVersions(post.id), refreshPost(post.id)]);
@@ -421,7 +421,7 @@ function App() {
 
         {/* Post Content */}
         <section className="flex h-full flex-1 flex-col overflow-hidden" style={{ minWidth: "200px" }}>
-          <PostContent post={post} description={description} />
+          <PostContent post={post} content={content} />
         </section>
 
         {/* Assistant — collapsible to the right */}
