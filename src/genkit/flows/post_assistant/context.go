@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"text/template"
 	"time"
@@ -38,10 +39,14 @@ type assistantContext struct {
 }
 
 // contextCacheEntry is a cached assistantContext keyed by post ID.
+// fingerprint captures every post field that feeds into the rendered
+// prompt — any change to it invalidates the entry. Tracked explicitly
+// rather than diffing field-by-field so adding a new field is a one-line
+// update to postFingerprint.
 type contextCacheEntry struct {
-	ctx       *assistantContext
-	contentAt string // post.Content snapshot used to build this entry
-	expiresAt time.Time
+	ctx         *assistantContext
+	fingerprint string
+	expiresAt   time.Time
 }
 
 var (
@@ -49,18 +54,36 @@ var (
 	contextCacheMu sync.Mutex
 )
 
-// assembleContextCached returns the cached context for the given post if it
-// exists, the post content hasn't changed, and the TTL hasn't expired.
-// Otherwise it assembles a fresh context, caches it, and returns it.
+// postFingerprint returns a stable string that changes whenever any
+// prompt-affecting field of the post changes (content, attached assets,
+// phase). Asset IDs are joined without sorting so a reorder also busts
+// the cache — the order is surfaced to the model via listAssets output.
+func postFingerprint(post *models.Post) string {
+	var b strings.Builder
+	b.WriteString(post.Content)
+	b.WriteByte('\x1f')
+	b.WriteString(strings.Join(post.UsedAssetIDs, ","))
+	b.WriteByte('\x1f')
+	if post.CampaignTypePhaseID != nil {
+		b.WriteString(*post.CampaignTypePhaseID)
+	}
+	return b.String()
+}
+
+// assembleContextCached returns the cached context for the given post if
+// the fingerprint matches and the TTL hasn't expired. Otherwise it
+// assembles a fresh context, caches it, and returns it.
 func assembleContextCached(
 	ctx context.Context,
 	post *models.Post,
 	repos PostAssistantRepos,
 	systemTmpl, contextTmpl *template.Template,
 ) (*assistantContext, error) {
+	fp := postFingerprint(post)
+
 	contextCacheMu.Lock()
 	if entry, ok := contextCache[post.ID]; ok {
-		if time.Now().Before(entry.expiresAt) && entry.contentAt == post.Content {
+		if time.Now().Before(entry.expiresAt) && entry.fingerprint == fp {
 			contextCacheMu.Unlock()
 			return entry.ctx, nil
 		}
@@ -75,9 +98,9 @@ func assembleContextCached(
 
 	contextCacheMu.Lock()
 	contextCache[post.ID] = &contextCacheEntry{
-		ctx:       actx,
-		contentAt: post.Content,
-		expiresAt: time.Now().Add(contextCacheTTL),
+		ctx:         actx,
+		fingerprint: fp,
+		expiresAt:   time.Now().Add(contextCacheTTL),
 	}
 	contextCacheMu.Unlock()
 
