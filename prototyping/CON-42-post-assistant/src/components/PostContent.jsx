@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { BlockNoteEditor } from "@blocknote/core";
 import { useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
@@ -66,9 +66,26 @@ function EditorView({ initialContent, onChange, onWordCount }) {
   return <BlockNoteView editor={editor} theme="light" />;
 }
 
-export function PostContent({ post, content, onContentChange }) {
+// StreamingPreview renders the raw Markdown arriving from the assistant as
+// an ordered list of fade-in spans. React's index-based keys ensure that
+// already-mounted chunks do not re-animate as new chunks are appended —
+// only the newest span runs the CSS animation on its initial mount.
+// Markdown is shown as plain text during streaming (no live formatting);
+// the authoritative BlockNote render kicks in on the `complete` event.
+function StreamingPreview({ chunks }) {
+  return (
+    <div className="px-10 py-2 text-sm leading-relaxed whitespace-pre-wrap text-slate-700">
+      {chunks.map((c, i) => (
+        <span key={i} className="chunk-fade">{c}</span>
+      ))}
+    </div>
+  );
+}
+
+export function PostContent({ post, content, streamingChunks, onContentChange }) {
   const blocks = useMemo(() => parseContent(content), [content]);
   const [wordCount, setWordCount] = useState(0);
+  const isStreaming = Array.isArray(streamingChunks) && streamingChunks.length > 0;
 
   if (!post) {
     return (
@@ -91,15 +108,15 @@ export function PostContent({ post, content, onContentChange }) {
             </h1>
           )}
           <div className="py-4">
-            {blocks ? (
+            {isStreaming ? (
+              <StreamingPreview chunks={streamingChunks} />
+            ) : (
               <EditorView
-                key={content}
+                key={content || "empty"}
                 initialContent={blocks}
                 onChange={onContentChange}
                 onWordCount={setWordCount}
               />
-            ) : (
-              <p className="px-10 text-sm italic text-slate-400">No content yet</p>
             )}
           </div>
         </div>

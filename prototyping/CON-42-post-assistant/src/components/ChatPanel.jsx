@@ -33,7 +33,7 @@ export function ChatPanel({ messages, onSend, isLoading }) {
           </p>
         )}
         {messages.map((msg, i) => (
-          <div key={i} className={`fade-in-card flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+          <div key={i} className={`fade-in-card flex items-center gap-2 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
             <div
               className={`max-w-[85%] rounded-lg px-3 py-2 text-xs leading-relaxed ${
                 msg.role === "user"
@@ -61,25 +61,32 @@ export function ChatPanel({ messages, onSend, isLoading }) {
                   )}
                 </div>
               )}
-              <p className="whitespace-pre-wrap">{msg.text}</p>
+              {Array.isArray(msg.toolCalls) && msg.toolCalls.length > 0 && (
+                <div className="mb-1.5 flex flex-wrap gap-1">
+                  {msg.toolCalls.map((tc, j) => (
+                    <span
+                      key={`${tc.ref || tc.name}-${j}`}
+                      className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                        tc.status === "done"
+                          ? "bg-slate-100 text-slate-500"
+                          : "bg-amber-50 text-amber-700"
+                      }`}
+                    >
+                      {tc.status === "done" ? "✓" : "⋯"} {tc.name}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {msg.text
+                ? <p className="whitespace-pre-wrap">{msg.text}</p>
+                : msg.streaming && <p className="text-slate-400 italic">thinking…</p>}
               {msg.versionNote && (
                 <p className="mt-1 text-[10px] text-slate-400 italic">Version note: {msg.versionNote}</p>
               )}
             </div>
+            {msg.streaming && <span className="spinner" aria-label="Assistant is responding" title="Assistant is responding" />}
           </div>
         ))}
-        {isLoading && (
-          <div className="flex justify-start fade-in-card">
-            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-xs text-slate-400 flex items-center gap-1.5">
-              <span className="thinking-dots flex gap-0.5">
-                <span className="dot" />
-                <span className="dot" />
-                <span className="dot" />
-              </span>
-              Thinking…
-            </div>
-          </div>
-        )}
         <div ref={bottomRef} />
       </div>
 

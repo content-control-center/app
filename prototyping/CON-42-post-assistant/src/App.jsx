@@ -26,6 +26,12 @@ function App() {
   const [campaign, setCampaign] = useState(null);
   const [post, setPost] = useState(null);
   const [content, setContent] = useState("");
+  // Individual Markdown fragments from content_delta events while the
+  // assistant is streaming. Each fragment renders as its own span so the
+  // React key preserves old chunks (no re-animation) while new chunks
+  // fade in on mount. Cleared on complete — the editor then snaps back
+  // to the authoritative BlockNote JSON.
+  const [streamingChunks, setStreamingChunks] = useState([]);
   const [versions, setVersions] = useState([]);
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -231,43 +237,123 @@ function App() {
   const handleSend = async (instruction) => {
     if (!post) return;
 
-    setMessages((prev) => [...prev, { role: "user", text: instruction }]);
+    // Push the user message and a placeholder assistant bubble that the
+    // stream will progressively fill in.
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", text: instruction },
+      { role: "assistant", text: "", toolCalls: [], streaming: true },
+    ]);
+    setStreamingChunks([]);
     setIsLoading(true);
+
+    // Update only the last message in the list — used by each SSE event
+    // handler to mutate the in-flight assistant bubble in place.
+    const updateLast = (patch) => {
+      setMessages((prev) => {
+        if (prev.length === 0) return prev;
+        const next = prev.slice();
+        const last = next[next.length - 1];
+        next[next.length - 1] = typeof patch === "function" ? patch(last) : { ...last, ...patch };
+        return next;
+      });
+    };
 
     try {
       const url = buildAssistantEndpoint(baseUrl, post.id);
       const res = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
         credentials: "include",
         body: JSON.stringify({ instruction }),
       });
 
-      if (!res.ok) {
-        const body = await res.text();
+      if (!res.ok || !res.body) {
+        const body = res.body ? await res.text() : "no response body";
         throw new Error(`Request failed (${res.status}): ${body}`);
       }
 
-      const data = await res.json();
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          text: data.explanation || "Done.",
-          action: data.action,
-          saveVersion: data.saveVersion,
-          versionNote: data.versionNote,
-        },
-      ]);
+      const handleEvent = (event, dataStr) => {
+        let data;
+        try { data = JSON.parse(dataStr); } catch { return; }
+        switch (event) {
+          case "explanation_delta":
+            updateLast((m) => ({ ...m, text: (m.text || "") + (data.delta || "") }));
+            break;
+          case "content_delta":
+            if (data.delta) setStreamingChunks((prev) => [...prev, data.delta]);
+            break;
+          case "tool_call":
+            updateLast((m) => ({
+              ...m,
+              toolCalls: [...(m.toolCalls || []), { name: data.name, ref: data.ref, status: "running" }],
+            }));
+            break;
+          case "tool_result":
+            updateLast((m) => ({
+              ...m,
+              toolCalls: (m.toolCalls || []).map((tc) =>
+                tc.ref === data.ref ? { ...tc, status: "done" } : tc,
+              ),
+            }));
+            break;
+          case "complete":
+            updateLast((m) => ({
+              ...m,
+              text: data.explanation || m.text || "Done.",
+              action: data.action,
+              saveVersion: data.saveVersion,
+              versionNote: data.versionNote,
+              streaming: false,
+            }));
+            if (data.action === "edited" && data.updatedContent) {
+              setContent(data.updatedContent);
+            }
+            setStreamingChunks([]);
+            break;
+          case "error":
+            updateLast({ role: "error", text: data.message || "Assistant failed", streaming: false });
+            setStreamingChunks([]);
+            break;
+          default:
+            break;
+        }
+      };
 
-      if (data.action === "edited" && data.updatedContent) {
-        setContent(data.updatedContent);
+      // Parse SSE frames: blocks separated by a blank line, each block has
+      // `event: <name>` and `data: <json>` lines.
+      const flushFrames = () => {
+        let idx;
+        while ((idx = buf.indexOf("\n\n")) >= 0) {
+          const frame = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          let event = "", dataStr = "";
+          for (const line of frame.split("\n")) {
+            if (line.startsWith("event: ")) event = line.slice(7);
+            else if (line.startsWith("data: ")) dataStr = line.slice(6);
+          }
+          if (event) handleEvent(event, dataStr);
+        }
+      };
+
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        flushFrames();
       }
+      buf += decoder.decode();
+      flushFrames();
 
       await Promise.all([fetchVersions(post.id), refreshPost(post.id)]);
     } catch (e) {
-      setMessages((prev) => [...prev, { role: "error", text: e.message }]);
+      updateLast({ role: "error", text: e.message, streaming: false });
+      setStreamingChunks([]);
     } finally {
       setIsLoading(false);
     }
@@ -421,7 +507,7 @@ function App() {
 
         {/* Post Content */}
         <section className="flex h-full flex-1 flex-col overflow-hidden" style={{ minWidth: "200px" }}>
-          <PostContent post={post} content={content} />
+          <PostContent post={post} content={content} streamingChunks={streamingChunks} />
         </section>
 
         {/* Assistant — collapsible to the right */}
