@@ -248,18 +248,35 @@ func runPostAssistant(
 		return nil, fmt.Errorf("persist user message: %w", err)
 	}
 
-	// Store only the explanation (not the full JSON with updatedContent)
-	// to keep conversation history lightweight for subsequent turns.
+	// Persist the model turn as the same JSON shape the assistant emits —
+	// minus `updatedContent`, which is bulky and would bloat history on
+	// subsequent turns. Storing JSON lets the UI reload the action /
+	// saveVersion / versionNote badges on page refresh without a round-trip
+	// through a custom parse, and gives the model its own prior response
+	// back in its native output format.
 	modelMsgID, err := models.NewID()
 	if err != nil {
 		return nil, err
 	}
-	modelSummary := result.Action + ": " + result.Explanation
+	historyJSON, err := json.Marshal(struct {
+		Action      string `json:"action"`
+		Explanation string `json:"explanation"`
+		SaveVersion bool   `json:"saveVersion"`
+		VersionNote string `json:"versionNote,omitempty"`
+	}{
+		Action:      result.Action,
+		Explanation: result.Explanation,
+		SaveVersion: result.SaveVersion,
+		VersionNote: result.VersionNote,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal model history: %w", err)
+	}
 	if err := repos.Messages.Create(ctx, &models.PostAssistantMessage{
 		ID:      modelMsgID,
 		PostID:  req.PostID,
 		Role:    "model",
-		Content: modelSummary,
+		Content: string(historyJSON),
 	}); err != nil {
 		return nil, fmt.Errorf("persist model message: %w", err)
 	}
