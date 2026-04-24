@@ -76,7 +76,7 @@ type postRequest struct {
 	CTAType             models.PostCTAType `json:"cta_type"`
 	CTAUrl              string             `json:"cta_url"`
 	TargetAudienceNotes string             `json:"target_audience_notes"`
-	UsedAssetIDs       models.StringSlice `json:"used_asset_ids"`
+	UsedAssetIDs        models.StringSlice `json:"used_asset_ids"`
 	CampaignTypePhaseID *string            `json:"campaign_type_phase_id"`
 }
 
@@ -179,7 +179,7 @@ func (h *PostsHandler) Create(c *fiber.Ctx) error {
 		CTAType:             ctaType,
 		CTAUrl:              req.CTAUrl,
 		TargetAudienceNotes: req.TargetAudienceNotes,
-		UsedAssetIDs:       nullSlice(req.UsedAssetIDs),
+		UsedAssetIDs:        nullSlice(req.UsedAssetIDs),
 		CampaignTypePhaseID: req.CampaignTypePhaseID,
 		CreatedBy:           session.UserID,
 		UsedAssets:          []models.Asset{},
@@ -312,7 +312,7 @@ type assistantRequest struct {
 
 // Assistant godoc
 // @Summary      Post assistant
-// @Description  Sends an instruction to the AI assistant to enhance the post description.
+// @Description  Sends an instruction to the AI assistant to enhance the post content.
 // @Tags         posts
 // @Accept       json
 // @Produce      json
@@ -401,7 +401,7 @@ type createVersionRequest struct {
 
 // CreateVersion godoc
 // @Summary      Create post version
-// @Description  Manually creates a version snapshot of the current post description.
+// @Description  Manually creates a version snapshot of the current post content.
 // @Tags         posts
 // @Accept       json
 // @Produce      json
@@ -444,7 +444,7 @@ func (h *PostsHandler) CreateVersion(c *fiber.Ctx) error {
 		ID:            id,
 		PostID:        post.ID,
 		VersionNumber: nextNum,
-		Description:   post.Content,
+		Content:       post.Content,
 		Note:          req.Note,
 		Creator:       "user",
 	}

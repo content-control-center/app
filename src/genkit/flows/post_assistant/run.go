@@ -59,7 +59,7 @@ func runPostAssistant(
 			ID:            id,
 			PostID:        req.PostID,
 			VersionNumber: 1,
-			Description:   post.Content,
+			Content:       post.Content,
 			Note:          "Initial version",
 			Creator:       "user",
 		}); err != nil {
@@ -135,7 +135,7 @@ func runPostAssistant(
 		ai.WithSystem(systemBlock),
 		ai.WithMessages(history...),
 		ai.WithPrompt(req.Instruction),
-		ai.WithTools(tools.listAssets, tools.getAssetChunks, tools.searchAssetChunks, tools.getCurrentDesc),
+		ai.WithTools(tools.listAssets, tools.getAssetChunks, tools.searchAssetChunks, tools.getCurrentContent),
 		ai.WithMaxTurns(3),
 		ai.WithOutputType(PostAssistantResponse{}),
 		ai.WithStreaming(func(_ context.Context, _ *ai.ModelResponseChunk) error { return nil }),
@@ -170,9 +170,9 @@ func runPostAssistant(
 		return nil, &AIError{Msg: fmt.Sprintf("failed to parse model response as JSON: %v\nraw: %.300s", err, text)}
 	}
 
-	// Convert Markdown description to BlockNote JSON for storage.
-	if result.Action == "edited" && result.UpdatedDescription != "" {
-		result.UpdatedDescription = markdown.ToBlocks([]byte(result.UpdatedDescription))
+	// Convert Markdown content to BlockNote JSON for storage.
+	if result.Action == "edited" && result.UpdatedContent != "" {
+		result.UpdatedContent = markdown.ToBlocks([]byte(result.UpdatedContent))
 	}
 
 	// ── Persist conversation turn ────────────────────────────────────────────
@@ -189,7 +189,7 @@ func runPostAssistant(
 		return nil, fmt.Errorf("persist user message: %w", err)
 	}
 
-	// Store only the explanation (not the full JSON with updatedDescription)
+	// Store only the explanation (not the full JSON with updatedContent)
 	// to keep conversation history lightweight for subsequent turns.
 	modelMsgID, err := models.NewID()
 	if err != nil {
@@ -224,7 +224,7 @@ func runPostAssistant(
 			ID:            versionID,
 			PostID:        req.PostID,
 			VersionNumber: nextNum,
-			Description:   result.UpdatedDescription,
+			Content:       result.UpdatedContent,
 			Note:          result.VersionNote,
 			Creator:       "assistant",
 		}); err != nil {
@@ -235,7 +235,7 @@ func runPostAssistant(
 
 	// ── Update post content ──────────────────────────────────────────────────
 	if result.Action == "edited" {
-		post.Content = result.UpdatedDescription
+		post.Content = result.UpdatedContent
 		post.UpdatedAt = time.Now().UTC()
 		if err := repos.Posts.Update(ctx, post); err != nil {
 			return nil, fmt.Errorf("update post: %w", err)

@@ -78,7 +78,7 @@ type toolSet struct {
 	listAssets        ai.ToolRef
 	getAssetChunks    ai.ToolRef
 	searchAssetChunks ai.ToolRef
-	getCurrentDesc    ai.ToolRef
+	getCurrentContent ai.ToolRef
 }
 
 func defineTools(g *genkit.Genkit) *toolSet {
@@ -103,10 +103,10 @@ func defineTools(g *genkit.Genkit) *toolSet {
 		},
 	)
 
-	getCurrentDesc := genkit.DefineTool(g, "getCurrentDescription",
-		"Returns the latest post description text.",
+	getCurrentContent := genkit.DefineTool(g, "getCurrentContent",
+		"Returns the latest post content as plain text.",
 		func(ctx *ai.ToolContext, _ struct{}) (string, error) {
-			return toolGetCurrentDescription(ctx)
+			return toolGetCurrentContent(ctx)
 		},
 	)
 
@@ -114,7 +114,7 @@ func defineTools(g *genkit.Genkit) *toolSet {
 		listAssets:        list,
 		getAssetChunks:    getChunks,
 		searchAssetChunks: searchChunks,
-		getCurrentDesc:    getCurrentDesc,
+		getCurrentContent: getCurrentContent,
 	}
 }
 
@@ -210,7 +210,7 @@ func toolSearchAssetChunks(ctx context.Context, in SearchChunksInput) (*ChunksOu
 	return packChunks(result), nil
 }
 
-func toolGetCurrentDescription(ctx context.Context) (string, error) {
+func toolGetCurrentContent(ctx context.Context) (string, error) {
 	st := getRequestState(ctx)
 	post, err := st.repos.Posts.GetByID(ctx, st.postID)
 	if err != nil {

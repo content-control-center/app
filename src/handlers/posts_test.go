@@ -668,7 +668,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				Expect(json.NewDecoder(resp.Body).Decode(&v)).To(Succeed())
 				Expect(v.PostID).To(Equal(p.ID))
 				Expect(v.VersionNumber).To(Equal(1))
-				Expect(v.Description).To(Equal("Original content"))
+				Expect(v.Content).To(Equal("Original content"))
 				Expect(v.Note).To(Equal("First manual save"))
 				Expect(v.Creator).To(Equal("user"))
 			})

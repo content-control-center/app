@@ -112,9 +112,9 @@ func assembleContext(
 
 	// Extract plain text from BlockNote JSON so the model sees readable
 	// content rather than raw JSON. Falls back to raw content on error.
-	postDescription := post.Content
+	postContent := post.Content
 	if plainText, err := flows.ExtractText(post.Content); err == nil && plainText != "" {
-		postDescription = plainText
+		postContent = plainText
 	}
 
 	data := contextTemplateData{
@@ -126,7 +126,7 @@ func assembleContext(
 		Language:            campaign.Language,
 		PhaseName:           phaseName,
 		PhaseDescription:    phaseDescription,
-		PostDescription:     postDescription,
+		PostContent:         postContent,
 		Assets:              summaries,
 	}
 
@@ -154,7 +154,7 @@ type contextTemplateData struct {
 	Language            string
 	PhaseName           string
 	PhaseDescription    string
-	PostDescription     string
+	PostContent         string
 	Assets              []assetSummary
 }
 

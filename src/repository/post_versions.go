@@ -10,7 +10,7 @@ import (
 	"github.com/content-control-center/app/src/models"
 )
 
-// PostVersionRepository handles persistence of post description version snapshots.
+// PostVersionRepository handles persistence of post content version snapshots.
 type PostVersionRepository interface {
 	Create(ctx context.Context, version *models.PostVersion) error
 	ListByPostID(ctx context.Context, postID string) ([]models.PostVersion, error)

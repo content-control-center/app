@@ -12,7 +12,7 @@ type PostVersion struct {
 	ID            string    `bun:"id,pk"                                        json:"id"`
 	PostID        string    `bun:"post_id,notnull"                              json:"post_id"`
 	VersionNumber int       `bun:"version_number,notnull"                       json:"version_number"`
-	Description   string    `bun:"description,notnull"                          json:"description"`
+	Content       string    `bun:"content,notnull"                              json:"content"`
 	Note          string    `bun:"note,notnull"                                 json:"note"`
 	Creator       string    `bun:"creator,notnull"                              json:"creator"`
 	CreatedAt     time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
