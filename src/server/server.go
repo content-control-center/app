@@ -70,10 +70,13 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	handlers.NewSessionsHandler(userRepo, sessionRepo, cfg.SessionCookieName, !cfg.Debug).Register(app)
 	handlers.NewSettingsHandler(settingRepo, auth).Register(app)
 
-	// Zernio integration controller (CON-62). Validates ZERNIO_API_KEY
-	// at boot; never aborts startup. Handlers + sync worker are wired
-	// in subsequent phases.
-	_ = initZernio(ctx, cfg)
+	// Zernio integration controller (CON-62). Ping + profile bootstrap
+	// run in a background goroutine so Ogen boot never blocks on
+	// Zernio reachability. The sync worker is wired in Phase 5.
+	zernioIntegration, zernioBootstrapper := initZernio(ctx, cfg, settingRepo)
+	if zernioBootstrapper != nil {
+		handlers.NewZernioHandler(zernioIntegration, zernioBootstrapper, auth).Register(app)
+	}
 
 	store, err := storage.New(cfg)
 	if err != nil {
