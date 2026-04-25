@@ -187,3 +187,39 @@ DELETE {{baseUrl}}/api/posts/{{postId}}
 
 ### Delete post — non-existent ID (expects 404)  [protected]
 DELETE {{baseUrl}}/api/posts/nonexistent
+
+###
+# ── Assistant ─────────────────────────────────────────────────────────────────
+###
+
+### Send instruction to post assistant  [protected]
+POST {{baseUrl}}/api/posts/{{postId}}/assistant
+Content-Type: application/json
+
+{
+  "instruction": "Make the description more concise and punchy, targeting senior developers."
+}
+
+### Send instruction — incorporate asset info  [protected]
+POST {{baseUrl}}/api/posts/{{postId}}/assistant
+Content-Type: application/json
+
+{
+  "instruction": "Incorporate key facts from the attached brand guidelines asset into the description."
+}
+
+###
+# ── Versions ──────────────────────────────────────────────────────────────────
+###
+
+### List post versions  [protected]
+GET {{baseUrl}}/api/posts/{{postId}}/versions
+Accept: application/json
+
+### Create manual version snapshot  [protected]
+POST {{baseUrl}}/api/posts/{{postId}}/versions
+Content-Type: application/json
+
+{
+  "note": "Manual save before major rewrite"
+}

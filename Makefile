@@ -1,4 +1,4 @@
-.PHONY: build run test test-integration coverage _ginkgo _air web web-dev tidy docker clean openapi seed
+.PHONY: build run test test-integration coverage _ginkgo _air web web-dev tidy docker docker-genkit clean openapi seed genkit
 
 GINKGO_FLAGS = --github-output -r -randomize-all -randomize-suites -race -trace -procs=2 -poll-progress-after=10s -poll-progress-interval=10s
 
@@ -44,6 +44,10 @@ openapi:
 	go install github.com/swaggo/swag/cmd/swag@latest
 	swag init -g main.go -d cmd/server,src/handlers,src/models -o docs --outputTypes go,json
 
+# ── Genkit ───────────────────────────────────────────────────────────────────
+genkit: web/dist
+	npx genkit start -- go run ./cmd/server
+
 # ── React ────────────────────────────────────────────────────────────────────
 web/node_modules:
 	cd web && npm install
@@ -57,6 +61,9 @@ web-dev: web/node_modules
 # ── Docker ───────────────────────────────────────────────────────────────────
 docker:
 	docker build -t content-control-center .
+
+docker-genkit:
+	docker compose -f docker-compose.genkit.yml up --build
 
 # ── Cleanup ──────────────────────────────────────────────────────────────────
 clean:

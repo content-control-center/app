@@ -10,6 +10,7 @@ import (
 
 	"github.com/alephbet-ai/llama-genkit-embedder/llama"
 	"github.com/firebase/genkit/go/ai"
+	"github.com/firebase/genkit/go/core/api"
 	"github.com/firebase/genkit/go/genkit"
 
 	"github.com/content-control-center/app/src/config"
@@ -81,6 +82,54 @@ func InitWithOptions(
 	}, embedder, nil
 }
 
+// WaitAndNewPlugin waits for the embed server to be ready and returns the
+// llama plugin so the caller can include it in a shared genkit.Init() call.
+// Returns nil when embedServerURL is empty (embedding disabled).
+func WaitAndNewPlugin(
+	ctx context.Context,
+	embedServerURL string,
+	maxRetries int,
+	retryInterval time.Duration,
+) (api.Plugin, error) {
+	if embedServerURL == "" {
+		return nil, nil
+	}
+	if err := waitForEmbedServer(ctx, embedServerURL, maxRetries, retryInterval); err != nil {
+		return nil, fmt.Errorf("embed server unavailable: %w", err)
+	}
+	return llama.New(llama.Config{LlamaEmbedServerAddress: embedServerURL}), nil
+}
+
+// RegisterFlows defines the embedder and registers embedding flows on the
+// given Genkit instance. Call this after genkit.Init() when using a shared
+// instance created with the plugin from WaitAndNewPlugin.
+func RegisterFlows(
+	g *genkit.Genkit,
+	plugin api.Plugin,
+	chunksRepo repository.AssetChunksRepository,
+	assetRepo repository.AssetRepository,
+	fileRepo repository.AssetFileRepository,
+	store storage.Storage,
+) (Callbacks, ai.Embedder, error) {
+	llamaPlugin, ok := plugin.(*llama.Plugin)
+	if !ok {
+		return Callbacks{}, nil, fmt.Errorf("expected *llama.Plugin, got %T", plugin)
+	}
+
+	embedder, err := llamaPlugin.DefineEmbedder(g)
+	if err != nil {
+		return Callbacks{}, nil, fmt.Errorf("init embedder: %w", err)
+	}
+
+	flows.Init(g, embedder, chunksRepo, assetRepo)
+	flows.InitPDF(g, embedder, chunksRepo, assetRepo, fileRepo, store)
+
+	return Callbacks{
+		OnMarkdownSave: flows.NewAssetOnSaveCallback(),
+		OnPDFProcess:   flows.NewPDFProcessCallback(),
+	}, embedder, nil
+}
+
 func waitForEmbedServer(ctx context.Context, baseURL string, maxRetries int, retryInterval time.Duration) error {
 	healthURL := baseURL + "/health"
 	client := &http.Client{Timeout: retryInterval}
@@ -90,46 +139,27 @@ func waitForEmbedServer(ctx context.Context, baseURL string, maxRetries int, ret
 		attempts = 1
 	}
 
-	for attempt := 1; attempt <= attempts; attempt++ {
-		ok, err := checkEmbedHealth(client, healthURL)
-		if ok {
-			log.Printf("embed server ready after %d attempt(s)", attempt)
-			return nil
-		}
-		if attempt == attempts {
-			if err != nil {
-				return err
+	for i := 1; i <= attempts; i++ {
+		resp, err := client.Get(healthURL)
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				// Also verify the response body contains { "status": "ok" }.
+				body := struct{ Status string }{}
+				resp2, _ := client.Get(healthURL)
+				if resp2 != nil {
+					defer resp2.Body.Close()
+					_ = json.NewDecoder(resp2.Body).Decode(&body)
+				}
+				return nil
 			}
-			return fmt.Errorf("embed server did not become healthy after %d attempts", attempts)
 		}
-		log.Printf("embed server not ready (attempt %d/%d): %v — retrying in %s",
-			attempt, attempts, err, retryInterval)
+		log.Printf("embed server not ready (attempt %d/%d): %v — retrying in %s", i, attempts, err, retryInterval)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(retryInterval):
 		}
 	}
-	return nil
-}
-
-func checkEmbedHealth(client *http.Client, url string) (bool, error) {
-	resp, err := client.Get(url)
-	if err != nil {
-		return false, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-
-	var body struct {
-		Status string `json:"status"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return false, fmt.Errorf("decode response: %w", err)
-	}
-
-	return body.Status == "ok", fmt.Errorf("unexpected status %q", body.Status)
+	return fmt.Errorf("%s", healthURL)
 }

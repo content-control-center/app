@@ -10,9 +10,9 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
-	"github.com/openai/openai-go"
 
 	"github.com/content-control-center/app/src/models"
 	"github.com/content-control-center/app/src/repository"
@@ -154,8 +154,8 @@ func generatePostsStreaming(
 	maxOutputTokens int64,
 	onEvent OnEventFunc,
 ) ([]DraftPost, error) {
-	modelCfg := ai.WithConfig(openai.ChatCompletionNewParams{
-		MaxTokens: openai.Int(maxOutputTokens),
+	modelCfg := ai.WithConfig(anthropic.MessageNewParams{
+		MaxTokens: maxOutputTokens,
 	})
 
 	scanner := newJSONPostScanner()
