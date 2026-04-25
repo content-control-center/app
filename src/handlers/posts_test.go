@@ -281,9 +281,31 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				Expect(resp.StatusCode).To(Equal(400))
 			})
 
-			It("returns 400 when platform_id is missing", func() {
+			It("creates a draft post without platform_id or platform_post_type", func() {
+				// Drafts can sit without a platform chosen — content is
+				// what matters, the publishing target gets picked later.
 				body, _ := json.Marshal(fiber.Map{
-					"campaign_id": campaignID, "platform_post_type": "text-post", "title": "No Platform",
+					"campaign_id": campaignID, "title": "Platformless draft",
+				})
+				req := httptest.NewRequest("POST", "/api/posts", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+
+				var p models.Post
+				Expect(json.NewDecoder(resp.Body).Decode(&p)).To(Succeed())
+				Expect(p.Status).To(Equal(models.PostStatusDraft))
+				Expect(p.PlatformID).To(BeEmpty())
+				Expect(p.PlatformPostType).To(BeEmpty())
+				Expect(p.Platform).To(BeNil(), "hydration should leave Platform nil when ID is empty")
+			})
+
+			It("returns 400 when creating a non-draft post without platform_id", func() {
+				body, _ := json.Marshal(fiber.Map{
+					"campaign_id": campaignID, "title": "Premature ready",
+					"status": "ready_for_publish",
 				})
 				req := httptest.NewRequest("POST", "/api/posts", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
@@ -291,6 +313,24 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(400))
+				body2, _ := io.ReadAll(resp.Body)
+				Expect(string(body2)).To(ContainSubstring("platform_id is required"))
+			})
+
+			It("returns 400 when creating a non-draft post without platform_post_type", func() {
+				body, _ := json.Marshal(fiber.Map{
+					"campaign_id": campaignID, "title": "Type missing",
+					"platform_id": "AXqWG7U2qnpt",
+					"status":      "ready_for_publish",
+				})
+				req := httptest.NewRequest("POST", "/api/posts", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(400))
+				body2, _ := io.ReadAll(resp.Body)
+				Expect(string(body2)).To(ContainSubstring("platform_post_type is required"))
 			})
 
 			It("creates a post without a title", func() {
@@ -551,6 +591,56 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				var got models.Post
 				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
 				Expect(got.Title).To(BeEmpty())
+			})
+
+			It("rejects a draft → ready_for_publish transition without a platform", func() {
+				// Draft posts can be saved without a platform; when the
+				// user moves to ready_for_publish, the platform fields
+				// become mandatory and the transition must fail until
+				// they're filled in.
+				body, _ := json.Marshal(fiber.Map{
+					"campaign_id": campaignID, "title": "No-platform draft",
+				})
+				req := httptest.NewRequest("POST", "/api/posts", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+				var draft models.Post
+				Expect(json.NewDecoder(resp.Body).Decode(&draft)).To(Succeed())
+
+				// Try to transition without supplying a platform.
+				updateBody, _ := json.Marshal(fiber.Map{
+					"campaign_id": campaignID,
+					"status":      "ready_for_publish",
+				})
+				upReq := httptest.NewRequest("PUT", "/api/posts/"+draft.ID, bytes.NewReader(updateBody))
+				upReq.Header.Set("Content-Type", "application/json")
+				upReq.AddCookie(authCookie)
+				upResp, err := app.Test(upReq)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(upResp.StatusCode).To(Equal(400))
+				bodyBytes, _ := io.ReadAll(upResp.Body)
+				Expect(string(bodyBytes)).To(ContainSubstring("platform_id is required"))
+
+				// Now supply the platform; the transition succeeds.
+				updateBody2, _ := json.Marshal(fiber.Map{
+					"campaign_id":        campaignID,
+					"platform_id":        "AXqWG7U2qnpt",
+					"platform_post_type": "text-post",
+					"status":             "ready_for_publish",
+				})
+				upReq2 := httptest.NewRequest("PUT", "/api/posts/"+draft.ID, bytes.NewReader(updateBody2))
+				upReq2.Header.Set("Content-Type", "application/json")
+				upReq2.AddCookie(authCookie)
+				upResp2, err := app.Test(upReq2)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(upResp2.StatusCode).To(Equal(200))
+				var got models.Post
+				Expect(json.NewDecoder(upResp2.Body).Decode(&got)).To(Succeed())
+				Expect(got.Status).To(Equal(models.PostStatusReadyForPublish))
+				Expect(got.PlatformID).To(Equal("AXqWG7U2qnpt"))
 			})
 		})
 	})

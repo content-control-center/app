@@ -57,8 +57,16 @@ type Post struct {
 
 	ID                   string      `bun:"id,pk"                                        json:"id"`
 	CampaignID           string      `bun:"campaign_id,notnull"                          json:"campaign_id"`
-	PlatformID           string      `bun:"platform_id,notnull"                          json:"platform_id"`
-	PlatformPostType     string      `bun:"platform_post_type,notnull"                   json:"platform_post_type"`
+	// platform_id and platform_post_type are nullable so draft posts can
+	// exist without a platform chosen up front (CON-60). They become
+	// required when the post moves out of "draft" — enforced by the
+	// posts handler, not by the schema.
+	//
+	// `nullzero` makes bun send NULL (not "") for empty values, which is
+	// required for platform_id because the FK to platforms can't match
+	// an empty string. We use it on platform_post_type too for symmetry.
+	PlatformID           string      `bun:"platform_id,nullzero"                         json:"platform_id"`
+	PlatformPostType     string      `bun:"platform_post_type,nullzero"                  json:"platform_post_type"`
 	Title                string      `bun:"title"                                        json:"title"`
 	Content              string      `bun:"content,notnull"                              json:"content"`
 	MediaURLs            StringSlice `bun:"media_urls,notnull"                           json:"media_urls"`
