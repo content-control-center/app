@@ -3,6 +3,7 @@ package post_assistant
 import (
 	"github.com/firebase/genkit/go/ai"
 
+	"github.com/content-control-center/app/src/eventhub"
 	"github.com/content-control-center/app/src/repository"
 )
 
@@ -52,6 +53,9 @@ type PostAssistantFlowConfig struct {
 	// few assets + read chunks + respond).
 	MaxTurns int
 	Embedder ai.Embedder // nil = semantic search unavailable
+	// Hub is the event broker used to publish "operation finalised"
+	// events on success/failure. nil = silent (no events emitted).
+	Hub eventhub.Hub
 }
 
 // ValidationError is returned when preconditions are not met (HTTP 400).

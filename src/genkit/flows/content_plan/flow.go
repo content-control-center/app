@@ -12,6 +12,8 @@ import (
 	"github.com/firebase/genkit/go/core"
 	"github.com/firebase/genkit/go/genkit"
 
+	"github.com/content-control-center/app/src/eventhub"
+	"github.com/content-control-center/app/src/models"
 	"github.com/content-control-center/app/src/repository"
 )
 
@@ -34,8 +36,11 @@ type ContentPlanFlowConfig struct {
 	MaxContextChars  int         // character budget for asset context in the prompt
 	MaxOutputTokens  int64       // max_tokens sent to the model; 0 falls back to 8192
 	Embedder         ai.Embedder // nil = skip semantic ranking, fall back to creation order
-	systemTmpl       *template.Template
-	userTmpl         *template.Template
+	// Hub is the event broker used to publish "operation finalised"
+	// events on success/failure. nil = silent (no events emitted).
+	Hub        eventhub.Hub
+	systemTmpl *template.Template
+	userTmpl   *template.Template
 }
 
 // ContentPlanRepos bundles all repository dependencies for the flow.
@@ -94,6 +99,53 @@ func emit(onEvent OnEventFunc, name SSEEventKind, data any) {
 	}
 }
 
+// publishContentPlanFinalised announces the end of a content-plan run on
+// the shared event hub. Topic is "entity:campaign:<id>"; type is
+// "content_plan_completed" on success, "content_plan_failed" on error.
+func publishContentPlanFinalised(
+	hub eventhub.Hub,
+	campaignID, ownerID string,
+	resp *ContentPlanResponse,
+	err error,
+) {
+	if hub == nil {
+		return
+	}
+	id, idErr := models.NewID()
+	if idErr != nil {
+		log.Printf("content_plan: cannot mint event id: %v", idErr)
+		return
+	}
+	ev := eventhub.Event{
+		ID:     id,
+		Topic:  "entity:campaign:" + campaignID,
+		UserID: ownerID,
+	}
+	if err != nil {
+		ev.Type = "content_plan_failed"
+		ev.Payload = map[string]any{
+			"campaignId": campaignID,
+			"error":      err.Error(),
+		}
+	} else {
+		postCount := 0
+		warningCount := 0
+		if resp != nil {
+			postCount = len(resp.Posts)
+			warningCount = len(resp.Warnings)
+		}
+		ev.Type = "content_plan_completed"
+		ev.Payload = map[string]any{
+			"campaignId":   campaignID,
+			"postCount":    postCount,
+			"warningCount": warningCount,
+		}
+	}
+	if pubErr := hub.Publish(context.Background(), ev); pubErr != nil {
+		log.Printf("content_plan[%s]: hub publish failed: %v", campaignID, pubErr)
+	}
+}
+
 // runContentPlan executes the six steps of the flow.
 func runContentPlan(
 	ctx context.Context,
@@ -102,9 +154,22 @@ func runContentPlan(
 	cfg ContentPlanFlowConfig,
 	repos ContentPlanRepos,
 	onEvent OnEventFunc,
-) (*ContentPlanResponse, error) {
+) (out *ContentPlanResponse, retErr error) {
 	start := time.Now()
 	log.Printf("content_plan[%s]: starting", req.CampaignID)
+
+	// finaliseOwnerID is captured once the campaign is loaded so the
+	// deferred finalisation event can be scoped to the campaign owner.
+	// Empty before validateInput → finalisation events for very-early
+	// failures are skipped.
+	var finaliseOwnerID string
+
+	defer func() {
+		if cfg.Hub == nil || finaliseOwnerID == "" {
+			return
+		}
+		publishContentPlanFinalised(cfg.Hub, req.CampaignID, finaliseOwnerID, out, retErr)
+	}()
 
 	// ── Step 1: validateInput ─────────────────────────────────────────────────
 	log.Printf("content_plan[%s]: step 1/6 validateInput", req.CampaignID)
@@ -113,6 +178,7 @@ func runContentPlan(
 		log.Printf("content_plan[%s]: validateInput failed after %s: %v", req.CampaignID, time.Since(start).Round(time.Millisecond), err)
 		return nil, err
 	}
+	finaliseOwnerID = campaign.CreatedBy
 	log.Printf("content_plan[%s]: validateInput done (campaign=%q platforms=%d)", req.CampaignID, campaign.Name, len(campaign.TargetPlatforms))
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "validateInput", Status: "done"})
 

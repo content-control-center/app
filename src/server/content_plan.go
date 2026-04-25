@@ -8,6 +8,7 @@ import (
 	"github.com/firebase/genkit/go/genkit"
 
 	"github.com/content-control-center/app/src/config"
+	"github.com/content-control-center/app/src/eventhub"
 	"github.com/content-control-center/app/src/genkit/flows/content_plan"
 )
 
@@ -17,6 +18,7 @@ func initContentPlan(
 	g *genkit.Genkit,
 	cfg *config.Config,
 	embedder ai.Embedder,
+	hub eventhub.Hub,
 	repos content_plan.ContentPlanRepos,
 ) (func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error), error) {
 	flowCfg := content_plan.ContentPlanFlowConfig{
@@ -25,6 +27,7 @@ func initContentPlan(
 		MaxContextChars:  cfg.MaxContextChars,
 		MaxOutputTokens:  cfg.MaxOutputTokens,
 		Embedder:         embedder,
+		Hub:              hub,
 	}
 	if err := content_plan.InitContentPlan(g, flowCfg, repos); err != nil {
 		return nil, fmt.Errorf("init content plan flow: %w", err)

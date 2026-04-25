@@ -28,9 +28,21 @@ func runPostAssistant(
 	systemTmpl, contextTmpl *template.Template,
 	tools *toolSet,
 	onEvent OnEventFunc,
-) (*PostAssistantResponse, error) {
+) (out *PostAssistantResponse, retErr error) {
 	start := time.Now()
 	log.Printf("post_assistant[%s]: starting instruction=%.80s", req.PostID, req.Instruction)
+
+	// finaliseOwnerID is captured once the post is loaded so the deferred
+	// finalisation event can be scoped to the post owner. Empty before
+	// load → finalisation events for very-early failures are skipped.
+	var finaliseOwnerID string
+
+	defer func() {
+		if cfg.Hub == nil || finaliseOwnerID == "" {
+			return
+		}
+		publishAssistantFinalised(cfg.Hub, req.PostID, finaliseOwnerID, out, retErr)
+	}()
 
 	if req.Instruction == "" {
 		return nil, &ValidationError{Msg: "instruction is required"}
@@ -44,6 +56,7 @@ func runPostAssistant(
 		}
 		return nil, fmt.Errorf("load post: %w", err)
 	}
+	finaliseOwnerID = post.CreatedBy
 
 	// ── Ensure initial version ───────────────────────────────────────────────
 	count, err := repos.Versions.CountByPostID(ctx, req.PostID)
