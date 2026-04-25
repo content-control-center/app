@@ -56,6 +56,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	postRepo := repository.NewPostRepository(db)
 	postVersionRepo := repository.NewPostVersionRepository(db)
 	postMessageRepo := repository.NewPostAssistantMessageRepository(db)
+	socialAccountRepo := repository.NewSocialAccountRepository(db)
 	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
 
 	// In-process event hub: backend code publishes; the SSE endpoint
@@ -70,19 +71,26 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	handlers.NewSessionsHandler(userRepo, sessionRepo, cfg.SessionCookieName, !cfg.Debug).Register(app)
 	handlers.NewSettingsHandler(settingRepo, auth).Register(app)
 
-	// Zernio integration controller. Ping + profile bootstrap
-	// run in a background goroutine so Ogen boot never blocks on
-	// Zernio reachability. The sync worker is wired.
-	zernioRT := initZernio(ctx, cfg, settingRepo)
+	// Zernio integration. Ping, profile bootstrap, and the sync worker
+	// all run in background goroutines so Ogen boot never blocks on
+	// Zernio reachability. The shutdown hook waits up to 2s for the
+	// worker to exit cleanly.
+	zernioRT := initZernio(ctx, cfg, settingRepo, socialAccountRepo, hub)
 	if zernioRT.Bootstrapper != nil {
 		handlers.NewZernioHandler(
 			zernioRT.Integration,
 			zernioRT.Bootstrapper,
 			zernioRT.Settings,
 			platformRepo,
+			socialAccountRepo,
+			zernioRT.Worker,
 			zernioRT.RateLimiter,
 			auth,
 		).Register(app)
+		app.Hooks().OnShutdown(func() error {
+			zernioRT.shutdown()
+			return nil
+		})
 	}
 
 	store, err := storage.New(cfg)

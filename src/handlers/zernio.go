@@ -31,6 +31,8 @@ type ZernioHandler struct {
 	bootstrapper *zernio.Bootstrapper
 	settings     zernio.SettingsStore
 	platforms    repository.PlatformRepository
+	accounts     repository.SocialAccountRepository
+	worker       *zernio.Worker
 	rateLimiter  *zernio.RateLimiter
 	auth         fiber.Handler
 }
@@ -40,6 +42,8 @@ func NewZernioHandler(
 	bootstrapper *zernio.Bootstrapper,
 	settings zernio.SettingsStore,
 	platforms repository.PlatformRepository,
+	accounts repository.SocialAccountRepository,
+	worker *zernio.Worker,
 	rateLimiter *zernio.RateLimiter,
 	auth fiber.Handler,
 ) *ZernioHandler {
@@ -48,6 +52,8 @@ func NewZernioHandler(
 		bootstrapper: bootstrapper,
 		settings:     settings,
 		platforms:    platforms,
+		accounts:     accounts,
+		worker:       worker,
 		rateLimiter:  rateLimiter,
 		auth:         auth,
 	}
@@ -57,6 +63,8 @@ func (h *ZernioHandler) Register(app *fiber.App) {
 	g := app.Group("/api/integrations/zernio", h.auth)
 	g.Get("/platforms", h.ListPlatforms)
 	g.Post("/connect-links", h.CreateConnectLink)
+	g.Get("/accounts", h.ListAccounts)
+	g.Post("/sync", h.TriggerSync)
 	g.Post("/profile/repair", h.RepairProfile)
 }
 
@@ -196,6 +204,97 @@ func (h *ZernioHandler) CreateConnectLink(c *fiber.Ctx) error {
 		Platform:   req.Platform,
 		ConnectURL: connectURL,
 		ExpiresAt:  time.Now().UTC().Add(connectLinkTTL),
+	})
+}
+
+type accountsResponse struct {
+	Accounts       []accountInfo `json:"accounts"`
+	LastSyncAt     string        `json:"lastSyncAt,omitempty"`
+	LastSyncStatus string        `json:"lastSyncStatus,omitempty"`
+}
+
+type accountInfo struct {
+	ID            string    `json:"id"`
+	Platform      string    `json:"platform"`
+	Username      string    `json:"username"`
+	DisplayName   string    `json:"displayName"`
+	AvatarURL     string    `json:"avatarUrl"`
+	IsActive      bool      `json:"isActive"`
+	ConnectedAt   time.Time `json:"connectedAt"`
+	LastSyncedAt  time.Time `json:"lastSyncedAt"`
+}
+
+// ListAccounts godoc
+// @Summary      List Zernio social accounts (local mirror)
+// @Description  Returns the local view of accounts attached via the
+// @Description  Zernio profile, plus the last sync timestamp + status.
+// @Description  Reads from SQLite — does not call Zernio.
+// @Tags         zernio
+// @Produce      json
+// @Security     CookieAuth
+// @Success      200  {object}  accountsResponse
+// @Failure      401  {object}  map[string]string
+// @Failure      409  {object}  map[string]string  "integration_disabled"
+// @Router       /api/integrations/zernio/accounts [get]
+func (h *ZernioHandler) ListAccounts(c *fiber.Ctx) error {
+	if !h.integ.Enabled() {
+		return fiber.NewError(fiber.StatusConflict, "integration_disabled")
+	}
+	profileID, _, err := h.settings.Get(c.Context(), zernio.SettingProfileID)
+	if err != nil {
+		return err
+	}
+	var rows []accountInfo
+	if profileID != "" {
+		fetched, err := h.accounts.ListActive(c.Context(), profileID)
+		if err != nil {
+			return err
+		}
+		rows = make([]accountInfo, 0, len(fetched))
+		for _, a := range fetched {
+			rows = append(rows, accountInfo{
+				ID:           a.ID,
+				Platform:     a.Platform,
+				Username:     a.Username,
+				DisplayName:  a.DisplayName,
+				AvatarURL:    a.AvatarURL,
+				IsActive:     a.IsActive,
+				ConnectedAt:  a.ConnectedAt,
+				LastSyncedAt: a.LastSyncedAt,
+			})
+		}
+	}
+	lastAt, _, _ := h.settings.Get(c.Context(), zernio.SettingLastSyncAt)
+	lastStatus, _, _ := h.settings.Get(c.Context(), zernio.SettingLastSyncStatus)
+	return c.JSON(accountsResponse{
+		Accounts:       rows,
+		LastSyncAt:     lastAt,
+		LastSyncStatus: lastStatus,
+	})
+}
+
+// TriggerSync godoc
+// @Summary      Trigger a Zernio sync tick
+// @Description  Asks the background worker to run a sync at its
+// @Description  earliest opportunity. Returns 202 with the previous
+// @Description  last_sync_at value so callers can poll for progress.
+// @Tags         zernio
+// @Produce      json
+// @Security     CookieAuth
+// @Success      202  {object}  map[string]string
+// @Failure      401  {object}  map[string]string
+// @Failure      409  {object}  map[string]string  "integration_disabled"
+// @Router       /api/integrations/zernio/sync [post]
+func (h *ZernioHandler) TriggerSync(c *fiber.Ctx) error {
+	if !h.integ.Enabled() {
+		return fiber.NewError(fiber.StatusConflict, "integration_disabled")
+	}
+	prevAt, _, _ := h.settings.Get(c.Context(), zernio.SettingLastSyncAt)
+	if h.worker != nil {
+		h.worker.TriggerNow()
+	}
+	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
+		"previousLastSyncAt": prevAt,
 	})
 }
 

@@ -6,8 +6,10 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/content-control-center/app/src/config"
+	"github.com/content-control-center/app/src/eventhub"
 	"github.com/content-control-center/app/src/integrations/zernio"
 	"github.com/content-control-center/app/src/models"
 	"github.com/content-control-center/app/src/repository"
@@ -38,16 +40,20 @@ type zernioRuntime struct {
 	Bootstrapper *zernio.Bootstrapper
 	Settings     zernio.SettingsStore
 	RateLimiter  *zernio.RateLimiter
+	Worker       *zernio.Worker
+	WorkerCancel context.CancelFunc
 }
 
 func initZernio(
 	ctx context.Context,
 	cfg *config.Config,
 	settingRepo repository.SettingRepository,
+	accountRepo repository.SocialAccountRepository,
+	hub eventhub.Hub,
 ) zernioRuntime {
 	// 30s in-process TTL cache around zernio.* setting reads. All
-	// downstream callers (handlers, bootstrap, future worker) share
-	// this single instance so writes invalidate everyone's view.
+	// downstream callers (handlers, bootstrap, worker) share this
+	// single instance so writes invalidate everyone's view.
 	store := zernio.NewCachedSettingsStore(&settingsStoreAdapter{repo: settingRepo})
 
 	if cfg.ZernioAPIKey == "" {
@@ -61,13 +67,33 @@ func initZernio(
 	client := zernio.NewClient(cfg.ZernioAPIKey, cfg.ZernioBaseURL, cfg.ZernioHTTPTimeout)
 	integ := zernio.NewIntegration(client)
 	bootstrapper := zernio.NewBootstrapper(integ, store)
+	worker := zernio.NewWorker(integ, accountRepo, store, hub, bootstrapper, cfg.ZernioSyncInterval, cfg.ZernioSyncIntervalFast)
 
-	go warmupZernio(ctx, integ, bootstrapper)
+	workerCtx, workerCancel := context.WithCancel(ctx)
+	go warmupZernio(workerCtx, integ, bootstrapper)
+	go worker.Run(workerCtx)
+
 	return zernioRuntime{
 		Integration:  integ,
 		Bootstrapper: bootstrapper,
 		Settings:     store,
 		RateLimiter:  zernio.NewConnectLinkRateLimiter(),
+		Worker:       worker,
+		WorkerCancel: workerCancel,
+	}
+}
+
+// shutdown signals the worker to stop and waits up to 2s for the
+// goroutine to exit cleanly. Wired from a Fiber OnShutdown hook.
+func (r zernioRuntime) shutdown() {
+	if r.WorkerCancel == nil || r.Worker == nil {
+		return
+	}
+	r.WorkerCancel()
+	select {
+	case <-r.Worker.Done():
+	case <-time.After(2 * time.Second):
+		log.Printf("zernio: worker did not exit within 2s — leaving it to the process")
 	}
 }
 
