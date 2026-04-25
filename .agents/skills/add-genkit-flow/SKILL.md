@@ -88,7 +88,12 @@ type <FlowName>Repos struct {
 // <FlowName>FlowConfig holds static settings (model id, token caps, optional
 // embedder). Not per-request state — that goes in context.WithValue.
 type <FlowName>FlowConfig struct {
-    ModelID         string
+    ModelID string
+    // MaxOutputTokens caps the model's output for one call. 0 falls back
+    // to a generous default (32768) so multi-paragraph rewrites + the
+    // metadata fields after them don't get truncated. Anthropic charges
+    // only for tokens actually emitted, so a generous cap costs nothing
+    // on short responses.
     MaxOutputTokens int64
     // MaxTurns caps tool-use round-trips. With tools, the model needs
     // N+1 turns to make N tool calls plus 1 final answer. 0 = sensible
@@ -434,19 +439,38 @@ raw := scanner.FullText()
 | nested object / array | absent from map | We don't extract these — keys are silently skipped |
 | key never seen | absent from map | E.g. when the model omits an optional field |
 
-### Sanity-check the extraction
+### Sanity-check the extraction (graceful degradation, not strict failure)
 
-The scanner returns whatever it saw. If the model produced something so broken that no top-level keys were observed, `Values()` returns an empty map and you'd silently persist garbage. After populating your response struct, **always verify your required fields are non-empty** and bail with a logged `AIError` otherwise:
+The scanner returns whatever it saw — strings decoded, missing fields absent. The naive temptation is to require **every** field and fail loudly when one is missing. Don't: that fails legitimate runs that hit `max_tokens` mid-content.
+
+Concretely: in our prompt schema the order is `explanation` → `updatedContent` → `action` → `saveVersion` → `versionNote`. When the model runs out of tokens during the long `updatedContent` field, every metadata field after it is missing. The user has already seen the streamed content; failing the call now would discard it and surface an unhelpful "didn't contain expected fields" error.
+
+Instead, fail only when the response is **genuinely** unusable, and infer or default the rest:
 
 ```go
-if result.RequiredField1 == "" || result.RequiredField2 == "" {
-    log.Printf("<flow>[%s]: scanner failed to extract required fields (len=%d): %.500s",
+switch {
+case result.PrimaryField == "" && result.LongField == "":
+    // Both empty — the model produced nothing recognisable. Fail.
+    log.Printf("<flow>[%s]: scanner found no usable fields (len=%d): %.500s",
         req.<ID>, len(scanner.FullText()), scanner.FullText())
     return nil, &AIError{Msg: "model response did not contain the expected fields"}
+
+case result.Action == "" && result.LongField != "":
+    // Truncation recovery: the model wouldn't have emitted the long
+    // field if it had decided to "decline". Infer the action.
+    log.Printf("<flow>[%s]: action missing — inferring 'edited' from non-empty long field (likely max_tokens truncation)", req.<ID>)
+    result.Action = "edited"
+}
+
+// Surface a generic placeholder so the chat bubble isn't blank.
+if result.Explanation == "" && result.LongField != "" {
+    result.Explanation = "<sensible default e.g. 'Updated content.'>"
 }
 ```
 
-This is the only way the user sees an `AIError` from the parse path under the scanner approach — and it means the model's output didn't even resemble the expected JSON. Log captures the raw text so you can diagnose new drift shapes from production.
+The pattern: identify the **one or two pieces** of the response that, if both empty, mean the model produced gibberish. Anything past that is recoverable through inference (action) or a placeholder (explanation). Always log the raw text on the genuine-fail branch so new drift shapes are diagnosable from server logs.
+
+This also constrains how you order fields in your prompt schema: put the **shortest required fields** (action, flags) **before** the long ones (content, explanations). Field order in the prompt drives emission order; if action comes after a 5000-char content blob and `max_tokens` runs out, action never makes it. We deliberately violate this rule for `post_assistant` because user-facing streaming UX wants the explanation to arrive first — but that's why we need the truncation-recovery fallback above. If your flow doesn't have streaming UX constraints, prefer schema order: `action`, `saveVersion`, `versionNote`, `explanation`, `<long field last>`.
 
 ### What still needs your attention per flow
 
@@ -529,9 +553,9 @@ func run<FlowName>(
 
     // ── Call model ──────────────────────────────────────────────────────────
     maxTokens := cfg.MaxOutputTokens
-    if maxTokens == 0 { maxTokens = 8192 }
+    if maxTokens == 0 { maxTokens = 32768 } // see Step 2 FlowConfig comment
     maxTurns := cfg.MaxTurns
-    if maxTurns == 0 { maxTurns = 8 } // see Step 2 FlowConfig comment
+    if maxTurns == 0 { maxTurns = 8 }       // see Step 2 FlowConfig comment
     modelName := "anthropic/" + cfg.ModelID
     systemBlock := actx.SystemPrompt + "\n\n" + actx.ContextBlock
 
@@ -611,13 +635,22 @@ func run<FlowName>(
     if b, ok := vals["saveVersion"].(bool); ok      { result.SaveVersion = b }
     if s, ok := vals["versionNote"].(string); ok    { result.VersionNote = s }
 
-    // Required-field sanity check. If the scanner saw nothing recognisable,
-    // we'd otherwise silently persist a zero-valued struct.
-    if result.Explanation == "" || result.Action == "" {
+    // Graceful degradation against truncated responses (see Step 6's
+    // "Sanity-check the extraction" for the rationale). Fail only when the
+    // response is genuinely unusable; recover the rest through inference.
+    switch {
+    case result.Explanation == "" && result.UpdatedContent == "":
         raw := scanner.FullText()
-        log.Printf("<flow>[%s]: scanner failed to extract required fields (len=%d): %.500s",
+        log.Printf("<flow>[%s]: scanner found no usable fields (len=%d): %.500s",
             req.<ID>, len(raw), raw)
         return nil, &AIError{Msg: "model response did not contain the expected fields"}
+
+    case result.Action == "" && result.UpdatedContent != "":
+        log.Printf("<flow>[%s]: action missing — inferring 'edited' from non-empty content (likely max_tokens truncation)", req.<ID>)
+        result.Action = "edited"
+    }
+    if result.Explanation == "" && result.UpdatedContent != "" {
+        result.Explanation = "Updated post content."
     }
 
     // ── Apply domain conversions + persist ──────────────────────────────────
@@ -636,7 +669,7 @@ func run<FlowName>(
 **Rules:**
 - `genkit.Generate` + `WithStreaming` callback, NOT `genkit.GenerateStream`. The former preserves tool round-tripping naturally; the latter is just a wrapper that yields chunks via an iterator (less control).
 - **No `ai.WithOutputType`.** It enables a strict post-generation validator that hard-fails on common Claude drift (trailing comma, etc.) and discards the response. See Step 6 for the rationale and the comprehensive drift table.
-- **Use `scanner.Values()` instead of `json.Unmarshal`.** Same reason — full character-level tolerance, partial response support on truncation, and one less moving part. Sanity-check required fields after extraction.
+- **Use `scanner.Values()` instead of `json.Unmarshal`.** Same reason — full character-level tolerance, partial response support on truncation, and one less moving part. Sanity-check required fields after extraction with **graceful degradation** (see Step 6's "Sanity-check the extraction"): fail only when the response is genuinely unusable; recover missing metadata fields through inference and placeholders.
 - Skip chunks where `Aggregated == true` — those are recap frames that would double-feed the scanner.
 - Dedupe tool events by `Ref` with a local map. Emit tool_call only when `!Partial` (complete request).
 - Log the full prompt once per call for debugging: `log.Printf("<flow>: system prompt:\n%s", systemPrompt)`. Do NOT log the response — it may contain user data. Exception: log raw text (truncated to ~500 chars) when the required-field sanity check trips, so new drift shapes are diagnosable.
@@ -1053,7 +1086,9 @@ flushFrames();
 
 12. **Size `MaxTurns` for the flow's tool depth.** With tools enabled, `MaxTurns=N` allows up to `N-1` tool calls plus one final answer — the model needs an extra turn after its last tool call to produce the response. Genkit's library default is 5; we found 3 catastrophically low (asset-incorporation flows blow it on the second tool call) and recommend **8** as the FlowConfig default. Symptoms of too low: `model call failed: exceeded maximum tool call iterations (N)`. Symptoms of too high: a buggy prompt with tools can loop indefinitely (rare in practice — Claude is good at terminating). Tune via `<FlowName>FlowConfig.MaxTurns`; leaving it at 0 picks the default in `run.go`.
 
-13. **Authorization before lookup.** If the flow operates on a user-owned resource, check ownership BEFORE returning 404 — never reveal whether an id exists to an unauthorized caller. The handler should 403 for "exists but not yours" and 404 for "doesn't exist or not yours" (whichever the project convention dictates — check `CLAUDE.md` / memory).
+13. **Don't fail the call when only metadata is missing.** Truncation at `max_tokens` drops the trailing fields (action, flags, etc.) before it drops the long content. Use the graceful-degradation pattern from Step 6: fail only when the response is genuinely unusable (no content **and** no explanation); infer `action = "edited"` from non-empty content; provide a placeholder explanation. The user has already seen the streamed content — surfacing an "expected fields missing" error here would discard it for no benefit. Default `MaxOutputTokens` to **32768** to make truncation rare in the first place.
+
+14. **Authorization before lookup.** If the flow operates on a user-owned resource, check ownership BEFORE returning 404 — never reveal whether an id exists to an unauthorized caller. The handler should 403 for "exists but not yours" and 404 for "doesn't exist or not yours" (whichever the project convention dictates — check `CLAUDE.md` / memory).
 
 ---
 

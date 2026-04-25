@@ -36,7 +36,12 @@ type PostAssistantRepos struct {
 
 // PostAssistantFlowConfig holds settings for the post assistant flow.
 type PostAssistantFlowConfig struct {
-	ModelID         string
+	ModelID string
+	// MaxOutputTokens caps the model's output for a single call. 0 falls
+	// back to a sensible default (32768) that fits multi-paragraph
+	// Markdown rewrites plus the metadata fields without truncation.
+	// Anthropic charges only for tokens actually emitted, so a generous
+	// cap costs nothing on short responses.
 	MaxOutputTokens int64
 	// MaxTurns caps tool-use round-trips. The model needs one extra turn
 	// for the final answer after its last tool call, so MaxTurns=N allows

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"sync"
 	"text/template"
 	"time"
@@ -118,8 +117,8 @@ func runPostAssistant(
 	// Assistant responses are short (description + explanation), so cap
 	// output tokens well below the content-plan default.
 	maxTokens := cfg.MaxOutputTokens
-	if maxTokens == 0 || maxTokens > 8192 {
-		maxTokens = 8192
+	if maxTokens == 0 {
+		maxTokens = 32768
 	}
 	maxTurns := cfg.MaxTurns
 	if maxTurns == 0 {
@@ -250,15 +249,32 @@ func runPostAssistant(
 		result.VersionNote = s
 	}
 
-	// Sanity check: if the scanner couldn't extract the two required
-	// fields (explanation + action), the response is unusable — log the
-	// raw text and surface a model-error. This shouldn't happen in
-	// practice; if it does, the log is the evidence.
-	if result.Explanation == "" || result.Action == "" {
-		raw := strings.TrimSpace(resp.Text())
-		log.Printf("post_assistant[%s]: scanner failed to extract required fields (len=%d): %.500s",
+	// Graceful degradation against truncated responses (max_tokens hit
+	// mid-content). Field order in the prompt is
+	// explanation → updatedContent → action → saveVersion → versionNote,
+	// so when the model runs out of tokens during updatedContent the
+	// trailing metadata fields are the first to drop off. If we got
+	// usable content, recover the missing fields from defaults instead
+	// of failing the whole turn.
+	switch {
+	case result.Explanation == "" && result.UpdatedContent == "":
+		// Genuinely unusable — neither field came through.
+		raw := scanner.FullText()
+		log.Printf("post_assistant[%s]: scanner found no usable fields (len=%d): %.500s",
 			req.PostID, len(raw), raw)
 		return nil, &AIError{Msg: "model response did not contain the expected fields"}
+
+	case result.Action == "" && result.UpdatedContent != "":
+		// The model wouldn't have emitted updatedContent if it had
+		// decided to decline; infer "edited".
+		log.Printf("post_assistant[%s]: action missing — inferring 'edited' from non-empty updatedContent (likely max_tokens truncation)", req.PostID)
+		result.Action = "edited"
+	}
+
+	// Surface a generic explanation if the model got truncated before
+	// it could write one.
+	if result.Explanation == "" && result.UpdatedContent != "" {
+		result.Explanation = "Updated post content."
 	}
 
 	// Content is persisted and returned as Markdown. The frontend is the
