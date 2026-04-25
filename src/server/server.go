@@ -21,6 +21,7 @@ import (
 
 	"github.com/content-control-center/app/src/config"
 	"github.com/content-control-center/app/src/embedding"
+	"github.com/content-control-center/app/src/eventhub"
 	"github.com/content-control-center/app/src/genkit/flows/content_plan"
 	"github.com/content-control-center/app/src/genkit/flows/post_assistant"
 	"github.com/content-control-center/app/src/handlers"
@@ -56,6 +57,11 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	postVersionRepo := repository.NewPostVersionRepository(db)
 	postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
+
+	// In-process event hub: backend code publishes; the SSE endpoint
+	// fans events out to authenticated clients.
+	hub := eventhub.New(eventhub.Config{})
+	handlers.NewEventsHandler(hub, sessionRepo, auth, 0).Register(app)
 
 	handlers.NewHealthHandler(db).Register(app)
 	handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
@@ -111,7 +117,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 			Platforms:  platformRepo,
 			Posts:      postRepo,
 		}
-		generateDraft, err = initContentPlan(g, cfg, embedder, contentPlanRepos)
+		generateDraft, err = initContentPlan(g, cfg, embedder, hub, contentPlanRepos)
 		if err != nil {
 			return nil, err
 		}
@@ -124,7 +130,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 			Versions:  postVersionRepo,
 			Messages:  postMessageRepo,
 		}
-		assistantCallback, err = initPostAssistant(g, cfg, embedder, postAssistantRepos)
+		assistantCallback, err = initPostAssistant(g, cfg, embedder, hub, postAssistantRepos)
 		if err != nil {
 			return nil, err
 		}
