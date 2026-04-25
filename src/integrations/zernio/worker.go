@@ -221,7 +221,12 @@ func (w *Worker) sleep(ctx context.Context, d time.Duration) bool {
 
 // tick executes one reconciliation pass. Returns the underlying error
 // so the loop can react to 401 vs 429 vs everything else.
+//
+// Log lines use the documented zernio.* key=value fields so a future
+// structured-logging migration can ingest them without a regex pass.
 func (w *Worker) tick(ctx context.Context) error {
+	tickStart := time.Now()
+
 	profileID, _, err := w.settings.Get(ctx, SettingProfileID)
 	if err != nil {
 		w.recordSyncStatus(ctx, err)
@@ -235,6 +240,8 @@ func (w *Worker) tick(ctx context.Context) error {
 		}
 		w.recordSyncStatus(ctx, err)
 		w.publishSyncEvent(ctx, EventTypeSyncFailed, fmt.Sprintf("list_accounts: %v", err))
+		log.Printf("zernio.sync failed zernio.profile_id=%s zernio.sync_tick_ms=%d error=%q",
+			profileID, time.Since(tickStart).Milliseconds(), err.Error())
 		return err
 	}
 
@@ -249,36 +256,44 @@ func (w *Worker) tick(ctx context.Context) error {
 
 	if err := w.accounts.ApplyPlan(ctx, plan.Upserts, plan.SoftDeleteIDs, now); err != nil {
 		w.recordSyncStatus(ctx, err)
-		// Persistence failure during attachment is the case the user
-		// wants surfaced as an event so listeners can react.
 		for _, ch := range plan.Changes {
 			if ch.Change == ChangeAttached {
 				w.publishAccountEvent(ctx, EventTypeAttachFailed, ch.Account, fmt.Sprintf("apply_plan: %v", err))
 			}
 		}
+		log.Printf("zernio.sync failed zernio.profile_id=%s zernio.sync_tick_ms=%d error=%q",
+			profileID, time.Since(tickStart).Milliseconds(), err.Error())
 		return err
 	}
 
+	var added, updated, removed int
 	for _, ch := range plan.Changes {
 		switch ch.Change {
 		case ChangeAttached:
+			added++
 			w.publishAccountEvent(ctx, EventTypeAttached, ch.Account, "")
+			log.Printf("zernio.account.attached zernio.profile_id=%s zernio.platform=%s zernio.account_id=%s",
+				profileID, ch.Account.Platform, ch.Account.ID)
 		case ChangeUpdated:
+			updated++
 			w.publishAccountEvent(ctx, EventTypeUpdated, ch.Account, "")
 		case ChangeDisconnected:
+			removed++
 			w.publishAccountEvent(ctx, EventTypeDisconnected, ch.Account, "")
+			log.Printf("zernio.account.disconnected zernio.profile_id=%s zernio.platform=%s zernio.account_id=%s",
+				profileID, ch.Account.Platform, ch.Account.ID)
 		case ChangeRevived:
+			added++
 			w.publishAccountEvent(ctx, EventTypeRevived, ch.Account, "")
 		}
 	}
 
-	// Refresh profile metadata in lockstep with Zernio (cheap; the
-	// ticket spec calls this out as a free win — admin renames the
-	// profile on Zernio, our local cache catches up).
 	w.refreshProfileMeta(ctx, profileID)
 
 	w.recordSyncStatus(ctx, nil)
 	w.publishSyncEvent(ctx, EventTypeSyncOK, fmt.Sprintf("upserts=%d soft_deletes=%d", len(plan.Upserts), len(plan.SoftDeleteIDs)))
+	log.Printf("zernio.sync ok zernio.profile_id=%s zernio.sync_tick_ms=%d zernio.accounts_added=%d zernio.accounts_updated=%d zernio.accounts_removed=%d",
+		profileID, time.Since(tickStart).Milliseconds(), added, updated, removed)
 	return nil
 }
 

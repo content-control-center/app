@@ -60,12 +60,57 @@ func NewZernioHandler(
 }
 
 func (h *ZernioHandler) Register(app *fiber.App) {
+	// Health is intentionally unauthenticated, matching /api/health —
+	// monitoring agents need to scrape it without holding a session.
+	app.Get("/api/integrations/zernio/health", h.Health)
+
 	g := app.Group("/api/integrations/zernio", h.auth)
 	g.Get("/platforms", h.ListPlatforms)
 	g.Post("/connect-links", h.CreateConnectLink)
 	g.Get("/accounts", h.ListAccounts)
 	g.Post("/sync", h.TriggerSync)
 	g.Post("/profile/repair", h.RepairProfile)
+}
+
+type healthResponse struct {
+	Enabled        bool   `json:"enabled"`
+	State          string `json:"state"`
+	ProfileID      string `json:"profileId,omitempty"`
+	LastSyncAt     string `json:"lastSyncAt,omitempty"`
+	LastSyncStatus string `json:"lastSyncStatus,omitempty"`
+	AccountCount   int    `json:"accountCount"`
+}
+
+// Health godoc
+// @Summary      Zernio integration health
+// @Description  Public endpoint suitable for inclusion in monitoring
+// @Description  dashboards. Reports whether the integration is enabled,
+// @Description  its state (disabled / degraded / ok), the bootstrapped
+// @Description  profile ID, and the most recent sync result.
+// @Tags         zernio
+// @Produce      json
+// @Success      200  {object}  healthResponse
+// @Router       /api/integrations/zernio/health [get]
+func (h *ZernioHandler) Health(c *fiber.Ctx) error {
+	resp := healthResponse{
+		Enabled: h.integ.Enabled(),
+		State:   string(h.integ.State()),
+	}
+	profileID, _, err := h.settings.Get(c.Context(), zernio.SettingProfileID)
+	if err != nil {
+		return err
+	}
+	resp.ProfileID = profileID
+	if profileID != "" {
+		rows, err := h.accounts.ListActive(c.Context(), profileID)
+		if err != nil {
+			return err
+		}
+		resp.AccountCount = len(rows)
+	}
+	resp.LastSyncAt, _, _ = h.settings.Get(c.Context(), zernio.SettingLastSyncAt)
+	resp.LastSyncStatus, _, _ = h.settings.Get(c.Context(), zernio.SettingLastSyncStatus)
+	return c.JSON(resp)
 }
 
 // platformInfo is the GET /platforms entry shape.
