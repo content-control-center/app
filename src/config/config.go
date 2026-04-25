@@ -1,6 +1,10 @@
 package config
 
-import "github.com/kelseyhightower/envconfig"
+import (
+	"time"
+
+	"github.com/kelseyhightower/envconfig"
+)
 
 type Config struct {
 	Addr              string `envconfig:"ADDR"                default:":9001"`
@@ -10,10 +14,10 @@ type Config struct {
 	EmbedServerURL    string `envconfig:"EMBED_SERVER_URL"    default:"http://localhost:8080"`
 
 	// Anthropic config.
-	AnthropicAPIKey string `envconfig:"ANTHROPIC_API_KEY"     default:""`
-	ModelID         string `envconfig:"MODEL_ID"              default:"claude-sonnet-4-5-20250929"` // claude-haiku-4-5-20251001 for testing
-	MaxContextAssets int   `envconfig:"MAX_ASSET_CONTEXT"     default:"15"`
-	MaxContextChars  int   `envconfig:"MAX_CONTEXT_CHARS"     default:"10000"`
+	AnthropicAPIKey  string `envconfig:"ANTHROPIC_API_KEY"     default:""`
+	ModelID          string `envconfig:"MODEL_ID"              default:"claude-sonnet-4-5-20250929"` // claude-haiku-4-5-20251001 for testing
+	MaxContextAssets int    `envconfig:"MAX_ASSET_CONTEXT"     default:"15"`
+	MaxContextChars  int    `envconfig:"MAX_CONTEXT_CHARS"     default:"10000"`
 
 	// 64K matches Claude 4.x Haiku/Sonnet's max output. Anthropic charges
 	// only for tokens actually emitted, so a generous cap costs nothing on
@@ -29,6 +33,21 @@ type Config struct {
 	StorageSecretKey string `envconfig:"STORAGE_SECRET_KEY" default:""`
 	StorageBucket    string `envconfig:"STORAGE_BUCKET"     default:""`
 	StoragePublicURL string `envconfig:"STORAGE_PUBLIC_URL" default:""` // CDN/public base URL for returned object URLs
+
+	// Zernio integration. Empty ZernioAPIKey disables the
+	// integration entirely; everything else stays defaulted.
+	ZernioAPIKey           string        `envconfig:"ZERNIO_API_KEY"            default:""`
+	ZernioBaseURL          string        `envconfig:"ZERNIO_BASE_URL"           default:"https://zernio.com/api/v1"`
+	ZernioHTTPTimeout      time.Duration `envconfig:"ZERNIO_HTTP_TIMEOUT"       default:"15s"`
+	ZernioSyncInterval     time.Duration `envconfig:"ZERNIO_SYNC_INTERVAL"      default:"30s"`
+	ZernioSyncIntervalFast time.Duration `envconfig:"ZERNIO_SYNC_INTERVAL_FAST" default:"5s"`
+
+	// Optional post-OAuth redirect target. When set, every connect
+	// link Zernio issues will send the user here after authorization
+	// succeeds, with ?connected=<platform>&profileId=<id>&accountId=<id>&username=<name>
+	// appended by Zernio. Leaving this empty falls back to Zernio's
+	// default success page.
+	ZernioRedirectURL string `envconfig:"ZERNIO_REDIRECT_URL" default:""`
 }
 
 func Load() (*Config, error) {

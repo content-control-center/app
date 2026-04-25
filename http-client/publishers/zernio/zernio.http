@@ -1,0 +1,126 @@
+@baseUrl = http://localhost:9001
+
+# Most Zernio endpoints require authentication.
+# Run "Login" from sessions/sessions.http first — the HTTP client stores and
+# sends the cookie automatically on subsequent requests to the same host.
+#
+# /health is intentionally unauthenticated, matching /api/health.
+#
+# Useful env knobs when running the server:
+#   ZERNIO_API_KEY=<key>            # required to enable the integration
+#   ZERNIO_BASE_URL=<url>           # defaults to https://api.zernio.com
+#   ZERNIO_HTTP_TIMEOUT=15s
+#   ZERNIO_SYNC_INTERVAL=30s
+#   ZERNIO_SYNC_INTERVAL_FAST=5s
+
+### Health — integration state, profile id, last sync, account count  [public]
+GET {{baseUrl}}/api/integrations/zernio/health
+Accept: application/json
+
+### List Phase 1 platform allowlist with supportedPostTypes  [protected]
+GET {{baseUrl}}/api/integrations/zernio/platforms
+Accept: application/json
+
+### Create connect link — LinkedIn  [protected]
+# @name connectLinkLinkedIn
+POST {{baseUrl}}/api/integrations/zernio/connect-links
+Content-Type: application/json
+
+{
+  "platform": "linkedin"
+}
+
+> {% client.global.set("zernioConnectURL", response.body.connectUrl) %}
+
+### Create connect link — Twitter (Zernio uses "twitter", not "x-twitter")  [protected]
+POST {{baseUrl}}/api/integrations/zernio/connect-links
+Content-Type: application/json
+
+{
+  "platform": "twitter"
+}
+
+### Create connect link — Facebook  [protected]
+POST {{baseUrl}}/api/integrations/zernio/connect-links
+Content-Type: application/json
+
+{
+  "platform": "facebook"
+}
+
+### Create connect link — Instagram  [protected]
+POST {{baseUrl}}/api/integrations/zernio/connect-links
+Content-Type: application/json
+
+{
+  "platform": "instagram"
+}
+
+### Create connect link — YouTube  [protected]
+POST {{baseUrl}}/api/integrations/zernio/connect-links
+Content-Type: application/json
+
+{
+  "platform": "youtube"
+}
+
+### Create connect link — Threads  [protected]
+POST {{baseUrl}}/api/integrations/zernio/connect-links
+Content-Type: application/json
+
+{
+  "platform": "threads"
+}
+
+### Create connect link — outside allowlist (expects 400 invalid_platform)  [protected]
+POST {{baseUrl}}/api/integrations/zernio/connect-links
+Content-Type: application/json
+
+{
+  "platform": "tiktok"
+}
+
+### Create connect link — Bluesky is intentionally excluded (expects 400)  [protected]
+POST {{baseUrl}}/api/integrations/zernio/connect-links
+Content-Type: application/json
+
+{
+  "platform": "bluesky"
+}
+
+### Create connect link — missing platform (expects 400)  [protected]
+POST {{baseUrl}}/api/integrations/zernio/connect-links
+Content-Type: application/json
+
+{}
+
+### Create connect link — empty platform (expects 400)  [protected]
+POST {{baseUrl}}/api/integrations/zernio/connect-links
+Content-Type: application/json
+
+{
+  "platform": ""
+}
+
+# Rate-limit smoke test: the bucket is 30/min per Ogen instance. Run this
+# block 31 times in quick succession to see the 31st return 429 with a
+# Retry-After header.
+### Rate-limit probe (run 31x; the 31st expects 429 rate_limited)  [protected]
+POST {{baseUrl}}/api/integrations/zernio/connect-links
+Content-Type: application/json
+
+{
+  "platform": "linkedin"
+}
+
+### List local social-account mirror + last sync metadata  [protected]
+GET {{baseUrl}}/api/integrations/zernio/accounts
+Accept: application/json
+
+### Trigger an immediate sync tick  [protected]
+POST {{baseUrl}}/api/integrations/zernio/sync
+Accept: application/json
+
+### Repair profile — re-runs the bootstrap (idempotent)  [protected]
+POST {{baseUrl}}/api/integrations/zernio/profile/repair
+Accept: application/json

@@ -56,6 +56,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	postRepo := repository.NewPostRepository(db)
 	postVersionRepo := repository.NewPostVersionRepository(db)
 	postMessageRepo := repository.NewPostAssistantMessageRepository(db)
+	socialAccountRepo := repository.NewSocialAccountRepository(db)
 	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
 
 	// In-process event hub: backend code publishes; the SSE endpoint
@@ -69,6 +70,28 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	// development escape hatch so localhost over plain HTTP still works.
 	handlers.NewSessionsHandler(userRepo, sessionRepo, cfg.SessionCookieName, !cfg.Debug).Register(app)
 	handlers.NewSettingsHandler(settingRepo, auth).Register(app)
+
+	// Zernio integration. Ping, profile bootstrap, and the sync worker
+	// all run in background goroutines so Ogen boot never blocks on
+	// Zernio reachability. The shutdown hook waits up to 2s for the
+	// worker to exit cleanly.
+	zernioRT := initZernio(ctx, cfg, settingRepo, socialAccountRepo, hub)
+	if zernioRT.Bootstrapper != nil {
+		handlers.NewZernioHandler(
+			zernioRT.Integration,
+			zernioRT.Bootstrapper,
+			zernioRT.Settings,
+			platformRepo,
+			socialAccountRepo,
+			zernioRT.Worker,
+			zernioRT.RateLimiter,
+			auth,
+		).Register(app)
+		app.Hooks().OnShutdown(func() error {
+			zernioRT.shutdown()
+			return nil
+		})
+	}
 
 	store, err := storage.New(cfg)
 	if err != nil {
@@ -111,11 +134,11 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 
 	if cfg.AnthropicAPIKey != "" {
 		contentPlanRepos := content_plan.ContentPlanRepos{
-			Campaigns:  campaignRepo,
-			Assets:     pieceRepo,
-			Chunks:     chunksRepo,
-			Platforms:  platformRepo,
-			Posts:      postRepo,
+			Campaigns: campaignRepo,
+			Assets:    pieceRepo,
+			Chunks:    chunksRepo,
+			Platforms: platformRepo,
+			Posts:     postRepo,
 		}
 		generateDraft, err = initContentPlan(g, cfg, embedder, hub, contentPlanRepos)
 		if err != nil {
