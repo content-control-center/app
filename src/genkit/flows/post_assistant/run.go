@@ -119,7 +119,7 @@ func runPostAssistant(
 	// output tokens well below the content-plan default.
 	maxTokens := cfg.MaxOutputTokens
 	if maxTokens == 0 {
-		maxTokens = 32768
+		maxTokens = 64000
 	}
 	maxTurns := cfg.MaxTurns
 	if maxTurns == 0 {
@@ -216,6 +216,19 @@ func runPostAssistant(
 	if err != nil {
 		log.Printf("post_assistant[%s]: model call failed after %s: %v", req.PostID, time.Since(start).Round(time.Millisecond), err)
 		return nil, &AIError{Msg: fmt.Sprintf("model call failed: %v", err)}
+	}
+
+	// Deterministic truncation signal: when Anthropic's stop_reason is
+	// "max_tokens", genkit surfaces it as FinishReasonLength. Log loudly
+	// so the cap can be tuned (env MAX_OUTPUT_TOKENS) before users see
+	// the recovery branches kick in.
+	if resp.FinishReason == ai.FinishReasonLength {
+		var outputTokens int64
+		if resp.Usage != nil {
+			outputTokens = int64(resp.Usage.OutputTokens)
+		}
+		log.Printf("post_assistant[%s]: TRUNCATED — finish_reason=length, output_tokens=%d, cap=%d. Bump MAX_OUTPUT_TOKENS or shorten the post/instruction.",
+			req.PostID, outputTokens, maxTokens)
 	}
 
 	if resp.Usage != nil {

@@ -15,9 +15,11 @@ type Config struct {
 	MaxContextAssets int   `envconfig:"MAX_ASSET_CONTEXT"     default:"15"`
 	MaxContextChars  int   `envconfig:"MAX_CONTEXT_CHARS"     default:"10000"`
 
-	// Token math: 30 posts × ~200 tokens/post = ~6,000 tokens. The default of 8,192 comfortably covers that. If you
-	// switch to Sonnet (which supports 64K output), set MAX_OUTPUT_TOKENS=32768 in the app environment.
-	MaxOutputTokens int64 `envconfig:"MAX_OUTPUT_TOKENS"     default:"32000"`
+	// 64K matches Claude 4.x Haiku/Sonnet's max output. Anthropic charges
+	// only for tokens actually emitted, so a generous cap costs nothing on
+	// short responses but prevents truncation on long rewrites (assistant
+	// flow with explanation + full post content + tool inputs combined).
+	MaxOutputTokens int64 `envconfig:"MAX_OUTPUT_TOKENS"     default:"64000"`
 
 	// Object storage (S3-compatible: Cloudflare R2, DigitalOcean Spaces, AWS S3).
 	// Leave StorageEndpoint empty to disable image uploads.

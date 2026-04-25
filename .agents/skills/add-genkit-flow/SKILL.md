@@ -90,10 +90,12 @@ type <FlowName>Repos struct {
 type <FlowName>FlowConfig struct {
     ModelID string
     // MaxOutputTokens caps the model's output for one call. 0 falls back
-    // to a generous default (32768) so multi-paragraph rewrites + the
-    // metadata fields after them don't get truncated. Anthropic charges
+    // to 64000 — Claude 4.x Haiku/Sonnet's max output. Anthropic charges
     // only for tokens actually emitted, so a generous cap costs nothing
-    // on short responses.
+    // on short responses but prevents truncation when explanation + full
+    // content + tool inputs combined exceed a smaller cap. Detect
+    // truncation deterministically via resp.FinishReason ==
+    // ai.FinishReasonLength (see run.go template).
     MaxOutputTokens int64
     // MaxTurns caps tool-use round-trips. With tools, the model needs
     // N+1 turns to make N tool calls plus 1 final answer. 0 = sensible
@@ -579,7 +581,7 @@ func run<FlowName>(
 
     // ── Call model ──────────────────────────────────────────────────────────
     maxTokens := cfg.MaxOutputTokens
-    if maxTokens == 0 { maxTokens = 32768 } // see Step 2 FlowConfig comment
+    if maxTokens == 0 { maxTokens = 64000 } // see Step 2 FlowConfig comment
     maxTurns := cfg.MaxTurns
     if maxTurns == 0 { maxTurns = 8 }       // see Step 2 FlowConfig comment
     modelName := "anthropic/" + cfg.ModelID
@@ -647,6 +649,19 @@ func run<FlowName>(
     )
     if err != nil {
         return nil, &AIError{Msg: fmt.Sprintf("model call failed: %v", err)}
+    }
+
+    // Deterministic truncation signal: when Anthropic stops at max_tokens,
+    // genkit surfaces it as FinishReasonLength. Log loudly so the cap can
+    // be tuned (env MAX_OUTPUT_TOKENS) before users see the recovery
+    // branches in the assemble block kick in.
+    if resp.FinishReason == ai.FinishReasonLength {
+        var outputTokens int64
+        if resp.Usage != nil {
+            outputTokens = int64(resp.Usage.OutputTokens)
+        }
+        log.Printf("<flow>[%s]: TRUNCATED — finish_reason=length, output_tokens=%d, cap=%d. Bump MAX_OUTPUT_TOKENS or shorten the input.",
+            req.<ID>, outputTokens, maxTokens)
     }
 
     // ── Assemble response from scanner ──────────────────────────────────────
