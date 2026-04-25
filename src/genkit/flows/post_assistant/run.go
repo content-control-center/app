@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"text/template"
 	"time"
@@ -247,6 +248,21 @@ func runPostAssistant(
 	}
 	if s, ok := vals["versionNote"].(string); ok {
 		result.VersionNote = s
+	}
+
+	// Pure-prose recovery: occasionally the model ignores the JSON
+	// envelope entirely and answers in plain prose (often when the user
+	// asks an informational question). Salvage the raw text as the
+	// explanation of a "declined" response so the user at least sees
+	// the answer in the chat bubble. The prompt is the proper fix —
+	// this is the safety net for when the prompt fails to constrain.
+	if result.Explanation == "" && result.UpdatedContent == "" {
+		raw := strings.TrimSpace(scanner.FullText())
+		if raw != "" && !strings.Contains(raw, "{") {
+			log.Printf("post_assistant[%s]: model emitted prose-only response (len=%d) — treating as informational/declined", req.PostID, len(raw))
+			result.Explanation = raw
+			result.Action = "declined"
+		}
 	}
 
 	// Graceful degradation against truncated responses (max_tokens hit

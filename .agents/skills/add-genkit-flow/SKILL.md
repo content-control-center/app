@@ -202,6 +202,17 @@ Respond ONLY with the JSON object. No markdown fences, no extra text.{{end}}
 {{end}}
 ```
 
+### Two response modes (when the flow edits a resource)
+
+For flows that edit a resource (post, asset, campaign, etc.), users routinely send messages that are **questions** rather than edit requests — "what does the asset say about X?", "summarize the campaign", "how long is this post?". If the prompt only allows "edit" and "decline", the model frequently gives up on JSON entirely and writes prose. That triggers the pure-prose recovery path (see Step 6) but it's better to design for it explicitly.
+
+Pattern: keep one JSON envelope and distinguish via `action`:
+
+- `action: "edited"` — content changed, populate the long field.
+- `action: "declined"` — no content change. Use this for **both** out-of-scope refusals AND informational answers; the `explanation` field carries the prose response in both cases.
+
+Be explicit in the prompt about both modes, with examples. Reinforce that the model must **always** wrap output in the JSON envelope — even purely informational answers go inside `explanation`. See `src/genkit/flows/post_assistant/prompts/post_assistant.tmpl` for the canonical phrasing.
+
 **Rules:**
 - Embed via `//go:embed prompts/<flow_name>.tmpl` in `flow.go`.
 - The template data struct (`contextTemplateData`) lives in `context.go`.
@@ -445,12 +456,27 @@ The scanner returns whatever it saw — strings decoded, missing fields absent. 
 
 Concretely: in our prompt schema the order is `explanation` → `updatedContent` → `action` → `saveVersion` → `versionNote`. When the model runs out of tokens during the long `updatedContent` field, every metadata field after it is missing. The user has already seen the streamed content; failing the call now would discard it and surface an unhelpful "didn't contain expected fields" error.
 
-Instead, fail only when the response is **genuinely** unusable, and infer or default the rest:
+Instead, fail only when the response is **genuinely** unusable, and infer or default the rest. Three recovery cases sit before the strict-fail branch — pure-prose, truncated metadata, and missing explanation:
 
 ```go
+// Pure-prose recovery: the model ignored the JSON envelope entirely
+// and answered in plain text (often happens when the user asks a
+// purely informational question). Salvage the raw text as the
+// explanation of a "declined" response so the user at least sees
+// the answer.
+if result.Explanation == "" && result.LongField == "" {
+    raw := strings.TrimSpace(scanner.FullText())
+    if raw != "" && !strings.Contains(raw, "{") {
+        log.Printf("<flow>[%s]: model emitted prose-only response (len=%d) — treating as informational/declined", req.<ID>, len(raw))
+        result.Explanation = raw
+        result.Action = "declined"
+    }
+}
+
 switch {
 case result.PrimaryField == "" && result.LongField == "":
-    // Both empty — the model produced nothing recognisable. Fail.
+    // Both empty AND the prose-recovery above didn't fill them.
+    // The model produced nothing recognisable. Fail.
     log.Printf("<flow>[%s]: scanner found no usable fields (len=%d): %.500s",
         req.<ID>, len(scanner.FullText()), scanner.FullText())
     return nil, &AIError{Msg: "model response did not contain the expected fields"}
