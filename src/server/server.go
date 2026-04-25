@@ -70,6 +70,11 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	handlers.NewSessionsHandler(userRepo, sessionRepo, cfg.SessionCookieName, !cfg.Debug).Register(app)
 	handlers.NewSettingsHandler(settingRepo, auth).Register(app)
 
+	// Zernio integration controller (CON-62). Validates ZERNIO_API_KEY
+	// at boot; never aborts startup. Handlers + sync worker are wired
+	// in subsequent phases.
+	_ = initZernio(ctx, cfg)
+
 	store, err := storage.New(cfg)
 	if err != nil {
 		return nil, err
