@@ -95,6 +95,11 @@ func (c *Client) CreateProfile(ctx context.Context, name, description string) (*
 // with the platform as a path segment and `profileId` as a query
 // parameter. The response shape is `{"authUrl": "..."}`.
 //
+// When the Client was constructed with a non-empty RedirectURL,
+// `redirect_url` is forwarded so Zernio sends the user back there
+// after authorization with `?connected=<platform>&profileId=<id>&accountId=<id>&username=<name>`
+// appended.
+//
 // Caller is responsible for log redaction — the returned URL contains
 // a short-lived token that must not appear in log lines verbatim.
 func (c *Client) CreateConnectLink(ctx context.Context, profileID, platform string) (string, error) {
@@ -102,6 +107,9 @@ func (c *Client) CreateConnectLink(ctx context.Context, profileID, platform stri
 		return "", errors.New("zernio: client is disabled")
 	}
 	q := url.Values{"profileId": {profileID}}
+	if c.redirectURL != "" {
+		q.Set("redirect_url", c.redirectURL)
+	}
 	var out struct {
 		AuthURL string `json:"authUrl"`
 	}

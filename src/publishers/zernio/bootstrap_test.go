@@ -70,7 +70,7 @@ func jsonResponse(status int, body any) http.HandlerFunc {
 }
 
 func makeIntegration(stub *stubServer) *Integration {
-	c := NewClient("test-key", stub.URL, time.Second)
+	c := NewClient("test-key", stub.URL, ClientOpts{Timeout: time.Second})
 	integ := NewIntegration(c)
 	integ.SetState(StateDegraded) // post-Ping
 	return integ
@@ -213,8 +213,61 @@ func TestBootstrapAuthHeaderIsPresent(t *testing.T) {
 	}
 }
 
+func TestCreateConnectLinkForwardsRedirectURL(t *testing.T) {
+	stub := newStubServer()
+	defer stub.Close()
+	var sawRedirect, sawProfileID string
+	stub.handle("GET", "/connect/linkedin", func(w http.ResponseWriter, r *http.Request) {
+		sawRedirect = r.URL.Query().Get("redirect_url")
+		sawProfileID = r.URL.Query().Get("profileId")
+		jsonResponse(http.StatusOK, map[string]string{"authUrl": "https://zernio.com/oauth/linkedin?token=t"})(w, r)
+	})
+
+	c := NewClient("test-key", stub.URL, ClientOpts{
+		Timeout:     time.Second,
+		RedirectURL: "https://app.example.com/oauth/done",
+	})
+	got, err := c.CreateConnectLink(context.Background(), "p_test", "linkedin")
+	if err != nil {
+		t.Fatalf("CreateConnectLink: %v", err)
+	}
+	if got == "" {
+		t.Fatalf("authUrl: empty response")
+	}
+	if sawRedirect != "https://app.example.com/oauth/done" {
+		t.Errorf("redirect_url forwarded: got %q want app.example.com/oauth/done", sawRedirect)
+	}
+	if sawProfileID != "p_test" {
+		t.Errorf("profileId forwarded: got %q want p_test", sawProfileID)
+	}
+}
+
+func TestCreateConnectLinkOmitsRedirectURLWhenUnset(t *testing.T) {
+	stub := newStubServer()
+	defer stub.Close()
+	var redirectKeys []string
+	stub.handle("GET", "/connect/linkedin", func(w http.ResponseWriter, r *http.Request) {
+		// Capture every key Zernio sees so we can prove redirect_url
+		// is absent (rather than just empty-valued).
+		for k := range r.URL.Query() {
+			redirectKeys = append(redirectKeys, k)
+		}
+		jsonResponse(http.StatusOK, map[string]string{"authUrl": "https://zernio.com/oauth/linkedin?token=t"})(w, r)
+	})
+
+	c := NewClient("test-key", stub.URL, ClientOpts{Timeout: time.Second})
+	if _, err := c.CreateConnectLink(context.Background(), "p_test", "linkedin"); err != nil {
+		t.Fatalf("CreateConnectLink: %v", err)
+	}
+	for _, k := range redirectKeys {
+		if k == "redirect_url" {
+			t.Fatalf("redirect_url was sent without being configured (keys=%v)", redirectKeys)
+		}
+	}
+}
+
 func TestClientStringRedactsAPIKey(t *testing.T) {
-	c := NewClient("super-secret-key", "https://example.com", time.Second)
+	c := NewClient("super-secret-key", "https://example.com", ClientOpts{Timeout: time.Second})
 	got := fmt.Sprintf("%v", c)
 	if strings.Contains(got, "super-secret-key") {
 		t.Fatalf("API key leaked in String(): %q", got)

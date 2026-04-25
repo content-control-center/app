@@ -48,24 +48,46 @@ type Client struct {
 	httpClient *http.Client
 	baseURL    string
 	apiKey     string
+	// redirectURL is the post-OAuth landing target sent on every
+	// connect-link request. Empty means "use Zernio's default success
+	// page". See ClientOpts.RedirectURL for semantics.
+	redirectURL string
 }
 
-// NewClient constructs a Client. apiKey == "" returns nil so callers can
-// treat a nil receiver as "integration disabled".
-func NewClient(apiKey, baseURL string, timeout time.Duration) *Client {
+// ClientOpts holds optional Client knobs. Zero-value fields fall back
+// to package defaults; passing a zero-value ClientOpts is equivalent
+// to omitting it.
+type ClientOpts struct {
+	// Timeout for individual outbound HTTP requests. Defaults to 15s.
+	Timeout time.Duration
+
+	// RedirectURL, when non-empty, is forwarded to Zernio as
+	// `redirect_url` on every CreateConnectLink call. Zernio appends
+	// ?connected=<platform>&profileId=<id>&accountId=<id>&username=<name>
+	// to it after a successful authorization. Useful when the SPA
+	// owns a "connection complete" page that should consume those
+	// parameters directly.
+	RedirectURL string
+}
+
+// NewClient constructs a Client. apiKey == "" returns nil so callers
+// can treat a nil receiver as "integration disabled".
+func NewClient(apiKey, baseURL string, opts ClientOpts) *Client {
 	if apiKey == "" {
 		return nil
 	}
 	if baseURL == "" {
 		baseURL = defaultBaseURL
 	}
+	timeout := opts.Timeout
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
 	return &Client{
-		httpClient: &http.Client{Timeout: timeout},
-		baseURL:    strings.TrimRight(baseURL, "/"),
-		apiKey:     apiKey,
+		httpClient:  &http.Client{Timeout: timeout},
+		baseURL:     strings.TrimRight(baseURL, "/"),
+		apiKey:      apiKey,
+		redirectURL: opts.RedirectURL,
 	}
 }
 

@@ -64,7 +64,10 @@ func initZernio(
 		}
 	}
 
-	client := zernio.NewClient(cfg.ZernioAPIKey, cfg.ZernioBaseURL, cfg.ZernioHTTPTimeout)
+	client := zernio.NewClient(cfg.ZernioAPIKey, cfg.ZernioBaseURL, zernio.ClientOpts{
+		Timeout:     cfg.ZernioHTTPTimeout,
+		RedirectURL: cfg.ZernioRedirectURL,
+	})
 	integ := zernio.NewIntegration(client)
 	bootstrapper := zernio.NewBootstrapper(integ, store)
 	worker := zernio.NewWorker(integ, accountRepo, store, hub, bootstrapper, cfg.ZernioSyncInterval, cfg.ZernioSyncIntervalFast)

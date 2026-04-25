@@ -41,6 +41,13 @@ type Config struct {
 	ZernioHTTPTimeout      time.Duration `envconfig:"ZERNIO_HTTP_TIMEOUT"       default:"15s"`
 	ZernioSyncInterval     time.Duration `envconfig:"ZERNIO_SYNC_INTERVAL"      default:"30s"`
 	ZernioSyncIntervalFast time.Duration `envconfig:"ZERNIO_SYNC_INTERVAL_FAST" default:"5s"`
+
+	// Optional post-OAuth redirect target. When set, every connect
+	// link Zernio issues will send the user here after authorization
+	// succeeds, with ?connected=<platform>&profileId=<id>&accountId=<id>&username=<name>
+	// appended by Zernio. Leaving this empty falls back to Zernio's
+	// default success page.
+	ZernioRedirectURL string `envconfig:"ZERNIO_REDIRECT_URL" default:""`
 }
 
 func Load() (*Config, error) {

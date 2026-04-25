@@ -197,7 +197,7 @@ var _ = Describe("ZernioHandler", Ordered, func() {
 		store = &settingStoreFromRepo{repo: settingRepo}
 
 		hub = &quietHub{}
-		client := zernio.NewClient(apiKey, stub.URL, time.Second)
+		client := zernio.NewClient(apiKey, stub.URL, zernio.ClientOpts{Timeout: time.Second})
 		integ = zernio.NewIntegration(client)
 		integ.SetState(zernio.StateDegraded)
 		bootstrapper = zernio.NewBootstrapper(integ, store)
