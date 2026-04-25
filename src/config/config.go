@@ -37,7 +37,7 @@ type Config struct {
 	// Zernio integration. Empty ZernioAPIKey disables the
 	// integration entirely; everything else stays defaulted.
 	ZernioAPIKey           string        `envconfig:"ZERNIO_API_KEY"            default:""`
-	ZernioBaseURL          string        `envconfig:"ZERNIO_BASE_URL"           default:"https://api.zernio.com"`
+	ZernioBaseURL          string        `envconfig:"ZERNIO_BASE_URL"           default:"https://zernio.com/api/v1"`
 	ZernioHTTPTimeout      time.Duration `envconfig:"ZERNIO_HTTP_TIMEOUT"       default:"15s"`
 	ZernioSyncInterval     time.Duration `envconfig:"ZERNIO_SYNC_INTERVAL"      default:"30s"`
 	ZernioSyncIntervalFast time.Duration `envconfig:"ZERNIO_SYNC_INTERVAL_FAST" default:"5s"`

@@ -16,7 +16,7 @@ const (
 // in-memory and per-instance, matching the ticket's "max 30 connect-link
 // requests per minute per Ogen instance" requirement.
 //
-// NB: when Ogen runs as more than one replica, replace this with a
+// TODO: when Ogen runs as more than one replica, replace this with a
 // distributed limiter (Redis INCR + TTL, or a Lua script for atomic
 // take-with-expiry). The Allow() contract is intentionally simple
 // enough to swap implementations without changes at the call site.

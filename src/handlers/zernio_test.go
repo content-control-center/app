@@ -136,35 +136,40 @@ var _ = Describe("ZernioHandler", Ordered, func() {
 	setupApp := func(apiKey string) {
 		stub = newZernioStub()
 
-		// Boot-time Ping → 200 (validates the key).
+		// Boot-time Ping + bootstrap: list returns no matching profile
+		// so we exercise the create branch.
 		stub.handle("GET", "/profiles", func(w http.ResponseWriter, r *http.Request) {
-			// Bootstrap: list returns no matching profile so we go through
-			// the create branch.
-			writeJSON(w, http.StatusOK, map[string]any{"items": []any{}})
+			writeJSON(w, http.StatusOK, map[string]any{"profiles": []any{}})
 		})
-		// Bootstrap: create profile, return canned ID.
+		// Bootstrap: create profile, return canned ID wrapped in
+		// Zernio's documented `{profile: {...}}` envelope.
 		stub.handle("POST", "/profiles", func(w http.ResponseWriter, r *http.Request) {
 			now := time.Now().UTC().Format(time.RFC3339)
 			id := "p_test"
 			profileIDSeen.Store(id)
 			writeJSON(w, http.StatusOK, map[string]any{
-				"_id":       id,
-				"name":      zernio.ManagedProfileName,
-				"createdAt": now,
-				"updatedAt": now,
+				"profile": map[string]any{
+					"_id":       id,
+					"name":      zernio.ManagedProfileName,
+					"createdAt": now,
+					"updatedAt": now,
+				},
 			})
 		})
 		// Profile fetch by ID — used by the worker's metadata refresh.
 		stub.handle("GET", "/profiles/p_test", func(w http.ResponseWriter, r *http.Request) {
 			now := time.Now().UTC().Format(time.RFC3339)
 			writeJSON(w, http.StatusOK, map[string]any{
-				"_id": "p_test", "name": zernio.ManagedProfileName, "createdAt": now, "updatedAt": now,
+				"profile": map[string]any{
+					"_id": "p_test", "name": zernio.ManagedProfileName, "createdAt": now, "updatedAt": now,
+				},
 			})
 		})
-		// Connect-link issuance.
-		stub.handle("POST", "/connect-links", func(w http.ResponseWriter, r *http.Request) {
+		// Connect-link issuance: GET /connect/{platform}?profileId=...
+		// returning {"authUrl": "..."}.
+		stub.handle("GET", "/connect/linkedin", func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]string{
-				"url": "https://zernio.com/connect/linkedin?token=secret-do-not-log",
+				"authUrl": "https://zernio.com/connect/linkedin?token=secret-do-not-log",
 			})
 		})
 

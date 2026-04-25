@@ -157,7 +157,7 @@ func (b *Bootstrapper) tick(ctx context.Context) (*Profile, error) {
 		log.Printf("zernio: stored profile_id=%s no longer exists; will recreate", storedID)
 	}
 
-	profiles, err := b.integ.Client.ListProfiles(ctx, 100)
+	profiles, err := b.integ.Client.ListProfiles(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +173,7 @@ func (b *Bootstrapper) tick(ctx context.Context) (*Profile, error) {
 	// Concurrent-boot mitigation: re-list and adopt the oldest matching
 	// profile. If another boot raced us, both processes converge on the
 	// same ID. List failures fall back to the just-created profile.
-	if profiles, listErr := b.integ.Client.ListProfiles(ctx, 100); listErr == nil {
+	if profiles, listErr := b.integ.Client.ListProfiles(ctx); listErr == nil {
 		matches := matchesByName(profiles, ManagedProfileName)
 		if len(matches) > 1 {
 			log.Printf("zernio: WARN %d profiles named %q exist on Zernio; adopting oldest. Manually clean up duplicates.",

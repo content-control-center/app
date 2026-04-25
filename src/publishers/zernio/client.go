@@ -26,8 +26,11 @@ import (
 )
 
 const (
-	// defaultBaseURL is used when ZERNIO_BASE_URL is unset.
-	defaultBaseURL = "https://api.zernio.com"
+	// defaultBaseURL is used when ZERNIO_BASE_URL is unset. Zernio's
+	// REST API lives under /api/v1; the prefix is part of the base
+	// URL rather than each path so tests can point a stub server at
+	// the same paths without re-deriving the prefix.
+	defaultBaseURL = "https://zernio.com/api/v1"
 	// defaultTimeout matches the ticket's documented 15s default.
 	defaultTimeout = 15 * time.Second
 	// errorBodyLimit caps how much of a non-2xx body we read into APIError
@@ -113,11 +116,16 @@ func IsStatus(err error, status int) bool {
 // Ping issues a low-cost authenticated request to validate the API key
 // at boot. 200 → nil; 401 → *APIError{Status:401}; transport errors
 // propagate as-is.
+//
+// Zernio's GET /profiles returns the full list with no pagination
+// surface in the documented schema; for a tenant with one or two
+// profiles it's effectively free. We discard the body — the only
+// signal we care about here is the HTTP status.
 func (c *Client) Ping(ctx context.Context) error {
 	if c == nil {
 		return errors.New("zernio: client is disabled")
 	}
-	return c.do(ctx, http.MethodGet, "/profiles", url.Values{"limit": {"1"}}, nil, nil)
+	return c.do(ctx, http.MethodGet, "/profiles", nil, nil, nil)
 }
 
 // do performs an authenticated request and decodes the JSON body into

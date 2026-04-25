@@ -80,9 +80,11 @@ func TestBootstrapAdoptsByStoredID(t *testing.T) {
 	stub := newStubServer()
 	defer stub.Close()
 	stub.handle("GET", "/profiles/p1", jsonResponse(http.StatusOK, map[string]any{
-		"_id":       "p1",
-		"name":      ManagedProfileName,
-		"createdAt": time.Now().UTC(),
+		"profile": map[string]any{
+			"_id":       "p1",
+			"name":      ManagedProfileName,
+			"createdAt": time.Now().UTC(),
+		},
 	}))
 
 	store := newMemStore()
@@ -107,7 +109,7 @@ func TestBootstrapClearsStaleIDOn404ThenAdoptsByName(t *testing.T) {
 	defer stub.Close()
 	stub.handle("GET", "/profiles/old", jsonResponse(http.StatusNotFound, map[string]string{"error": "not_found"}))
 	stub.handle("GET", "/profiles", jsonResponse(http.StatusOK, map[string]any{
-		"items": []map[string]any{
+		"profiles": []map[string]any{
 			{"_id": "p2", "name": ManagedProfileName, "createdAt": time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)},
 		},
 	}))
@@ -135,19 +137,21 @@ func TestBootstrapCreatesWhenNoMatchInList(t *testing.T) {
 		// First list (pre-create) returns no matches; second list
 		// (post-create) returns the freshly-created profile.
 		if listCalls.Load() == 1 {
-			jsonResponse(http.StatusOK, map[string]any{"items": []any{}})(w, r)
+			jsonResponse(http.StatusOK, map[string]any{"profiles": []any{}})(w, r)
 			return
 		}
 		jsonResponse(http.StatusOK, map[string]any{
-			"items": []map[string]any{
+			"profiles": []map[string]any{
 				{"_id": "p3", "name": ManagedProfileName, "createdAt": time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC)},
 			},
 		})(w, r)
 	})
 	stub.handle("POST", "/profiles", jsonResponse(http.StatusOK, map[string]any{
-		"_id":       "p3",
-		"name":      ManagedProfileName,
-		"createdAt": time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC),
+		"profile": map[string]any{
+			"_id":       "p3",
+			"name":      ManagedProfileName,
+			"createdAt": time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC),
+		},
 	}))
 
 	store := newMemStore()
@@ -185,7 +189,7 @@ func TestBootstrapAuthHeaderIsPresent(t *testing.T) {
 	stub := newStubServer()
 	defer stub.Close()
 	stub.handle("GET", "/profiles/p1", jsonResponse(http.StatusOK, map[string]any{
-		"_id": "p1", "name": ManagedProfileName,
+		"profile": map[string]any{"_id": "p1", "name": ManagedProfileName},
 	}))
 
 	store := newMemStore()
