@@ -45,7 +45,10 @@ func initZernio(
 	cfg *config.Config,
 	settingRepo repository.SettingRepository,
 ) zernioRuntime {
-	store := &settingsStoreAdapter{repo: settingRepo}
+	// 30s in-process TTL cache around zernio.* setting reads. All
+	// downstream callers (handlers, bootstrap, future worker) share
+	// this single instance so writes invalidate everyone's view.
+	store := zernio.NewCachedSettingsStore(&settingsStoreAdapter{repo: settingRepo})
 
 	if cfg.ZernioAPIKey == "" {
 		log.Printf("zernio: integration disabled — ZERNIO_API_KEY not set")
