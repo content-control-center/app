@@ -29,23 +29,43 @@ import (
 //                             (Phase 5) or admin repair.
 //   - Ping returns 200      → run Bootstrapper.Run; on success
 //                             StateOK, otherwise StateDegraded.
+// zernioRuntime bundles the long-lived Zernio runtime collaborators
+// constructed at boot. A nil Bootstrapper indicates the integration is
+// permanently disabled this boot (no API key set), in which case
+// Integration.Enabled() also returns false.
+type zernioRuntime struct {
+	Integration  *zernio.Integration
+	Bootstrapper *zernio.Bootstrapper
+	Settings     zernio.SettingsStore
+	RateLimiter  *zernio.RateLimiter
+}
+
 func initZernio(
 	ctx context.Context,
 	cfg *config.Config,
 	settingRepo repository.SettingRepository,
-) (*zernio.Integration, *zernio.Bootstrapper) {
+) zernioRuntime {
+	store := &settingsStoreAdapter{repo: settingRepo}
+
 	if cfg.ZernioAPIKey == "" {
 		log.Printf("zernio: integration disabled — ZERNIO_API_KEY not set")
-		return zernio.NewIntegration(nil), nil
+		return zernioRuntime{
+			Integration: zernio.NewIntegration(nil),
+			Settings:    store,
+		}
 	}
 
 	client := zernio.NewClient(cfg.ZernioAPIKey, cfg.ZernioBaseURL, cfg.ZernioHTTPTimeout)
 	integ := zernio.NewIntegration(client)
-	store := &settingsStoreAdapter{repo: settingRepo}
 	bootstrapper := zernio.NewBootstrapper(integ, store)
 
 	go warmupZernio(ctx, integ, bootstrapper)
-	return integ, bootstrapper
+	return zernioRuntime{
+		Integration:  integ,
+		Bootstrapper: bootstrapper,
+		Settings:     store,
+		RateLimiter:  zernio.NewConnectLinkRateLimiter(),
+	}
 }
 
 // warmupZernio validates the API key with a single Ping then runs the

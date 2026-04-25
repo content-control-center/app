@@ -84,6 +84,27 @@ func (c *Client) CreateProfile(ctx context.Context, name, description string) (*
 	return decodeProfile(raw)
 }
 
+// CreateConnectLink requests a connect URL from Zernio for the given
+// profile and platform. Caller is responsible for log redaction — the
+// returned URL contains a short-lived token that must not appear in
+// log lines verbatim.
+func (c *Client) CreateConnectLink(ctx context.Context, profileID, platform string) (string, error) {
+	if c == nil {
+		return "", errors.New("zernio: client is disabled")
+	}
+	body := map[string]string{
+		"profileId": profileID,
+		"platform":  platform,
+	}
+	var out struct {
+		URL string `json:"url"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/connect-links", nil, body, &out); err != nil {
+		return "", err
+	}
+	return out.URL, nil
+}
+
 func decodeProfile(raw json.RawMessage) (*Profile, error) {
 	var p Profile
 	if err := json.Unmarshal(raw, &p); err != nil {

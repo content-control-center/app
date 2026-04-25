@@ -70,12 +70,19 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 	handlers.NewSessionsHandler(userRepo, sessionRepo, cfg.SessionCookieName, !cfg.Debug).Register(app)
 	handlers.NewSettingsHandler(settingRepo, auth).Register(app)
 
-	// Zernio integration controller (CON-62). Ping + profile bootstrap
+	// Zernio integration controller. Ping + profile bootstrap
 	// run in a background goroutine so Ogen boot never blocks on
-	// Zernio reachability. The sync worker is wired in Phase 5.
-	zernioIntegration, zernioBootstrapper := initZernio(ctx, cfg, settingRepo)
-	if zernioBootstrapper != nil {
-		handlers.NewZernioHandler(zernioIntegration, zernioBootstrapper, auth).Register(app)
+	// Zernio reachability. The sync worker is wired.
+	zernioRT := initZernio(ctx, cfg, settingRepo)
+	if zernioRT.Bootstrapper != nil {
+		handlers.NewZernioHandler(
+			zernioRT.Integration,
+			zernioRT.Bootstrapper,
+			zernioRT.Settings,
+			platformRepo,
+			zernioRT.RateLimiter,
+			auth,
+		).Register(app)
 	}
 
 	store, err := storage.New(cfg)
@@ -119,11 +126,11 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 
 	if cfg.AnthropicAPIKey != "" {
 		contentPlanRepos := content_plan.ContentPlanRepos{
-			Campaigns:  campaignRepo,
-			Assets:     pieceRepo,
-			Chunks:     chunksRepo,
-			Platforms:  platformRepo,
-			Posts:      postRepo,
+			Campaigns: campaignRepo,
+			Assets:    pieceRepo,
+			Chunks:    chunksRepo,
+			Platforms: platformRepo,
+			Posts:     postRepo,
 		}
 		generateDraft, err = initContentPlan(g, cfg, embedder, hub, contentPlanRepos)
 		if err != nil {

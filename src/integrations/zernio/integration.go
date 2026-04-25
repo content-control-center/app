@@ -1,6 +1,9 @@
 package zernio
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 // State reflects whether the Zernio integration is usable.
 //
@@ -29,8 +32,9 @@ const (
 type Integration struct {
 	Client *Client
 
-	mu    sync.RWMutex
-	state State
+	mu        sync.RWMutex
+	state     State
+	fastUntil time.Time // worker reads via FastUntil() to switch cadence
 }
 
 // NewIntegration wires a fresh controller around c. The initial state is
@@ -62,4 +66,24 @@ func (i *Integration) SetState(s State) {
 // circuit with 409 without consulting State().
 func (i *Integration) Enabled() bool {
 	return i != nil && i.Client != nil
+}
+
+// BumpFastUntil extends the fast-polling deadline so the background
+// sync worker (Phase 5) tightens its cadence after a connect link is
+// issued. Bumping past the existing deadline wins; bumps to an earlier
+// time are ignored. Safe to call from any goroutine.
+func (i *Integration) BumpFastUntil(deadline time.Time) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if deadline.After(i.fastUntil) {
+		i.fastUntil = deadline
+	}
+}
+
+// FastUntil returns the current fast-polling deadline. The zero time
+// means "no fast-polling window active".
+func (i *Integration) FastUntil() time.Time {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.fastUntil
 }
