@@ -119,13 +119,13 @@ var _ = Describe("CampaignTypesHandler", Ordered, func() {
 
 				var types []models.CampaignType
 				Expect(json.NewDecoder(resp.Body).Decode(&types)).To(Succeed())
-				Expect(types).To(HaveLen(4))
+				Expect(types).To(HaveLen(5))
 
 				names := make([]string, len(types))
 				for i, ct := range types {
 					names[i] = ct.Name
 				}
-				Expect(names).To(ConsistOf("awareness", "engagement", "conversion", "retention"))
+				Expect(names).To(ConsistOf("awareness", "engagement", "conversion", "retention", "evergreen"))
 			})
 
 			It("returns phases for each campaign type", func() {
@@ -146,6 +146,7 @@ var _ = Describe("CampaignTypesHandler", Ordered, func() {
 				Expect(byName["engagement"].Phases).To(HaveLen(3))
 				Expect(byName["conversion"].Phases).To(HaveLen(3))
 				Expect(byName["retention"].Phases).To(HaveLen(3))
+				Expect(byName["evergreen"].Phases).To(HaveLen(3))
 			})
 
 			It("returns phases ordered by sequence", func() {
