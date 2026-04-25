@@ -10,7 +10,7 @@ import (
 
 	"github.com/content-control-center/app/src/config"
 	"github.com/content-control-center/app/src/eventhub"
-	"github.com/content-control-center/app/src/integrations/zernio"
+	"github.com/content-control-center/app/src/publishers/zernio"
 	"github.com/content-control-center/app/src/models"
 	"github.com/content-control-center/app/src/repository"
 )
