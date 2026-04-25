@@ -67,9 +67,12 @@ func (h *PostsHandler) Register(app *fiber.App) {
 }
 
 type postRequest struct {
-	CampaignID          string             `json:"campaign_id"             validate:"required"`
-	PlatformID          string             `json:"platform_id"             validate:"required"`
-	PlatformPostType    string             `json:"platform_post_type"      validate:"required"`
+	CampaignID string `json:"campaign_id"             validate:"required"`
+	// PlatformID + PlatformPostType are required only when status is not
+	// "draft" — see requirePlatformIfNotDraft below. Drafts can be saved
+	// before the user has picked a platform (CON-60).
+	PlatformID          string             `json:"platform_id"`
+	PlatformPostType    string             `json:"platform_post_type"`
 	Title               string             `json:"title"`
 	Content             string             `json:"content"`
 	MediaURLs           models.StringSlice `json:"media_urls"`
@@ -95,6 +98,24 @@ func (r *postRequest) toCTAType() models.PostCTAType {
 		return models.CTATypeNone
 	}
 	return r.CTAType
+}
+
+// requirePlatformIfNotDraft enforces that platform fields are populated
+// for any status other than draft. Drafts can sit without a platform
+// chosen so the user can write content first and pick a platform later;
+// once they're moving the post toward publication, both fields are
+// mandatory.
+func requirePlatformIfNotDraft(status models.PostStatus, platformID, platformPostType string) error {
+	if status == models.PostStatusDraft {
+		return nil
+	}
+	if platformID == "" {
+		return fmt.Errorf("platform_id is required when status is %q", status)
+	}
+	if platformPostType == "" {
+		return fmt.Errorf("platform_post_type is required when status is %q", status)
+	}
+	return nil
 }
 
 // List godoc
@@ -136,6 +157,8 @@ func (h *PostsHandler) ListByCampaign(c *fiber.Ctx) error {
 // @Summary      Create post
 // @Description  Creates a new post. The created_by field is set from the authenticated session.
 // @Description  The `content` field is a Markdown string; the frontend renders it via BlockNote.
+// @Description  `platform_id` and `platform_post_type` are required only when `status` is not `draft`;
+// @Description  drafts can be saved without a platform chosen up front.
 // @Tags         posts
 // @Accept       json
 // @Produce      json
@@ -160,6 +183,9 @@ func (h *PostsHandler) Create(c *fiber.Ctx) error {
 	ctaType := req.toCTAType()
 	if !validCTATypes[ctaType] {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid cta_type")
+	}
+	if err := requirePlatformIfNotDraft(status, req.PlatformID, req.PlatformPostType); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
 
 	session := c.Locals("session").(*models.Session)
@@ -220,6 +246,9 @@ func (h *PostsHandler) Get(c *fiber.Ctx) error {
 // @Summary      Update post
 // @Description  Replaces all mutable fields of an existing post.
 // @Description  The `content` field is a Markdown string; the frontend renders it via BlockNote.
+// @Description  `platform_id` and `platform_post_type` are required only when the new `status` is
+// @Description  not `draft`; transitioning a draft to `ready_for_publish` (or beyond) without a
+// @Description  platform chosen returns 400.
 // @Tags         posts
 // @Accept       json
 // @Produce      json
@@ -258,6 +287,9 @@ func (h *PostsHandler) Update(c *fiber.Ctx) error {
 
 	if !post.Status.CanTransition(status) {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid status transition from "+string(post.Status)+" to "+string(status))
+	}
+	if err := requirePlatformIfNotDraft(status, req.PlatformID, req.PlatformPostType); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
 
 	post.CampaignID = req.CampaignID
