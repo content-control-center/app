@@ -87,3 +87,34 @@ body {
 .chunk-fade {
   animation: chunkFadeIn 180ms ease-out both;
 }
+
+/* Tool action log — Claude-Code-style bullets next to each tool call. */
+@keyframes toolBulletSpin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes toolBulletGlow {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
+
+.tool-bullet {
+  display: inline-block;
+  width: 12px;
+  text-align: center;
+  font-size: 11px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.tool-bullet-running {
+  color: #d97706; /* amber-600 */
+  animation:
+    toolBulletSpin 2.4s linear infinite,
+    toolBulletGlow 1.2s ease-in-out infinite;
+}
+
+.tool-bullet-done {
+  color: #94a3b8; /* slate-400 */
+}

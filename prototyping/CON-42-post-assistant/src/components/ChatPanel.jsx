@@ -62,18 +62,9 @@ export function ChatPanel({ messages, onSend, isLoading }) {
                 </div>
               )}
               {Array.isArray(msg.toolCalls) && msg.toolCalls.length > 0 && (
-                <div className="mb-1.5 flex flex-wrap gap-1">
+                <div className="mb-2 space-y-0.5 font-mono text-[11px]">
                   {msg.toolCalls.map((tc, j) => (
-                    <span
-                      key={`${tc.ref || tc.name}-${j}`}
-                      className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium ${
-                        tc.status === "done"
-                          ? "bg-slate-100 text-slate-500"
-                          : "bg-amber-50 text-amber-700"
-                      }`}
-                    >
-                      {tc.status === "done" ? "✓" : "⋯"} {tc.name}
-                    </span>
+                    <ToolActionLine key={`${tc.ref || tc.name}-${j}`} call={tc} />
                   ))}
                 </div>
               )}
@@ -112,4 +103,71 @@ export function ChatPanel({ messages, onSend, isLoading }) {
       </form>
     </div>
   );
+}
+
+// ToolActionLine renders one row in the assistant bubble's "system action
+// log" — Claude-Code-style: a coloured glyph (animated while running,
+// static when done) followed by a human-readable description of the tool
+// call. Shows the input when meaningful (search query, asset id) so the
+// user can follow what the assistant is doing.
+function ToolActionLine({ call }) {
+  const isRunning = call.status !== "done";
+  return (
+    <div className="flex items-start gap-2 leading-tight">
+      <span
+        aria-hidden="true"
+        className={isRunning ? "tool-bullet tool-bullet-running" : "tool-bullet tool-bullet-done"}
+      >
+        {isRunning ? "✱" : "●"}
+      </span>
+      <span className={isRunning ? "text-amber-700" : "text-slate-400"}>
+        {describeToolCall(call)}
+      </span>
+    </div>
+  );
+}
+
+const TOOL_DESCRIPTIONS = {
+  listAssets: {
+    running: () => "Listing attached assets…",
+    done:    () => "Listed attached assets",
+  },
+  getAssetChunks: {
+    running: (i) => `Reading ${formatChunkTarget(i)}…`,
+    done:    (i) => `Read ${formatChunkTarget(i)}`,
+  },
+  searchAssetChunks: {
+    running: (i) => `Searching ${formatAsset(i?.assetId)} for ${formatQuery(i?.query)}…`,
+    done:    (i) => `Searched ${formatAsset(i?.assetId)} for ${formatQuery(i?.query)}`,
+  },
+  getCurrentContent: {
+    running: () => "Re-reading current post…",
+    done:    () => "Re-read current post",
+  },
+};
+
+function describeToolCall(call) {
+  const entry = TOOL_DESCRIPTIONS[call.name];
+  if (!entry) return call.name; // unknown tool — show its raw name
+  return (call.status === "done" ? entry.done : entry.running)(call.input);
+}
+
+function formatChunkTarget(input) {
+  if (!input) return "asset";
+  const asset = formatAsset(input.assetId);
+  const ids = Array.isArray(input.chunkIds) ? input.chunkIds : [];
+  if (ids.length === 0) return `all chunks of ${asset}`;
+  if (ids.length === 1) return `1 chunk of ${asset}`;
+  return `${ids.length} chunks of ${asset}`;
+}
+
+function formatAsset(id) {
+  if (!id) return "an asset";
+  return `asset ${id}`;
+}
+
+function formatQuery(q) {
+  if (!q) return "<empty>";
+  const trimmed = q.length > 60 ? q.slice(0, 60) + "…" : q;
+  return `"${trimmed}"`;
 }

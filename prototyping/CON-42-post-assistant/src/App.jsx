@@ -290,7 +290,10 @@ function App() {
           case "tool_call":
             updateLast((m) => ({
               ...m,
-              toolCalls: [...(m.toolCalls || []), { name: data.name, ref: data.ref, status: "running" }],
+              toolCalls: [
+                ...(m.toolCalls || []),
+                { name: data.name, ref: data.ref, input: data.input, status: "running" },
+              ],
             }));
             break;
           case "tool_result":
