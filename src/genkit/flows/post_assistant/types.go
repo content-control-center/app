@@ -38,7 +38,13 @@ type PostAssistantRepos struct {
 type PostAssistantFlowConfig struct {
 	ModelID         string
 	MaxOutputTokens int64
-	Embedder        ai.Embedder // nil = semantic search unavailable
+	// MaxTurns caps tool-use round-trips. The model needs one extra turn
+	// for the final answer after its last tool call, so MaxTurns=N allows
+	// up to N-1 tool calls. 0 falls back to a sensible default (8) that
+	// covers realistic asset-incorporation scenarios (browse + search a
+	// few assets + read chunks + respond).
+	MaxTurns int
+	Embedder ai.Embedder // nil = semantic search unavailable
 }
 
 // ValidationError is returned when preconditions are not met (HTTP 400).

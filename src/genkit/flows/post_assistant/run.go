@@ -121,6 +121,10 @@ func runPostAssistant(
 	if maxTokens == 0 || maxTokens > 8192 {
 		maxTokens = 8192
 	}
+	maxTurns := cfg.MaxTurns
+	if maxTurns == 0 {
+		maxTurns = 8
+	}
 
 	modelName := "anthropic/" + cfg.ModelID
 
@@ -203,7 +207,7 @@ func runPostAssistant(
 		ai.WithMessages(history...),
 		ai.WithPrompt(req.Instruction),
 		ai.WithTools(tools.listAssets, tools.getAssetChunks, tools.searchAssetChunks, tools.getCurrentContent),
-		ai.WithMaxTurns(3),
+		ai.WithMaxTurns(maxTurns),
 		ai.WithStreaming(streamCb),
 		ai.WithConfig(anthropic.MessageNewParams{
 			MaxTokens: maxTokens,

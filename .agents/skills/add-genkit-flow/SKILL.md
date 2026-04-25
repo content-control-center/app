@@ -90,7 +90,12 @@ type <FlowName>Repos struct {
 type <FlowName>FlowConfig struct {
     ModelID         string
     MaxOutputTokens int64
-    Embedder        ai.Embedder // nil = semantic search unavailable
+    // MaxTurns caps tool-use round-trips. With tools, the model needs
+    // N+1 turns to make N tool calls plus 1 final answer. 0 = sensible
+    // default (8). Genkit's library-wide default is 5; we recommend 8 so
+    // realistic asset-incorporation flows don't blow the cap.
+    MaxTurns int
+    Embedder ai.Embedder // nil = semantic search unavailable
 }
 
 // ── Errors (mapped to HTTP codes by the handler) ────────────────────────────
@@ -525,6 +530,8 @@ func run<FlowName>(
     // ── Call model ──────────────────────────────────────────────────────────
     maxTokens := cfg.MaxOutputTokens
     if maxTokens == 0 { maxTokens = 8192 }
+    maxTurns := cfg.MaxTurns
+    if maxTurns == 0 { maxTurns = 8 } // see Step 2 FlowConfig comment
     modelName := "anthropic/" + cfg.ModelID
     systemBlock := actx.SystemPrompt + "\n\n" + actx.ContextBlock
 
@@ -581,7 +588,7 @@ func run<FlowName>(
         ai.WithMessages(history...),              // omit if not conversational
         ai.WithPrompt(req.<Prompt>),
         ai.WithTools(tools.listAssets /* , ... */), // omit if no tools
-        ai.WithMaxTurns(3),                       // tool-use round-trips cap
+        ai.WithMaxTurns(maxTurns),                // see Step 2 FlowConfig + gotcha #12
         ai.WithStreaming(streamCb),
         ai.WithConfig(anthropic.MessageNewParams{
             MaxTokens: maxTokens,
@@ -1044,7 +1051,9 @@ flushFrames();
 
 11. **`ai.WithOutputType` and `json.Unmarshal` are both traps.** They look like the obvious tools and they hard-fail on common Claude JSON drift. Use the `JSONStringScanner` for parsing — every flow, streaming or not. See Step 6 for the full table of drift patterns the scanner handles vs. what `json.Unmarshal` chokes on.
 
-12. **Authorization before lookup.** If the flow operates on a user-owned resource, check ownership BEFORE returning 404 — never reveal whether an id exists to an unauthorized caller. The handler should 403 for "exists but not yours" and 404 for "doesn't exist or not yours" (whichever the project convention dictates — check `CLAUDE.md` / memory).
+12. **Size `MaxTurns` for the flow's tool depth.** With tools enabled, `MaxTurns=N` allows up to `N-1` tool calls plus one final answer — the model needs an extra turn after its last tool call to produce the response. Genkit's library default is 5; we found 3 catastrophically low (asset-incorporation flows blow it on the second tool call) and recommend **8** as the FlowConfig default. Symptoms of too low: `model call failed: exceeded maximum tool call iterations (N)`. Symptoms of too high: a buggy prompt with tools can loop indefinitely (rare in practice — Claude is good at terminating). Tune via `<FlowName>FlowConfig.MaxTurns`; leaving it at 0 picks the default in `run.go`.
+
+13. **Authorization before lookup.** If the flow operates on a user-owned resource, check ownership BEFORE returning 404 — never reveal whether an id exists to an unauthorized caller. The handler should 403 for "exists but not yours" and 404 for "doesn't exist or not yours" (whichever the project convention dictates — check `CLAUDE.md` / memory).
 
 ---
 
