@@ -8,16 +8,22 @@
 #
 # Useful env knobs when running the server:
 #   ZERNIO_API_KEY=<key>            # required to enable the integration
-#   ZERNIO_BASE_URL=<url>           # defaults to https://api.zernio.com
+#   ZERNIO_BASE_URL=<url>           # defaults to https://zernio.com/api/v1
 #   ZERNIO_HTTP_TIMEOUT=15s
 #   ZERNIO_SYNC_INTERVAL=30s
 #   ZERNIO_SYNC_INTERVAL_FAST=5s
+#   ZERNIO_REDIRECT_URL=<url>       # optional; landing page after OAuth.
+#                                   # Zernio appends ?connected=<platform>
+#                                   # &profileId=<id>&accountId=<id>&username=<name>
 
 ### Health — integration state, profile id, last sync, account count  [public]
 GET {{baseUrl}}/api/integrations/zernio/health
 Accept: application/json
 
-### List Phase 1 platform allowlist with supportedPostTypes  [protected]
+### List Phase 1 platform allowlist with supportedPostTypes  [protected, deprecated]
+# DEPRECATED: prefer GET /api/platforms (CON-63), which surfaces the
+# same publisher information inline per platform plus connection
+# state. Kept for clients that haven't migrated yet.
 GET {{baseUrl}}/api/integrations/zernio/platforms
 Accept: application/json
 

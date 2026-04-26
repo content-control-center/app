@@ -3,8 +3,36 @@
 # All platform endpoints require authentication.
 # Run "Login" from sessions/sessions.http first — the HTTP client stores and
 # sends the cookie automatically on subsequent requests to the same host.
+#
+# Each platform in the response carries a `publishers` array describing
+# which publishing backends (e.g. Zernio) support it, the post types
+# each publisher can post in, and any social accounts the user has
+# connected. Empty `publishers: []` means no integration is configured
+# or none of them support that platform. Example shape:
+#
+#   {
+#     "id": "linkedin",
+#     "name": "LinkedIn",
+#     "post_types": { "text-post": "...", ... },
+#     "cadence": "...",
+#     "constraints": "...",
+#     "publishers": [
+#       {
+#         "id": "zernio",
+#         "name": "Zernio",
+#         "state": "ok",
+#         "connected": true,
+#         "supported_post_types": ["text-post", "image-post", "carousel", "video"],
+#         "accounts": [
+#           { "id": "acc_abc", "username": "ogen-team",
+#             "display_name": "Ogen", "is_active": true,
+#             "connected_at": "..." }
+#         ]
+#       }
+#     ]
+#   }
 
-### List all platforms  [protected]
+### List all platforms (with publishers)  [protected]
 GET {{baseUrl}}/api/platforms
 Accept: application/json
 

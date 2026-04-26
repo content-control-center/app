@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"time"
@@ -8,16 +9,25 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/content-control-center/app/src/models"
+	"github.com/content-control-center/app/src/publishers"
 	"github.com/content-control-center/app/src/repository"
 )
 
 type PlatformsHandler struct {
-	repo repository.PlatformRepository
-	auth fiber.Handler
+	repo       repository.PlatformRepository
+	publishers []publishers.Publisher
+	auth       fiber.Handler
 }
 
-func NewPlatformsHandler(repo repository.PlatformRepository, auth fiber.Handler) *PlatformsHandler {
-	return &PlatformsHandler{repo: repo, auth: auth}
+// NewPlatformsHandler wires the handler. The publishers slice may be
+// empty when no integration is configured — in that case List/Get
+// emit `"publishers": []` per platform so clients see a stable shape.
+func NewPlatformsHandler(
+	repo repository.PlatformRepository,
+	pubs []publishers.Publisher,
+	auth fiber.Handler,
+) *PlatformsHandler {
+	return &PlatformsHandler{repo: repo, publishers: pubs, auth: auth}
 }
 
 func (h *PlatformsHandler) Register(app *fiber.App) {
@@ -36,13 +46,48 @@ type platformRequest struct {
 	Constraints string             `json:"constraints"`
 }
 
+// publisherView is the per-publisher entry attached to each platform
+// in List / Get responses. snake_case to match the surrounding shape.
+type publisherView struct {
+	ID                 string         `json:"id"`
+	Name               string         `json:"name"`
+	State              string         `json:"state"`
+	Connected          bool           `json:"connected"`
+	SupportedPostTypes []string       `json:"supported_post_types"`
+	Accounts           []accountView  `json:"accounts"`
+}
+
+// accountView is the minimal account projection — full detail lives
+// at the publisher's own /accounts endpoint.
+type accountView struct {
+	ID          string    `json:"id"`
+	Username    string    `json:"username"`
+	DisplayName string    `json:"display_name"`
+	AvatarURL   string    `json:"avatar_url"`
+	IsActive    bool      `json:"is_active"`
+	ConnectedAt time.Time `json:"connected_at"`
+}
+
+// platformResponse is the wire shape returned by List / Get. Embedding
+// *models.Platform keeps every existing field at the top level so the
+// response is fully backward-compatible — `publishers` is purely
+// additive.
+type platformResponse struct {
+	*models.Platform
+	Publishers []publisherView `json:"publishers"`
+}
+
 // List godoc
-// @Summary      List platforms
-// @Description  Returns all platforms ordered by creation date.
+// @Summary      List platforms (with publishers)
+// @Description  Returns all platforms ordered by creation date. Each
+// @Description  platform carries a `publishers` array describing
+// @Description  whether it's connected via any of the configured
+// @Description  publisher backends (e.g. Zernio) and which post
+// @Description  types each publisher can post in.
 // @Tags         platforms
 // @Produce      json
 // @Security     CookieAuth
-// @Success      200  {array}   models.Platform
+// @Success      200  {array}   platformResponse
 // @Failure      401  {object}  map[string]string
 // @Router       /api/platforms [get]
 func (h *PlatformsHandler) List(c *fiber.Ctx) error {
@@ -50,7 +95,18 @@ func (h *PlatformsHandler) List(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(platforms)
+	views, err := h.collectPublisherViews(c.Context())
+	if err != nil {
+		return err
+	}
+	out := make([]platformResponse, 0, len(platforms))
+	for i := range platforms {
+		out = append(out, platformResponse{
+			Platform:   &platforms[i],
+			Publishers: ensurePublishersSlice(views[platforms[i].ID]),
+		})
+	}
+	return c.JSON(out)
 }
 
 // Create godoc
@@ -93,13 +149,14 @@ func (h *PlatformsHandler) Create(c *fiber.Ctx) error {
 }
 
 // Get godoc
-// @Summary      Get platform
-// @Description  Returns a single platform by Sqid.
+// @Summary      Get platform (with publishers)
+// @Description  Returns a single platform with the same `publishers`
+// @Description  enrichment as the list endpoint.
 // @Tags         platforms
 // @Produce      json
 // @Security     CookieAuth
 // @Param        id   path      string  true  "Platform Sqid"
-// @Success      200  {object}  models.Platform
+// @Success      200  {object}  platformResponse
 // @Failure      401  {object}  map[string]string
 // @Failure      404  {object}  map[string]string
 // @Router       /api/platforms/{id} [get]
@@ -111,7 +168,24 @@ func (h *PlatformsHandler) Get(c *fiber.Ctx) error {
 		}
 		return err
 	}
-	return c.JSON(platform)
+	views, err := h.collectPublisherViews(c.Context())
+	if err != nil {
+		return err
+	}
+	return c.JSON(platformResponse{
+		Platform:   platform,
+		Publishers: ensurePublishersSlice(views[platform.ID]),
+	})
+}
+
+// ensurePublishersSlice replaces a nil slice with [] so JSON
+// marshalling emits an empty array rather than `null`. Clients can
+// then assume `publishers` is always iterable.
+func ensurePublishersSlice(s []publisherView) []publisherView {
+	if s == nil {
+		return []publisherView{}
+	}
+	return s
 }
 
 // Update godoc
@@ -176,4 +250,45 @@ func (h *PlatformsHandler) Delete(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "platform not found")
 	}
 	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// collectPublisherViews queries each registered publisher exactly once
+// and groups the result by Ogen platform ID. The returned map always
+// has []publisherView{} for keys with no entries — never nil — so the
+// caller can read it directly into the response without nil-checks
+// (Go's encoding/json marshals a nil slice as `null`, which we want
+// to avoid).
+func (h *PlatformsHandler) collectPublisherViews(ctx context.Context) (map[string][]publisherView, error) {
+	out := map[string][]publisherView{}
+	if len(h.publishers) == 0 {
+		return out, nil
+	}
+	for _, pub := range h.publishers {
+		views, err := pub.PlatformViews(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, v := range views {
+			accounts := make([]accountView, 0, len(v.Accounts))
+			for _, a := range v.Accounts {
+				accounts = append(accounts, accountView{
+					ID:          a.ID,
+					Username:    a.Username,
+					DisplayName: a.DisplayName,
+					AvatarURL:   a.AvatarURL,
+					IsActive:    a.IsActive,
+					ConnectedAt: a.ConnectedAt,
+				})
+			}
+			out[v.OgenPlatformID] = append(out[v.OgenPlatformID], publisherView{
+				ID:                 pub.ID(),
+				Name:               pub.Name(),
+				State:              pub.State(),
+				Connected:          len(accounts) > 0,
+				SupportedPostTypes: append([]string(nil), v.SupportedPostTypes...),
+				Accounts:           accounts,
+			})
+		}
+	}
+	return out, nil
 }
