@@ -25,6 +25,8 @@ import (
 	"github.com/content-control-center/app/src/genkit/flows/content_plan"
 	"github.com/content-control-center/app/src/genkit/flows/post_assistant"
 	"github.com/content-control-center/app/src/handlers"
+	"github.com/content-control-center/app/src/publishers"
+	pubzernio "github.com/content-control-center/app/src/publishers/zernio"
 	"github.com/content-control-center/app/src/repository"
 	"github.com/content-control-center/app/src/storage"
 )
@@ -91,6 +93,18 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 			zernioRT.shutdown()
 			return nil
 		})
+	}
+
+	// Build the publisher list the platforms handler will surface in
+	// its enriched response. Empty when no integration is configured —
+	// the handler emits `"publishers": []` per platform in that case.
+	var pubs []publishers.Publisher
+	if zernioRT.Integration != nil && zernioRT.Settings != nil {
+		pubs = append(pubs, pubzernio.NewPublisher(
+			zernioRT.Integration,
+			socialAccountRepo,
+			zernioRT.Settings,
+		))
 	}
 
 	store, err := storage.New(cfg)
@@ -162,7 +176,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config) (*
 
 	handlers.NewCampaignTypesHandler(campaignTypeRepo, auth).Register(app)
 	handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, generateDraft).Register(app)
-	handlers.NewPlatformsHandler(platformRepo, auth).Register(app)
+	handlers.NewPlatformsHandler(platformRepo, pubs, auth).Register(app)
 	handlers.NewTagsHandler(tagRepo, auth).Register(app)
 	handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, auth, assistantCallback).Register(app)
 

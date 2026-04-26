@@ -126,10 +126,17 @@ type platformsResponse struct {
 
 // ListPlatforms godoc
 // @Summary      List Zernio-supported platforms (Phase 1 allowlist)
+// @Description  Deprecated: prefer GET /api/platforms, which surfaces the
+// @Description  same publisher information (and connection state) inline
+// @Description  per platform. This endpoint stays for clients that
+// @Description  haven't migrated yet and will be removed in a later
+// @Description  cycle.
+// @Description
 // @Description  Returns the Phase 1 allowlist with each platform's
 // @Description  supportedPostTypes derived from the local platforms
-// @Description  table. Clients render a picker from this list.
+// @Description  table.
 // @Tags         zernio
+// @Deprecated
 // @Produce      json
 // @Security     CookieAuth
 // @Success      200  {object}  platformsResponse

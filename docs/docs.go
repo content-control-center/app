@@ -1608,7 +1608,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Returns the Phase 1 allowlist with each platform's\nsupportedPostTypes derived from the local platforms\ntable. Clients render a picker from this list.",
+                "description": "Deprecated: prefer GET /api/platforms, which surfaces the\nsame publisher information (and connection state) inline\nper platform. This endpoint stays for clients that\nhaven't migrated yet and will be removed in a later\ncycle.\n\nReturns the Phase 1 allowlist with each platform's\nsupportedPostTypes derived from the local platforms\ntable.",
                 "produces": [
                     "application/json"
                 ],
@@ -1616,6 +1616,7 @@ const docTemplate = `{
                     "zernio"
                 ],
                 "summary": "List Zernio-supported platforms (Phase 1 allowlist)",
+                "deprecated": true,
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -1743,21 +1744,21 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Returns all platforms ordered by creation date.",
+                "description": "Returns all platforms ordered by creation date. Each\nplatform carries a ` + "`" + `publishers` + "`" + ` array describing\nwhether it's connected via any of the configured\npublisher backends (e.g. Zernio) and which post\ntypes each publisher can post in.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "platforms"
                 ],
-                "summary": "List platforms",
+                "summary": "List platforms (with publishers)",
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/models.Platform"
+                                "$ref": "#/definitions/handlers.platformResponse"
                             }
                         }
                     },
@@ -1835,14 +1836,14 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Returns a single platform by Sqid.",
+                "description": "Returns a single platform with the same ` + "`" + `publishers` + "`" + `\nenrichment as the list endpoint.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "platforms"
                 ],
-                "summary": "Get platform",
+                "summary": "Get platform (with publishers)",
                 "parameters": [
                     {
                         "type": "string",
@@ -1856,7 +1857,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.Platform"
+                            "$ref": "#/definitions/handlers.platformResponse"
                         }
                     },
                     "401": {
@@ -3304,6 +3305,29 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.accountView": {
+            "type": "object",
+            "properties": {
+                "avatar_url": {
+                    "type": "string"
+                },
+                "connected_at": {
+                    "type": "string"
+                },
+                "display_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.accountsResponse": {
             "type": "object",
             "properties": {
@@ -3601,6 +3625,38 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.platformResponse": {
+            "type": "object",
+            "properties": {
+                "cadence": {
+                    "type": "string"
+                },
+                "constraints": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "post_types": {
+                    "$ref": "#/definitions/models.PostTypeMap"
+                },
+                "publishers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.publisherView"
+                    }
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.platformsResponse": {
             "type": "object",
             "properties": {
@@ -3662,6 +3718,35 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "used_asset_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "handlers.publisherView": {
+            "type": "object",
+            "properties": {
+                "accounts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.accountView"
+                    }
+                },
+                "connected": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "state": {
+                    "type": "string"
+                },
+                "supported_post_types": {
                     "type": "array",
                     "items": {
                         "type": "string"

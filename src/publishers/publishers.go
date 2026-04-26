@@ -1,0 +1,60 @@
+// Package publishers defines the abstraction Ogen uses to surface
+// "where can I publish posts?" information into the platforms API.
+//
+// One Publisher corresponds to one backend (today: Zernio; future:
+// Buffer, Hootsuite, native Meta Graph, etc.). Each publisher knows
+// which Ogen platforms it supports, which post types it can publish
+// in for each, and which social accounts the user has connected.
+//
+// The handler queries every registered Publisher exactly once per
+// request via PlatformViews so I/O scales with publisher count, not
+// platform count. Publishers cache or batch internally; the contract
+// here is just "give me everything you support".
+package publishers
+
+import (
+	"context"
+	"time"
+)
+
+// Publisher is the runtime view of one publishing backend. The platforms
+// handler holds a slice of these and asks each for its full snapshot
+// once per request.
+type Publisher interface {
+	// ID returns the stable slug used in API responses ("zernio").
+	ID() string
+
+	// Name returns the human label rendered in pickers ("Zernio").
+	Name() string
+
+	// State reports the integration's runtime health. Conventional
+	// values mirror the Zernio integration: "disabled", "degraded",
+	// "ok". Other publishers are free to use the same vocabulary.
+	State() string
+
+	// PlatformViews returns one PlatformView per Ogen platform this
+	// publisher supports. Called exactly once per /api/platforms
+	// request — do batched I/O here, not per-platform lookups.
+	PlatformViews(ctx context.Context) ([]PlatformView, error)
+}
+
+// PlatformView is what one publisher reports for one Ogen platform.
+// OgenPlatformID joins back to models.Platform.ID; SupportedPostTypes
+// references keys in that platform's PostTypes map.
+type PlatformView struct {
+	OgenPlatformID     string
+	SupportedPostTypes []string
+	Accounts           []Account
+}
+
+// Account is the minimal account projection the platforms response
+// surfaces. Full detail (last_synced_at, raw_json) stays on the
+// publisher's own /accounts endpoint.
+type Account struct {
+	ID          string
+	Username    string
+	DisplayName string
+	AvatarURL   string
+	IsActive    bool
+	ConnectedAt time.Time
+}
