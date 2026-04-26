@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -95,7 +96,7 @@ func (h *PlatformsHandler) List(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	views, err := h.collectPublisherViews(c.Context())
+	views, err := h.collectPublisherViews(c.Context(), platforms)
 	if err != nil {
 		return err
 	}
@@ -168,7 +169,7 @@ func (h *PlatformsHandler) Get(c *fiber.Ctx) error {
 		}
 		return err
 	}
-	views, err := h.collectPublisherViews(c.Context())
+	views, err := h.collectPublisherViews(c.Context(), []models.Platform{*platform})
 	if err != nil {
 		return err
 	}
@@ -253,22 +254,52 @@ func (h *PlatformsHandler) Delete(c *fiber.Ctx) error {
 }
 
 // collectPublisherViews queries each registered publisher exactly once
-// and groups the result by Ogen platform ID. The returned map always
-// has []publisherView{} for keys with no entries — never nil — so the
-// caller can read it directly into the response without nil-checks
-// (Go's encoding/json marshals a nil slice as `null`, which we want
-// to avoid).
-func (h *PlatformsHandler) collectPublisherViews(ctx context.Context) (map[string][]publisherView, error) {
+// and groups the result by local platform.ID. The returned map's
+// values are never nil — callers can drop them straight into the
+// response without nil-checks (Go's encoding/json marshals a nil
+// slice as `null`, which we want to avoid).
+//
+// Match strategy: each PlatformView is joined to a local platform
+// row by OgenPlatformID first; if that doesn't match any row's ID,
+// fall back to a case-insensitive match against the platform's
+// Name. The fallback is what makes the enrichment work in
+// deployments where the platforms table holds Sqid IDs (the
+// well-known seeded "linkedin"/"instagram"/... IDs only survive on
+// untouched DBs). Views that don't match any row are dropped.
+func (h *PlatformsHandler) collectPublisherViews(ctx context.Context, platforms []models.Platform) (map[string][]publisherView, error) {
 	out := map[string][]publisherView{}
-	if len(h.publishers) == 0 {
+	if len(h.publishers) == 0 || len(platforms) == 0 {
 		return out, nil
 	}
+
+	idIndex := make(map[string]string, len(platforms))   // platform.ID → platform.ID (identity, for fast contains)
+	nameIndex := make(map[string]string, len(platforms)) // lower(platform.Name) → platform.ID
+	for _, p := range platforms {
+		idIndex[p.ID] = p.ID
+		nameIndex[strings.ToLower(p.Name)] = p.ID
+	}
+
 	for _, pub := range h.publishers {
 		views, err := pub.PlatformViews(ctx)
 		if err != nil {
 			return nil, err
 		}
 		for _, v := range views {
+			matchID := ""
+			if v.OgenPlatformID != "" {
+				if id, ok := idIndex[v.OgenPlatformID]; ok {
+					matchID = id
+				}
+			}
+			if matchID == "" && v.PlatformName != "" {
+				if id, ok := nameIndex[strings.ToLower(v.PlatformName)]; ok {
+					matchID = id
+				}
+			}
+			if matchID == "" {
+				continue
+			}
+
 			accounts := make([]accountView, 0, len(v.Accounts))
 			for _, a := range v.Accounts {
 				accounts = append(accounts, accountView{
@@ -280,7 +311,7 @@ func (h *PlatformsHandler) collectPublisherViews(ctx context.Context) (map[strin
 					ConnectedAt: a.ConnectedAt,
 				})
 			}
-			out[v.OgenPlatformID] = append(out[v.OgenPlatformID], publisherView{
+			out[matchID] = append(out[matchID], publisherView{
 				ID:                 pub.ID(),
 				Name:               pub.Name(),
 				State:              pub.State(),

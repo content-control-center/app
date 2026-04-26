@@ -178,6 +178,52 @@ var _ = Describe("PlatformsHandler publishers enrichment", Ordered, func() {
 			Expect(accts).To(BeEmpty())
 		})
 
+		It("matches platforms by name when local IDs differ from the allowlist (Sqid IDs)", func() {
+			// Simulate a deployment where platforms.id holds a Sqid
+			// rather than the seeded "instagram". The publisher
+			// allowlist still uses "instagram" — the name fallback
+			// should match it to the local row.
+			ctx := context.Background()
+			_, err := db.NewInsert().Model(&models.Platform{
+				ID:   "rzgpTkARLH0L",
+				Name: "Instagram",
+				PostTypes: models.PostTypeMap{
+					"image-post": "Image post",
+					"reel":       "Reel",
+				},
+			}).On("CONFLICT (id) DO NOTHING").Exec(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			setupApp([]publishers.Publisher{buildZernioPublisher()})
+
+			now := time.Now().UTC()
+			Expect(accountRepo.ApplyPlan(ctx, []models.SocialAccount{{
+				ID:           "acc_ig",
+				Platform:     "instagram",
+				ProfileID:    "p_test",
+				Username:     "ogen-team",
+				DisplayName:  "Ogen",
+				IsActive:     true,
+				RawJSON:      "{}",
+				ConnectedAt:  now,
+				LastSyncedAt: now,
+			}}, nil, now)).To(Succeed())
+
+			req := httptest.NewRequest("GET", "/api/platforms/rzgpTkARLH0L", nil)
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(200))
+
+			var body map[string]any
+			Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
+			pubs := body["publishers"].([]any)
+			Expect(pubs).To(HaveLen(1), "name fallback should attach Zernio publisher despite ID mismatch")
+			z := pubs[0].(map[string]any)
+			Expect(z["connected"]).To(Equal(true))
+			Expect(z["accounts"].([]any)).To(HaveLen(1))
+		})
+
 		It("with a connected account: connected=true and the account in the response", func() {
 			setupApp([]publishers.Publisher{buildZernioPublisher()})
 

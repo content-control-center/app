@@ -39,10 +39,22 @@ type Publisher interface {
 }
 
 // PlatformView is what one publisher reports for one Ogen platform.
-// OgenPlatformID joins back to models.Platform.ID; SupportedPostTypes
-// references keys in that platform's PostTypes map.
+//
+// The handler matches each view to a local models.Platform row using
+// OgenPlatformID first and PlatformName (case-insensitive) as a
+// fallback. The fallback exists because the seeded platform IDs
+// drift in some deployments (e.g. when a test suite has been run
+// against a dev DB and replaced the seeded "linkedin" rows with
+// fresh Sqid IDs). Publishers should populate both fields whenever
+// possible — ID is faster, name is more durable.
+//
+// SupportedPostTypes references keys in the matched platform's
+// PostTypes map. Keys the platform doesn't define are tolerated by
+// the response but indicate either a stale allowlist or a custom
+// platform the publisher can't fully describe.
 type PlatformView struct {
 	OgenPlatformID     string
+	PlatformName       string
 	SupportedPostTypes []string
 	Accounts           []Account
 }
