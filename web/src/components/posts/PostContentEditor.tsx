@@ -8,41 +8,34 @@ import '@/blocknote-theme.css'
 type PostContentEditorProps = {
   initialContent: string
   onContentChange: (content: string) => void
-  onDirty?: () => void
 }
 
 const DEFAULT_CONTENT: Block[] = [
   { type: 'paragraph', props: {}, content: [] } as unknown as Block,
 ]
 
-function parseBlocks(raw: string): Block[] {
-  if (!raw || raw.trim() === '') return DEFAULT_CONTENT
-  try {
-    const parsed = JSON.parse(raw)
-    if (Array.isArray(parsed) && parsed.length > 0) return parsed as Block[]
-  } catch {
-    return [
-      { type: 'paragraph', props: {}, content: raw } as unknown as Block,
-    ]
-  }
-  return DEFAULT_CONTENT
-}
-
 export function PostContentEditor({
   initialContent,
   onContentChange,
-  onDirty,
 }: PostContentEditorProps) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const editor = useCreateBlockNote({ initialContent: parseBlocks(initialContent) })
+  const readyRef = useRef(false)
+  const editor = useCreateBlockNote({ initialContent: DEFAULT_CONTENT })
+
+  useEffect(() => {
+    const blocks = editor.tryParseMarkdownToBlocks(initialContent ?? '')
+    const next = blocks.length > 0 ? blocks : DEFAULT_CONTENT
+    editor.replaceBlocks(editor.document, next)
+    readyRef.current = true
+  }, [editor])
 
   const handleChange = useCallback(() => {
-    onDirty?.()
+    if (!readyRef.current) return
     if (timerRef.current) clearTimeout(timerRef.current)
     timerRef.current = setTimeout(() => {
-      onContentChange(JSON.stringify(editor.document))
+      onContentChange(editor.blocksToMarkdownLossy())
     }, 500)
-  }, [editor, onContentChange, onDirty])
+  }, [editor, onContentChange])
 
   useEffect(() => {
     return () => {

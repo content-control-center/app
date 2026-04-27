@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -22,13 +22,7 @@ import {
 import { useCampaign } from '@/hooks/useCampaigns'
 import { usePlatforms } from '@/hooks/usePlatforms'
 import { useDeletePost } from '@/hooks/usePosts'
-import type { Post, PostCTAType, PostStatus } from '@/types/posts'
-import { POST_STATUS_LABELS } from '@/types/posts'
-import { usePostAutosave } from './shared'
-
-const STATUS_OPTIONS: { id: PostStatus; displayValue: string }[] = (
-  Object.keys(POST_STATUS_LABELS) as PostStatus[]
-).map((id) => ({ id, displayValue: POST_STATUS_LABELS[id] }))
+import type { Post, PostCTAType } from '@/types/posts'
 
 const CTA_OPTIONS: { id: PostCTAType; displayValue: string }[] = [
   { id: 'none', displayValue: 'None' },
@@ -37,11 +31,12 @@ const CTA_OPTIONS: { id: PostCTAType; displayValue: string }[] = [
 ]
 
 const NO_PHASE = '__none__'
+const DEFAULT_HOUR = 9
+const DEFAULT_MINUTE = 0
 
 const schema = z.object({
   platform_id: z.string().min(1, 'Platform is required'),
   platform_post_type: z.string().min(1, 'Post type is required'),
-  status: z.string().min(1),
   scheduled_at: z.string().nullable(),
   cta_type: z.string(),
   cta_url: z.string(),
@@ -51,57 +46,110 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>
 
-function defaultValues(post: Post): FormValues {
+function docToFormValues(doc: Post): FormValues {
   return {
-    platform_id: post.platform_id,
-    platform_post_type: post.platform_post_type,
-    status: post.status,
-    scheduled_at: post.scheduled_at,
-    cta_type: post.cta_type,
-    cta_url: post.cta_url,
-    target_audience_notes: post.target_audience_notes,
-    campaign_type_phase_id: post.campaign_type_phase_id ?? NO_PHASE,
+    platform_id: doc.platform_id,
+    platform_post_type: doc.platform_post_type,
+    scheduled_at: doc.scheduled_at,
+    cta_type: doc.cta_type,
+    cta_url: doc.cta_url,
+    target_audience_notes: doc.target_audience_notes,
+    campaign_type_phase_id: doc.campaign_type_phase_id ?? NO_PHASE,
+  }
+}
+
+function toLocalParts(iso: string | null): { dateStr: string; timeStr: string } {
+  if (!iso) return { dateStr: '', timeStr: '' }
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return { dateStr: '', timeStr: '' }
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mm = String(d.getMinutes()).padStart(2, '0')
+  return { dateStr: `${y}-${m}-${day}`, timeStr: `${hh}:${mm}` }
+}
+
+function fromLocalParts(dateStr: string, timeStr: string): string | null {
+  if (!dateStr) return null
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const [hh, mm] = timeStr
+    ? timeStr.split(':').map(Number)
+    : [DEFAULT_HOUR, DEFAULT_MINUTE]
+  const local = new Date(y, m - 1, d, hh ?? 0, mm ?? 0, 0, 0)
+  return local.toISOString()
+}
+
+function getLocalTimezoneLabel(): string {
+  try {
+    const parts = new Intl.DateTimeFormat(undefined, {
+      timeZoneName: 'short',
+    }).formatToParts(new Date())
+    return parts.find((p) => p.type === 'timeZoneName')?.value ?? 'local time'
+  } catch {
+    return 'local time'
   }
 }
 
 type Props = {
-  post: Post
+  doc: Post
+  changeDoc: (fn: (p: Post) => void) => void
   onClose?: () => void
 }
 
-export function PostSettingsForm({ post, onClose }: Props) {
+export function PostSettingsForm({ doc, changeDoc, onClose }: Props) {
   const form = useForm<FormValues>({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolver: zodResolver(schema as any),
-    defaultValues: defaultValues(post),
+    defaultValues: docToFormValues(doc),
   })
 
   const { data: platforms } = usePlatforms()
-  const { data: campaign } = useCampaign(post.campaign_id)
-  const { mutate: deletePost, isPending: deleting } = useDeletePost(post.campaign_id)
+  const { data: campaign } = useCampaign(doc.campaign_id)
+  const { mutate: deletePost, isPending: deleting } = useDeletePost(doc.campaign_id)
   const navigate = useNavigate()
 
   const platformId = form.watch('platform_id')
+  const tzLabel = useMemo(() => getLocalTimezoneLabel(), [])
 
-  usePostAutosave({
-    post,
-    form,
-    buildOverrides: (v) => ({
-      platform_id: v.platform_id,
-      platform_post_type: v.platform_post_type,
-      status: v.status as PostStatus,
-      scheduled_at: v.scheduled_at,
-      cta_type: v.cta_type as PostCTAType,
-      cta_url: v.cta_url,
-      target_audience_notes: v.target_audience_notes,
-      campaign_type_phase_id:
-        v.campaign_type_phase_id === NO_PHASE ? null : v.campaign_type_phase_id,
-    }),
-  })
+  useEffect(() => {
+    const sub = form.watch((values, info) => {
+      if (!info.name) return
+      changeDoc((d) => {
+        switch (info.name) {
+          case 'platform_id':
+            if (values.platform_id) d.platform_id = values.platform_id
+            if (values.platform_post_type) d.platform_post_type = values.platform_post_type
+            break
+          case 'platform_post_type':
+            if (values.platform_post_type) d.platform_post_type = values.platform_post_type
+            break
+          case 'scheduled_at':
+            d.scheduled_at = values.scheduled_at ?? null
+            break
+          case 'cta_type':
+            if (values.cta_type) d.cta_type = values.cta_type as PostCTAType
+            break
+          case 'cta_url':
+            d.cta_url = values.cta_url ?? ''
+            break
+          case 'target_audience_notes':
+            d.target_audience_notes = values.target_audience_notes ?? ''
+            break
+          case 'campaign_type_phase_id':
+            d.campaign_type_phase_id =
+              values.campaign_type_phase_id === NO_PHASE || !values.campaign_type_phase_id
+                ? null
+                : values.campaign_type_phase_id
+            break
+        }
+      })
+    })
+    return () => sub.unsubscribe()
+  }, [form, changeDoc])
 
   const platformOptions = useMemo(
-    () =>
-      (platforms ?? []).map((p) => ({ id: p.id, displayValue: p.name })),
+    () => (platforms ?? []).map((p) => ({ id: p.id, displayValue: p.name })),
     [platforms],
   )
 
@@ -122,13 +170,13 @@ export function PostSettingsForm({ post, onClose }: Props) {
   }, [campaign])
 
   const handleDelete = () => {
-    const label = post.title.trim() === '' ? 'this post' : `"${post.title}"`
+    const label = doc.title.trim() === '' ? 'this post' : `"${doc.title}"`
     if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return
-    deletePost(post.id, {
+    deletePost(doc.id, {
       onSuccess: () => {
         navigate({
           to: '/campaigns/$campaignId',
-          params: { campaignId: post.campaign_id },
+          params: { campaignId: doc.campaign_id },
         })
       },
     })
@@ -139,23 +187,6 @@ export function PostSettingsForm({ post, onClose }: Props) {
       <form noValidate autoComplete="off" className="h-full">
         <RailPanel title="Post settings" onClose={onClose}>
           <div className="flex flex-col gap-4">
-            <FormField
-              control={form.control}
-              name="status"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Status</FormLabel>
-                  <FormControl>
-                    <TextSelect
-                      value={field.value}
-                      onValueChange={field.onChange}
-                      elements={STATUS_OPTIONS}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
             <div className="grid grid-cols-2 gap-4">
               <FormField
                 control={form.control}
@@ -204,17 +235,6 @@ export function PostSettingsForm({ post, onClose }: Props) {
             </div>
             <FormField
               control={form.control}
-              name="scheduled_at"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Scheduled date</FormLabel>
-                  <DatePicker value={field.value} onChange={field.onChange} />
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
               name="campaign_type_phase_id"
               render={({ field }) => (
                 <FormItem>
@@ -231,6 +251,53 @@ export function PostSettingsForm({ post, onClose }: Props) {
                   <FormMessage />
                 </FormItem>
               )}
+            />
+            <FormField
+              control={form.control}
+              name="scheduled_at"
+              render={({ field }) => {
+                const { dateStr, timeStr } = toLocalParts(field.value)
+                return (
+                  <FormItem>
+                    <FormLabel>
+                      Publish date and time
+                      <span className="ml-2 text-xs font-normal text-tertiary-foreground">
+                        {tzLabel}
+                      </span>
+                    </FormLabel>
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 min-w-0">
+                        <DatePicker
+                          value={dateStr ? `${dateStr}T00:00:00` : null}
+                          onChange={(nextDate) =>
+                            field.onChange(fromLocalParts(nextDate ?? '', timeStr))
+                          }
+                        />
+                      </div>
+                      <Input
+                        type="time"
+                        value={timeStr}
+                        onChange={(e) =>
+                          field.onChange(fromLocalParts(dateStr, e.target.value))
+                        }
+                        disabled={!dateStr}
+                        className="w-24 appearance-none [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:appearance-none"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="smIcon"
+                        onClick={() => field.onChange(null)}
+                        disabled={!field.value}
+                        aria-label="Clear publish date and time"
+                      >
+                        <Icon name="x_mark" className="size-4" />
+                      </Button>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )
+              }}
             />
             <div className="grid grid-cols-2 gap-4">
               <FormField

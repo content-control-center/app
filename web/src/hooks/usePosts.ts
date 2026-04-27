@@ -1,9 +1,8 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { listCampaignPosts, getPost, createPost, updatePost, deletePost } from '@/services/api/posts'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { createPost, deletePost, listCampaignPosts } from '@/services/api/posts'
 import type { PostPayload } from '@/types/posts'
 
 const campaignPostsKey = (campaignId: string) => ['campaigns', campaignId, 'posts'] as const
-const postKey = (postId: string) => ['posts', postId] as const
 
 export function useCampaignPosts(campaignId: string) {
   return useQuery({
@@ -13,33 +12,12 @@ export function useCampaignPosts(campaignId: string) {
   })
 }
 
-export function usePost(postId: string) {
-  return useQuery({
-    queryKey: postKey(postId),
-    queryFn: () => getPost(postId),
-    enabled: !!postId,
-  })
-}
-
 export function useCreatePost(campaignId: string) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (payload: PostPayload) => createPost(payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: campaignPostsKey(campaignId) })
-    },
-  })
-}
-
-export function useUpdatePost(postId: string, campaignId?: string) {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (payload: PostPayload) => updatePost(postId, payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: postKey(postId) })
-      if (campaignId) {
-        qc.invalidateQueries({ queryKey: campaignPostsKey(campaignId) })
-      }
     },
   })
 }

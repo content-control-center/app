@@ -42,18 +42,50 @@ export function RightRail({ panelWidth = 'w-120' }: RightRailProps) {
           <div className="w-px self-stretch bg-border shrink-0" aria-hidden />
         </div>
       </div>
-      <div className="w-14 shrink-0 flex flex-col gap-2 items-center justify-center bg-white">
+      <div className="group/rail relative z-20 w-14 shrink-0 flex flex-col items-center justify-center bg-white">
         {sections.map((section) =>
           section.buttons.map((b) => (
-            <Button
+            <div
               key={`${section.id}:${b.id}`}
-              size="smIcon"
-              active={activeId === b.id}
-              onClick={() => toggleActiveId(b.id)}
-              aria-label={b.ariaLabel}
+              className="group/rail-btn relative py-1"
             >
-              <Icon name={b.icon} className="size-4" />
-            </Button>
+              <Button
+                size="smIcon"
+                active={activeId === b.id}
+                onClick={() => toggleActiveId(b.id)}
+                aria-label={b.ariaLabel}
+                className={cn(
+                  'relative z-10',
+                  'group-hover/rail-btn:bg-primary-foreground group-hover/rail-btn:text-primary',
+                  'data-[active=true]:group-hover/rail-btn:bg-primary data-[active=true]:group-hover/rail-btn:text-primary-foreground',
+                )}
+              >
+                <Icon name={b.icon} className="size-4" />
+              </Button>
+              <div
+                onClick={() => toggleActiveId(b.id)}
+                className={cn(
+                  'pointer-events-none absolute inset-y-0 right-full flex items-stretch cursor-pointer',
+                  'opacity-0 transition-opacity duration-150',
+                  'group-hover/rail:pointer-events-auto group-hover/rail:opacity-100',
+                )}
+              >
+                <div className="relative isolate flex items-center">
+                  <div
+                    aria-hidden
+                    className="absolute inset-1 -z-10 bg-white/60 backdrop-blur-lg"
+                  />
+                  <div
+                    className={cn(
+                      'whitespace-nowrap px-2 text-[11px] font-medium',
+                      'text-secondary-foreground group-hover/rail-btn:text-primary-foreground',
+                    )}
+                  >
+                    {b.ariaLabel}
+                  </div>
+                </div>
+              </div>
+            </div>
           )),
         )}
       </div>

@@ -1,48 +1,23 @@
 import { useMemo, useState } from 'react'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
 
 import { Icon } from '@/components/ui/icon'
 import { RailPanel } from '@/components/page-primitives/RailPanel'
 import { cn } from '@/lib'
-import type { Post } from '@/types/posts'
 import type { Asset } from '@/types/content'
+import type { Post } from '@/types/posts'
 import { useAssets } from '@/hooks/useContent'
 import { useCampaign } from '@/hooks/useCampaigns'
-import { usePostAutosave } from '../postSettingsForm/shared'
-
-const schema = z.object({
-  used_asset_ids: z.array(z.string()),
-})
-
-type FormValues = z.infer<typeof schema>
-
-function defaultValues(post: Post): FormValues {
-  return { used_asset_ids: post.used_asset_ids ?? [] }
-}
 
 type Props = {
-  post: Post
+  doc: Post
+  changeDoc: (fn: (p: Post) => void) => void
   onClose?: () => void
 }
 
-export function PostContentUsageForm({ post, onClose }: Props) {
-  const form = useForm<FormValues>({
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    resolver: zodResolver(schema as any),
-    defaultValues: defaultValues(post),
-  })
-
-  const assetIds = form.watch('used_asset_ids')
+export function PostContentUsageForm({ doc, changeDoc, onClose }: Props) {
+  const assetIds = doc.used_asset_ids
   const { data: assets } = useAssets()
-  const { data: campaign } = useCampaign(post.campaign_id)
-
-  usePostAutosave({
-    post,
-    form,
-    buildOverrides: (v) => ({ used_asset_ids: v.used_asset_ids }),
-  })
+  const { data: campaign } = useCampaign(doc.campaign_id)
 
   const { selected, available } = useMemo(() => {
     const all = assets ?? []
@@ -60,16 +35,17 @@ export function PostContentUsageForm({ post, onClose }: Props) {
   }, [assets, assetIds, campaign])
 
   const addAsset = (id: string) => {
-    if (assetIds.includes(id)) return
-    form.setValue('used_asset_ids', [...assetIds, id], { shouldDirty: true })
+    changeDoc((d) => {
+      if (d.used_asset_ids.includes(id)) return
+      d.used_asset_ids.push(id)
+    })
   }
 
   const removeAsset = (id: string) => {
-    form.setValue(
-      'used_asset_ids',
-      assetIds.filter((x) => x !== id),
-      { shouldDirty: true },
-    )
+    changeDoc((d) => {
+      const idx = d.used_asset_ids.indexOf(id)
+      if (idx >= 0) d.used_asset_ids.splice(idx, 1)
+    })
   }
 
   return (

@@ -50,6 +50,25 @@ export async function updatePost(id: string, payload: PostPayload): Promise<Post
   return (await res.json()) as Post
 }
 
+export function postToPayload(post: Post): PostPayload {
+  return {
+    campaign_id: post.campaign_id,
+    platform_id: post.platform_id,
+    platform_post_type: post.platform_post_type,
+    title: post.title,
+    content: post.content,
+    media_urls: post.media_urls,
+    scheduled_at: post.scheduled_at,
+    published_at: post.published_at,
+    status: post.status,
+    cta_type: post.cta_type,
+    cta_url: post.cta_url,
+    target_audience_notes: post.target_audience_notes,
+    used_asset_ids: post.used_asset_ids,
+    campaign_type_phase_id: post.campaign_type_phase_id,
+  }
+}
+
 export async function deletePost(id: string): Promise<void> {
   const res = await fetch(`${BASE}/${id}`, {
     method: 'DELETE',
