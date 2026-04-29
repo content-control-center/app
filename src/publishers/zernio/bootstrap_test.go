@@ -70,7 +70,7 @@ func jsonResponse(status int, body any) http.HandlerFunc {
 }
 
 func makeIntegration(stub *stubServer) *Integration {
-	c := NewClient("test-key", stub.URL, ClientOpts{Timeout: time.Second})
+	c := NewClient(StaticKey("test-key"), stub.URL, ClientOpts{Timeout: time.Second})
 	integ := NewIntegration(c)
 	integ.SetState(StateDegraded) // post-Ping
 	return integ
@@ -223,7 +223,7 @@ func TestCreateConnectLinkForwardsRedirectURL(t *testing.T) {
 		jsonResponse(http.StatusOK, map[string]string{"authUrl": "https://zernio.com/oauth/linkedin?token=t"})(w, r)
 	})
 
-	c := NewClient("test-key", stub.URL, ClientOpts{
+	c := NewClient(StaticKey("test-key"), stub.URL, ClientOpts{
 		Timeout:     time.Second,
 		RedirectURL: "https://app.example.com/oauth/done",
 	})
@@ -255,7 +255,7 @@ func TestCreateConnectLinkOmitsRedirectURLWhenUnset(t *testing.T) {
 		jsonResponse(http.StatusOK, map[string]string{"authUrl": "https://zernio.com/oauth/linkedin?token=t"})(w, r)
 	})
 
-	c := NewClient("test-key", stub.URL, ClientOpts{Timeout: time.Second})
+	c := NewClient(StaticKey("test-key"), stub.URL, ClientOpts{Timeout: time.Second})
 	if _, err := c.CreateConnectLink(context.Background(), "p_test", "linkedin"); err != nil {
 		t.Fatalf("CreateConnectLink: %v", err)
 	}
@@ -267,7 +267,7 @@ func TestCreateConnectLinkOmitsRedirectURLWhenUnset(t *testing.T) {
 }
 
 func TestClientStringRedactsAPIKey(t *testing.T) {
-	c := NewClient("super-secret-key", "https://example.com", ClientOpts{Timeout: time.Second})
+	c := NewClient(StaticKey("super-secret-key"), "https://example.com", ClientOpts{Timeout: time.Second})
 	got := fmt.Sprintf("%v", c)
 	if strings.Contains(got, "super-secret-key") {
 		t.Fatalf("API key leaked in String(): %q", got)

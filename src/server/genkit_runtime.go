@@ -1,0 +1,165 @@
+package server
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"sync"
+
+	"github.com/firebase/genkit/go/ai"
+	"github.com/firebase/genkit/go/genkit"
+	"github.com/firebase/genkit/go/plugins/anthropic"
+
+	"github.com/content-control-center/app/src/config"
+	"github.com/content-control-center/app/src/eventhub"
+	"github.com/content-control-center/app/src/genkit/flows/content_plan"
+	"github.com/content-control-center/app/src/genkit/flows/post_assistant"
+	"github.com/content-control-center/app/src/secrets"
+)
+
+// ErrAnthropicUnavailable is returned by the runtime callbacks when no
+// Anthropic key is currently configured. Handlers map this to 503 via
+// IsAnthropicAvailable, so the SSE stream is never opened in the
+// unavailable case.
+var ErrAnthropicUnavailable = errors.New("anthropic api key not configured")
+
+// genkitRuntime owns a *genkit.Genkit dedicated to the Anthropic flows.
+// The plugin captures its API key at genkit.Init time, so changing the
+// key requires re-initialising the whole instance — Rebuild does that
+// under a write lock and atomically swaps the cached callbacks.
+//
+// The embedding genkit instance lives separately in server.New: it is
+// built once at boot, never rebuilt, and shared with the runtime via
+// the embedder dependency. Splitting the two instances keeps the
+// Anthropic rebuild from disturbing the embedder bound to the
+// embedding instance.
+type genkitRuntime struct {
+	mu sync.RWMutex
+
+	g      *genkit.Genkit
+	plugin *anthropic.Anthropic
+
+	contentPlanFn   func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)
+	postAssistantFn func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error)
+
+	cfg              *config.Config
+	hub              eventhub.Hub
+	embedder         ai.Embedder
+	contentPlanRepos content_plan.ContentPlanRepos
+	postAssistRepos  post_assistant.PostAssistantRepos
+}
+
+// genkitDeps groups the runtime's static inputs: things captured at
+// boot and reused on every rebuild.
+type genkitDeps struct {
+	cfg              *config.Config
+	hub              eventhub.Hub
+	embedder         ai.Embedder
+	contentPlanRepos content_plan.ContentPlanRepos
+	postAssistRepos  post_assistant.PostAssistantRepos
+}
+
+// newGenkitRuntime builds the runtime and runs the initial rebuild.
+// The boot path is allowed to start without an Anthropic key — the
+// runtime's callbacks then return ErrAnthropicUnavailable until a key
+// is added via the secrets API. Any error from the rebuild path
+// (e.g. flow registration on a valid key) is returned so the caller
+// can decide whether to fail boot.
+func newGenkitRuntime(ctx context.Context, deps genkitDeps, store secrets.Store) (*genkitRuntime, error) {
+	r := &genkitRuntime{
+		cfg:              deps.cfg,
+		hub:              deps.hub,
+		embedder:         deps.embedder,
+		contentPlanRepos: deps.contentPlanRepos,
+		postAssistRepos:  deps.postAssistRepos,
+	}
+
+	if err := r.rebuild(ctx, store); err != nil {
+		return nil, err
+	}
+
+	store.Subscribe(secrets.NameAnthropicAPIKey, func() {
+		if err := r.rebuild(context.Background(), store); err != nil {
+			log.Printf("genkit: rebuild after anthropic_api_key change failed: %v", err)
+		}
+	})
+	return r, nil
+}
+
+// IsAnthropicAvailable reports whether the runtime currently has live
+// Anthropic-backed flows. Handlers consult this before opening SSE
+// streams so a missing key produces a clean 503.
+func (r *genkitRuntime) IsAnthropicAvailable() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.contentPlanFn != nil && r.postAssistantFn != nil
+}
+
+func (r *genkitRuntime) GenerateDraft(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error) {
+	r.mu.RLock()
+	fn := r.contentPlanFn
+	r.mu.RUnlock()
+	if fn == nil {
+		return nil, ErrAnthropicUnavailable
+	}
+	return fn(ctx, campaignID, onEvent)
+}
+
+func (r *genkitRuntime) RunPostAssistant(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error) {
+	r.mu.RLock()
+	fn := r.postAssistantFn
+	r.mu.RUnlock()
+	if fn == nil {
+		return nil, ErrAnthropicUnavailable
+	}
+	return fn(ctx, req, onEvent)
+}
+
+// rebuild fetches the current Anthropic key (if any), constructs a
+// fresh Genkit instance with a fresh Anthropic plugin, re-registers
+// the two flows, and atomically swaps the cached callbacks. Holding
+// the write lock for the duration ensures handlers don't observe a
+// half-rebuilt state.
+//
+// When no key is set, the runtime drops to the unavailable state:
+// callbacks become nil, IsAnthropicAvailable returns false, and the
+// previously-built genkit instance is left for the GC. Existing
+// in-flight requests still hold a reference to the previous closures
+// and continue running on the previous instance until they return.
+func (r *genkitRuntime) rebuild(ctx context.Context, store secrets.Store) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	key, err := store.Get(ctx, secrets.NameAnthropicAPIKey)
+	if errors.Is(err, secrets.ErrNotFound) {
+		log.Printf("genkit: anthropic_api_key not configured; flows disabled")
+		r.contentPlanFn = nil
+		r.postAssistantFn = nil
+		r.g = nil
+		r.plugin = nil
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("genkit: read anthropic_api_key: %w", err)
+	}
+
+	plugin := &anthropic.Anthropic{APIKey: key}
+	g := genkit.Init(ctx, genkit.WithPlugins(plugin))
+
+	contentPlanFn, err := initContentPlan(g, r.cfg, r.embedder, r.hub, r.contentPlanRepos)
+	if err != nil {
+		return fmt.Errorf("init content plan: %w", err)
+	}
+	postAssistantFn, err := initPostAssistant(g, r.cfg, r.embedder, r.hub, r.postAssistRepos)
+	if err != nil {
+		return fmt.Errorf("init post assistant: %w", err)
+	}
+
+	r.g = g
+	r.plugin = plugin
+	r.contentPlanFn = contentPlanFn
+	r.postAssistantFn = postAssistantFn
+	log.Printf("genkit: anthropic flows rebuilt")
+	return nil
+}

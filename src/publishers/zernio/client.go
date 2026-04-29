@@ -38,16 +38,39 @@ const (
 	errorBodyLimit = 4096
 )
 
+// KeyResolver returns the current Zernio API key. Implementations
+// should resolve through the SecretStore on each call so a rotated key
+// is picked up without a process restart. An error indicates the key
+// is unavailable (missing in DB, decrypt failure, etc.) — outbound
+// requests fail cleanly rather than authenticate with stale data.
+type KeyResolver func(ctx context.Context) (string, error)
+
+// StaticKey returns a KeyResolver that always yields the supplied key.
+// Intended for tests; production wiring goes through the SecretStore.
+//
+// An empty key returns a nil resolver so NewClient(StaticKey("")) is
+// equivalent to "no integration configured" — handlers see a nil
+// *Client and surface the existing integration-disabled (409) error
+// path. Tests rely on this to model the unconfigured state.
+func StaticKey(key string) KeyResolver {
+	if key == "" {
+		return nil
+	}
+	return func(context.Context) (string, error) { return key, nil }
+}
+
 // Client is the authenticated HTTP wrapper for Zernio's REST API.
 //
-// The bearer key is held in apiKey and is intentionally not exported
-// nor surfaced via String() — accidental %v of a *Client in a log line
-// must not leak credentials. All outbound requests carry the bearer
-// header; non-2xx responses are returned as a typed *APIError.
+// The bearer key is fetched on every outbound request via keyResolver
+// — never cached on the Client itself — so SecretStore rotations land
+// on the next call. accidental %v of a *Client in a log line must not
+// leak credentials; String() and BaseURL() are the only intended
+// debug surfaces. All outbound requests carry the bearer header;
+// non-2xx responses are returned as a typed *APIError.
 type Client struct {
-	httpClient *http.Client
-	baseURL    string
-	apiKey     string
+	httpClient  *http.Client
+	baseURL     string
+	keyResolver KeyResolver
 	// redirectURL is the post-OAuth landing target sent on every
 	// connect-link request. Empty means "use Zernio's default success
 	// page". See ClientOpts.RedirectURL for semantics.
@@ -70,10 +93,14 @@ type ClientOpts struct {
 	RedirectURL string
 }
 
-// NewClient constructs a Client. apiKey == "" returns nil so callers
-// can treat a nil receiver as "integration disabled".
-func NewClient(apiKey, baseURL string, opts ClientOpts) *Client {
-	if apiKey == "" {
+// NewClient constructs a Client. resolver == nil returns nil so
+// callers can treat a nil receiver as "integration disabled" — the
+// only state where Zernio is permanently off is when no resolver is
+// wired (the integration was never registered). A resolver that
+// returns "key missing" at call time produces a typed error and is
+// not the same as "integration disabled".
+func NewClient(resolver KeyResolver, baseURL string, opts ClientOpts) *Client {
+	if resolver == nil {
 		return nil
 	}
 	if baseURL == "" {
@@ -86,7 +113,7 @@ func NewClient(apiKey, baseURL string, opts ClientOpts) *Client {
 	return &Client{
 		httpClient:  &http.Client{Timeout: timeout},
 		baseURL:     strings.TrimRight(baseURL, "/"),
-		apiKey:      apiKey,
+		keyResolver: resolver,
 		redirectURL: opts.RedirectURL,
 	}
 }
@@ -167,11 +194,19 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		bodyReader = bytes.NewReader(buf)
 	}
 
+	apiKey, err := c.keyResolver(ctx)
+	if err != nil {
+		return fmt.Errorf("zernio: resolve api key: %w", err)
+	}
+	if apiKey == "" {
+		return errors.New("zernio: api key not configured")
+	}
+
 	req, err := http.NewRequestWithContext(ctx, method, u, bodyReader)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")

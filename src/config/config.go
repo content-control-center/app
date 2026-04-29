@@ -48,6 +48,13 @@ type Config struct {
 	// appended by Zernio. Leaving this empty falls back to Zernio's
 	// default success page.
 	ZernioRedirectURL string `envconfig:"ZERNIO_REDIRECT_URL" default:""`
+
+	// Envelope encryption. KEKPath points at a Docker-volume directory;
+	// the actual key file lives at <KEKPath>/kek.v1. The versioned
+	// filename leaves room for KEK rotation later without a path
+	// migration. Default is a relative ./kek for local dev; the
+	// Docker image mounts /var/lib/ogen/keys.
+	KEKPath string `envconfig:"OGEN_KEK_PATH" default:"./kek"`
 }
 
 func Load() (*Config, error) {

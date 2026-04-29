@@ -143,7 +143,7 @@ var _ = Describe("PlatformsHandler publishers enrichment", Ordered, func() {
 
 	Describe("with Zernio configured", func() {
 		buildZernioPublisher := func() publishers.Publisher {
-			integ := pubzernio.NewIntegration(pubzernio.NewClient("test-key", "http://stub", pubzernio.ClientOpts{Timeout: time.Second}))
+			integ := pubzernio.NewIntegration(pubzernio.NewClient(pubzernio.StaticKey("test-key"), "http://stub", pubzernio.ClientOpts{Timeout: time.Second}))
 			integ.SetState(pubzernio.StateOK)
 			store := &settingStoreFromRepo{repo: settingRepo}
 			Expect(store.Set(context.Background(), pubzernio.SettingProfileID, "p_test")).To(Succeed())

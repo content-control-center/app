@@ -31,10 +31,29 @@ type CampaignsHandler struct {
 	campaignTypeRepo repository.CampaignTypeRepository
 	auth             fiber.Handler
 	generateDraft    func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)
+	// isContentPlanReady reports whether the underlying Anthropic key
+	// is currently configured. Decoupled from generateDraft so we can
+	// return 503 before opening the SSE stream rather than emitting
+	// an error event mid-stream when the runtime is unavailable.
+	// May be nil in tests; nil is treated as "always available" so
+	// existing fixture wiring keeps working.
+	isContentPlanReady func() bool
 }
 
-func NewCampaignsHandler(repo repository.CampaignRepository, campaignTypeRepo repository.CampaignTypeRepository, auth fiber.Handler, generateDraft func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)) *CampaignsHandler {
-	return &CampaignsHandler{repo: repo, campaignTypeRepo: campaignTypeRepo, auth: auth, generateDraft: generateDraft}
+func NewCampaignsHandler(
+	repo repository.CampaignRepository,
+	campaignTypeRepo repository.CampaignTypeRepository,
+	auth fiber.Handler,
+	generateDraft func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error),
+	isContentPlanReady func() bool,
+) *CampaignsHandler {
+	return &CampaignsHandler{
+		repo:               repo,
+		campaignTypeRepo:   campaignTypeRepo,
+		auth:               auth,
+		generateDraft:      generateDraft,
+		isContentPlanReady: isContentPlanReady,
+	}
 }
 
 func (h *CampaignsHandler) Register(app *fiber.App) {
@@ -278,6 +297,9 @@ func (h *CampaignsHandler) Delete(c *fiber.Ctx) error {
 // @Router       /api/campaigns/{id}/generate-draft [post]
 func (h *CampaignsHandler) GenerateDraft(c *fiber.Ctx) error {
 	if h.generateDraft == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "content plan feature is not enabled")
+	}
+	if h.isContentPlanReady != nil && !h.isContentPlanReady() {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "content plan feature is not enabled")
 	}
 

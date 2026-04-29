@@ -55,10 +55,10 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
-		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil).Register(app)
+		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil).Register(app)
 		handlers.NewAssetsHandler(pieceRepo, repository.NewAssetFileRepository(db), nil, auth, nil, nil).Register(app)
 		postMessageRepo := repository.NewPostAssistantMessageRepository(db)
-		handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, auth, nil).Register(app)
+		handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, auth, nil, nil).Register(app)
 
 		// Seed auth user and log in.
 		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "admin@example.com", "password": "admin-password"})
@@ -730,8 +730,8 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				auth := handlers.RequireAuth(sessionRepo, testCookieName)
 				handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(stubApp)
 				handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(stubApp)
-				handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil).Register(stubApp)
-				handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, auth, stub).Register(stubApp)
+				handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil).Register(stubApp)
+				handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, auth, stub, nil).Register(stubApp)
 
 				body, _ := json.Marshal(fiber.Map{"name": "SSE", "email": "sse-assist@example.com", "password": "sse-password"})
 				regReq := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))

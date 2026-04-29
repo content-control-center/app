@@ -10,9 +10,10 @@ import (
 
 	"github.com/content-control-center/app/src/config"
 	"github.com/content-control-center/app/src/eventhub"
-	"github.com/content-control-center/app/src/publishers/zernio"
 	"github.com/content-control-center/app/src/models"
+	"github.com/content-control-center/app/src/publishers/zernio"
 	"github.com/content-control-center/app/src/repository"
+	"github.com/content-control-center/app/src/secrets"
 )
 
 // initZernio constructs the Zernio integration, the Bootstrapper, and a
@@ -47,6 +48,7 @@ type zernioRuntime struct {
 func initZernio(
 	ctx context.Context,
 	cfg *config.Config,
+	secretStore secrets.Store,
 	settingRepo repository.SettingRepository,
 	accountRepo repository.SocialAccountRepository,
 	hub eventhub.Hub,
@@ -56,15 +58,27 @@ func initZernio(
 	// single instance so writes invalidate everyone's view.
 	store := zernio.NewCachedSettingsStore(&settingsStoreAdapter{repo: settingRepo})
 
-	if cfg.ZernioAPIKey == "" {
-		log.Printf("zernio: integration disabled — ZERNIO_API_KEY not set")
+	// Treat "no zernio key in DB at boot" as transient — the integration
+	// stays disabled this boot but the resolver will pick up a key
+	// added later via the secrets API on the next outbound call. We
+	// still need a key to attempt the warmup ping; without one we
+	// short-circuit to disabled and skip the worker.
+	if _, err := secretStore.Get(ctx, secrets.NameZernioAPIKey); err != nil {
+		if errors.Is(err, secrets.ErrNotFound) {
+			log.Printf("zernio: integration disabled — zernio_api_key not set")
+		} else {
+			log.Printf("zernio: integration disabled — read zernio_api_key: %v", err)
+		}
 		return zernioRuntime{
 			Integration: zernio.NewIntegration(nil),
 			Settings:    store,
 		}
 	}
 
-	client := zernio.NewClient(cfg.ZernioAPIKey, cfg.ZernioBaseURL, zernio.ClientOpts{
+	resolver := func(ctx context.Context) (string, error) {
+		return secretStore.Get(ctx, secrets.NameZernioAPIKey)
+	}
+	client := zernio.NewClient(resolver, cfg.ZernioBaseURL, zernio.ClientOpts{
 		Timeout:     cfg.ZernioHTTPTimeout,
 		RedirectURL: cfg.ZernioRedirectURL,
 	})

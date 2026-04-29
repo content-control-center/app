@@ -52,7 +52,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewCampaignTypesHandler(campaignTypeRepo, auth).Register(app)
-		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil).Register(app)
+		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil).Register(app)
 		handlers.NewTagsHandler(tagRepo, auth).Register(app)
 
 		// Seed an auth user and log in
@@ -559,7 +559,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				noop := func(_ context.Context, _ string, _ content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error) {
 					return &content_plan.ContentPlanResponse{}, nil
 				}
-				handlers.NewCampaignsHandler(campaignRepo2, campaignTypeRepo2, auth2, noop).Register(appWithDraft)
+				handlers.NewCampaignsHandler(campaignRepo2, campaignTypeRepo2, auth2, noop, nil).Register(appWithDraft)
 
 				req := httptest.NewRequest("POST", "/api/campaigns/nonexistent/generate-draft", nil)
 				req.AddCookie(authCookie)
@@ -590,7 +590,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				noop := func(_ context.Context, _ string, _ content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error) {
 					return &content_plan.ContentPlanResponse{}, nil
 				}
-				handlers.NewCampaignsHandler(campaignRepo2, campaignTypeRepo2, auth2, noop).Register(appWithDraft)
+				handlers.NewCampaignsHandler(campaignRepo2, campaignTypeRepo2, auth2, noop, nil).Register(appWithDraft)
 
 				// Register and log in as a second user.
 				body, _ := json.Marshal(fiber.Map{"name": "Other", "email": "other@example.com", "password": "other-password"})
@@ -659,7 +659,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 					onEvent(content_plan.SSEEventStep, content_plan.StepEventPayload{Step: "generatePosts", Status: "done"})
 					return &content_plan.ContentPlanResponse{CampaignID: "test"}, nil
 				}
-				handlers.NewCampaignsHandler(campaignRepo2, campaignTypeRepo2, auth2, stub).Register(appWithDraft)
+				handlers.NewCampaignsHandler(campaignRepo2, campaignTypeRepo2, auth2, stub, nil).Register(appWithDraft)
 
 				// Seed user/session for appWithDraft.
 				body, _ := json.Marshal(fiber.Map{"name": "SSE User", "email": "sse@example.com", "password": "sse-password"})
@@ -754,7 +754,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				stub := func(_ context.Context, _ string, _ content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error) {
 					return nil, &content_plan.ValidationError{Msg: "missing required fields"}
 				}
-				handlers.NewCampaignsHandler(campaignRepo2, campaignTypeRepo2, auth2, stub).Register(appWithDraft)
+				handlers.NewCampaignsHandler(campaignRepo2, campaignTypeRepo2, auth2, stub, nil).Register(appWithDraft)
 
 				// Seed user/session.
 				body, _ := json.Marshal(fiber.Map{"name": "Err User", "email": "err@example.com", "password": "err-password"})
