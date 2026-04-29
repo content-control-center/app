@@ -12,28 +12,36 @@ services:
       STORAGE_SECRET_KEY: ""
       STORAGE_BUCKET: ""
       STORAGE_PUBLIC_URL: ""
+      ANTHROPIC_API_KEY: ""
+
+      # Envelope-encryption KEK directory. Mounted from a named volume
+      # so the key survives container rebuilds — losing it bricks every
+      # encrypted secret in the database. The actual file is kek.v1
+      # under this path.
+      OGEN_KEK_PATH: "/var/lib/ogen/keys"
     volumes:
       - ./data:/data
+      - ogen-kek:/var/lib/ogen/keys
     ports:
       - "9001:9001"
     depends_on:
       - llama-embedserver
 
-  web:
-    image: node:20-alpine
-    platform: linux/amd64
-    working_dir: /app
-    volumes:
-      - ./web:/app
-      - /app/node_modules
-    environment:
-      API_URL: "http://api:9001"
-      CHOKIDAR_USEPOLLING: "true"
-    ports:
-      - "9002:9002"
-    command: sh -c "corepack enable && corepack prepare pnpm@latest --activate && pnpm install --frozen-lockfile && pnpm exec vite --host 0.0.0.0"
-    depends_on:
-      - api
+#  web:
+#    image: node:20-alpine
+#    platform: linux/amd64
+#    working_dir: /app
+#    volumes:
+#      - ./web:/app
+#      - /app/node_modules
+#    environment:
+#      API_URL: "http://api:9001"
+#      CHOKIDAR_USEPOLLING: "true"
+#    ports:
+#      - "9002:9002"
+#    command: sh -c "corepack enable && corepack prepare pnpm@latest --activate && pnpm install --frozen-lockfile && pnpm exec vite --host 0.0.0.0"
+#    depends_on:
+#      - api
 
   llama-embedserver:
     image: alephbetai/llama-embedserver:latest
@@ -43,3 +51,4 @@ services:
 
 volumes:
   db-data:
+  ogen-kek:
