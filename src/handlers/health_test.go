@@ -22,7 +22,7 @@ var _ = Describe("HealthHandler", func() {
 
 	BeforeEach(func() {
 		app = fiber.New()
-		handlers.NewHealthHandler(db).Register(app)
+		handlers.NewHealthHandler(db, nil).Register(app)
 	})
 
 	Describe("GET /api/health", func() {
