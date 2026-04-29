@@ -39,6 +39,10 @@ type PostsHandler struct {
 	messageRepo repository.PostAssistantMessageRepository
 	auth        fiber.Handler
 	assistant   func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error)
+	// isAssistantReady reports whether the Anthropic key is currently
+	// configured. nil is treated as "always ready" so existing test
+	// fixtures keep working without rewiring.
+	isAssistantReady func() bool
 }
 
 func NewPostsHandler(
@@ -47,8 +51,9 @@ func NewPostsHandler(
 	messageRepo repository.PostAssistantMessageRepository,
 	auth fiber.Handler,
 	assistant func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error),
+	isAssistantReady func() bool,
 ) *PostsHandler {
-	return &PostsHandler{repo: repo, versionRepo: versionRepo, messageRepo: messageRepo, auth: auth, assistant: assistant}
+	return &PostsHandler{repo: repo, versionRepo: versionRepo, messageRepo: messageRepo, auth: auth, assistant: assistant, isAssistantReady: isAssistantReady}
 }
 
 func (h *PostsHandler) Register(app *fiber.App) {
@@ -369,6 +374,9 @@ type assistantRequest struct {
 // @Router       /api/posts/{id}/assistant [post]
 func (h *PostsHandler) Assistant(c *fiber.Ctx) error {
 	if h.assistant == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "post assistant is not available")
+	}
+	if h.isAssistantReady != nil && !h.isAssistantReady() {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "post assistant is not available")
 	}
 	var req assistantRequest
