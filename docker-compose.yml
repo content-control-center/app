@@ -20,8 +20,8 @@ services:
       # under this path.
       OGEN_KEK_PATH: "/var/lib/ogen/keys"
     volumes:
-      - ./data:/data
-      - ogen-kek:/var/lib/ogen/keys
+      - ./ogen-data:/data
+      - ./ogen-keys:/var/lib/ogen/keys
     ports:
       - "9001:9001"
     depends_on:
@@ -51,4 +51,4 @@ services:
 
 volumes:
   db-data:
-  ogen-kek:
+  ogen-keys:
