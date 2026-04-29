@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
@@ -117,29 +118,151 @@ func generatePosts(
 		Assets:                  assets,
 	}
 
+	// System prompt is identical for every batch — render once.
 	systemPrompt, err := renderTemplate(cfg.systemTmpl, data)
 	if err != nil {
 		return nil, nil, fmt.Errorf("render system prompt: %w", err)
 	}
-	userPrompt, err := renderTemplate(cfg.userTmpl, data)
-	if err != nil {
-		return nil, nil, fmt.Errorf("render user prompt: %w", err)
-	}
-
 	log.Printf("content_plan: system prompt:\n%s", systemPrompt)
-	log.Printf("content_plan: user prompt:\n%s", userPrompt)
 
 	maxTokens := cfg.MaxOutputTokens
 	if maxTokens == 0 {
 		maxTokens = 8192
 	}
+	maxPostsPerBatch := cfg.MaxPostsPerBatch
+	if maxPostsPerBatch <= 0 {
+		maxPostsPerBatch = 30
+	}
+	maxParallel := cfg.MaxParallelBatches
+	if maxParallel <= 0 {
+		maxParallel = 5
+	}
 
 	modelName := "anthropic/" + cfg.ModelID
-	posts, err := generatePostsStreaming(ctx, g, modelName, systemPrompt, userPrompt, maxTokens, onEvent)
-	if err != nil {
-		return nil, nil, err
+
+	// Single-shot fallback: no estimated count, or fewer slots than a single
+	// batch. We still go through the batched path for consistency, but with
+	// a single batch covering everything.
+	batches := planBatches(estCount, phases, platforms, *campaign.StartDate, *campaign.EndDate, maxPostsPerBatch)
+	if len(batches) == 0 {
+		// EstimatedPostCount is 0 or otherwise unplannable — preserve the
+		// pre-CON-67 behaviour of asking the model to decide the count
+		// from campaign context.
+		userPrompt, err := renderTemplate(cfg.userTmpl, data)
+		if err != nil {
+			return nil, nil, fmt.Errorf("render user prompt: %w", err)
+		}
+		log.Printf("content_plan: user prompt (no batch plan):\n%s", userPrompt)
+		posts, genErr := generatePostsStreaming(ctx, g, modelName, systemPrompt, userPrompt, maxTokens, 0, onEvent)
+		if genErr != nil {
+			return nil, nil, genErr
+		}
+		return posts, nil, nil
 	}
-	return posts, nil, nil
+
+	log.Printf("content_plan: planned %d batches (totalPosts=%d, K=%d, parallel=%d)",
+		len(batches), estCount, maxPostsPerBatch, maxParallel)
+
+	gen := func(ctx context.Context, spec batchSpec, emit OnEventFunc) ([]DraftPost, error) {
+		batchData := data
+		batchData.Batch = &spec
+		userPrompt, err := renderTemplate(cfg.userTmpl, batchData)
+		if err != nil {
+			return nil, fmt.Errorf("render user prompt for batch %d: %w", spec.Index, err)
+		}
+		log.Printf("content_plan: batch %d/%d (posts=%d window=%s..%s) user prompt:\n%s",
+			spec.Index+1, len(batches), spec.PostCount, spec.DateWindow.Start, spec.DateWindow.End, userPrompt)
+		return generatePostsStreaming(ctx, g, modelName, systemPrompt, userPrompt, maxTokens, spec.GlobalStartIndex, emit)
+	}
+	return runBatchesParallel(ctx, batches, maxParallel, gen, onEvent)
+}
+
+// runBatchesParallel fans the planned batches out to up to maxParallel
+// goroutines, serialising the optional emit callback so a single-writer SSE
+// sink stays safe. Aggregation is partial-success: a per-batch failure
+// becomes a warning and the surviving batches' posts are returned in batch
+// order. When every batch fails the function returns an AIError so the
+// caller can surface a hard "error" SSE event.
+//
+// Extracted for unit-testability — the production gen calls into Anthropic;
+// tests pass a stub that simulates timing, partial failures, and emit
+// concurrency without touching the network.
+func runBatchesParallel(
+	ctx context.Context,
+	batches []batchSpec,
+	maxParallel int,
+	gen func(ctx context.Context, spec batchSpec, emit OnEventFunc) ([]DraftPost, error),
+	onEvent OnEventFunc,
+) ([]DraftPost, []string, error) {
+	if maxParallel <= 0 {
+		maxParallel = 1
+	}
+
+	// onEvent is called from per-batch goroutines; the SSE writer behind it
+	// is single-writer, so we must serialise. The lock is held only for the
+	// duration of one event emit — negligible contention.
+	var emitMu sync.Mutex
+	safeEmit := onEvent
+	if onEvent != nil {
+		safeEmit = func(name SSEEventKind, payload any) {
+			emitMu.Lock()
+			defer emitMu.Unlock()
+			onEvent(name, payload)
+		}
+	}
+
+	type batchResult struct {
+		posts []DraftPost
+		err   error
+	}
+	results := make([]batchResult, len(batches))
+
+	sem := make(chan struct{}, maxParallel)
+	var wg sync.WaitGroup
+
+	for i := range batches {
+		i := i
+		spec := batches[i]
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			posts, err := gen(ctx, spec, safeEmit)
+			if err != nil {
+				log.Printf("content_plan: batch %d/%d failed: %v", i+1, len(batches), err)
+				results[i] = batchResult{err: err}
+				return
+			}
+			log.Printf("content_plan: batch %d/%d done (%d posts)", i+1, len(batches), len(posts))
+			results[i] = batchResult{posts: posts}
+		}()
+	}
+	wg.Wait()
+
+	var allPosts []DraftPost
+	var warnings []string
+	failures := 0
+	for i, r := range results {
+		if r.err != nil {
+			failures++
+			warnings = append(warnings, fmt.Sprintf(
+				"batch %d/%d (slots %d-%d) failed: %v",
+				i+1, len(batches),
+				batches[i].GlobalStartIndex,
+				batches[i].GlobalStartIndex+batches[i].PostCount-1,
+				r.err,
+			))
+			continue
+		}
+		allPosts = append(allPosts, r.posts...)
+	}
+
+	if failures == len(batches) {
+		return nil, warnings, &AIError{Msg: fmt.Sprintf("all %d batches failed; first error: %v", len(batches), results[0].err)}
+	}
+	return allPosts, warnings, nil
 }
 
 // generatePostsStreaming attempts a streaming model call and incrementally emits
@@ -147,11 +270,17 @@ func generatePosts(
 // blocking genkit.Generate call regardless of how many partial posts were already
 // emitted — the blocking response is the canonical result sent in the "complete"
 // event, while the streamed posts are treated as live previews by the client.
+//
+// globalStartIndex is the slot index assigned to the first post produced by
+// this call; emitted PostEventPayload.Index values are globalStartIndex +
+// within-batch offset. Single-shot callers pass 0; batched callers pass the
+// batch's GlobalStartIndex so the UI can place posts in deterministic order.
 func generatePostsStreaming(
 	ctx context.Context,
 	g *genkit.Genkit,
 	modelName, systemPrompt, userPrompt string,
 	maxOutputTokens int64,
+	globalStartIndex int,
 	onEvent OnEventFunc,
 ) ([]DraftPost, error) {
 	modelCfg := ai.WithConfig(anthropic.MessageNewParams{
@@ -197,7 +326,7 @@ func generatePostsStreaming(
 				log.Printf("content_plan: malformed post chunk (raw=%.100s)", raw)
 				continue
 			}
-			emit(onEvent, SSEEventPost, PostEventPayload{Post: post, Index: len(posts)})
+			emit(onEvent, SSEEventPost, PostEventPayload{Post: post, Index: globalStartIndex + len(posts)})
 			posts = append(posts, post)
 		}
 	}
@@ -242,7 +371,7 @@ func generatePostsStreaming(
 	// Emit post events for the fallback results so the client still sees them.
 	for i := range posts {
 		posts[i].Body = trimBody(posts[i].Body)
-		emit(onEvent, SSEEventPost, PostEventPayload{Post: posts[i], Index: i})
+		emit(onEvent, SSEEventPost, PostEventPayload{Post: posts[i], Index: globalStartIndex + i})
 	}
 
 	return posts, nil

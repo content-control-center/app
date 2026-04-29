@@ -54,6 +54,13 @@ type resolvedPhase struct {
 }
 
 // contentPlanTemplateData is the data passed to the user-prompt template.
+//
+// Batch is non-nil when the user template is rendered for a specific batch
+// (the production path under parallel batching). The template uses Batch to
+// emit the per-batch slot table — required count, phase mix, platform mix,
+// date window — so the model produces exactly the slice we asked for. When
+// Batch is nil, the template falls back to the global EstimatedPostCount
+// rendering for a single-shot run.
 type contentPlanTemplateData struct {
 	Name                   string
 	Description            string
@@ -70,6 +77,7 @@ type contentPlanTemplateData struct {
 	EstimatedPostCount     int
 	Platforms              []resolvedPlatform
 	Assets                 []resolvedPiece
+	Batch                  *batchSpec
 }
 
 // ValidationError is returned by the flow when preconditions are not met.
@@ -105,9 +113,15 @@ type StepEventPayload struct {
 // PostEventPayload is the data payload for a "post" SSE event.
 // Emitted incrementally during model generation for each draft post
 // as it is parsed from the streaming model response.
+//
+// Index is the post's deterministic global slot index assigned by the batch
+// planner — stable across runs and independent of arrival order. Under
+// parallel batching, posts arrive interleaved by completion time, so the
+// stream-arrival order is no longer a reliable identifier; the UI should
+// place posts by Index, not by the order they appear on the wire.
 type PostEventPayload struct {
 	Post  DraftPost `json:"post"`
-	Index int       `json:"index"` // 0-based order from the stream
+	Index int       `json:"index"`
 }
 
 // ErrorEventPayload is the data payload for an "error" SSE event.
