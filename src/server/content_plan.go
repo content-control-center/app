@@ -22,12 +22,14 @@ func initContentPlan(
 	repos content_plan.ContentPlanRepos,
 ) (func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error), error) {
 	flowCfg := content_plan.ContentPlanFlowConfig{
-		ModelID:          cfg.ModelID,
-		MaxContextAssets: cfg.MaxContextAssets,
-		MaxContextChars:  cfg.MaxContextChars,
-		MaxOutputTokens:  cfg.MaxOutputTokens,
-		Embedder:         embedder,
-		Hub:              hub,
+		ModelID:            cfg.ModelID,
+		MaxContextAssets:   cfg.MaxContextAssets,
+		MaxContextChars:    cfg.MaxContextChars,
+		MaxOutputTokens:    cfg.MaxOutputTokens,
+		MaxPostsPerBatch:   cfg.MaxPostsPerBatch,
+		MaxParallelBatches: cfg.MaxParallelBatches,
+		Embedder:           embedder,
+		Hub:                hub,
 	}
 	if err := content_plan.InitContentPlan(g, flowCfg, repos); err != nil {
 		return nil, fmt.Errorf("init content plan flow: %w", err)

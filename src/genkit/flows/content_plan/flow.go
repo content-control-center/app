@@ -35,7 +35,16 @@ type ContentPlanFlowConfig struct {
 	MaxContextAssets int         // max assets when no embedder (creation-order fallback)
 	MaxContextChars  int         // character budget for asset context in the prompt
 	MaxOutputTokens  int64       // max_tokens sent to the model; 0 falls back to 8192
-	Embedder         ai.Embedder // nil = skip semantic ranking, fall back to creation order
+	// MaxPostsPerBatch caps the number of posts the model is asked to
+	// produce in a single batched call. Sized so 800 tokens/post stays
+	// comfortably under MaxOutputTokens with headroom for slower
+	// per-post tail latencies. 0 falls back to 30.
+	MaxPostsPerBatch int
+	// MaxParallelBatches caps how many batches run concurrently — a
+	// safety knob against Anthropic per-account rate limits when very
+	// large campaigns produce many batches. 0 falls back to 5.
+	MaxParallelBatches int
+	Embedder           ai.Embedder // nil = skip semantic ranking, fall back to creation order
 	// Hub is the event broker used to publish "operation finalised"
 	// events on success/failure. nil = silent (no events emitted).
 	Hub        eventhub.Hub

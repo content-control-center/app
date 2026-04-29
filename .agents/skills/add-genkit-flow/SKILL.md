@@ -515,6 +515,8 @@ Everything else (state machine, escape decoding, UTF-8 carry, recovery states) i
 
 The heart of the flow. This template is the per-field-streaming-with-tools case — trim for simpler flows.
 
+> **Variant — high-volume output:** if the flow produces an array of many independent items (50+, 100+) and the total output may exceed Claude's per-call cap (Sonnet 4.5 = 64K), the canonical "one Generate call per request" shape will hit `FinishReason == FinishReasonLength` in production. Skip ahead to the **Variant: parallel batching** section below — it replaces the model-call portion of this step with a deterministic slot allocator + parallel fan-out, but keeps the surrounding scaffolding (input validation, context assembly, scanner-based parsing, response shape) identical.
+
 ```go
 package <flow_name>
 
@@ -1101,6 +1103,276 @@ flushFrames();
 
 ---
 
+## Variant: parallel batching for high-volume output
+
+When the flow produces an array of independent items and the total output may exceed Claude's per-call cap (Sonnet 4.5 = 64K), generate in K-sized batches in parallel instead of one monolithic call. Canonical reference: `src/genkit/flows/content_plan/` after CON-67.
+
+### When to reach for this
+
+- Output is an array of independent items (posts, summaries, classifications) — items in slot N don't depend on items in slot N±1.
+- The total count is known per request and may grow large (50+, 100+, …).
+- Symptom in logs: `FinishReason == ai.FinishReasonLength` firing on real-world inputs.
+- Or: total per-request latency matters more than minimising API calls.
+
+### Architecture
+
+Three pieces, plus prompt and config changes. The single-shot run function from Step 7 stays as a fallback for callers that don't know the item count up front.
+
+1. **Slot allocator** (`batch.go`) — pure logic, no genkit deps. Plans N items across whatever domain dimensions matter (phases × platforms × dates × …). Chunks slots into K-sized batches with deterministic global indices.
+2. **Parallel fan-out helper** (`runBatchesParallel`) — extracted from `runX`. Takes a `gen(ctx, spec, emit)` callback so the test layer can stub it. Spawns goroutines (semaphore-capped), serialises emit through a mutex, aggregates results in batch order with partial-success semantics.
+3. **Per-batch prompt rendering** — extend the template data struct with an optional `Batch *batchSpec` field; the user prompt template emits a slot table (count + per-dimension breakdowns + scope window) when `.Batch` is non-nil and falls through to the unconstrained "produce N items" form when nil.
+
+### Slot allocator (`batch.go`)
+
+Pure logic, easily unit-tested. Each batch's `GlobalStartIndex` is the slot index of its first item in the campaign-wide ordering — used downstream to stamp every emitted SSE event with a stable global index.
+
+```go
+type batchSpec struct {
+    Index            int
+    GlobalStartIndex int
+    PostCount        int
+    PhaseCounts      []phaseCount   // your domain's primary dimension
+    PlatformCounts   []platformCount
+    DateWindow       dateWindow     // if your domain is date-bounded
+}
+
+func planBatches(
+    totalItems int,
+    phases []resolvedPhase,
+    platforms []resolvedPlatform,
+    start, end time.Time,
+    maxPerBatch int,
+) []batchSpec {
+    if totalItems <= 0 || len(phases) == 0 || len(platforms) == 0 {
+        return nil  // caller falls back to single-shot
+    }
+    if maxPerBatch <= 0 {
+        maxPerBatch = totalItems
+    }
+    // 1. evenSplit(totalItems, len(phases))     — front-load remainder to earliest
+    // 2. computeDateWindows(start, end, len(phases))
+    // 3. for each phase: evenSplit(phasePosts[p], len(platforms))
+    // 4. flatten into ordered slot list (phase ASC by Sequence → platform in declared order)
+    // 5. chunk slots into batches of maxPerBatch; aggregate per-batch counts + window union
+    // ... see content_plan/batch.go for the canonical implementation
+}
+```
+
+**Rules for the allocator:**
+- Defensive-sort dimensions by their canonical ordering field (e.g. `Sequence`) before splitting — repository queries don't always return them ordered, and front-loading depends on order.
+- `evenSplit(total, n)` distributes total into n buckets, remainder to earliest. Trivially testable.
+- Skip dimensions that get 0 items (don't emit empty `phaseCount` rows in the prompt — the model treats them as constraint noise).
+- Date-window splitter: if `dayCount < numPhases`, collapse all phases to the full range rather than emitting zero-day windows that produce invalid publishDates downstream.
+
+### Parallel fan-out helper
+
+```go
+func runBatchesParallel(
+    ctx context.Context,
+    batches []batchSpec,
+    maxParallel int,
+    gen func(ctx context.Context, spec batchSpec, emit OnEventFunc) ([]Item, error),
+    onEvent OnEventFunc,
+) ([]Item, []string, error) {
+    if maxParallel <= 0 {
+        maxParallel = 1
+    }
+
+    // SSE writer is single-writer — serialise emit before fanning out.
+    // Without the lock the bytes interleave across goroutines and frame
+    // parsing on the client breaks; symptoms are intermittent, not clean.
+    var emitMu sync.Mutex
+    safeEmit := onEvent
+    if onEvent != nil {
+        safeEmit = func(name SSEEventKind, payload any) {
+            emitMu.Lock()
+            defer emitMu.Unlock()
+            onEvent(name, payload)
+        }
+    }
+
+    type result struct {
+        items []Item
+        err   error
+    }
+    results := make([]result, len(batches))
+    sem := make(chan struct{}, maxParallel)
+    var wg sync.WaitGroup
+
+    for i := range batches {
+        i, spec := i, batches[i]
+        wg.Add(1)
+        sem <- struct{}{}
+        go func() {
+            defer wg.Done()
+            defer func() { <-sem }()
+            items, err := gen(ctx, spec, safeEmit)
+            results[i] = result{items: items, err: err}
+        }()
+    }
+    wg.Wait()
+
+    // Aggregate in batch order, not completion order — the persisted set
+    // and any future replay both need deterministic slot ordering.
+    var all []Item
+    var warnings []string
+    failures := 0
+    for i, r := range results {
+        if r.err != nil {
+            failures++
+            warnings = append(warnings, fmt.Sprintf(
+                "batch %d/%d (slots %d-%d) failed: %v",
+                i+1, len(batches),
+                batches[i].GlobalStartIndex,
+                batches[i].GlobalStartIndex+batches[i].PostCount-1,
+                r.err,
+            ))
+            continue
+        }
+        all = append(all, r.items...)
+    }
+    // Hard error only when EVERY batch failed — anything else is partial
+    // success and the surviving items are returned with warnings.
+    if failures == len(batches) {
+        return nil, warnings, &AIError{Msg: fmt.Sprintf("all %d batches failed; first error: %v", len(batches), results[0].err)}
+    }
+    return all, warnings, nil
+}
+```
+
+### Calling pattern in `runX`
+
+```go
+batches := planBatches(estCount, phases, platforms, *start, *end, cfg.MaxPostsPerBatch)
+if len(batches) == 0 {
+    // Single-shot fallback — preserve the pre-batching behaviour for
+    // callers that don't know the count up front. Same code path as Step 7.
+    userPrompt, _ := renderTemplate(cfg.userTmpl, data)
+    return generateItemsStreaming(ctx, g, modelName, systemPrompt, userPrompt, maxTokens, 0, onEvent)
+}
+
+// System prompt is identical for every batch — render once. Anthropic's
+// prompt cache hits across batches when the system block is byte-identical.
+systemPrompt, _ := renderTemplate(cfg.systemTmpl, data)
+
+gen := func(ctx context.Context, spec batchSpec, emit OnEventFunc) ([]Item, error) {
+    batchData := data
+    batchData.Batch = &spec
+    userPrompt, err := renderTemplate(cfg.userTmpl, batchData)
+    if err != nil {
+        return nil, fmt.Errorf("render user prompt for batch %d: %w", spec.Index, err)
+    }
+    return generateItemsStreaming(ctx, g, modelName, systemPrompt, userPrompt, maxTokens, spec.GlobalStartIndex, emit)
+}
+items, warnings, err := runBatchesParallel(ctx, batches, cfg.MaxParallelBatches, gen, onEvent)
+```
+
+### Per-item global indices
+
+`generateItemsStreaming` (your per-batch streaming helper) takes an extra `globalStartIndex int` param and stamps it onto every emitted event:
+
+```go
+emit(onEvent, SSEEventItem, ItemEventPayload{
+    Item:  item,
+    Index: globalStartIndex + len(items),  // stable global slot ID
+})
+```
+
+Under parallel batching, posts arrive **interleaved by completion time, not slot index**. The `Index` field becomes a stable identifier the UI uses to place items in deterministic slot order rather than appending in arrival order. Update the doc comment on `<Item>EventPayload.Index` to say so explicitly — the React layer relies on this contract.
+
+### Prompt template variant
+
+Two changes:
+
+1. **System prompt** — drop "Generate exactly N items" (it's now per-batch); replace with "exactly the number the user message asks for" and add "honour any per-dimension constraints stated in the user message — distributions are pre-computed and not negotiable".
+2. **User prompt** — wrap the per-batch slot table in `{{if .Batch}}`; keep the legacy `{{else if gt .EstimatedItemCount 0}}` arm so the single-shot fallback still works.
+
+```go-template
+{{define "user"}}
+... global request context ...
+
+{{- if .Batch}}
+This request is one slice of a larger plan. Generate exactly {{.Batch.PostCount}} items in this response — the JSON array must contain exactly {{.Batch.PostCount}} objects, no more, no fewer.
+
+Within this batch, distribute items as follows (counts are non-negotiable):
+{{- range .Batch.PhaseCounts}}
+  • Phase {{.Sequence}} "{{.PhaseName}}" (id: "{{.PhaseID}}"): {{.Count}}
+{{- end}}
+
+Platform mix for this batch:
+{{- range .Batch.PlatformCounts}}
+  • {{.PlatformName}} (id: "{{.PlatformID}}"): {{.Count}}
+{{- end}}
+
+Restrict every <date/scope> to the window {{.Batch.DateWindow.Start}} — {{.Batch.DateWindow.End}} (inclusive).
+{{- else if gt .EstimatedItemCount 0}}
+Required count: exactly {{.EstimatedItemCount}} items.
+{{- end}}
+
+... static reference material ...
+{{end}}
+```
+
+### Configuration knobs
+
+```go
+// in <FlowName>FlowConfig
+MaxPostsPerBatch   int  // 0 → 30 (sized for 64K output / ~800 tok/post + headroom)
+MaxParallelBatches int  // 0 → 5 (tier-1 Anthropic ITPM safety knob)
+```
+
+Plumb through `src/config/config.go` (env vars `MAX_POSTS_PER_BATCH`, `MAX_PARALLEL_BATCHES`) and `src/server/<flow_name>.go`. Defaults assume Sonnet 4.5 + tier-1 limits — bump for Haiku (more parallelism affordable) or tier 2+ accounts.
+
+### Testing
+
+The extracted `runBatchesParallel` helper is the unit-testable surface. Production hits Anthropic; tests pass a stub `gen` that simulates timing, partial failures, and emit concurrency without the network.
+
+```go
+// 1. Aggregation in batch order despite staggered completion
+delays := []time.Duration{30 * time.Millisecond, 5 * time.Millisecond, 60 * time.Millisecond}
+gen := func(_ context.Context, spec batchSpec, _ OnEventFunc) ([]Item, error) {
+    time.Sleep(delays[spec.Index])
+    return makeItems(spec), nil
+}
+items, _, _ := runBatchesParallel(ctx, batches, 5, gen, nil)
+// assert items appear in batch order, not completion order
+
+// 2. Partial-success → warnings, not error
+gen := func(_, spec, _) ([]Item, error) {
+    if spec.Index == 1 { return nil, errors.New("simulated batch 1 failure") }
+    return makeItems(spec), nil
+}
+items, warnings, err := runBatchesParallel(ctx, batches, 5, gen, nil)
+// err == nil, len(warnings) == 1, items contain only batches 0 and 2
+
+// 3. Emit serialisation under -race
+var inside int32
+emit := func(_, _) {
+    if got := atomic.AddInt32(&inside, 1); got != 1 {
+        t.Errorf("concurrent emit: inside = %d", got)
+    }
+    time.Sleep(time.Microsecond)
+    atomic.AddInt32(&inside, -1)
+}
+runBatchesParallel(ctx, batches, 8, gen, emit)
+
+// 4. Max-parallel cap honoured (atomic counter for in-flight goroutines)
+//    See content_plan/parallel_test.go for the canonical implementation.
+```
+
+For an integration test against the real model: deliberately force multiple batches by setting `MaxPostsPerBatch=5` with a mid-range `EstimatedPostCount=10`, then assert (a) the response shape is valid, (b) all dimensions are represented across batches, and (c) emitted `Index` values form a unique set with the lowest at 0. ~$0.005/run on Haiku makes this safe to leave on without budgeting CI cost.
+
+### Gotchas specific to batching
+
+1. **Single-shot fallback is a feature, not a leftover.** When `totalCount` is unset or `planBatches` returns nil, fall through to one un-batched call. Preserves the pre-batching behaviour for callers that don't pre-compute counts.
+2. **Mutex the emit callback even when "obviously" safe.** SSE writers are single-writer; missing the lock surfaces as garbled events under load, not a clean panic. Race-detector clean is the bar.
+3. **Partial-success aggregation is the default.** A 4-batch run with one batch failing should return 90 of 120 items + a warning, not abort everything. Hard `*AIError` fires only when **every** batch fails so the SSE error event surfaces a real outage rather than a flake.
+4. **Aggregate in batch order, not completion order.** Persisting items as they arrive would scatter them across whatever order goroutines happened to finish in. The slot allocator's deterministic ordering is the contract; honour it on the way out.
+5. **Don't share a Genkit instance across rebuilds.** If your project rotates Anthropic keys at runtime (e.g. via the SecretStore pattern from CON-64), the Anthropic plugin captures the key at `Init` and panics on re-init. Keep the embedding genkit instance separate from the rebuildable Anthropic-flow instance so an Anthropic key change doesn't disturb the embedder.
+6. **Front-end consequence.** Items arriving out of slot order is now the contract — UIs must place by `Index`, not by stream position. Document this on the `*EventPayload.Index` field comment so the next person to wire a frontend doesn't append-as-arrived and ship a jumbled view.
+
+---
+
 ## Gotchas (read this before you start)
 
 1. **Native Anthropic plugin, not compat.** `import "github.com/firebase/genkit/go/plugins/anthropic"`. The `plugins/compat_oai/anthropic` shim rejects `anthropic.MessageNewParams` as an unknown config type — the error is `unexpected config type: anthropic.MessageNewParams` which is misleading because the type name in the error matches the supported type (different package with the same short name).
@@ -1162,5 +1434,6 @@ Fix any compile or test errors before reporting success. Do not claim success wi
 - Handler test added (`src/handlers/<resource>_test.go`) — stub callback, SSE frame parser, happy path + error path
 - (Optional) Integration test added under `src/integration/` with `//go:build integration` tag
 - (Optional) React prototype wiring — SSE reader, per-chunk render, tool chips, spinner
+- (Optional, when batching) `batch.go` slot allocator + `batch_test.go` distribution tests; `runBatchesParallel` extracted with stubbed-gen unit tests covering ordered aggregation, partial-success warnings, all-failed → `*AIError`, max-parallel cap, and emit non-reentrancy under `-race`; user prompt template wraps slot table in `{{if .Batch}}` with single-shot fallback preserved; `MaxPostsPerBatch` and `MaxParallelBatches` plumbed through config + server adapter; per-event `Index` doc updated to reflect stable-slot semantics
 - `go build ./src/...` clean
 - `go test -count=1 ./src/...` green — including all `TestScanner_*`, `TestValues_*`, and `TestTrimIncompleteUTF8`

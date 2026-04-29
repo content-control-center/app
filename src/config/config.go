@@ -25,6 +25,14 @@ type Config struct {
 	// flow with explanation + full post content + tool inputs combined).
 	MaxOutputTokens int64 `envconfig:"MAX_OUTPUT_TOKENS"     default:"64000"`
 
+	// Content-plan batching. The flow generates posts in K-sized batches in
+	// parallel; the defaults are sized so a 64K-output Sonnet call comfortably
+	// returns 30 posts with headroom, and so an account with default tier
+	// limits doesn't stall on parallel ITPM bursts. Tune up for plans with
+	// 200+ posts where wall time matters.
+	MaxPostsPerBatch   int `envconfig:"MAX_POSTS_PER_BATCH"   default:"30"`
+	MaxParallelBatches int `envconfig:"MAX_PARALLEL_BATCHES"  default:"5"`
+
 	// Object storage (S3-compatible: Cloudflare R2, DigitalOcean Spaces, AWS S3).
 	// Leave StorageEndpoint empty to disable image uploads.
 	StorageEndpoint  string `envconfig:"STORAGE_ENDPOINT"   default:""`
