@@ -516,6 +516,8 @@ Everything else (state machine, escape decoding, UTF-8 carry, recovery states) i
 The heart of the flow. This template is the per-field-streaming-with-tools case — trim for simpler flows.
 
 > **Variant — high-volume output:** if the flow produces an array of many independent items (50+, 100+) and the total output may exceed Claude's per-call cap (Sonnet 4.5 = 64K), the canonical "one Generate call per request" shape will hit `FinishReason == FinishReasonLength` in production. Skip ahead to the **Variant: parallel batching** section below — it replaces the model-call portion of this step with a deterministic slot allocator + parallel fan-out, but keeps the surrounding scaffolding (input validation, context assembly, scanner-based parsing, response shape) identical.
+>
+> **Variant — per-post persistence:** if the flow streams an array of records that you want to land in the database as they arrive (so a client disconnect mid-stream doesn't discard work, and a batch's hard failure doesn't roll back successful peers), see the **Variant: per-post persistence** section below. It absorbs the legacy "validate then persist at the end" pair of steps into the streaming callback — each parsed record is inline-validated, inline-inserted, and emitted with its new row's ID before the next chunk arrives. Layers cleanly with parallel batching.
 
 ```go
 package <flow_name>
@@ -1373,6 +1375,213 @@ For an integration test against the real model: deliberately force multiple batc
 
 ---
 
+## Variant: per-post persistence for streamed records
+
+When a flow streams an array of records (posts, summaries, classifications, generated invoices, …) and the records have meaningful database identity, persist each one **inline as it parses**, not as a final aggregate insert. Canonical reference: `src/genkit/flows/content_plan/` after CON-66 — applied on top of the CON-67 batching path.
+
+### When to reach for this
+
+- The flow's output is an array of records that will be persisted regardless of run success.
+- The user has already seen the streamed previews in the UI by the time the run finishes — discarding them on a late-stage failure is a worse UX than honouring what's already on screen.
+- You want partial-success semantics: one batch failing in a parallel run shouldn't roll back the others.
+- Symptoms motivating it: bug reports of "the calendar showed 90 posts but then everything disappeared," "client refresh during generation lost all my work," or "DB write failed on the final commit and we lost the entire run."
+
+### What it changes vs. the canonical Step 7
+
+```
+Canonical:                            With per-post persistence:
+─────                                 ──────────────────────────
+parse stream → []Records              parse stream → for each record:
+                                        ↳ validate inline
+validateOutput(records) → valid set     ↳ persist inline (single-row insert)
+                                        ↳ emit "post" event with id
+persistDraftPosts(valid) → bulk        ↳ next record
+   insert at the end                  (no separate persist step)
+emit "complete" with valid set        emit "complete" with the persisted set
+```
+
+Steps 5 (validateOutput) and 6 (persistDraftPosts) become **no-op SSE step events** for client compatibility; the substantive work happened inside Step 4. The response struct's `Posts: ...` field now reflects the inline-persisted set rather than a post-validation slice.
+
+### File-level changes
+
+1. **`validate.go`** — extract the per-record check into a closure. Replaces the slice-based `validateOutput` as the source of truth (the legacy slice wrapper stays as a thin convenience for tests):
+   ```go
+   type postValidator func(post DraftPost) error
+
+   func buildPostValidator(campaign *models.Campaign, platforms []resolvedPlatform) postValidator {
+       // ... build platform/phase/date allowlists once ...
+       return func(post DraftPost) error {
+           // ... per-rule rejection with descriptive errors ...
+       }
+   }
+   ```
+
+2. **`generate.go`** — `persistOne(ctx, dp, campaign, postRepo) (string, error)` replaces the bulk `persistDraftPosts`. Returns the new row ID. `generatePostsStreaming` gains two parameters threaded down from `generatePosts`:
+   ```go
+   func generatePostsStreaming(
+       ctx context.Context,
+       g *genkit.Genkit,
+       modelName, systemPrompt, userPrompt string,
+       maxOutputTokens int64,
+       globalStartIndex int,
+       validate postValidator,
+       persistFn func(ctx context.Context, post DraftPost) (string, error),
+       onEvent OnEventFunc,
+   ) ([]DraftPost, error) {
+       // ... within the streaming chunk loop, for each parsed post:
+       tryPersist := func(post DraftPost, position int) {
+           if err := validate(post); err != nil {
+               emit(onEvent, SSEEventWarning, WarningPayload{
+                   Message: fmt.Sprintf("post %q dropped: %s", post.Title, err),
+               })
+               return
+           }
+           id, err := persistFn(ctx, post)
+           if err != nil {
+               emit(onEvent, SSEEventWarning, WarningPayload{
+                   Message: fmt.Sprintf("post %q persist failed: %v", post.Title, err),
+               })
+               return
+           }
+           persistedPositions[position] = true
+           emit(onEvent, SSEEventPost, PostEventPayload{
+               Post:  post,
+               Index: globalStartIndex + len(posts),
+               ID:    id,
+           })
+           posts = append(posts, post)
+       }
+       // ...
+   }
+   ```
+
+3. **`generate.go` (continued)** — `generatePosts` builds the validator + persist closure once per run and threads them into every batch:
+   ```go
+   validate := buildPostValidator(campaign, platforms)
+   persistFn := func(ctx context.Context, dp DraftPost) (string, error) {
+       return persistOne(ctx, dp, campaign, repos.Posts)
+   }
+   // ... pass into single-shot fallback AND each batch's gen closure ...
+   ```
+
+4. **`flow.go` / `runX`** — Step 4 absorbs validation + persistence; Steps 5 and 6 become no-op SSE step emits for client compatibility. The response's `Posts: ...` field uses the inline-persisted set:
+   ```go
+   posts, genWarnings, err := generatePosts(ctx, g, campaign, platforms, assets, cfg, repos, onEvent)
+   if err != nil {
+       // Even on error, surviving persisted posts are returned so the
+       // caller can surface partial success.
+       return nil, err
+   }
+   emit(onEvent, SSEEventStep, StepEventPayload{Step: "generatePosts", Status: "done"})
+
+   // No-ops, kept for client compat:
+   emit(onEvent, SSEEventStep, StepEventPayload{Step: "validateOutput", Status: "done"})
+   emit(onEvent, SSEEventStep, StepEventPayload{Step: "persistDraftPosts", Status: "done"})
+
+   return &ContentPlanResponse{Posts: posts, Warnings: warnings, /* ... */}, nil
+   ```
+
+5. **`types.go`** — three additive changes:
+   ```go
+   const SSEEventWarning SSEEventKind = "warning"
+
+   type WarningPayload struct {
+       Message string `json:"message"`
+       Index   int    `json:"index,omitempty"`
+   }
+
+   type PostEventPayload struct {
+       Post  DraftPost `json:"post"`
+       Index int       `json:"index"`
+       ID    string    `json:"id"`  // NEW: persisted row ID
+   }
+   ```
+
+### Stream-fallback dedup
+
+`generatePostsStreaming` retries with a blocking `genkit.Generate` when the streaming connection fails. Without dedup, every post that already streamed-and-persisted would be parsed again from the blocking response and inserted a second time. Track raw response positions in a `persistedPositions map[int]bool`:
+
+```go
+parsedPosition := 0  // 0-based count of every parse attempt (valid + invalid)
+
+// streaming loop:
+for _, raw := range scanner.push(chunkText) {
+    position := parsedPosition
+    parsedPosition++
+    post, ok := parseAndTrimPost(raw)
+    if !ok { continue }
+    tryPersist(post, position)  // sets persistedPositions[position] on success
+}
+
+// fallback loop:
+for i, post := range fallbackPosts {
+    if persistedPositions[i] {
+        continue  // first-write wins, even if the blocking response
+                  // produces a slightly different text for this slot
+                  // (non-zero temperature)
+    }
+    tryPersist(post, i)
+}
+```
+
+Position-based dedup assumes the model is approximately deterministic in its first-N positions — true under temperature 0 and effectively true under low temperatures with a structured prompt. If your flow uses high-temperature creative generation, factor that in (consider content-hash-based dedup).
+
+### Layering with parallel batching
+
+Critical detail when combining per-post persistence with the parallel-batching variant: **`runBatchesParallel` must NOT discard a batch's partial posts on error.** The default-looking shape would be:
+
+```go
+posts, err := gen(ctx, spec, safeEmit)
+if err != nil {
+    results[i] = batchResult{err: err}  // ← BUG: persisted posts lost from response slice
+    return
+}
+results[i] = batchResult{posts: posts}
+```
+
+The right shape — keep the partial slice even when err is non-nil:
+
+```go
+posts, err := gen(ctx, spec, safeEmit)
+results[i] = batchResult{posts: posts, err: err}
+// ...
+// In aggregation:
+allPosts = append(allPosts, r.posts...)  // always include
+if r.err != nil { warnings = append(warnings, ...) }
+```
+
+The DB has the rows regardless; the response must reflect that. Same rule applies to the all-failed `*AIError` path: return `allPosts, warnings, &AIError{...}` rather than discarding.
+
+### SSE contract changes
+
+| Event | Before | After per-post persistence |
+|---|---|---|
+| `post` | `{post, index}` — preview only | `{post, index, id}` — already in DB |
+| `warning` | not emitted (only inside `complete.warnings`) | emitted live for every dropped or failed post |
+| `complete` | full `Posts[]` + aggregated `warnings[]` | unchanged shape; `Posts[]` is the persisted set |
+| `error` | terminal, response usually empty | terminal, surviving persisted posts still in DB and in the response |
+
+Both new fields are additive — old clients that don't read `payload.id` or that ignore `warning` events keep working. Document the new contract on `PostEventPayload.ID` and `WarningPayload.Message` so the next person to wire a frontend uses them.
+
+### Tests
+
+- **Unit tests for `buildPostValidator`** — accept path, reject paths (unknown platform, contentType not in allowlist, empty allowlist passthrough, out-of-range date, unknown phase). Pure function, easy.
+- **Slice wrapper test** — `validateOutput` (the retained legacy form) still produces the right warnings. Confirms the refactor preserves behaviour.
+- **Integration test addition** — after a successful run, assert (a) every emitted `PostEventPayload.ID` is non-empty, (b) the DB row count for the campaign equals the streamed event count, (c) every emitted ID references a real row. Same fixture as the parallel-batching integration test; one extra `It` block.
+
+`generatePostsStreaming` itself is hard to unit-test without faking the genkit stream. Lean on the integration test for end-to-end coverage; the validator and persist helpers are individually testable.
+
+### Gotchas specific to per-post persistence
+
+1. **Cross-run idempotency is not free.** A re-trigger of the flow for the same campaign creates fresh rows — same as the pre-CON-66 bulk-insert behaviour. If you need re-trigger to be a true upsert, design a stable per-slot key (e.g. `campaign_id + slot_index`) and `INSERT ... ON CONFLICT DO UPDATE`. Out of scope for the variant; surface explicitly in the PR if it matters.
+2. **Validation moves earlier; warnings now arrive live.** Old `complete.warnings` arrived in one batch at the end; live `warning` events stream across the run. Both shapes coexist (`complete.warnings` aggregates everything emitted live); the React layer should handle either independently.
+3. **DB-write contention.** SQLite with `_pragma=journal_mode(WAL)` plus `MaxOpenConns(1)` serialises writes; per-post inserts queue but don't deadlock. For 120 posts that's ~120 serialised writes vs. 1 bulk insert — likely <1s under WAL but worth a benchmark if you bump volumes much higher.
+4. **First-write-wins on stream→fallback dedup.** The streamed copy of a post is preserved even if the blocking response would have produced a slightly different text for that slot. This is usually what you want (the user already saw the streamed version) but document it for posterity.
+5. **The flow's response is the persisted set.** No "valid posts" vs "raw posts" distinction any more. Tests that previously asserted on `validateOutput`'s output should now assert against the response's `Posts` field directly.
+6. **Don't forget `repos` in `generatePosts`.** The persist closure needs the post repository; thread `ContentPlanRepos` (or your equivalent) through `generatePosts` if it wasn't already a parameter.
+
+---
+
 ## Gotchas (read this before you start)
 
 1. **Native Anthropic plugin, not compat.** `import "github.com/firebase/genkit/go/plugins/anthropic"`. The `plugins/compat_oai/anthropic` shim rejects `anthropic.MessageNewParams` as an unknown config type — the error is `unexpected config type: anthropic.MessageNewParams` which is misleading because the type name in the error matches the supported type (different package with the same short name).
@@ -1435,5 +1644,6 @@ Fix any compile or test errors before reporting success. Do not claim success wi
 - (Optional) Integration test added under `src/integration/` with `//go:build integration` tag
 - (Optional) React prototype wiring — SSE reader, per-chunk render, tool chips, spinner
 - (Optional, when batching) `batch.go` slot allocator + `batch_test.go` distribution tests; `runBatchesParallel` extracted with stubbed-gen unit tests covering ordered aggregation, partial-success warnings, all-failed → `*AIError`, max-parallel cap, and emit non-reentrancy under `-race`; user prompt template wraps slot table in `{{if .Batch}}` with single-shot fallback preserved; `MaxPostsPerBatch` and `MaxParallelBatches` plumbed through config + server adapter; per-event `Index` doc updated to reflect stable-slot semantics
+- (Optional, when persisting incrementally) `buildPostValidator` extracted from `validateOutput` + unit tests; `persistOne` replaces bulk persist with single-row insert returning the new ID; `generatePostsStreaming` takes `validate` and `persistFn` params and inline-validates / inline-persists / inline-emits each parsed record; stream→fallback dedup via a `persistedPositions` map; `runBatchesParallel` keeps each batch's partial posts on error (don't discard `posts` when `err != nil`); `PostEventPayload.ID` and `SSEEventWarning` / `WarningPayload` added to `types.go` (additive); legacy `validateOutput` / `persistDraftPosts` SSE step events fire as no-ops for client compat; integration test asserts every emitted ID maps to a real DB row
 - `go build ./src/...` clean
 - `go test -count=1 ./src/...` green — including all `TestScanner_*`, `TestValues_*`, and `TestTrimIncompleteUTF8`
