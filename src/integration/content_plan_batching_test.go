@@ -247,5 +247,64 @@ var _ = Describe("Content plan flow — parallel batched generation", Ordered, f
 			Expect(idxs[0]).To(Equal(0),
 				"lowest streamed index must be 0; got %d", idxs[0])
 		})
+
+		// Per CON-66 every post is persisted before its post-event fires.
+		// PostEventPayload.ID carries the row id; the event is the proof
+		// that the row exists. Verify that:
+		//   1. Every emitted event has a non-empty ID.
+		//   2. The DB has exactly one row per emitted ID.
+		//   3. The persisted row count matches resp.Posts (the run's
+		//      authoritative result is also the persisted set — there's
+		//      no separate aggregate persist step any more).
+		It("persists each post before its event fires (per-CON-66)", func() {
+			_, _ = db.NewDelete().TableExpr("posts").Where("campaign_id = ?", campaignID).Exec(ctx)
+
+			var (
+				mu     sync.Mutex
+				events []content_plan.PostEventPayload
+			)
+			onEvent := content_plan.OnEventFunc(func(name content_plan.SSEEventKind, data any) {
+				if name != content_plan.SSEEventPost {
+					return
+				}
+				if p, ok := data.(content_plan.PostEventPayload); ok {
+					mu.Lock()
+					events = append(events, p)
+					mu.Unlock()
+				}
+			})
+
+			cb := content_plan.NewContentPlanCallback()
+			resp, err := cb(ctx, campaignID, onEvent)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp).NotTo(BeNil())
+
+			// Every event must carry a persisted row ID.
+			for _, e := range events {
+				Expect(e.ID).NotTo(BeEmpty(),
+					"PostEventPayload.ID must be set under CON-66; missing for index %d (%q)", e.Index, e.Post.Title)
+			}
+
+			// DB row count = streamed event count = resp.Posts length.
+			postRepo := repository.NewPostRepository(db)
+			persisted, err := postRepo.ListByCampaign(ctx, campaignID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(len(persisted)).To(Equal(len(events)),
+				"DB row count (%d) must match emitted post-event count (%d) — CON-66 promise is per-event persistence",
+				len(persisted), len(events))
+			Expect(len(persisted)).To(Equal(len(resp.Posts)),
+				"DB row count (%d) must match resp.Posts len (%d) — flow now returns the persisted set",
+				len(persisted), len(resp.Posts))
+
+			// Every emitted ID must reference a real row in the DB.
+			gotIDs := map[string]bool{}
+			for _, p := range persisted {
+				gotIDs[p.ID] = true
+			}
+			for _, e := range events {
+				Expect(gotIDs[e.ID]).To(BeTrue(),
+					"emitted ID %q (slot %d, %q) is not present in the posts table", e.ID, e.Index, e.Post.Title)
+			}
+		})
 	})
 })

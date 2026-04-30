@@ -100,6 +100,7 @@ type SSEEventKind string
 const (
 	SSEEventStep     SSEEventKind = "step"
 	SSEEventPost     SSEEventKind = "post"
+	SSEEventWarning  SSEEventKind = "warning"
 	SSEEventComplete SSEEventKind = "complete"
 	SSEEventError    SSEEventKind = "error"
 )
@@ -119,9 +120,25 @@ type StepEventPayload struct {
 // parallel batching, posts arrive interleaved by completion time, so the
 // stream-arrival order is no longer a reliable identifier; the UI should
 // place posts by Index, not by the order they appear on the wire.
+//
+// ID is the persisted Post row's primary key. Per CON-66 every post is
+// inserted before its event fires, so the client can reference the row
+// (edit, delete, drag) immediately rather than waiting for the
+// "complete" event.
 type PostEventPayload struct {
 	Post  DraftPost `json:"post"`
 	Index int       `json:"index"`
+	ID    string    `json:"id"`
+}
+
+// WarningPayload is the data payload for a "warning" SSE event.
+// Emitted when a parsed post is dropped (validation failure) or
+// rejected (persist failure). Index points at the global slot the
+// post would have occupied; clients can use it to remove a previously
+// emitted preview if the post was streamed before being rejected.
+type WarningPayload struct {
+	Message string `json:"message"`
+	Index   int    `json:"index,omitempty"`
 }
 
 // ErrorEventPayload is the data payload for an "error" SSE event.

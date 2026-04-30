@@ -81,6 +81,7 @@ func generatePosts(
 	platforms []resolvedPlatform,
 	assets []resolvedPiece,
 	cfg ContentPlanFlowConfig,
+	repos ContentPlanRepos,
 	onEvent OnEventFunc,
 ) ([]DraftPost, []string, error) {
 	estCount := 0
@@ -140,6 +141,15 @@ func generatePosts(
 
 	modelName := "anthropic/" + cfg.ModelID
 
+	// Per CON-66 every parsed post is validated and persisted inline,
+	// before its post-event fires — the validator is built once and
+	// shared across all batches; the persist closure binds the campaign
+	// + post repository for the duration of the run.
+	validate := buildPostValidator(campaign, platforms)
+	persistFn := func(ctx context.Context, dp DraftPost) (string, error) {
+		return persistOne(ctx, dp, campaign, repos.Posts)
+	}
+
 	// Single-shot fallback: no estimated count, or fewer slots than a single
 	// batch. We still go through the batched path for consistency, but with
 	// a single batch covering everything.
@@ -153,9 +163,11 @@ func generatePosts(
 			return nil, nil, fmt.Errorf("render user prompt: %w", err)
 		}
 		log.Printf("content_plan: user prompt (no batch plan):\n%s", userPrompt)
-		posts, genErr := generatePostsStreaming(ctx, g, modelName, systemPrompt, userPrompt, maxTokens, 0, onEvent)
+		posts, genErr := generatePostsStreaming(ctx, g, modelName, systemPrompt, userPrompt, maxTokens, 0, validate, persistFn, onEvent)
 		if genErr != nil {
-			return nil, nil, genErr
+			// Even on hard failure, return what was persisted so the
+			// caller's partial-success aggregation has the rows.
+			return posts, nil, genErr
 		}
 		return posts, nil, nil
 	}
@@ -172,7 +184,7 @@ func generatePosts(
 		}
 		log.Printf("content_plan: batch %d/%d (posts=%d window=%s..%s) user prompt:\n%s",
 			spec.Index+1, len(batches), spec.PostCount, spec.DateWindow.Start, spec.DateWindow.End, userPrompt)
-		return generatePostsStreaming(ctx, g, modelName, systemPrompt, userPrompt, maxTokens, spec.GlobalStartIndex, emit)
+		return generatePostsStreaming(ctx, g, modelName, systemPrompt, userPrompt, maxTokens, spec.GlobalStartIndex, validate, persistFn, emit)
 	}
 	return runBatchesParallel(ctx, batches, maxParallel, gen, onEvent)
 }
@@ -229,14 +241,18 @@ func runBatchesParallel(
 			defer wg.Done()
 			defer func() { <-sem }()
 
+			// Per CON-66 generatePostsStreaming returns whatever was
+			// persisted before the failure point — keep both the posts
+			// AND the err so a batch that streamed 5 then fell back and
+			// errored still contributes its 5 persisted rows to the
+			// response.
 			posts, err := gen(ctx, spec, safeEmit)
 			if err != nil {
-				log.Printf("content_plan: batch %d/%d failed: %v", i+1, len(batches), err)
-				results[i] = batchResult{err: err}
-				return
+				log.Printf("content_plan: batch %d/%d failed: %v (%d persisted before failure)", i+1, len(batches), err, len(posts))
+			} else {
+				log.Printf("content_plan: batch %d/%d done (%d posts)", i+1, len(batches), len(posts))
 			}
-			log.Printf("content_plan: batch %d/%d done (%d posts)", i+1, len(batches), len(posts))
-			results[i] = batchResult{posts: posts}
+			results[i] = batchResult{posts: posts, err: err}
 		}()
 	}
 	wg.Wait()
@@ -245,6 +261,10 @@ func runBatchesParallel(
 	var warnings []string
 	failures := 0
 	for i, r := range results {
+		// Always include persisted posts (CON-66) — even from a batch
+		// that ultimately errored, the DB has the rows and the response
+		// must reflect that.
+		allPosts = append(allPosts, r.posts...)
 		if r.err != nil {
 			failures++
 			warnings = append(warnings, fmt.Sprintf(
@@ -254,33 +274,43 @@ func runBatchesParallel(
 				batches[i].GlobalStartIndex+batches[i].PostCount-1,
 				r.err,
 			))
-			continue
 		}
-		allPosts = append(allPosts, r.posts...)
 	}
 
 	if failures == len(batches) {
-		return nil, warnings, &AIError{Msg: fmt.Sprintf("all %d batches failed; first error: %v", len(batches), results[0].err)}
+		// Even when every batch errored, surviving persisted posts from
+		// each batch's streaming phase are returned alongside the
+		// AIError so the caller can surface them.
+		return allPosts, warnings, &AIError{Msg: fmt.Sprintf("all %d batches failed; first error: %v", len(batches), results[0].err)}
 	}
 	return allPosts, warnings, nil
 }
 
-// generatePostsStreaming attempts a streaming model call and incrementally emits
-// each parsed DraftPost via onEvent. On any stream failure it falls back to a
-// blocking genkit.Generate call regardless of how many partial posts were already
-// emitted — the blocking response is the canonical result sent in the "complete"
-// event, while the streamed posts are treated as live previews by the client.
+// generatePostsStreaming attempts a streaming model call and inline-persists
+// each parsed-and-validated DraftPost via persistFn before emitting it as a
+// "post" SSE event with the new row's ID. Validation failures and persist
+// failures emit "warning" SSE events; the run continues. On any stream
+// failure the function falls back to a blocking genkit.Generate call —
+// posts that were already persisted during streaming are tracked by raw
+// response position and skipped in the fallback so we never double-insert.
 //
 // globalStartIndex is the slot index assigned to the first post produced by
 // this call; emitted PostEventPayload.Index values are globalStartIndex +
-// within-batch offset. Single-shot callers pass 0; batched callers pass the
-// batch's GlobalStartIndex so the UI can place posts in deterministic order.
+// within-batch offset (compact — failed posts don't consume an index).
+// Single-shot callers pass 0; batched callers pass the batch's
+// GlobalStartIndex so the UI can place posts in deterministic order.
+//
+// Returns whatever was persisted, even on hard fallback failure — CON-66's
+// guarantee is that work survives the call, so a downstream AIError must
+// still hand back the persisted slice.
 func generatePostsStreaming(
 	ctx context.Context,
 	g *genkit.Genkit,
 	modelName, systemPrompt, userPrompt string,
 	maxOutputTokens int64,
 	globalStartIndex int,
+	validate postValidator,
+	persistFn func(ctx context.Context, post DraftPost) (string, error),
 	onEvent OnEventFunc,
 ) ([]DraftPost, error) {
 	modelCfg := ai.WithConfig(anthropic.MessageNewParams{
@@ -289,9 +319,40 @@ func generatePostsStreaming(
 
 	scanner := newJSONPostScanner()
 	var posts []DraftPost
+	// persistedPositions tracks the raw parse position (0-based, includes
+	// invalid attempts) of every successfully persisted post in the
+	// streaming phase, so the blocking-fallback below can skip them. The
+	// model is approximately deterministic in its first-N positions, so a
+	// position-based skip is more reliable than a content-equality check.
+	persistedPositions := map[int]bool{}
+	parsedPosition := 0
 	var streamErr error
 	var chunkCount int
 	var totalBytes int
+
+	tryPersist := func(post DraftPost, position int) {
+		if err := validate(post); err != nil {
+			emit(onEvent, SSEEventWarning, WarningPayload{
+				Message: fmt.Sprintf("post %q dropped: %s", post.Title, err),
+			})
+			return
+		}
+		id, err := persistFn(ctx, post)
+		if err != nil {
+			log.Printf("content_plan: persist failed for post %q: %v", post.Title, err)
+			emit(onEvent, SSEEventWarning, WarningPayload{
+				Message: fmt.Sprintf("post %q persist failed: %v", post.Title, err),
+			})
+			return
+		}
+		persistedPositions[position] = true
+		emit(onEvent, SSEEventPost, PostEventPayload{
+			Post:  post,
+			Index: globalStartIndex + len(posts),
+			ID:    id,
+		})
+		posts = append(posts, post)
+	}
 
 	for result, err := range genkit.GenerateStream(ctx, g,
 		ai.WithModelName(modelName),
@@ -311,8 +372,8 @@ func generatePostsStreaming(
 						u.InputTokens, u.OutputTokens, u.InputTokens+u.OutputTokens)
 				}
 				respText := result.Response.Text()
-				log.Printf("content_plan: stream finish_reason=%q posts_parsed=%d chunks=%d bytes=%d response_len=%d response_tail=%s",
-					result.Response.FinishReason, len(posts), chunkCount, totalBytes, len(respText), tailOf(respText, 200))
+				log.Printf("content_plan: stream finish_reason=%q posts_persisted=%d parsed=%d chunks=%d bytes=%d response_len=%d response_tail=%s",
+					result.Response.FinishReason, len(posts), parsedPosition, chunkCount, totalBytes, len(respText), tailOf(respText, 200))
 			}
 			break
 		}
@@ -321,13 +382,17 @@ func generatePostsStreaming(
 		chunkText := result.Chunk.Text()
 		totalBytes += len(chunkText)
 		for _, raw := range scanner.push(chunkText) {
+			position := parsedPosition
+			parsedPosition++
 			post, ok := parseAndTrimPost(raw)
 			if !ok {
 				log.Printf("content_plan: malformed post chunk (raw=%.100s)", raw)
+				emit(onEvent, SSEEventWarning, WarningPayload{
+					Message: fmt.Sprintf("malformed post chunk: %.80s", raw),
+				})
 				continue
 			}
-			emit(onEvent, SSEEventPost, PostEventPayload{Post: post, Index: globalStartIndex + len(posts)})
-			posts = append(posts, post)
+			tryPersist(post, position)
 		}
 	}
 
@@ -335,10 +400,10 @@ func generatePostsStreaming(
 		return posts, nil
 	}
 
-	// Stream failed (connection dropped mid-generation). The partial posts already emitted as
-	// SSE preview events are discarded here — the blocking fallback gives the complete set,
-	// which the client uses as the canonical result via the "complete" event.
-	log.Printf("content_plan: stream error after %d partial posts — falling back to blocking Generate: %v", len(posts), streamErr)
+	// Stream failed (connection dropped mid-generation). Re-issue as a
+	// blocking call to recover the rest of the batch; deduplicate against
+	// what the streaming path already persisted so we never double-insert.
+	log.Printf("content_plan: stream error after %d persisted (parsed=%d) — falling back to blocking Generate: %v", len(posts), parsedPosition, streamErr)
 	resp, err := genkit.Generate(ctx, g,
 		ai.WithModelName(modelName),
 		ai.WithSystem(systemPrompt),
@@ -346,7 +411,9 @@ func generatePostsStreaming(
 		modelCfg,
 	)
 	if err != nil {
-		return nil, &AIError{Msg: fmt.Sprintf("model call failed (stream+fallback): %v", err)}
+		// Hand back whatever was already persisted so the caller can
+		// surface partial success rather than discarding the run.
+		return posts, &AIError{Msg: fmt.Sprintf("model call failed (stream+fallback): %v", err)}
 	}
 
 	if resp.Usage != nil {
@@ -364,14 +431,20 @@ func generatePostsStreaming(
 		text = strings.TrimSpace(text)
 	}
 
-	if err := json.Unmarshal([]byte(text), &posts); err != nil {
-		return nil, &AIError{Msg: fmt.Sprintf("model response not valid JSON: %v\nraw: %.200s", err, text)}
+	var fallbackPosts []DraftPost
+	if err := json.Unmarshal([]byte(text), &fallbackPosts); err != nil {
+		return posts, &AIError{Msg: fmt.Sprintf("model response not valid JSON: %v\nraw: %.200s", err, text)}
 	}
 
-	// Emit post events for the fallback results so the client still sees them.
-	for i := range posts {
-		posts[i].Body = trimBody(posts[i].Body)
-		emit(onEvent, SSEEventPost, PostEventPayload{Post: posts[i], Index: globalStartIndex + i})
+	for i, post := range fallbackPosts {
+		if persistedPositions[i] {
+			// Already persisted via the streaming path — first-write
+			// wins, even if the blocking response produces a slightly
+			// different text for this slot (e.g. non-zero temperature).
+			continue
+		}
+		post.Body = trimBody(post.Body)
+		tryPersist(post, i)
 	}
 
 	return posts, nil
@@ -398,48 +471,49 @@ func trimBody(body string) string {
 	return body
 }
 
-func persistDraftPosts(ctx context.Context, posts []DraftPost, campaign *models.Campaign, postRepo repository.PostRepository) error {
-	if len(posts) == 0 {
-		return nil
+// persistOne inserts a single DraftPost as a new Post row and returns the
+// generated row ID. Per CON-66 the streaming path calls this for each
+// parsed-and-validated post immediately rather than aggregating to a final
+// CreateBatch — a client disconnect mid-stream now leaves whatever was
+// already persisted in the database, and a hard *AIError from one batch
+// no longer rolls back the surviving batches' rows.
+func persistOne(ctx context.Context, dp DraftPost, campaign *models.Campaign, postRepo repository.PostRepository) (string, error) {
+	id, err := models.NewID()
+	if err != nil {
+		return "", err
 	}
 
-	records := make([]*models.Post, 0, len(posts))
-	for _, dp := range posts {
-		id, err := models.NewID()
-		if err != nil {
-			return err
-		}
-
-		var scheduledAt *time.Time
-		if t, err := time.Parse("2006-01-02", dp.PublishDate); err == nil {
-			scheduledAt = &t
-		}
-
-		var phaseID *string
-		if dp.PhaseID != "" {
-			phaseID = &dp.PhaseID
-		}
-
-		records = append(records, &models.Post{
-			ID:                  id,
-			CampaignID:          campaign.ID,
-			PlatformID:          dp.PlatformID,
-			PlatformPostType:    dp.ContentType,
-			Title:               dp.Title,
-			Content:             dp.Body,
-			MediaURLs:           models.StringSlice{},
-			Status:              models.PostStatusDraft,
-			CTAType:             models.CTATypeNone,
-			CTAUrl:              "",
-			TargetAudienceNotes: dp.ToneNotes,
-			UsedAssetIDs:       models.StringSlice(dp.AssetRefs),
-			CampaignTypePhaseID: phaseID,
-			ScheduledAt:         scheduledAt,
-			CreatedBy:           campaign.CreatedBy,
-		})
+	var scheduledAt *time.Time
+	if t, err := time.Parse("2006-01-02", dp.PublishDate); err == nil {
+		scheduledAt = &t
 	}
 
-	return postRepo.CreateBatch(ctx, records)
+	var phaseID *string
+	if dp.PhaseID != "" {
+		phaseID = &dp.PhaseID
+	}
+
+	row := &models.Post{
+		ID:                  id,
+		CampaignID:          campaign.ID,
+		PlatformID:          dp.PlatformID,
+		PlatformPostType:    dp.ContentType,
+		Title:               dp.Title,
+		Content:             dp.Body,
+		MediaURLs:           models.StringSlice{},
+		Status:              models.PostStatusDraft,
+		CTAType:             models.CTATypeNone,
+		CTAUrl:              "",
+		TargetAudienceNotes: dp.ToneNotes,
+		UsedAssetIDs:        models.StringSlice(dp.AssetRefs),
+		CampaignTypePhaseID: phaseID,
+		ScheduledAt:         scheduledAt,
+		CreatedBy:           campaign.CreatedBy,
+	}
+	if err := postRepo.Create(ctx, row); err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 // tailOf returns up to n bytes from the end of s, suitable for log output.
