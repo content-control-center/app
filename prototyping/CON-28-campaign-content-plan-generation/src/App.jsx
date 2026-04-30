@@ -315,7 +315,18 @@ function App() {
         if (eventName === "step") {
           appendCard({ kind: "step", title: data?.step || "step", payload: data });
         } else if (eventName === "post") {
+          // Per CON-66 the post is already persisted by the time this
+          // event fires; data.id is the new row's primary key. Stash it
+          // on the card so future per-post actions (delete, edit, drag
+          // that persists) can target the row directly without waiting
+          // for `complete`.
           appendCard({ kind: "post", title: data?.post?.title || `Post #${(data?.index ?? 0) + 1}`, payload: data });
+        } else if (eventName === "warning") {
+          // Per CON-66 the backend emits live `warning` events for each
+          // post dropped at validation or persist time, separate from
+          // the aggregated `complete.warnings` array. Surface both —
+          // duplicates are fine in the rolling event log.
+          appendCard({ kind: "warning", title: "Warning", payload: data });
         } else if (eventName === "complete") {
           appendCard({ kind: "complete", title: "Generation complete", payload: data });
           // Lock in the authoritative final count so the progress indicator
