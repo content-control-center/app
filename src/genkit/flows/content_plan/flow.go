@@ -218,37 +218,34 @@ func runContentPlan(
 	log.Printf("content_plan[%s]: resolvePlatforms done (%d platforms)", req.CampaignID, len(platforms))
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "resolvePlatforms", Status: "done"})
 
-	// ── Step 4: generatePosts ─────────────────────────────────────────────────
+	// ── Step 4: generatePosts (now: parse → validate → persist → emit) ───────
+	// Per CON-66 each post is inserted into the database the moment it's
+	// parsed and passes validation, so the response set is also the
+	// authoritative persisted set — no separate persist step. The legacy
+	// "validateOutput" / "persistDraftPosts" SSE step events still fire as
+	// no-ops below for client compatibility; the substantive work all
+	// happens inside generatePosts.
 	log.Printf("content_plan[%s]: step 4/6 generatePosts (model=%s estimatedCount=%d)", req.CampaignID, cfg.ModelID, campaign.EstimatedPostCount)
-	posts, genWarnings, err := generatePosts(ctx, g, campaign, platforms, assets, cfg, onEvent)
+	posts, genWarnings, err := generatePosts(ctx, g, campaign, platforms, assets, cfg, repos, onEvent)
 	if err != nil {
-		log.Printf("content_plan[%s]: generatePosts failed after %s: %v", req.CampaignID, time.Since(start).Round(time.Millisecond), err)
+		log.Printf("content_plan[%s]: generatePosts failed after %s: %v (persisted=%d before failure)", req.CampaignID, time.Since(start).Round(time.Millisecond), err, len(posts))
 		return nil, err
 	}
-	log.Printf("content_plan[%s]: generatePosts done (%d posts, %d warnings)", req.CampaignID, len(posts), len(genWarnings))
+	log.Printf("content_plan[%s]: generatePosts done (%d posts persisted, %d warnings)", req.CampaignID, len(posts), len(genWarnings))
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "generatePosts", Status: "done"})
 	warnings = append(warnings, genWarnings...)
 
-	// ── Step 5: validateOutput ────────────────────────────────────────────────
-	log.Printf("content_plan[%s]: step 5/6 validateOutput", req.CampaignID)
-	validPosts, valWarnings := validateOutput(posts, campaign, platforms)
-	log.Printf("content_plan[%s]: validateOutput done (%d valid, %d dropped)", req.CampaignID, len(validPosts), len(posts)-len(validPosts))
+	// ── Step 5: validateOutput (no-op — validation is inline) ─────────────────
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "validateOutput", Status: "done"})
-	warnings = append(warnings, valWarnings...)
 
-	// ── Step 6: persistDraftPosts ─────────────────────────────────────────────
-	log.Printf("content_plan[%s]: step 6/6 persistDraftPosts (%d posts)", req.CampaignID, len(validPosts))
-	if err := persistDraftPosts(ctx, validPosts, campaign, repos.Posts); err != nil {
-		log.Printf("content_plan[%s]: persistDraftPosts failed after %s: %v", req.CampaignID, time.Since(start).Round(time.Millisecond), err)
-		return nil, err
-	}
+	// ── Step 6: persistDraftPosts (no-op — persistence is inline) ─────────────
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "persistDraftPosts", Status: "done"})
 
-	log.Printf("content_plan[%s]: done in %s (%d posts, %d total warnings)", req.CampaignID, time.Since(start).Round(time.Millisecond), len(validPosts), len(warnings))
+	log.Printf("content_plan[%s]: done in %s (%d posts, %d total warnings)", req.CampaignID, time.Since(start).Round(time.Millisecond), len(posts), len(warnings))
 	return &ContentPlanResponse{
 		CampaignID:  campaign.ID,
 		GeneratedAt: time.Now().UTC(),
-		Posts:       validPosts,
+		Posts:       posts,
 		Warnings:    warnings,
 	}, nil
 }
