@@ -22,13 +22,8 @@ import {
 import { useCampaign } from '@/hooks/useCampaigns'
 import { usePlatforms } from '@/hooks/usePlatforms'
 import { useDeletePost } from '@/hooks/usePosts'
-import type { Post, PostCTAType } from '@/types/posts'
-
-const CTA_OPTIONS: { id: PostCTAType; displayValue: string }[] = [
-  { id: 'none', displayValue: 'None' },
-  { id: 'link', displayValue: 'Link' },
-  { id: 'button', displayValue: 'Button' },
-]
+import { cn } from '@/lib'
+import type { Post } from '@/types/posts'
 
 const NO_PHASE = '__none__'
 const DEFAULT_HOUR = 9
@@ -38,8 +33,6 @@ const schema = z.object({
   platform_id: z.string().min(1, 'Platform is required'),
   platform_post_type: z.string().min(1, 'Post type is required'),
   scheduled_at: z.string().nullable(),
-  cta_type: z.string(),
-  cta_url: z.string(),
   target_audience_notes: z.string(),
   campaign_type_phase_id: z.string(),
 })
@@ -51,8 +44,6 @@ function docToFormValues(doc: Post): FormValues {
     platform_id: doc.platform_id,
     platform_post_type: doc.platform_post_type,
     scheduled_at: doc.scheduled_at,
-    cta_type: doc.cta_type,
-    cta_url: doc.cta_url,
     target_audience_notes: doc.target_audience_notes,
     campaign_type_phase_id: doc.campaign_type_phase_id ?? NO_PHASE,
   }
@@ -127,12 +118,6 @@ export function PostSettingsForm({ doc, changeDoc, onClose }: Props) {
           case 'scheduled_at':
             d.scheduled_at = values.scheduled_at ?? null
             break
-          case 'cta_type':
-            if (values.cta_type) d.cta_type = values.cta_type as PostCTAType
-            break
-          case 'cta_url':
-            d.cta_url = values.cta_url ?? ''
-            break
           case 'target_audience_notes':
             d.target_audience_notes = values.target_audience_notes ?? ''
             break
@@ -187,52 +172,50 @@ export function PostSettingsForm({ doc, changeDoc, onClose }: Props) {
       <form noValidate autoComplete="off" className="h-full">
         <RailPanel title="Post settings" onClose={onClose}>
           <div className="flex flex-col gap-4">
-            <div className="grid grid-cols-2 gap-4">
-              <FormField
-                control={form.control}
-                name="platform_id"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Platform</FormLabel>
-                    <FormControl>
-                      <TextSelect
-                        value={field.value}
-                        onValueChange={(v) => {
-                          field.onChange(v)
-                          const next = platforms?.find((p) => p.id === v)
-                          const firstType = Object.keys(next?.post_types ?? {})[0] ?? ''
-                          form.setValue('platform_post_type', firstType, {
-                            shouldDirty: true,
-                          })
-                        }}
-                        elements={platformOptions}
-                        placeholder="Select platform"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="platform_post_type"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Post type</FormLabel>
-                    <FormControl>
-                      <TextSelect
-                        value={field.value}
-                        onValueChange={field.onChange}
-                        elements={postTypeOptions}
-                        placeholder="Select type"
-                        disabled={postTypeOptions.length === 0}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
+            <FormField
+              control={form.control}
+              name="platform_id"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Platform</FormLabel>
+                  <FormControl>
+                    <TextSelect
+                      value={field.value}
+                      onValueChange={(v) => {
+                        field.onChange(v)
+                        const next = platforms?.find((p) => p.id === v)
+                        const firstType = Object.keys(next?.post_types ?? {})[0] ?? ''
+                        form.setValue('platform_post_type', firstType, {
+                          shouldDirty: true,
+                        })
+                      }}
+                      elements={platformOptions}
+                      placeholder="Select platform"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="platform_post_type"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Post type</FormLabel>
+                  <FormControl>
+                    <TextSelect
+                      value={field.value}
+                      onValueChange={field.onChange}
+                      elements={postTypeOptions}
+                      placeholder="Select type"
+                      disabled={postTypeOptions.length === 0}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
             <FormField
               control={form.control}
               name="campaign_type_phase_id"
@@ -262,8 +245,17 @@ export function PostSettingsForm({ doc, changeDoc, onClose }: Props) {
                     <FormLabel>
                       Publish date and time
                       <span className="ml-2 text-xs font-normal text-tertiary-foreground">
-                        {tzLabel}
+                        ({tzLabel} time zone)
                       </span>
+                      {field.value && (
+                        <button
+                          type="button"
+                          onClick={() => field.onChange(null)}
+                          className="ml-2 text-xs font-normal text-tertiary-foreground hover:text-foreground transition-colors cursor-pointer underline"
+                        >
+                          Clear
+                        </button>
+                      )}
                     </FormLabel>
                     <div className="flex items-center gap-2">
                       <div className="flex-1 min-w-0">
@@ -274,63 +266,33 @@ export function PostSettingsForm({ doc, changeDoc, onClose }: Props) {
                           }
                         />
                       </div>
-                      <Input
-                        type="time"
-                        value={timeStr}
-                        onChange={(e) =>
-                          field.onChange(fromLocalParts(dateStr, e.target.value))
-                        }
-                        disabled={!dateStr}
-                        className="w-24 appearance-none [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:appearance-none"
-                      />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="smIcon"
-                        onClick={() => field.onChange(null)}
-                        disabled={!field.value}
-                        aria-label="Clear publish date and time"
-                      >
-                        <Icon name="x_mark" className="size-4" />
-                      </Button>
+                      <div className="relative w-24">
+                        <Input
+                          type="time"
+                          value={timeStr}
+                          onChange={(e) =>
+                            field.onChange(fromLocalParts(dateStr, e.target.value))
+                          }
+                          disabled={!dateStr}
+                          data-empty={!timeStr}
+                          className={cn(
+                            'w-24 appearance-none',
+                            '[&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:appearance-none',
+                            "data-[empty=true]:[&::-webkit-datetime-edit]:text-transparent",
+                          )}
+                        />
+                        {!timeStr && (
+                          <span className="pointer-events-none absolute inset-y-0 left-4 flex items-center text-[14px] font-medium text-tertiary-foreground">
+                            12:00
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <FormMessage />
                   </FormItem>
                 )
               }}
             />
-            <div className="grid grid-cols-2 gap-4">
-              <FormField
-                control={form.control}
-                name="cta_type"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>CTA type</FormLabel>
-                    <FormControl>
-                      <TextSelect
-                        value={field.value}
-                        onValueChange={field.onChange}
-                        elements={CTA_OPTIONS}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="cta_url"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>CTA URL</FormLabel>
-                    <FormControl>
-                      <Input placeholder="https://..." {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
             <FormField
               control={form.control}
               name="target_audience_notes"
