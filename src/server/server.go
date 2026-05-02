@@ -58,6 +58,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	postVersionRepo := repository.NewPostVersionRepository(db)
 	postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 	socialAccountRepo := repository.NewSocialAccountRepository(db)
+	autoPublishAllowlistRepo := repository.NewAutoPublishAllowlistRepository(db)
 	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
 
 	// In-process event hub: backend code publishes; the SSE endpoint
@@ -72,6 +73,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	handlers.NewSessionsHandler(userRepo, sessionRepo, cfg.SessionCookieName, !cfg.Debug).Register(app)
 	handlers.NewSettingsHandler(settingRepo, auth).Register(app)
 	handlers.NewSecretsHandler(secretStore, auth).Register(app)
+	handlers.NewAutoPublishAllowlistHandler(autoPublishAllowlistRepo, auth).Register(app)
 
 	// Zernio integration. Ping, profile bootstrap, and the sync worker
 	// all run in background goroutines so Ogen boot never blocks on
