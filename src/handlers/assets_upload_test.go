@@ -163,7 +163,7 @@ var _ = Describe("AssetsHandler upload", Ordered, func() {
 		Expect(results).To(HaveLen(1))
 		Expect(results[0]["status"]).To(Equal("created"))
 		asset := results[0]["asset"].(map[string]any)
-		Expect(asset["content"]).To(Equal("[]"))
+		Expect(asset["content"]).To(Equal(""))
 		Expect(asset["type"]).To(Equal("MD"))
 	})
 

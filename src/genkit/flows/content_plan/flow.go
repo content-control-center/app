@@ -12,6 +12,8 @@ import (
 	"github.com/firebase/genkit/go/core"
 	"github.com/firebase/genkit/go/genkit"
 
+	"github.com/content-control-center/app/src/eventhub"
+	"github.com/content-control-center/app/src/models"
 	"github.com/content-control-center/app/src/repository"
 )
 
@@ -33,9 +35,21 @@ type ContentPlanFlowConfig struct {
 	MaxContextAssets int         // max assets when no embedder (creation-order fallback)
 	MaxContextChars  int         // character budget for asset context in the prompt
 	MaxOutputTokens  int64       // max_tokens sent to the model; 0 falls back to 8192
-	Embedder         ai.Embedder // nil = skip semantic ranking, fall back to creation order
-	systemTmpl       *template.Template
-	userTmpl         *template.Template
+	// MaxPostsPerBatch caps the number of posts the model is asked to
+	// produce in a single batched call. Sized so 800 tokens/post stays
+	// comfortably under MaxOutputTokens with headroom for slower
+	// per-post tail latencies. 0 falls back to 30.
+	MaxPostsPerBatch int
+	// MaxParallelBatches caps how many batches run concurrently — a
+	// safety knob against Anthropic per-account rate limits when very
+	// large campaigns produce many batches. 0 falls back to 5.
+	MaxParallelBatches int
+	Embedder           ai.Embedder // nil = skip semantic ranking, fall back to creation order
+	// Hub is the event broker used to publish "operation finalised"
+	// events on success/failure. nil = silent (no events emitted).
+	Hub        eventhub.Hub
+	systemTmpl *template.Template
+	userTmpl   *template.Template
 }
 
 // ContentPlanRepos bundles all repository dependencies for the flow.
@@ -94,6 +108,53 @@ func emit(onEvent OnEventFunc, name SSEEventKind, data any) {
 	}
 }
 
+// publishContentPlanFinalised announces the end of a content-plan run on
+// the shared event hub. Topic is "entity:campaign:<id>"; type is
+// "content_plan_completed" on success, "content_plan_failed" on error.
+func publishContentPlanFinalised(
+	hub eventhub.Hub,
+	campaignID, ownerID string,
+	resp *ContentPlanResponse,
+	err error,
+) {
+	if hub == nil {
+		return
+	}
+	id, idErr := models.NewID()
+	if idErr != nil {
+		log.Printf("content_plan: cannot mint event id: %v", idErr)
+		return
+	}
+	ev := eventhub.Event{
+		ID:     id,
+		Topic:  "entity:campaign:" + campaignID,
+		UserID: ownerID,
+	}
+	if err != nil {
+		ev.Type = "content_plan_failed"
+		ev.Payload = map[string]any{
+			"campaignId": campaignID,
+			"error":      err.Error(),
+		}
+	} else {
+		postCount := 0
+		warningCount := 0
+		if resp != nil {
+			postCount = len(resp.Posts)
+			warningCount = len(resp.Warnings)
+		}
+		ev.Type = "content_plan_completed"
+		ev.Payload = map[string]any{
+			"campaignId":   campaignID,
+			"postCount":    postCount,
+			"warningCount": warningCount,
+		}
+	}
+	if pubErr := hub.Publish(context.Background(), ev); pubErr != nil {
+		log.Printf("content_plan[%s]: hub publish failed: %v", campaignID, pubErr)
+	}
+}
+
 // runContentPlan executes the six steps of the flow.
 func runContentPlan(
 	ctx context.Context,
@@ -102,9 +163,22 @@ func runContentPlan(
 	cfg ContentPlanFlowConfig,
 	repos ContentPlanRepos,
 	onEvent OnEventFunc,
-) (*ContentPlanResponse, error) {
+) (out *ContentPlanResponse, retErr error) {
 	start := time.Now()
 	log.Printf("content_plan[%s]: starting", req.CampaignID)
+
+	// finaliseOwnerID is captured once the campaign is loaded so the
+	// deferred finalisation event can be scoped to the campaign owner.
+	// Empty before validateInput → finalisation events for very-early
+	// failures are skipped.
+	var finaliseOwnerID string
+
+	defer func() {
+		if cfg.Hub == nil || finaliseOwnerID == "" {
+			return
+		}
+		publishContentPlanFinalised(cfg.Hub, req.CampaignID, finaliseOwnerID, out, retErr)
+	}()
 
 	// ── Step 1: validateInput ─────────────────────────────────────────────────
 	log.Printf("content_plan[%s]: step 1/6 validateInput", req.CampaignID)
@@ -113,6 +187,7 @@ func runContentPlan(
 		log.Printf("content_plan[%s]: validateInput failed after %s: %v", req.CampaignID, time.Since(start).Round(time.Millisecond), err)
 		return nil, err
 	}
+	finaliseOwnerID = campaign.CreatedBy
 	log.Printf("content_plan[%s]: validateInput done (campaign=%q platforms=%d)", req.CampaignID, campaign.Name, len(campaign.TargetPlatforms))
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "validateInput", Status: "done"})
 
@@ -143,37 +218,34 @@ func runContentPlan(
 	log.Printf("content_plan[%s]: resolvePlatforms done (%d platforms)", req.CampaignID, len(platforms))
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "resolvePlatforms", Status: "done"})
 
-	// ── Step 4: generatePosts ─────────────────────────────────────────────────
+	// ── Step 4: generatePosts (now: parse → validate → persist → emit) ───────
+	// Per CON-66 each post is inserted into the database the moment it's
+	// parsed and passes validation, so the response set is also the
+	// authoritative persisted set — no separate persist step. The legacy
+	// "validateOutput" / "persistDraftPosts" SSE step events still fire as
+	// no-ops below for client compatibility; the substantive work all
+	// happens inside generatePosts.
 	log.Printf("content_plan[%s]: step 4/6 generatePosts (model=%s estimatedCount=%d)", req.CampaignID, cfg.ModelID, campaign.EstimatedPostCount)
-	posts, genWarnings, err := generatePosts(ctx, g, campaign, platforms, assets, cfg, onEvent)
+	posts, genWarnings, err := generatePosts(ctx, g, campaign, platforms, assets, cfg, repos, onEvent)
 	if err != nil {
-		log.Printf("content_plan[%s]: generatePosts failed after %s: %v", req.CampaignID, time.Since(start).Round(time.Millisecond), err)
+		log.Printf("content_plan[%s]: generatePosts failed after %s: %v (persisted=%d before failure)", req.CampaignID, time.Since(start).Round(time.Millisecond), err, len(posts))
 		return nil, err
 	}
-	log.Printf("content_plan[%s]: generatePosts done (%d posts, %d warnings)", req.CampaignID, len(posts), len(genWarnings))
+	log.Printf("content_plan[%s]: generatePosts done (%d posts persisted, %d warnings)", req.CampaignID, len(posts), len(genWarnings))
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "generatePosts", Status: "done"})
 	warnings = append(warnings, genWarnings...)
 
-	// ── Step 5: validateOutput ────────────────────────────────────────────────
-	log.Printf("content_plan[%s]: step 5/6 validateOutput", req.CampaignID)
-	validPosts, valWarnings := validateOutput(posts, campaign, platforms)
-	log.Printf("content_plan[%s]: validateOutput done (%d valid, %d dropped)", req.CampaignID, len(validPosts), len(posts)-len(validPosts))
+	// ── Step 5: validateOutput (no-op — validation is inline) ─────────────────
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "validateOutput", Status: "done"})
-	warnings = append(warnings, valWarnings...)
 
-	// ── Step 6: persistDraftPosts ─────────────────────────────────────────────
-	log.Printf("content_plan[%s]: step 6/6 persistDraftPosts (%d posts)", req.CampaignID, len(validPosts))
-	if err := persistDraftPosts(ctx, validPosts, campaign, repos.Posts); err != nil {
-		log.Printf("content_plan[%s]: persistDraftPosts failed after %s: %v", req.CampaignID, time.Since(start).Round(time.Millisecond), err)
-		return nil, err
-	}
+	// ── Step 6: persistDraftPosts (no-op — persistence is inline) ─────────────
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "persistDraftPosts", Status: "done"})
 
-	log.Printf("content_plan[%s]: done in %s (%d posts, %d total warnings)", req.CampaignID, time.Since(start).Round(time.Millisecond), len(validPosts), len(warnings))
+	log.Printf("content_plan[%s]: done in %s (%d posts, %d total warnings)", req.CampaignID, time.Since(start).Round(time.Millisecond), len(posts), len(warnings))
 	return &ContentPlanResponse{
 		CampaignID:  campaign.ID,
 		GeneratedAt: time.Now().UTC(),
-		Posts:       validPosts,
+		Posts:       posts,
 		Warnings:    warnings,
 	}, nil
 }

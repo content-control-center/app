@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/firebase/genkit/go/genkit"
-	"github.com/firebase/genkit/go/plugins/compat_oai/anthropic"
+	"github.com/firebase/genkit/go/plugins/anthropic"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
@@ -64,22 +64,22 @@ var _ = Describe("Content plan flow", Ordered, func() {
 		campaignID, err = models.NewID()
 		Expect(err).NotTo(HaveOccurred())
 		campaign := &models.Campaign{
-			ID:                campaignID,
-			Name:              "Integration Test Campaign",
-			Description:       "A campaign to test AI-driven content plan generation.",
-			TargetPersona:     "Marketing professionals aged 25–45 interested in SaaS tools.",
-			KeyMessages:       "Save time, increase reach, data-driven insights.",
-			ToneGuidelines:    "Professional yet approachable; use concrete examples.",
-			CampaignTypeID:    "Uk",
-			Status:            models.StatusDraft,
-			Language:          "en",
+			ID:             campaignID,
+			Name:           "Integration Test Campaign",
+			Description:    "A campaign to test AI-driven content plan generation.",
+			TargetPersona:  "Marketing professionals aged 25–45 interested in SaaS tools.",
+			KeyMessages:    "Save time, increase reach, data-driven insights.",
+			ToneGuidelines: "Professional yet approachable; use concrete examples.",
+			CampaignTypeID: "Uk",
+			Status:         models.StatusDraft,
+			Language:       "en",
 			TargetPlatforms: models.CampaignPlatforms{
-					{ID: platformID, PostTypes: []string{"text-post", "article"}},
-				},
+				{ID: platformID, PostTypes: []string{"text-post", "article"}},
+			},
 			EstimatedPostCount: &estCount,
-			StartDate:         &start,
-			EndDate:           &end,
-			CreatedBy:         userID,
+			StartDate:          &start,
+			EndDate:            &end,
+			CreatedBy:          userID,
 		}
 		Expect(campaignRepo.Create(ctx, campaign)).To(Succeed())
 
@@ -91,17 +91,17 @@ var _ = Describe("Content plan flow", Ordered, func() {
 			modelID = "claude-haiku-4-5-20251001"
 		}
 		flowCfg := content_plan.ContentPlanFlowConfig{
-			ModelID:         modelID,
+			ModelID:          modelID,
 			MaxContextAssets: 5,
 			MaxContextChars:  3000,
-			MaxOutputTokens: 8192,
+			MaxOutputTokens:  8192,
 		}
 		repos := content_plan.ContentPlanRepos{
-			Campaigns:  campaignRepo,
-			Assets:     assetRepo,
-			Chunks:     chunksRepo,
-			Platforms:  platformRepo,
-			Posts:      postRepo,
+			Campaigns: campaignRepo,
+			Assets:    assetRepo,
+			Chunks:    chunksRepo,
+			Platforms: platformRepo,
+			Posts:     postRepo,
 		}
 		Expect(content_plan.InitContentPlan(g, flowCfg, repos)).To(Succeed())
 	})

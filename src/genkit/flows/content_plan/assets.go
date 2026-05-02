@@ -242,17 +242,14 @@ func rankAndPackChunks(
 	return result, warnings, nil
 }
 
-// buildExcerpt extracts plain text from BlockNote JSON and truncates to ~800
-// characters for the no-embedder fallback path.
+// buildExcerpt truncates the Markdown content to ~800 characters for the
+// no-embedder fallback path. Content is stored as Markdown, which is close
+// enough to plain text for the model to consume directly.
 func buildExcerpt(content string) (string, error) {
-	text, err := flows.ExtractText(content)
-	if err != nil {
-		return "", err
-	}
 	const maxChars = 800
-	runes := []rune(text)
+	runes := []rune(content)
 	if len(runes) <= maxChars {
-		return text, nil
+		return content, nil
 	}
 	return string(runes[:maxChars]) + "…", nil
 }

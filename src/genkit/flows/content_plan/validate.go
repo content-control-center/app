@@ -70,10 +70,19 @@ func validateInput(ctx context.Context, campaignID string, campaignRepo reposito
 	return c, nil
 }
 
-func validateOutput(posts []DraftPost, campaign *models.Campaign, platforms []resolvedPlatform) ([]DraftPost, []string) {
+// postValidator is the per-post check used by both the legacy
+// validateOutput pass and the per-post inline-persist path. Built once per
+// run by buildPostValidator and applied to each parsed post; returns nil
+// when the post passes, an error describing the rejection otherwise.
+type postValidator func(post DraftPost) error
+
+// buildPostValidator captures the per-run constraint sets — platform
+// allowlist, per-platform contentType allowlist, phase allowlist, and
+// the campaign's [start, end] window — into a closure callable inline
+// from generatePostsStreaming. The returned function is goroutine-safe
+// (read-only over the captured maps).
+func buildPostValidator(campaign *models.Campaign, platforms []resolvedPlatform) postValidator {
 	validPlatformIDs := make(map[string]bool, len(platforms))
-	// platformAllowedSlugs is non-nil only when the campaign explicitly
-	// constrains post types for that platform.
 	platformAllowedSlugs := make(map[string]map[string]bool)
 	for _, p := range platforms {
 		validPlatformIDs[p.ID] = true
@@ -94,31 +103,40 @@ func validateOutput(posts []DraftPost, campaign *models.Campaign, platforms []re
 	startDate := campaign.StartDate.Format("2006-01-02")
 	endDate := campaign.EndDate.Format("2006-01-02")
 
-	valid := make([]DraftPost, 0, len(posts))
-	var warnings []string
-
-	for _, post := range posts {
+	return func(post DraftPost) error {
 		if !validPlatformIDs[post.PlatformID] {
-			warnings = append(warnings, fmt.Sprintf("post %q dropped: unknown platformId %q", post.Title, post.PlatformID))
-			continue
+			return fmt.Errorf("unknown platformId %q", post.PlatformID)
 		}
 		if allowed, ok := platformAllowedSlugs[post.PlatformID]; ok {
 			if !allowed[post.ContentType] {
-				warnings = append(warnings, fmt.Sprintf("post %q dropped: contentType %q not allowed for platform %q", post.Title, post.ContentType, post.PlatformID))
-				continue
+				return fmt.Errorf("contentType %q not allowed for platform %q", post.ContentType, post.PlatformID)
 			}
 		}
 		d := post.PublishDate
 		if d < startDate || d > endDate {
-			warnings = append(warnings, fmt.Sprintf("post %q dropped: publishDate %q is outside campaign range", post.Title, d))
-			continue
+			return fmt.Errorf("publishDate %q is outside campaign range", d)
 		}
 		if !validPhaseIDs[post.PhaseID] {
-			warnings = append(warnings, fmt.Sprintf("post %q dropped: unknown phaseId %q", post.Title, post.PhaseID))
+			return fmt.Errorf("unknown phaseId %q", post.PhaseID)
+		}
+		return nil
+	}
+}
+
+// validateOutput is retained as a thin wrapper for callers that already
+// have the full post slice in hand (e.g. tests). The streaming path
+// applies the same validator inline rather than gathering the slice
+// first.
+func validateOutput(posts []DraftPost, campaign *models.Campaign, platforms []resolvedPlatform) ([]DraftPost, []string) {
+	validate := buildPostValidator(campaign, platforms)
+	valid := make([]DraftPost, 0, len(posts))
+	var warnings []string
+	for _, post := range posts {
+		if err := validate(post); err != nil {
+			warnings = append(warnings, fmt.Sprintf("post %q dropped: %s", post.Title, err))
 			continue
 		}
 		valid = append(valid, post)
 	}
-
 	return valid, warnings
 }

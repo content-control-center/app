@@ -15,6 +15,560 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/api/campaign_types": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Returns all campaign types with their phases ordered by name.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "campaign_types"
+                ],
+                "summary": "List campaign types",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/models.CampaignType"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Creates a new user-defined campaign type without phases.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "campaign_types"
+                ],
+                "summary": "Create campaign type",
+                "parameters": [
+                    {
+                        "description": "CampaignType payload",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.campaignTypeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/models.CampaignType"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/campaign_types/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Returns a single campaign type with its phases by ID.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "campaign_types"
+                ],
+                "summary": "Get campaign type",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "CampaignType ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.CampaignType"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Updates name, label, and description of a user-created campaign type. System types cannot be modified.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "campaign_types"
+                ],
+                "summary": "Update campaign type",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "CampaignType ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "CampaignType payload",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.campaignTypeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.CampaignType"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Deletes a user-created campaign type and all its phases. System types cannot be deleted.",
+                "tags": [
+                    "campaign_types"
+                ],
+                "summary": "Delete campaign type",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "CampaignType ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/campaign_types/{id}/clone": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Creates a new user-defined campaign type by deep-copying an existing type and all its phases.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "campaign_types"
+                ],
+                "summary": "Clone campaign type",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Source CampaignType ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Name and label for the clone",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.cloneCampaignTypeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/models.CampaignType"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/campaign_types/{id}/phases": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Adds a new phase to a campaign type.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "campaign_types"
+                ],
+                "summary": "Add phase to campaign type",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "CampaignType ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Phase payload",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.campaignTypePhaseRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/models.CampaignTypePhase"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/campaign_types/{id}/phases/{phase_id}": {
+            "put": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Updates a phase within a campaign type.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "campaign_types"
+                ],
+                "summary": "Update phase",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "CampaignType ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Phase ID",
+                        "name": "phase_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Phase payload",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.campaignTypePhaseRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.CampaignTypePhase"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Deletes a phase from a campaign type.",
+                "tags": [
+                    "campaign_types"
+                ],
+                "summary": "Delete phase",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "CampaignType ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Phase ID",
+                        "name": "phase_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/campaigns": {
             "get": {
                 "security": [
@@ -387,28 +941,28 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/assets": {
+        "/api/content-bank/assets": {
             "get": {
                 "security": [
                     {
                         "CookieAuth": []
                     }
                 ],
-                "description": "Returns all content bank pieces ordered by creation date.",
+                "description": "Returns all content bank assets ordered by creation date.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "content-bank"
                 ],
-                "summary": "List pieces",
+                "summary": "List assets",
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/models.Piece"
+                                "$ref": "#/definitions/models.Asset"
                             }
                         }
                     },
@@ -429,7 +983,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Creates a new content bank piece. The created_by field is set from the authenticated session.",
+                "description": "Creates a new content bank asset. The created_by field is set from the authenticated session.",
                 "consumes": [
                     "application/json"
                 ],
@@ -439,15 +993,15 @@ const docTemplate = `{
                 "tags": [
                     "content-bank"
                 ],
-                "summary": "Create piece",
+                "summary": "Create asset",
                 "parameters": [
                     {
-                        "description": "Piece payload",
+                        "description": "Asset payload",
                         "name": "body",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/handlers.createPieceRequest"
+                            "$ref": "#/definitions/handlers.createAssetRequest"
                         }
                     }
                 ],
@@ -455,7 +1009,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/models.Piece"
+                            "$ref": "#/definitions/models.Asset"
                         }
                     },
                     "400": {
@@ -479,25 +1033,81 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/assets/{id}": {
-            "get": {
+        "/api/content-bank/assets/upload": {
+            "post": {
                 "security": [
                     {
                         "CookieAuth": []
                     }
                 ],
-                "description": "Returns a single content bank piece by Sqid.",
+                "description": "Accepts one or more ` + "`" + `.md` + "`" + ` (max 10 MB) or ` + "`" + `.pdf` + "`" + ` (max 50 MB) files. Markdown files are converted to BlockNote JSON synchronously; PDFs are uploaded to object storage and processed asynchronously (text extraction, page-aware chunking, embedding, thumbnail). Files are processed independently — one failure does not block others.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "content-bank"
                 ],
-                "summary": "Get piece",
+                "summary": "Upload Markdown or PDF file(s)",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "Markdown or PDF file(s)",
+                        "name": "files",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/content-bank/assets/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Returns a single content bank asset by Sqid.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "content-bank"
+                ],
+                "summary": "Get asset",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Piece Sqid",
+                        "description": "Asset Sqid",
                         "name": "id",
                         "in": "path",
                         "required": true
@@ -507,7 +1117,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.Piece"
+                            "$ref": "#/definitions/models.Asset"
                         }
                     },
                     "401": {
@@ -536,7 +1146,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Updates title and content of an existing piece.",
+                "description": "Updates title and content of an existing asset.",
                 "consumes": [
                     "application/json"
                 ],
@@ -546,22 +1156,22 @@ const docTemplate = `{
                 "tags": [
                     "content-bank"
                 ],
-                "summary": "Update piece",
+                "summary": "Update asset",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Piece Sqid",
+                        "description": "Asset Sqid",
                         "name": "id",
                         "in": "path",
                         "required": true
                     },
                     {
-                        "description": "Piece payload",
+                        "description": "Asset payload",
                         "name": "body",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/handlers.updatePieceRequest"
+                            "$ref": "#/definitions/handlers.updateAssetRequest"
                         }
                     }
                 ],
@@ -569,7 +1179,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.Piece"
+                            "$ref": "#/definitions/models.Asset"
                         }
                     },
                     "400": {
@@ -607,15 +1217,15 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Deletes a content bank piece by Sqid.",
+                "description": "Deletes a content bank asset by Sqid.",
                 "tags": [
                     "content-bank"
                 ],
-                "summary": "Delete piece",
+                "summary": "Delete asset",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Piece Sqid",
+                        "description": "Asset Sqid",
                         "name": "id",
                         "in": "path",
                         "required": true
@@ -670,6 +1280,64 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/events": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Subscribes the authenticated user to a long-lived\nServer-Sent Events stream filtered by topic patterns.\n\nTopic filters are passed via the ` + "`" + `topics` + "`" + ` query param as a\ncomma-separated list. Supported forms per filter:\n- \"all\"               — receive every event the user is\nauthorised to see.\n- \"kind:id\"           — exact match (e.g. \"entity:post:Xq\").\n- \"kind:*\"            — prefix wildcard (e.g. \"job:*\").\n\nEach event is emitted as one SSE frame:\nid: \u003cevent-id\u003e\nevent: \u003ctype\u003e\ndata: \u003cjson\u003e\n\nA heartbeat comment (` + "`" + `: ping` + "`" + `) is sent every 20 seconds.\nDelivery is at-most-once; the server holds no event log.\nSubscribers are disconnected if their per-connection buffer\noverflows (the client should reconnect and reconcile via REST).\n\nThe ` + "`" + `Last-Event-ID` + "`" + ` request header is currently accepted\nand ignored — reserved for future replay support.",
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "events"
+                ],
+                "summary": "Event stream (SSE)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Comma-separated topic filters",
+                        "name": "topics",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "SSE stream"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -786,6 +1454,289 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/integrations/zernio/accounts": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Returns the local view of accounts attached via the\nZernio profile, plus the last sync timestamp + status.\nReads from SQLite — does not call Zernio.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "zernio"
+                ],
+                "summary": "List Zernio social accounts (local mirror)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.accountsResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "integration_disabled",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/integrations/zernio/connect-links": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Returns a one-shot connect URL that the user opens in\na browser to authorize a social account on the chosen\nplatform. The URL contains a short-lived token.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "zernio"
+                ],
+                "summary": "Create a Zernio connect link",
+                "parameters": [
+                    {
+                        "description": "Platform to connect",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.connectLinkRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.connectLinkResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid_platform",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "integration_disabled",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "rate_limited",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "integration_degraded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/integrations/zernio/health": {
+            "get": {
+                "description": "Public endpoint suitable for inclusion in monitoring\ndashboards. Reports whether the integration is enabled,\nits state (disabled / degraded / ok), the bootstrapped\nprofile ID, and the most recent sync result.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "zernio"
+                ],
+                "summary": "Zernio integration health",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.healthResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/integrations/zernio/platforms": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Deprecated: prefer GET /api/platforms, which surfaces the\nsame publisher information (and connection state) inline\nper platform. This endpoint stays for clients that\nhaven't migrated yet and will be removed in a later\ncycle.\n\nReturns the Phase 1 allowlist with each platform's\nsupportedPostTypes derived from the local platforms\ntable.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "zernio"
+                ],
+                "summary": "List Zernio-supported platforms (Phase 1 allowlist)",
+                "deprecated": true,
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.platformsResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/integrations/zernio/profile/repair": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Triggers a fresh Zernio profile bootstrap for operational\nrecovery. Idempotent: a successful repair leaves the\nintegration in the \"ok\" state.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "zernio"
+                ],
+                "summary": "Repair Zernio profile",
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "integration_disabled",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/integrations/zernio/sync": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Asks the background worker to run a sync at its\nearliest opportunity. Returns 202 with the previous\nlast_sync_at value so callers can poll for progress.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "zernio"
+                ],
+                "summary": "Trigger a Zernio sync tick",
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "integration_disabled",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/platforms": {
             "get": {
                 "security": [
@@ -793,21 +1744,21 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Returns all platforms ordered by creation date.",
+                "description": "Returns all platforms ordered by creation date. Each\nplatform carries a ` + "`" + `publishers` + "`" + ` array describing\nwhether it's connected via any of the configured\npublisher backends (e.g. Zernio) and which post\ntypes each publisher can post in.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "platforms"
                 ],
-                "summary": "List platforms",
+                "summary": "List platforms (with publishers)",
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/models.Platform"
+                                "$ref": "#/definitions/handlers.platformResponse"
                             }
                         }
                     },
@@ -885,14 +1836,14 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Returns a single platform by Sqid.",
+                "description": "Returns a single platform with the same ` + "`" + `publishers` + "`" + `\nenrichment as the list endpoint.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "platforms"
                 ],
-                "summary": "Get platform",
+                "summary": "Get platform (with publishers)",
                 "parameters": [
                     {
                         "type": "string",
@@ -906,7 +1857,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.Platform"
+                            "$ref": "#/definitions/handlers.platformResponse"
                         }
                     },
                     "401": {
@@ -1087,7 +2038,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Creates a new post. The created_by field is set from the authenticated session.",
+                "description": "Creates a new post. The created_by field is set from the authenticated session.\nThe ` + "`" + `content` + "`" + ` field is a Markdown string; the frontend renders it via BlockNote.\n` + "`" + `platform_id` + "`" + ` and ` + "`" + `platform_post_type` + "`" + ` are required only when ` + "`" + `status` + "`" + ` is not ` + "`" + `draft` + "`" + `;\ndrafts can be saved without a platform chosen up front.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1194,7 +2145,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Replaces all mutable fields of an existing post.",
+                "description": "Replaces all mutable fields of an existing post.\nThe ` + "`" + `content` + "`" + ` field is a Markdown string; the frontend renders it via BlockNote.\n` + "`" + `platform_id` + "`" + ` and ` + "`" + `platform_post_type` + "`" + ` are required only when the new ` + "`" + `status` + "`" + ` is\nnot ` + "`" + `draft` + "`" + `; transitioning a draft to ` + "`" + `ready_for_publish` + "`" + ` (or beyond) without a\nplatform chosen returns 400.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1282,6 +2233,239 @@ const docTemplate = `{
                 "responses": {
                     "204": {
                         "description": "No Content"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/posts/{id}/assistant": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Sends an instruction to the AI assistant and streams progress via Server-Sent Events.\nEvents: \"explanation_delta\" and \"content_delta\" carry {\"delta\":\"...\"} fragments (Markdown)\nas the model generates the explanation and updated content. \"tool_call\" and \"tool_result\"\nsignal asset-retrieval tool invocations. \"complete\" carries the final PostAssistantResponse\nwhose updatedContent is a Markdown string.\n\"error\" carries {\"message\":\"...\",\"code\":\u003chttp_code\u003e}.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "posts"
+                ],
+                "summary": "Post assistant (SSE)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Post Sqid",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Instruction payload",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.assistantRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "SSE stream: delta / tool_call / tool_result / complete / error events"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/posts/{id}/messages": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Returns the most recent assistant conversation messages for a post.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "posts"
+                ],
+                "summary": "List assistant messages",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Post Sqid",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/models.PostAssistantMessage"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/posts/{id}/versions": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Returns all version snapshots for a post.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "posts"
+                ],
+                "summary": "List post versions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Post Sqid",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/models.PostVersion"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Manually creates a version snapshot of the current post content.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "posts"
+                ],
+                "summary": "Create post version",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Post Sqid",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Version payload",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.createVersionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/models.PostVersion"
+                        }
                     },
                     "401": {
                         "description": "Unauthorized",
@@ -2092,15 +3276,104 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "handlers.accountInfo": {
+            "type": "object",
+            "properties": {
+                "avatarUrl": {
+                    "type": "string"
+                },
+                "connectedAt": {
+                    "type": "string"
+                },
+                "displayName": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "isActive": {
+                    "type": "boolean"
+                },
+                "lastSyncedAt": {
+                    "type": "string"
+                },
+                "platform": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.accountView": {
+            "type": "object",
+            "properties": {
+                "avatar_url": {
+                    "type": "string"
+                },
+                "connected_at": {
+                    "type": "string"
+                },
+                "display_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.accountsResponse": {
+            "type": "object",
+            "properties": {
+                "accounts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.accountInfo"
+                    }
+                },
+                "lastSyncAt": {
+                    "type": "string"
+                },
+                "lastSyncStatus": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.assistantRequest": {
+            "type": "object",
+            "required": [
+                "instruction"
+            ],
+            "properties": {
+                "instruction": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.campaignRequest": {
             "type": "object",
             "required": [
-                "name",
-                "objective"
+                "campaign_type_id",
+                "name"
             ],
             "properties": {
+                "asset_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "budget": {
                     "type": "number"
+                },
+                "campaign_type_id": {
+                    "type": "string"
                 },
                 "currency": {
                     "type": "string"
@@ -2122,15 +3395,6 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
-                },
-                "objective": {
-                    "$ref": "#/definitions/models.CampaignObjective"
-                },
-                "pieces_ids": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
                 },
                 "start_date": {
                     "type": "string"
@@ -2156,12 +3420,88 @@ const docTemplate = `{
                 "tone_guidelines": {
                     "type": "string"
                 },
-                "use_pieces": {
+                "use_assets": {
                     "type": "boolean"
                 }
             }
         },
-        "handlers.createPieceRequest": {
+        "handlers.campaignTypePhaseRequest": {
+            "type": "object",
+            "required": [
+                "name",
+                "sequence"
+            ],
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "purpose": {
+                    "type": "string"
+                },
+                "sequence": {
+                    "type": "integer"
+                }
+            }
+        },
+        "handlers.campaignTypeRequest": {
+            "type": "object",
+            "required": [
+                "label",
+                "name"
+            ],
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.cloneCampaignTypeRequest": {
+            "type": "object",
+            "required": [
+                "label",
+                "name"
+            ],
+            "properties": {
+                "label": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.connectLinkRequest": {
+            "type": "object",
+            "required": [
+                "platform"
+            ],
+            "properties": {
+                "platform": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.connectLinkResponse": {
+            "type": "object",
+            "properties": {
+                "connectUrl": {
+                    "type": "string"
+                },
+                "expiresAt": {
+                    "type": "string"
+                },
+                "platform": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.createAssetRequest": {
             "type": "object",
             "required": [
                 "content",
@@ -2217,6 +3557,54 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.createVersionRequest": {
+            "type": "object",
+            "properties": {
+                "note": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.healthResponse": {
+            "type": "object",
+            "properties": {
+                "accountCount": {
+                    "type": "integer"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "lastSyncAt": {
+                    "type": "string"
+                },
+                "lastSyncStatus": {
+                    "type": "string"
+                },
+                "profileId": {
+                    "type": "string"
+                },
+                "state": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.platformInfo": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "supportedPostTypes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "handlers.platformRequest": {
             "type": "object",
             "required": [
@@ -2237,16 +3625,59 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.platformResponse": {
+            "type": "object",
+            "properties": {
+                "cadence": {
+                    "type": "string"
+                },
+                "constraints": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "post_types": {
+                    "$ref": "#/definitions/models.PostTypeMap"
+                },
+                "publishers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.publisherView"
+                    }
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.platformsResponse": {
+            "type": "object",
+            "properties": {
+                "platforms": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.platformInfo"
+                    }
+                }
+            }
+        },
         "handlers.postRequest": {
             "type": "object",
             "required": [
-                "campaign_id",
-                "platform_id",
-                "platform_post_type",
-                "title"
+                "campaign_id"
             ],
             "properties": {
                 "campaign_id": {
+                    "type": "string"
+                },
+                "campaign_type_phase_id": {
                     "type": "string"
                 },
                 "content": {
@@ -2265,6 +3696,7 @@ const docTemplate = `{
                     }
                 },
                 "platform_id": {
+                    "description": "PlatformID + PlatformPostType are required only when status is not\n\"draft\" — see requirePlatformIfNotDraft below. Drafts can be saved\nbefore the user has picked a platform (CON-60).",
                     "type": "string"
                 },
                 "platform_post_type": {
@@ -2285,7 +3717,36 @@ const docTemplate = `{
                 "title": {
                     "type": "string"
                 },
-                "used_pieces_ids": {
+                "used_asset_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "handlers.publisherView": {
+            "type": "object",
+            "properties": {
+                "accounts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.accountView"
+                    }
+                },
+                "connected": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "state": {
+                    "type": "string"
+                },
+                "supported_post_types": {
                     "type": "array",
                     "items": {
                         "type": "string"
@@ -2307,7 +3768,7 @@ const docTemplate = `{
                 }
             }
         },
-        "handlers.updatePieceRequest": {
+        "handlers.updateAssetRequest": {
             "type": "object",
             "required": [
                 "content",
@@ -2359,11 +3820,106 @@ const docTemplate = `{
                 }
             }
         },
+        "models.Asset": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "file": {
+                    "$ref": "#/definitions/models.AssetFile"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "tag_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.Tag"
+                    }
+                },
+                "title": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.AssetFile": {
+            "type": "object",
+            "properties": {
+                "asset_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "mime_type": {
+                    "type": "string"
+                },
+                "original_name": {
+                    "type": "string"
+                },
+                "page_count": {
+                    "type": "integer"
+                },
+                "s3_key": {
+                    "type": "string"
+                },
+                "size_bytes": {
+                    "type": "integer"
+                },
+                "thumbnail_s3_key": {
+                    "type": "string"
+                },
+                "thumbnail_url": {
+                    "description": "ThumbnailURL is a transient public URL rendered from ThumbnailS3Key by\nthe handler layer before serialization. Not persisted.",
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
         "models.Campaign": {
             "type": "object",
             "properties": {
+                "asset_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "budget": {
                     "type": "number"
+                },
+                "campaign_type": {
+                    "$ref": "#/definitions/models.CampaignType"
+                },
+                "campaign_type_id": {
+                    "type": "string"
                 },
                 "created_at": {
                     "type": "string"
@@ -2395,15 +3951,6 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
-                },
-                "objective": {
-                    "$ref": "#/definitions/models.CampaignObjective"
-                },
-                "pieces_ids": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
                 },
                 "platforms": {
                     "type": "array",
@@ -2449,25 +3996,10 @@ const docTemplate = `{
                 "updated_at": {
                     "type": "string"
                 },
-                "use_pieces": {
+                "use_assets": {
                     "type": "boolean"
                 }
             }
-        },
-        "models.CampaignObjective": {
-            "type": "string",
-            "enum": [
-                "awareness",
-                "engagement",
-                "conversion",
-                "retention"
-            ],
-            "x-enum-varnames": [
-                "ObjectiveAwareness",
-                "ObjectiveEngagement",
-                "ObjectiveConversion",
-                "ObjectiveRetention"
-            ]
         },
         "models.CampaignPlatform": {
             "type": "object",
@@ -2502,38 +4034,49 @@ const docTemplate = `{
                 "StatusArchived"
             ]
         },
-        "models.Piece": {
+        "models.CampaignType": {
             "type": "object",
             "properties": {
-                "content": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "created_by": {
+                "description": {
                     "type": "string"
                 },
                 "id": {
                     "type": "string"
                 },
-                "tag_ids": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
+                "is_system": {
+                    "type": "boolean"
                 },
-                "tags": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/models.Tag"
-                    }
-                },
-                "title": {
+                "label": {
                     "type": "string"
                 },
-                "updated_at": {
+                "name": {
                     "type": "string"
+                },
+                "phases": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.CampaignTypePhase"
+                    }
+                }
+            }
+        },
+        "models.CampaignTypePhase": {
+            "type": "object",
+            "properties": {
+                "campaign_type_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "purpose": {
+                    "type": "string"
+                },
+                "sequence": {
+                    "type": "integer"
                 }
             }
         },
@@ -2577,6 +4120,12 @@ const docTemplate = `{
                 "campaign_id": {
                     "type": "string"
                 },
+                "campaign_type_phase": {
+                    "$ref": "#/definitions/models.CampaignTypePhase"
+                },
+                "campaign_type_phase_id": {
+                    "type": "string"
+                },
                 "content": {
                     "type": "string"
                 },
@@ -2605,6 +4154,7 @@ const docTemplate = `{
                     "$ref": "#/definitions/models.Platform"
                 },
                 "platform_id": {
+                    "description": "platform_id and platform_post_type are nullable so draft posts can\nexist without a platform chosen up front (CON-60). They become\nrequired when the post moves out of \"draft\" — enforced by the\nposts handler, not by the schema.\n\n` + "`" + `nullzero` + "`" + ` makes bun send NULL (not \"\") for empty values, which is\nrequired for platform_id because the FK to platforms can't match\nan empty string. We use it on platform_post_type too for symmetry.",
                     "type": "string"
                 },
                 "platform_post_type": {
@@ -2628,17 +4178,37 @@ const docTemplate = `{
                 "updated_at": {
                     "type": "string"
                 },
-                "used_pieces": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/models.Piece"
-                    }
-                },
-                "used_pieces_ids": {
+                "used_asset_ids": {
                     "type": "array",
                     "items": {
                         "type": "string"
                     }
+                },
+                "used_assets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.Asset"
+                    }
+                }
+            }
+        },
+        "models.PostAssistantMessage": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "post_id": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
                 }
             }
         },
@@ -2659,25 +4229,53 @@ const docTemplate = `{
             "type": "string",
             "enum": [
                 "draft",
-                "in_review",
-                "approved",
+                "ready_for_publish",
                 "scheduled",
+                "scheduled_for_manual_publishing",
+                "failed",
                 "published",
-                "failed"
+                "not_published"
             ],
             "x-enum-varnames": [
                 "PostStatusDraft",
-                "PostStatusInReview",
-                "PostStatusApproved",
+                "PostStatusReadyForPublish",
                 "PostStatusScheduled",
+                "PostStatusScheduledForManualPublish",
+                "PostStatusFailed",
                 "PostStatusPublished",
-                "PostStatusFailed"
+                "PostStatusNotPublished"
             ]
         },
         "models.PostTypeMap": {
             "type": "object",
             "additionalProperties": {
                 "type": "string"
+            }
+        },
+        "models.PostVersion": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "creator": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "post_id": {
+                    "type": "string"
+                },
+                "version_number": {
+                    "type": "integer"
+                }
             }
         },
         "models.Session": {

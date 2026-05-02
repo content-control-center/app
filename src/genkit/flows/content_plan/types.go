@@ -54,6 +54,13 @@ type resolvedPhase struct {
 }
 
 // contentPlanTemplateData is the data passed to the user-prompt template.
+//
+// Batch is non-nil when the user template is rendered for a specific batch
+// (the production path under parallel batching). The template uses Batch to
+// emit the per-batch slot table — required count, phase mix, platform mix,
+// date window — so the model produces exactly the slice we asked for. When
+// Batch is nil, the template falls back to the global EstimatedPostCount
+// rendering for a single-shot run.
 type contentPlanTemplateData struct {
 	Name                   string
 	Description            string
@@ -70,6 +77,7 @@ type contentPlanTemplateData struct {
 	EstimatedPostCount     int
 	Platforms              []resolvedPlatform
 	Assets                 []resolvedPiece
+	Batch                  *batchSpec
 }
 
 // ValidationError is returned by the flow when preconditions are not met.
@@ -92,6 +100,7 @@ type SSEEventKind string
 const (
 	SSEEventStep     SSEEventKind = "step"
 	SSEEventPost     SSEEventKind = "post"
+	SSEEventWarning  SSEEventKind = "warning"
 	SSEEventComplete SSEEventKind = "complete"
 	SSEEventError    SSEEventKind = "error"
 )
@@ -105,9 +114,31 @@ type StepEventPayload struct {
 // PostEventPayload is the data payload for a "post" SSE event.
 // Emitted incrementally during model generation for each draft post
 // as it is parsed from the streaming model response.
+//
+// Index is the post's deterministic global slot index assigned by the batch
+// planner — stable across runs and independent of arrival order. Under
+// parallel batching, posts arrive interleaved by completion time, so the
+// stream-arrival order is no longer a reliable identifier; the UI should
+// place posts by Index, not by the order they appear on the wire.
+//
+// ID is the persisted Post row's primary key. Per CON-66 every post is
+// inserted before its event fires, so the client can reference the row
+// (edit, delete, drag) immediately rather than waiting for the
+// "complete" event.
 type PostEventPayload struct {
 	Post  DraftPost `json:"post"`
-	Index int       `json:"index"` // 0-based order from the stream
+	Index int       `json:"index"`
+	ID    string    `json:"id"`
+}
+
+// WarningPayload is the data payload for a "warning" SSE event.
+// Emitted when a parsed post is dropped (validation failure) or
+// rejected (persist failure). Index points at the global slot the
+// post would have occupied; clients can use it to remove a previously
+// emitted preview if the post was streamed before being rejected.
+type WarningPayload struct {
+	Message string `json:"message"`
+	Index   int    `json:"index,omitempty"`
 }
 
 // ErrorEventPayload is the data payload for an "error" SSE event.

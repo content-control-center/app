@@ -25,7 +25,6 @@ function App() {
   const [calendarDate, setCalendarDate] = useState(() => new Date(2026, 4, 1)); // May 2026
   const [selectedCard, setSelectedCard] = useState(null);
   const [dragOverKey, setDragOverKey] = useState(null);
-  const autoNavigatedRef = useRef(false);
 
   // Campaign types
   const [campaignTypes, setCampaignTypes] = useState([]);
@@ -57,6 +56,7 @@ function App() {
 
   const [draftForm, setDraftForm] = useState(initialDraftForm);
   const [cards, setCards] = useState([]);
+  const [expectedPostCount, setExpectedPostCount] = useState(0);
   const [draftError, setDraftError] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const abortRef = useRef(null);
@@ -65,18 +65,6 @@ function App() {
   useEffect(() => {
     return () => { abortRef.current?.abort(); };
   }, []);
-
-  // Auto-navigate calendar to the month of the first arriving post
-  useEffect(() => {
-    if (autoNavigatedRef.current) return;
-    const first = cards.find((c) => c.kind === "post" && c.payload?.post?.publishDate);
-    if (!first) return;
-    const d = new Date(first.payload.post.publishDate);
-    if (!isNaN(d.getTime())) {
-      setCalendarDate(new Date(d.getFullYear(), d.getMonth(), 1));
-      autoNavigatedRef.current = true;
-    }
-  }, [cards]);
 
   const postsByDay = useMemo(() => {
     const map = {};
@@ -93,6 +81,10 @@ function App() {
   }, [cards]);
 
   const systemCards = useMemo(() => cards.filter((c) => c.kind !== "post"), [cards]);
+  const receivedPostCount = useMemo(
+    () => cards.reduce((n, c) => (c.kind === "post" ? n + 1 : n), 0),
+    [cards]
+  );
 
   const draftEndpointPreview = useMemo(() => {
     const id = draftForm.campaignId.trim() || "{{campaignId}}";
@@ -118,9 +110,38 @@ function App() {
     );
   };
 
+  // appendCard pushes onto the rolling event log. Post events from the
+  // backend are now batched and parallel — under CON-67 the same global
+  // slot index could in principle re-arrive (defensive against retries),
+  // so we replace any existing post card carrying the same payload.index
+  // rather than appending a duplicate. Stream-arrival order is no longer
+  // monotonic by index; the calendar layout is naturally robust to this
+  // because posts are placed by publishDate.
   const appendCard = (card) => {
+    if (card.kind === "post" && typeof card.payload?.index === "number") {
+      const idx = card.payload.index;
+      setCards((prev) => {
+        const existing = prev.findIndex(
+          (c) => c.kind === "post" && c.payload?.index === idx
+        );
+        if (existing >= 0) {
+          const next = prev.slice();
+          next[existing] = { ...prev[existing], payload: card.payload };
+          return next;
+        }
+        counterRef.current += 1;
+        return [
+          ...prev,
+          { id: counterRef.current, receivedAt: new Date().toISOString(), ...card },
+        ];
+      });
+      return;
+    }
     counterRef.current += 1;
-    setCards((prev) => [...prev, { id: counterRef.current, receivedAt: new Date().toISOString(), ...card }]);
+    setCards((prev) => [
+      ...prev,
+      { id: counterRef.current, receivedAt: new Date().toISOString(), ...card },
+    ]);
   };
 
   const handleFetchCampaignTypes = async () => {
@@ -234,7 +255,21 @@ function App() {
       const campaignId = body.id || "";
       setDraftForm((prev) => ({ ...prev, campaignId }));
       setCards([]);
-      autoNavigatedRef.current = false;
+      // Pre-position the calendar at the campaign's start month rather than
+      // following the first post arrival. Under parallel batching the first
+      // arriving post can be from any batch (i.e. any month), so navigating
+      // to it would jump the calendar somewhere unhelpful.
+      const startD = new Date(createForm.start_date);
+      if (!Number.isNaN(startD.getTime())) {
+        setCalendarDate(new Date(startD.getFullYear(), startD.getMonth(), 1));
+      }
+      // Pre-seed expected count so the progress indicator works from the
+      // very first post arrival rather than only after `complete`.
+      const expected = parseOptionalNumber(
+        createForm.estimated_post_count,
+        "estimated_post_count"
+      );
+      setExpectedPostCount(typeof expected === "number" ? expected : 0);
       setCreateSuccess(`Campaign created — ID: ${campaignId}`);
     } catch (error) {
       setCreateError(error instanceof Error ? error.message : "Unknown error");
@@ -280,9 +315,35 @@ function App() {
         if (eventName === "step") {
           appendCard({ kind: "step", title: data?.step || "step", payload: data });
         } else if (eventName === "post") {
+          // Per CON-66 the post is already persisted by the time this
+          // event fires; data.id is the new row's primary key. Stash it
+          // on the card so future per-post actions (delete, edit, drag
+          // that persists) can target the row directly without waiting
+          // for `complete`.
           appendCard({ kind: "post", title: data?.post?.title || `Post #${(data?.index ?? 0) + 1}`, payload: data });
+        } else if (eventName === "warning") {
+          // Per CON-66 the backend emits live `warning` events for each
+          // post dropped at validation or persist time, separate from
+          // the aggregated `complete.warnings` array. Surface both —
+          // duplicates are fine in the rolling event log.
+          appendCard({ kind: "warning", title: "Warning", payload: data });
         } else if (eventName === "complete") {
           appendCard({ kind: "complete", title: "Generation complete", payload: data });
+          // Lock in the authoritative final count so the progress indicator
+          // reads "120 / 120" rather than "120 / 100" if the backend yielded
+          // more (or fewer, on partial success) than the original estimate.
+          if (Array.isArray(data?.posts)) {
+            setExpectedPostCount(data.posts.length);
+          }
+          // Each warning becomes its own system card so partial-batch
+          // failures (CON-67: backend aggregates failed batches into the
+          // complete payload's warnings array) are visible without the
+          // user having to expand the complete card.
+          if (Array.isArray(data?.warnings)) {
+            for (const w of data.warnings) {
+              appendCard({ kind: "warning", title: "Warning", payload: { message: w } });
+            }
+          }
         } else if (eventName === "error") {
           const message = data?.message || "Unknown stream error";
           setDraftError(message);
@@ -391,7 +452,12 @@ function App() {
             selectedPhase={selectedPhase}
             onSelectPhase={(id) => setSelectedPhase((prev) => (prev === id ? null : id))}
           />
-          <SystemMessages systemCards={systemCards} />
+          <SystemMessages
+            systemCards={systemCards}
+            receivedPostCount={receivedPostCount}
+            expectedPostCount={expectedPostCount}
+            isStreaming={isStreaming}
+          />
         </section>
       </main>
 
