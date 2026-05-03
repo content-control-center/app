@@ -15,10 +15,10 @@ POST {{baseUrl}}/api/content-bank/assets/upload
 Content-Type: multipart/form-data; boundary=boundary
 
 --boundary
-Content-Disposition: form-data; name="files"; filename="sample.pdf"
+Content-Disposition: form-data; name="files"; filename="daat_atlas.pdf"
 Content-Type: application/pdf
 
-< ./sample.pdf
+< ./daat_atlas.pdf
 --boundary--
 
 > {% client.global.set("pdfAssetId", response.body.results[0].asset_id) %}

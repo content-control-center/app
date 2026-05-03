@@ -77,10 +77,11 @@ func (p *Publisher) PlatformViews(ctx context.Context) ([]publishers.PlatformVie
 			accounts = []publishers.Account{}
 		}
 		out = append(out, publishers.PlatformView{
-			OgenPlatformID:     sp.OgenID,
-			PlatformName:       sp.Label, // canonical Ogen platform name; matches platforms.name
-			SupportedPostTypes: append([]string(nil), sp.SupportedPostTypes...),
-			Accounts:           accounts,
+			OgenPlatformID:      sp.OgenID,
+			PlatformName:        sp.Label, // canonical Ogen platform name; matches platforms.name
+			PublisherPlatformID: sp.ZernioID,
+			SupportedPostTypes:  append([]string(nil), sp.SupportedPostTypes...),
+			Accounts:            accounts,
 		})
 	}
 	return out, nil

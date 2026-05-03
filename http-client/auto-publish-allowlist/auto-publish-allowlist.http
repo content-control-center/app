@@ -1,0 +1,62 @@
+@baseUrl = http://localhost:9001
+
+# Workspace-scoped auto-publish allowlist (CON-65).
+# All endpoints require authentication.
+# Run "Login" from sessions/sessions.http first.
+#
+# platform identifiers are Zernio's wire IDs (matching POST
+# /api/integrations/zernio/connect-links). The Phase 1 set Z is:
+#   - twitter
+#   - linkedin
+#   - facebook
+#   - instagram
+#   - youtube
+#   - threads
+#
+# An empty allowlist (default on a fresh workspace) means Ogen
+# auto-publishes nothing — every Scheduled post requires a manual
+# publish action.
+
+### Get the current allowlist  [protected]
+GET {{baseUrl}}/api/auto-publish-allowlist
+Accept: application/json
+
+### Replace allowlist with a single platform  [protected]
+PUT {{baseUrl}}/api/auto-publish-allowlist
+Content-Type: application/json
+
+{
+  "platforms": ["linkedin"]
+}
+
+### Replace allowlist with multiple platforms  [protected]
+PUT {{baseUrl}}/api/auto-publish-allowlist
+Content-Type: application/json
+
+{
+  "platforms": ["linkedin", "twitter", "facebook"]
+}
+
+### Clear the allowlist (opt back out of all auto-publishing)  [protected]
+PUT {{baseUrl}}/api/auto-publish-allowlist
+Content-Type: application/json
+
+{
+  "platforms": []
+}
+
+### Replace — unsupported platform (expects 400)  [protected]
+PUT {{baseUrl}}/api/auto-publish-allowlist
+Content-Type: application/json
+
+{
+  "platforms": ["linkedin", "tiktok"]
+}
+
+### Replace — duplicates are deduplicated  [protected]
+PUT {{baseUrl}}/api/auto-publish-allowlist
+Content-Type: application/json
+
+{
+  "platforms": ["linkedin", "linkedin"]
+}
