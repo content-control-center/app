@@ -8,7 +8,6 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { useCampaign } from '@/hooks/useCampaigns'
 import { useRightRailSection } from '@/hooks/useRightRailSection'
 import type { RightRailButton } from '@/stores/rightRailStore'
-import { AIAssistantPanel, StatsPanel } from '@/components/rail-panels/ComingSoonPanel'
 import { PostSettingsForm } from '@/components/forms/postSettingsForm'
 import { PostContentUsageForm } from '@/components/forms/postContentUsageForm'
 import { PostContentEditor } from '@/components/posts/PostContentEditor'
@@ -77,18 +76,6 @@ function PostPage() {
               panel: ({ close }) => (
                 <PostContentUsageForm doc={doc} changeDoc={changeDoc} onClose={close} />
               ),
-            },
-            {
-              id: 'ai',
-              icon: 'strategy',
-              ariaLabel: 'AI assistant',
-              panel: ({ close }) => <AIAssistantPanel onClose={close} />,
-            },
-            {
-              id: 'stats',
-              icon: 'trend_up',
-              ariaLabel: 'Stats',
-              panel: ({ close }) => <StatsPanel onClose={close} />,
             },
           ]
         : [],

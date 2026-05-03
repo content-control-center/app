@@ -54,8 +54,8 @@ export const DELETABLE_STATUSES: PostStatus[] = [
 
 export type PostPayload = {
   campaign_id: string
-  platform_id: string
-  platform_post_type: string
+  platform_id?: string
+  platform_post_type?: string
   title?: string
   content?: string
   media_urls?: string[]

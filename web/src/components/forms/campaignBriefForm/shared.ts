@@ -35,6 +35,12 @@ export function toNumberOrNull(s: string): number | null {
   return Number.isFinite(n) ? n : null
 }
 
+export function toISODateTime(value: string | null): string | null {
+  if (!value) return null
+  if (value.includes('T')) return value
+  return `${value}T00:00:00Z`
+}
+
 type UseCampaignAutosaveArgs<T extends FieldValues> = {
   campaign: Campaign
   form: UseFormReturn<T>

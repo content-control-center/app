@@ -20,7 +20,7 @@ const STATUS_DOT_COLOR: Record<string, string> = {
 
 function PostCardComponent({ post }: PostCardProps) {
   const title = !post.title || post.title.trim() === '' ? 'Untitled' : post.title
-  const platform = post.platform?.name ?? '—'
+  const platform = post.platform?.name ?? 'No platform'
   const statusLabel = POST_STATUS_LABELS[post.status] ?? post.status
   const dotColor = STATUS_DOT_COLOR[post.status] ?? 'bg-tertiary-foreground'
 
@@ -28,6 +28,11 @@ function PostCardComponent({ post }: PostCardProps) {
     <Link
       to="/campaigns/$campaignId/posts/$postId"
       params={{ campaignId: post.campaign_id, postId: post.id }}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData('text/plain', post.id)
+        e.dataTransfer.effectAllowed = 'move'
+      }}
       className={cn(
         'bg-primary px-3 py-2 min-w-60 max-w-90',
         'flex flex-col gap-1 cursor-pointer hover:bg-secondary transition-colors',

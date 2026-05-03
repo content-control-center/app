@@ -1,14 +1,16 @@
-import { useCallback } from 'react'
+import { useCallback, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Icon } from '@/components/ui/icon'
 import { cn } from '@/lib'
-import { useRightRailStore } from '@/stores/rightRailStore'
+import { useRightRailStore, type RightRailButton } from '@/stores/rightRailStore'
 
 export type { RightRailButton, RightRailPanelContext } from '@/stores/rightRailStore'
 
 type RightRailProps = {
   panelWidth?: string
 }
+
+export const GLOBAL_RAIL_SECTION_ID = 'global'
 
 export function RightRail({ panelWidth = 'w-120' }: RightRailProps) {
   const sections = useRightRailStore((s) => s.sections)
@@ -18,16 +20,28 @@ export function RightRail({ panelWidth = 'w-120' }: RightRailProps) {
 
   const close = useCallback(() => setActiveId(null), [setActiveId])
 
-  let active: ReturnType<typeof useRightRailStore.getState>['sections'][number]['buttons'][number] | undefined
-  for (const section of sections) {
-    const match = section.buttons.find((b) => b.id === activeId)
-    if (match) {
-      active = match
-      break
+  const orderedSections = useMemo(() => {
+    const nonGlobal = sections.filter((s) => s.id !== GLOBAL_RAIL_SECTION_ID)
+    const global = sections.find((s) => s.id === GLOBAL_RAIL_SECTION_ID)
+    return global ? [...nonGlobal, global] : nonGlobal
+  }, [sections])
+
+  const persistentButtons: RightRailButton[] = []
+  let active: RightRailButton | undefined
+  for (const section of orderedSections) {
+    for (const b of section.buttons) {
+      if (b.persistent) persistentButtons.push(b)
+      if (b.id === activeId) active = b
     }
   }
-  const panelNode =
-    typeof active?.panel === 'function' ? active.panel({ close }) : active?.panel
+
+  const isActivePersistent = !!active?.persistent
+  const transientNode =
+    active && !isActivePersistent
+      ? typeof active.panel === 'function'
+        ? active.panel({ close })
+        : active.panel
+      : null
 
   return (
     <>
@@ -38,12 +52,26 @@ export function RightRail({ panelWidth = 'w-120' }: RightRailProps) {
         )}
       >
         <div className={cn(panelWidth, 'h-full bg-white flex flex-row')}>
-          <div className="flex-1 min-w-0 min-h-0">{panelNode}</div>
+          <div className="flex-1 min-w-0 min-h-0 relative">
+            {persistentButtons.map((b) => {
+              const node = typeof b.panel === 'function' ? b.panel({ close }) : b.panel
+              const isActive = b.id === activeId
+              return (
+                <div
+                  key={b.id}
+                  className={cn('absolute inset-0', !isActive && 'hidden')}
+                >
+                  {node}
+                </div>
+              )
+            })}
+            {transientNode}
+          </div>
           <div className="w-px self-stretch bg-border shrink-0" aria-hidden />
         </div>
       </div>
       <div className="group/rail relative z-20 w-14 shrink-0 flex flex-col items-center justify-center bg-white">
-        {sections.map((section) =>
+        {orderedSections.map((section) =>
           section.buttons.map((b) => (
             <div
               key={`${section.id}:${b.id}`}

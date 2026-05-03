@@ -9,7 +9,6 @@ import {EditPageHeader} from "@/components/page-primitives/EditPageHeader.tsx";
 import { ScrollArea } from "@/components/ui/scroll-area.tsx";
 import { useRightRailSection } from "@/hooks/useRightRailSection";
 import type { RightRailButton } from "@/stores/rightRailStore";
-import { AIAssistantPanel, StatsPanel } from "@/components/rail-panels/ComingSoonPanel";
 
 export const Route = createFileRoute("/_authenticated/content-bank/$assetId")({
   component: AssetPage,
@@ -78,18 +77,6 @@ function AssetPage() {
         icon: 'settings',
         ariaLabel: 'Settings',
         panel: <div className="text-sm">Settings panel</div>,
-      },
-      {
-        id: 'ai',
-        icon: 'strategy',
-        ariaLabel: 'AI assistant',
-        panel: ({ close }) => <AIAssistantPanel onClose={close} />,
-      },
-      {
-        id: 'stats',
-        icon: 'trend_up',
-        ariaLabel: 'Stats',
-        panel: ({ close }) => <StatsPanel onClose={close} />,
       },
     ],
     [],

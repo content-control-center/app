@@ -13,6 +13,7 @@ export type RightRailButton = {
   icon: IconName
   ariaLabel: string
   panel: ReactNode | ((ctx: RightRailPanelContext) => ReactNode)
+  persistent?: boolean
 }
 
 type Section = {

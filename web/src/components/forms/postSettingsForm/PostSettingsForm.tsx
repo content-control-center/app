@@ -30,8 +30,8 @@ const DEFAULT_HOUR = 9
 const DEFAULT_MINUTE = 0
 
 const schema = z.object({
-  platform_id: z.string().min(1, 'Platform is required'),
-  platform_post_type: z.string().min(1, 'Post type is required'),
+  platform_id: z.string(),
+  platform_post_type: z.string(),
   scheduled_at: z.string().nullable(),
   target_audience_notes: z.string(),
   campaign_type_phase_id: z.string(),
@@ -180,6 +180,7 @@ export function PostSettingsForm({ doc, changeDoc, onClose }: Props) {
                   <FormLabel>Platform</FormLabel>
                   <FormControl>
                     <TextSelect
+                      variant="default"
                       value={field.value}
                       onValueChange={(v) => {
                         field.onChange(v)
@@ -205,6 +206,7 @@ export function PostSettingsForm({ doc, changeDoc, onClose }: Props) {
                   <FormLabel>Post type</FormLabel>
                   <FormControl>
                     <TextSelect
+                      variant="default"
                       value={field.value}
                       onValueChange={field.onChange}
                       elements={postTypeOptions}
@@ -224,6 +226,7 @@ export function PostSettingsForm({ doc, changeDoc, onClose }: Props) {
                   <FormLabel>Campaign phase</FormLabel>
                   <FormControl>
                     <TextSelect
+                      variant="default"
                       value={field.value}
                       onValueChange={field.onChange}
                       elements={phaseOptions}

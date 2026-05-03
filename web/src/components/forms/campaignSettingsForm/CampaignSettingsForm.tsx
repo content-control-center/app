@@ -23,7 +23,7 @@ import {
 import { useDeleteCampaign } from '@/hooks/useCampaigns'
 import { usePlatforms } from '@/hooks/usePlatforms'
 import type { Campaign, CampaignPlatform, Platform } from '@/types/campaigns'
-import { useCampaignAutosave, toNumberOrNull } from '../campaignBriefForm/shared'
+import { useCampaignAutosave, toNumberOrNull, toISODateTime } from '../campaignBriefForm/shared'
 
 const numericString = z
   .string()
@@ -106,8 +106,8 @@ export function CampaignSettingsForm({ campaign, onFlushRef, onClose }: Props) {
     form,
     buildOverrides: (v) => ({
       name: v.name.trim() === '' ? ' ' : v.name,
-      start_date: v.start_date,
-      end_date: v.end_date,
+      start_date: toISODateTime(v.start_date),
+      end_date: toISODateTime(v.end_date),
       estimated_post_count: toNumberOrNull(v.estimated_post_count),
       budget: toNumberOrNull(v.budget),
       currency: v.currency,

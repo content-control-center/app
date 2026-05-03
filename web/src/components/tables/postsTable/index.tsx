@@ -88,15 +88,20 @@ function PostsTableComponent({
       },
       {
         id: 'platform',
-        accessorFn: (row) => row.platform?.name ?? '',
+        accessorFn: (row) => row.platform?.name ?? 'No platform',
         header: 'Platform',
         size: 150,
         minSize: 120,
-        cell: (_value, row) => (
-          <div className="h-[34px] border-b-2 border-background px-3 leading-8">
-            <TextCell value={row.platform?.name ?? null} />
-          </div>
-        ),
+        cell: (_value, row) =>
+          row.platform ? (
+            <div className="h-[34px] border-b-2 border-background px-3 leading-8">
+              <TextCell value={row.platform.name} />
+            </div>
+          ) : (
+            <div className="h-[34px] border-b-2 border-background px-3 leading-8">
+              <span className="table-text text-tertiary-foreground">No platform</span>
+            </div>
+          ),
       },
       {
         id: 'scheduled_at',

@@ -2,10 +2,13 @@ import { memo, useCallback, useMemo, useState } from 'react'
 import type { Post } from '@/types/posts'
 import { Button } from '@/components/ui/button'
 import { Icon } from '@/components/ui/icon'
+import { useUpdatePost } from '@/hooks/usePosts'
+import { postToPayload } from '@/services/api/posts'
 import { PostCard } from './PostCard'
 import { cn } from '@/lib'
 
 type WeeklyCalendarProps = {
+  campaignId: string
   posts: Post[]
 }
 
@@ -33,10 +36,14 @@ function isSameDay(a: Date, b: Date): boolean {
 }
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+const UNSCHEDULED_KEY = 'unscheduled'
+const DEFAULT_HOUR = 9
 
-function WeeklyCalendarComponent({ posts }: WeeklyCalendarProps) {
+function WeeklyCalendarComponent({ campaignId, posts }: WeeklyCalendarProps) {
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()))
+  const [dragOverKey, setDragOverKey] = useState<string | null>(null)
   const today = useMemo(() => new Date(), [])
+  const { mutate: updatePost } = useUpdatePost(campaignId)
 
   const days = useMemo(() => {
     return Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
@@ -68,6 +75,56 @@ function WeeklyCalendarComponent({ posts }: WeeklyCalendarProps) {
   const handlePrev = useCallback(() => setWeekStart((s) => addDays(s, -7)), [])
   const handleNext = useCallback(() => setWeekStart((s) => addDays(s, 7)), [])
   const handleToday = useCallback(() => setWeekStart(startOfWeek(new Date())), [])
+
+  const applyDrop = useCallback(
+    (post: Post, targetDay: Date | null) => {
+      if (targetDay === null) {
+        if (post.scheduled_at === null) return
+        updatePost({
+          id: post.id,
+          payload: { ...postToPayload(post), scheduled_at: null },
+        })
+        return
+      }
+      const orig = post.scheduled_at ? new Date(post.scheduled_at) : null
+      if (orig && isSameDay(orig, targetDay)) return
+      const next = new Date(
+        targetDay.getFullYear(),
+        targetDay.getMonth(),
+        targetDay.getDate(),
+        orig ? orig.getHours() : DEFAULT_HOUR,
+        orig ? orig.getMinutes() : 0,
+        orig ? orig.getSeconds() : 0,
+      )
+      updatePost({
+        id: post.id,
+        payload: { ...postToPayload(post), scheduled_at: next.toISOString() },
+      })
+    },
+    [updatePost],
+  )
+
+  const laneHandlers = useCallback(
+    (key: string, targetDay: Date | null) => ({
+      onDragOver: (e: React.DragEvent<HTMLDivElement>) => {
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+        if (dragOverKey !== key) setDragOverKey(key)
+      },
+      onDragLeave: () => {
+        setDragOverKey((k) => (k === key ? null : k))
+      },
+      onDrop: (e: React.DragEvent<HTMLDivElement>) => {
+        e.preventDefault()
+        const id = e.dataTransfer.getData('text/plain')
+        setDragOverKey(null)
+        if (!id) return
+        const post = posts.find((p) => p.id === id)
+        if (post) applyDrop(post, targetDay)
+      },
+    }),
+    [dragOverKey, posts, applyDrop],
+  )
 
   const weekEnd = addDays(weekStart, 6)
   const formatMonthRange = () => {
@@ -105,6 +162,7 @@ function WeeklyCalendarComponent({ posts }: WeeklyCalendarProps) {
         {days.map((day, i) => {
           const dayPosts = postsByDay.get(day.toDateString()) ?? []
           const isToday = isSameDay(day, today)
+          const key = day.toDateString()
 
           return (
             <div
@@ -116,23 +174,29 @@ function WeeklyCalendarComponent({ posts }: WeeklyCalendarProps) {
             >
               {/* Day label */}
               <div
-                className={'w-10 shrink-0 py-2.5 pr-3 flex flex-col items-start'}
+                className={'w-10 shrink-0 py-2.5 pr-3 flex flex-col items-end'}
               >
-                <span className={cn("text-xs text-tertiary-foreground", isToday && 'text-positive')}>
+                <span className={cn("text-xs text-tertiary-foreground text-right", isToday && 'text-positive')}>
                   {DAY_NAMES[i]}
                 </span>
                 <span
                   className={cn(
-                    'text-lg font-display font-medium leading-6',
+                    'text-lg font-display font-medium leading-6 text-right tabular-nums',
                     isToday && 'text-positive',
                   )}
                 >
-                  {day.getDate()}
+                  {day.getDate().toString().padStart(2, '0')}
                 </span>
               </div>
 
               {/* Posts lane */}
-              <div className="flex-1 min-w-0 py-2 flex flex-wrap gap-2 items-start">
+              <div
+                {...laneHandlers(key, day)}
+                className={cn(
+                  'flex-1 min-w-0 py-2 flex flex-wrap gap-2 items-start transition-colors',
+                  dragOverKey === key && 'bg-secondary',
+                )}
+              >
                 {dayPosts.map((post) => (
                   <PostCard key={post.id} post={post} />
                 ))}
@@ -141,19 +205,23 @@ function WeeklyCalendarComponent({ posts }: WeeklyCalendarProps) {
           )
         })}
 
-        {/* Unscheduled posts */}
-        {unscheduledPosts.length > 0 && (
-          <div className="flex border-t border-border min-h-[72px]">
-            <div className="w-10 shrink-0 py-2.5 pr-3 flex flex-col items-start">
-              <span className="text-xs text-tertiary-foreground">No date</span>
-            </div>
-            <div className="flex-1 min-w-0 py-2 flex flex-wrap gap-2 items-start">
-              {unscheduledPosts.map((post) => (
-                <PostCard key={post.id} post={post} />
-              ))}
-            </div>
+        {/* Unscheduled posts — always rendered so it can act as a drop target */}
+        <div className="flex border-t border-border min-h-[72px]">
+          <div className="w-10 shrink-0 py-2.5 pr-3 flex flex-col items-start">
+            <span className="text-xs text-tertiary-foreground">No date</span>
           </div>
-        )}
+          <div
+            {...laneHandlers(UNSCHEDULED_KEY, null)}
+            className={cn(
+              'flex-1 min-w-0 py-2 flex flex-wrap gap-2 items-start transition-colors',
+              dragOverKey === UNSCHEDULED_KEY && 'bg-secondary',
+            )}
+          >
+            {unscheduledPosts.map((post) => (
+              <PostCard key={post.id} post={post} />
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   )

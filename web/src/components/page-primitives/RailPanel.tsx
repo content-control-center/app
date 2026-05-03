@@ -23,7 +23,7 @@ export function RailPanel({
 }: RailPanelProps) {
   return (
     <div className={cn('h-full flex flex-col', className)}>
-      <div className="h-0 grow overflow-y-auto">
+      <div className="h-0 grow overflow-y-auto flex flex-col">
         <div className="sticky top-0 z-10 pt-6 pb-6 px-3 lg:px-6 flex flex-col gap-0 shrink-0 bg-gradient-to-b from-white from-42% to-transparent">
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-lg font-medium font-display tracking-tight text-foreground">
@@ -38,7 +38,7 @@ export function RailPanel({
                   aria-label="Close"
                   className="flex items-center justify-center size-6 text-secondary-foreground hover:text-foreground cursor-pointer"
                 >
-                  <Icon name="x_mark" className="size-4" />
+                  <Icon name="x_mark" className="size-5 stroke-2" />
                 </button>
               )}
             </div>

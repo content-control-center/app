@@ -14,10 +14,8 @@ import { WeeklyCalendar } from "@/components/campaigns/calendar/WeeklyCalendar";
 import { CampaignBriefForm } from "@/components/forms/campaignBriefForm";
 import { CampaignSettingsForm } from "@/components/forms/campaignSettingsForm";
 import { CampaignContentUsageForm } from "@/components/forms/campaignContentUsageForm";
-import { AIAssistantPanel, StatsPanel } from "@/components/rail-panels/ComingSoonPanel";
 import { useCampaign } from "@/hooks/useCampaigns.ts";
 import { useCampaignPosts, useCreatePost, useDeletePost } from "@/hooks/usePosts.ts";
-import { usePlatforms } from "@/hooks/usePlatforms.ts";
 import { useRightRailSection } from "@/hooks/useRightRailSection";
 import type { RightRailButton } from "@/stores/rightRailStore";
 
@@ -38,7 +36,6 @@ function CampaignPage() {
   const { data: posts } = useCampaignPosts(campaignId);
   const createPost = useCreatePost(campaignId);
   const deletePost = useDeletePost(campaignId);
-  const { data: platforms } = usePlatforms();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<string>("calendar");
   const hasPosts = !!(posts && posts.length > 0);
@@ -62,18 +59,6 @@ function CampaignPage() {
               panel: ({ close }) => (
                 <CampaignContentUsageForm campaign={campaign} onClose={close} />
               ),
-            },
-            {
-              id: "ai",
-              icon: "strategy",
-              ariaLabel: "AI assistant",
-              panel: ({ close }) => <AIAssistantPanel onClose={close} />,
-            },
-            {
-              id: "stats",
-              icon: "trend_up",
-              ariaLabel: "Stats",
-              panel: ({ close }) => <StatsPanel onClose={close} />,
             },
           ]
         : [],
@@ -101,15 +86,8 @@ function CampaignPage() {
   const title = displayName === "" ? "Untitled campaign" : displayName;
 
   const handleAddPost = () => {
-    const firstPlatform = platforms?.[0];
-    if (!firstPlatform) return;
-    const firstPostType = Object.keys(firstPlatform.post_types ?? {})[0] ?? 'post';
     createPost.mutate(
-      {
-        campaign_id: campaignId,
-        platform_id: firstPlatform.id,
-        platform_post_type: firstPostType,
-      },
+      { campaign_id: campaignId },
       {
         onSuccess: (post) => {
           navigate({
@@ -151,7 +129,7 @@ function CampaignPage() {
         <div className={"grid overflow-hidden h-full mt-1 px-3 lg:mt-2 lg:px-6"}>
           {activeTab === "calendar" ? (
             hasPosts ? (
-              <WeeklyCalendar posts={posts ?? []} />
+              <WeeklyCalendar campaignId={campaignId} posts={posts ?? []} />
             ) : (
               <PageGridEmptyState
                 title="No posts yet"
