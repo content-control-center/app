@@ -17,18 +17,24 @@ import (
 type PlatformsHandler struct {
 	repo       repository.PlatformRepository
 	publishers []publishers.Publisher
+	allowlist  repository.AutoPublishAllowlistRepository
 	auth       fiber.Handler
 }
 
 // NewPlatformsHandler wires the handler. The publishers slice may be
 // empty when no integration is configured — in that case List/Get
 // emit `"publishers": []` per platform so clients see a stable shape.
+//
+// allowlist is the auto-publish allowlist (CON-65). It may be nil in
+// callers that don't care to surface auto_publish_allowed (legacy
+// tests); when nil, the field falls back to false on every view.
 func NewPlatformsHandler(
 	repo repository.PlatformRepository,
 	pubs []publishers.Publisher,
+	allowlist repository.AutoPublishAllowlistRepository,
 	auth fiber.Handler,
 ) *PlatformsHandler {
-	return &PlatformsHandler{repo: repo, publishers: pubs, auth: auth}
+	return &PlatformsHandler{repo: repo, publishers: pubs, allowlist: allowlist, auth: auth}
 }
 
 func (h *PlatformsHandler) Register(app *fiber.App) {
@@ -50,12 +56,13 @@ type platformRequest struct {
 // publisherView is the per-publisher entry attached to each platform
 // in List / Get responses. snake_case to match the surrounding shape.
 type publisherView struct {
-	ID                 string         `json:"id"`
-	Name               string         `json:"name"`
-	State              string         `json:"state"`
-	Connected          bool           `json:"connected"`
-	SupportedPostTypes []string       `json:"supported_post_types"`
-	Accounts           []accountView  `json:"accounts"`
+	ID                 string        `json:"id"`
+	Name               string        `json:"name"`
+	State              string        `json:"state"`
+	Connected          bool          `json:"connected"`
+	AutoPublishAllowed bool          `json:"auto_publish_allowed"`
+	SupportedPostTypes []string      `json:"supported_post_types"`
+	Accounts           []accountView `json:"accounts"`
 }
 
 // accountView is the minimal account projection — full detail lives
@@ -279,6 +286,22 @@ func (h *PlatformsHandler) collectPublisherViews(ctx context.Context, platforms 
 		nameIndex[strings.ToLower(p.Name)] = p.ID
 	}
 
+	// Pull the auto-publish allowlist once per request and turn it
+	// into a set keyed by the publisher's wire ID. nil repo (legacy
+	// callers) and a transient query error both degrade to "nothing
+	// allowlisted" rather than failing the request — auto_publish is
+	// a forward-looking permission, not a precondition for reading
+	// the platform list.
+	allowSet := map[string]struct{}{}
+	if h.allowlist != nil {
+		ids, err := h.allowlist.List(ctx)
+		if err == nil {
+			for _, id := range ids {
+				allowSet[id] = struct{}{}
+			}
+		}
+	}
+
 	for _, pub := range h.publishers {
 		views, err := pub.PlatformViews(ctx)
 		if err != nil {
@@ -311,11 +334,16 @@ func (h *PlatformsHandler) collectPublisherViews(ctx context.Context, platforms 
 					ConnectedAt: a.ConnectedAt,
 				})
 			}
+			autoPublish := false
+			if v.PublisherPlatformID != "" {
+				_, autoPublish = allowSet[v.PublisherPlatformID]
+			}
 			out[matchID] = append(out[matchID], publisherView{
 				ID:                 pub.ID(),
 				Name:               pub.Name(),
 				State:              pub.State(),
 				Connected:          len(accounts) > 0,
+				AutoPublishAllowed: autoPublish,
 				SupportedPostTypes: append([]string(nil), v.SupportedPostTypes...),
 				Accounts:           accounts,
 			})

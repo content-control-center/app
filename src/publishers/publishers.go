@@ -48,15 +48,22 @@ type Publisher interface {
 // fresh Sqid IDs). Publishers should populate both fields whenever
 // possible — ID is faster, name is more durable.
 //
+// PublisherPlatformID is the wire identifier this publisher uses for
+// the platform — distinct from OgenPlatformID for backends whose
+// vocabulary differs from Ogen's (e.g. Zernio's "twitter" vs Ogen's
+// "x-twitter"). The platforms handler joins it against the
+// auto-publish allowlist (CON-65) to populate auto_publish_allowed.
+//
 // SupportedPostTypes references keys in the matched platform's
 // PostTypes map. Keys the platform doesn't define are tolerated by
 // the response but indicate either a stale allowlist or a custom
 // platform the publisher can't fully describe.
 type PlatformView struct {
-	OgenPlatformID     string
-	PlatformName       string
-	SupportedPostTypes []string
-	Accounts           []Account
+	OgenPlatformID      string
+	PlatformName        string
+	PublisherPlatformID string
+	SupportedPostTypes  []string
+	Accounts            []Account
 }
 
 // Account is the minimal account projection the platforms response

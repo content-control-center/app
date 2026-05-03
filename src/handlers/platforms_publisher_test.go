@@ -24,12 +24,13 @@ import (
 // platforms_test.go so the original tests stay focused on CRUD.
 var _ = Describe("PlatformsHandler publishers enrichment", Ordered, func() {
 	var (
-		app          *fiber.App
-		db           *bun.DB
-		authCookie   *http.Cookie
-		platformRepo repository.PlatformRepository
-		accountRepo  repository.SocialAccountRepository
-		settingRepo  repository.SettingRepository
+		app           *fiber.App
+		db            *bun.DB
+		authCookie    *http.Cookie
+		platformRepo  repository.PlatformRepository
+		accountRepo   repository.SocialAccountRepository
+		settingRepo   repository.SettingRepository
+		allowlistRepo repository.AutoPublishAllowlistRepository
 	)
 
 	BeforeAll(func() {
@@ -53,10 +54,11 @@ var _ = Describe("PlatformsHandler publishers enrichment", Ordered, func() {
 		settingRepo = repository.NewSettingRepository(db)
 		platformRepo = repository.NewPlatformRepository(db)
 		accountRepo = repository.NewSocialAccountRepository(db)
+		allowlistRepo = repository.NewAutoPublishAllowlistRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
-		handlers.NewPlatformsHandler(platformRepo, pubs, auth).Register(app)
+		handlers.NewPlatformsHandler(platformRepo, pubs, allowlistRepo, auth).Register(app)
 
 		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "admin@example.com", "password": "admin-password"})
 		req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
@@ -100,6 +102,7 @@ var _ = Describe("PlatformsHandler publishers enrichment", Ordered, func() {
 		_, _ = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("social_accounts").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("settings").Where("key LIKE ?", "zernio.%").Exec(ctx)
+		_, _ = db.NewDelete().TableExpr("auto_publish_allowlist").Where("1 = 1").Exec(ctx)
 	})
 
 	// ── No publishers configured ────────────────────────────────────
@@ -259,6 +262,153 @@ var _ = Describe("PlatformsHandler publishers enrichment", Ordered, func() {
 			Expect(acc["username"]).To(Equal("ogen-team"))
 			Expect(acc["display_name"]).To(Equal("Ogen"))
 			Expect(acc["is_active"]).To(Equal(true))
+		})
+	})
+
+	// ── auto_publish_allowed (CON-65) ───────────────────────────────
+
+	Describe("auto_publish_allowed", func() {
+		// Initialise the package-level repos directly so this Describe
+		// is self-contained under `-ginkgo.focus`. The other Describes
+		// rely on a sibling BeforeEach having run first to populate
+		// settingRepo/accountRepo — fine for the full suite, broken
+		// under focus.
+		BeforeEach(func() {
+			settingRepo = repository.NewSettingRepository(db)
+			accountRepo = repository.NewSocialAccountRepository(db)
+			allowlistRepo = repository.NewAutoPublishAllowlistRepository(db)
+		})
+
+		buildZernioPublisher := func() publishers.Publisher {
+			integ := pubzernio.NewIntegration(pubzernio.NewClient(pubzernio.StaticKey("test-key"), "http://stub", pubzernio.ClientOpts{Timeout: time.Second}))
+			integ.SetState(pubzernio.StateOK)
+			store := &settingStoreFromRepo{repo: settingRepo}
+			Expect(store.Set(context.Background(), pubzernio.SettingProfileID, "p_test")).To(Succeed())
+			return pubzernio.NewPublisher(integ, accountRepo, store)
+		}
+
+		It("is false for every publisher when the allowlist is empty", func() {
+			setupApp([]publishers.Publisher{buildZernioPublisher()})
+
+			req := httptest.NewRequest("GET", "/api/platforms", nil)
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(200))
+
+			var body []map[string]any
+			Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
+			Expect(body).NotTo(BeEmpty())
+			for _, p := range body {
+				for _, pub := range p["publishers"].([]any) {
+					z := pub.(map[string]any)
+					Expect(z["auto_publish_allowed"]).To(Equal(false))
+				}
+			}
+		})
+
+		It("is true only for the allowlisted platform's publisher entry", func() {
+			setupApp([]publishers.Publisher{buildZernioPublisher()})
+
+			Expect(allowlistRepo.Set(context.Background(), []string{"linkedin"})).To(Succeed())
+
+			req := httptest.NewRequest("GET", "/api/platforms", nil)
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(200))
+
+			var body []map[string]any
+			Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
+
+			seenLinkedInAllowed := false
+			for _, p := range body {
+				name, _ := p["name"].(string)
+				for _, pub := range p["publishers"].([]any) {
+					z := pub.(map[string]any)
+					allowed, _ := z["auto_publish_allowed"].(bool)
+					if name == "LinkedIn" {
+						Expect(allowed).To(BeTrue(), "LinkedIn publisher should be auto-publish-allowed")
+						seenLinkedInAllowed = true
+					} else {
+						Expect(allowed).To(BeFalse(), "non-allowlisted platform %q should not be auto-publish-allowed", name)
+					}
+				}
+			}
+			Expect(seenLinkedInAllowed).To(BeTrue(), "expected to see LinkedIn enriched in the response")
+		})
+
+		It("maps Zernio's wire ID to the correct platform for X (Twitter)", func() {
+			// Zernio uses "twitter" on the wire; Ogen's local OgenID is
+			// "x-twitter". The allowlist stores Zernio wire IDs, so
+			// putting "twitter" in must mark the X platform's publisher
+			// view as auto-publish-allowed — proving the
+			// PublisherPlatformID join key works for vocabularies that
+			// drift between publisher and Ogen.
+			setupApp([]publishers.Publisher{buildZernioPublisher()})
+
+			Expect(allowlistRepo.Set(context.Background(), []string{"twitter"})).To(Succeed())
+
+			req := httptest.NewRequest("GET", "/api/platforms", nil)
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(200))
+
+			var body []map[string]any
+			Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
+
+			seenXAllowed := false
+			for _, p := range body {
+				name, _ := p["name"].(string)
+				for _, pub := range p["publishers"].([]any) {
+					z := pub.(map[string]any)
+					allowed, _ := z["auto_publish_allowed"].(bool)
+					if name == "X (Twitter)" {
+						Expect(allowed).To(BeTrue())
+						seenXAllowed = true
+					} else {
+						Expect(allowed).To(BeFalse())
+					}
+				}
+			}
+			Expect(seenXAllowed).To(BeTrue(), "expected to see X (Twitter) enriched in the response")
+		})
+
+		It("reflects allowlist changes between requests", func() {
+			setupApp([]publishers.Publisher{buildZernioPublisher()})
+
+			Expect(allowlistRepo.Set(context.Background(), []string{"threads"})).To(Succeed())
+
+			extract := func() map[string]bool {
+				req := httptest.NewRequest("GET", "/api/platforms", nil)
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+				var body []map[string]any
+				Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
+				out := map[string]bool{}
+				for _, p := range body {
+					name, _ := p["name"].(string)
+					for _, pub := range p["publishers"].([]any) {
+						z := pub.(map[string]any)
+						allowed, _ := z["auto_publish_allowed"].(bool)
+						out[name] = allowed
+					}
+				}
+				return out
+			}
+
+			before := extract()
+			Expect(before["Threads"]).To(BeTrue())
+			Expect(before["LinkedIn"]).To(BeFalse())
+
+			Expect(allowlistRepo.Set(context.Background(), []string{"linkedin"})).To(Succeed())
+
+			after := extract()
+			Expect(after["Threads"]).To(BeFalse())
+			Expect(after["LinkedIn"]).To(BeTrue())
 		})
 	})
 })
