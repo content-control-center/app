@@ -1,15 +1,15 @@
 import type { PostStatus } from '@/types/posts'
 import { POST_STATUS_LABELS } from '@/types/posts'
-import { cn } from '@/lib'
+import { StatusBadge, type StatusTone } from '@/components/ui/status-badge'
 
-const STATUS_DOT_COLOR: Record<PostStatus, string> = {
-  draft: 'bg-tertiary-foreground',
-  ready_for_publish: 'bg-chart-4',
-  scheduled: 'bg-positive',
-  scheduled_for_manual_publishing: 'bg-chart-5',
-  failed: 'bg-destructive',
-  published: 'bg-positive',
-  not_published: 'bg-negative',
+const POST_STATUS_TONE: Record<PostStatus, StatusTone> = {
+  draft: 'neutral',
+  ready_for_publish: 'progress',
+  scheduled: 'positive',
+  scheduled_for_manual_publishing: 'warn',
+  failed: 'destructive',
+  published: 'positive',
+  not_published: 'negative',
 }
 
 type Props = {
@@ -19,14 +19,10 @@ type Props = {
 
 export function PostStatusBadge({ status, className }: Props) {
   return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1.5 text-xs text-tertiary-foreground',
-        className,
-      )}
-    >
-      <span className={cn('size-1.5 rounded-full shrink-0', STATUS_DOT_COLOR[status])} />
-      <span>{POST_STATUS_LABELS[status] ?? status}</span>
-    </span>
+    <StatusBadge
+      label={POST_STATUS_LABELS[status] ?? status}
+      tone={POST_STATUS_TONE[status]}
+      className={className}
+    />
   )
 }

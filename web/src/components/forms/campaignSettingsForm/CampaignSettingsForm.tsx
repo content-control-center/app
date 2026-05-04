@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -8,10 +7,9 @@ import { Input } from '@/components/ui/input'
 import { DatePicker } from '@/components/ui/date-picker'
 import { TagsInput } from '@/components/ui/tags-input'
 import { Button } from '@/components/ui/button'
-import { Switch } from '@/components/ui/switch'
 import { Icon } from '@/components/ui/icon'
+import { Collapse } from '@/components/ui/collapse'
 import { RailPanel } from '@/components/page-primitives/RailPanel'
-import { cn } from '@/lib'
 import {
   Form,
   FormControl,
@@ -21,9 +19,9 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { useDeleteCampaign } from '@/hooks/useCampaigns'
-import { usePlatforms } from '@/hooks/usePlatforms'
-import type { Campaign, CampaignPlatform, Platform } from '@/types/campaigns'
+import type { Campaign } from '@/types/campaigns'
 import { useCampaignAutosave, toNumberOrNull, toISODateTime } from '../campaignBriefForm/shared'
+import { PlatformsControl } from './PlatformsControl'
 
 const numericString = z
   .string()
@@ -63,27 +61,6 @@ function defaultValues(campaign: Campaign): SettingsFormValues {
   }
 }
 
-function togglePostType(
-  current: CampaignPlatform[],
-  platformId: string,
-  postType: string,
-): CampaignPlatform[] {
-  const existing = current.find((p) => p.id === platformId)
-  if (!existing) {
-    return [...current, { id: platformId, post_types: [postType] }]
-  }
-  const hasType = existing.post_types.includes(postType)
-  const nextPostTypes = hasType
-    ? existing.post_types.filter((t) => t !== postType)
-    : [...existing.post_types, postType]
-  if (nextPostTypes.length === 0) {
-    return current.filter((p) => p.id !== platformId)
-  }
-  return current.map((p) =>
-    p.id === platformId ? { ...p, post_types: nextPostTypes } : p,
-  )
-}
-
 type Props = {
   campaign: Campaign
   onFlushRef?: (flush: () => void) => void
@@ -98,8 +75,17 @@ export function CampaignSettingsForm({ campaign, onFlushRef, onClose }: Props) {
   })
 
   const { mutate: deleteCampaign, isPending: deleting } = useDeleteCampaign()
-  const { data: platforms } = usePlatforms()
   const navigate = useNavigate()
+
+  const targetPlatforms = form.watch('target_platforms')
+  const postTypeCount = targetPlatforms.reduce(
+    (acc, p) => acc + p.post_types.length,
+    0,
+  )
+  const initialPostTypeCount = (campaign.target_platforms ?? []).reduce(
+    (acc, p) => acc + p.post_types.length,
+    0,
+  )
 
   const { error } = useCampaignAutosave({
     campaign,
@@ -132,164 +118,160 @@ export function CampaignSettingsForm({ campaign, onFlushRef, onClose }: Props) {
     <Form {...form}>
       <form noValidate autoComplete="off" className="h-full">
         <RailPanel title="General settings" onClose={onClose}>
-        <div className="flex flex-col gap-4">
-          <FormField
-            control={form.control}
-            name="name"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Campaign name</FormLabel>
-                <FormControl>
-                  <Input
-                    {...field}
-                    name="campaign-name"
-                    autoComplete="off"
-                    placeholder="e.g. Spring product launch"
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <div className="grid grid-cols-2 gap-4">
+        <Collapse title="BASIC" defaultOpen>
+          <div className="flex flex-col gap-4 pt-2 pb-4">
             <FormField
               control={form.control}
-              name="start_date"
+              name="name"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Start date</FormLabel>
-                  <DatePicker value={field.value} onChange={field.onChange} />
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="end_date"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>End date</FormLabel>
-                  <DatePicker value={field.value} onChange={field.onChange} />
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <FormField
-              control={form.control}
-              name="estimated_post_count"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Estimated post count</FormLabel>
+                  <FormLabel>Campaign name</FormLabel>
                   <FormControl>
-                    <Input type="number" min={0} placeholder="e.g. 12" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="language"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Language</FormLabel>
-                  <FormControl>
-                    <Input placeholder="en" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <FormField
-              control={form.control}
-              name="budget"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Budget</FormLabel>
-                  <FormControl>
-                    <Input type="number" min={0} step="0.01" placeholder="e.g. 5000" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="currency"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Currency</FormLabel>
-                  <FormControl>
-                    <Input placeholder="USD" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
-          <FormField
-            control={form.control}
-            name="tag_ids"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Tags</FormLabel>
-                <TagsInput value={field.value} onChange={field.onChange} />
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <FormField
-            control={form.control}
-            name="target_platforms"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Platforms & post types</FormLabel>
-                <div className="flex flex-col rounded-md border border-border overflow-hidden">
-                  {(platforms ?? []).map((platform) => (
-                    <PlatformRow
-                      key={platform.id}
-                      platform={platform}
-                      selected={
-                        field.value.find((p) => p.id === platform.id)?.post_types ?? []
-                      }
-                      onTogglePostType={(postType) =>
-                        field.onChange(togglePostType(field.value, platform.id, postType))
-                      }
+                    <Input
+                      {...field}
+                      name="campaign-name"
+                      autoComplete="off"
+                      placeholder="e.g. Spring product launch"
                     />
-                  ))}
-                  {(platforms ?? []).length === 0 && (
-                    <span className="text-xs text-tertiary-foreground p-3">
-                      No platforms available
-                    </span>
-                  )}
-                </div>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </div>
-
-        <div className="flex flex-col gap-3 pt-4 border-t border-border">
-          <div className="flex flex-col gap-1">
-            <span className="text-[13px] font-medium text-input-label">Danger zone</span>
-            <span className="text-xs text-tertiary-foreground">
-              Deleting a campaign removes it and all its posts. This cannot be undone.
-            </span>
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <div className="grid grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="start_date"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Start date</FormLabel>
+                    <DatePicker value={field.value} onChange={field.onChange} />
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="end_date"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>End date</FormLabel>
+                    <DatePicker value={field.value} onChange={field.onChange} />
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+            <FormField
+              control={form.control}
+              name="tag_ids"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Tags</FormLabel>
+                  <TagsInput value={field.value} onChange={field.onChange} />
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
           </div>
-          <Button
-            type="button"
-            variant="destructiveInverted"
-            onClick={handleDelete}
-            loading={deleting}
-          >
-            <Icon name="trash_bin" className="size-4" />
-            <span>DELETE CAMPAIGN</span>
-          </Button>
-        </div>
+        </Collapse>
+
+        <Collapse title="ADVANCED">
+          <div className="flex flex-col gap-4 pt-2 pb-4">
+            <div className="grid grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="budget"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Budget</FormLabel>
+                    <FormControl>
+                      <Input type="number" min={0} step="0.01" placeholder="e.g. 5000" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="currency"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Currency</FormLabel>
+                    <FormControl>
+                      <Input placeholder="USD" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="estimated_post_count"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Estimated post count</FormLabel>
+                    <FormControl>
+                      <Input type="number" min={0} placeholder="e.g. 12" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="language"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Language</FormLabel>
+                    <FormControl>
+                      <Input placeholder="en" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+          </div>
+        </Collapse>
+
+        <Collapse
+          title="PLATFORMS & POST TYPES"
+          meta={postTypeCount}
+          defaultOpen={initialPostTypeCount === 0}
+        >
+          <div className="flex flex-col pt-2 pb-4">
+            <FormField
+              control={form.control}
+              name="target_platforms"
+              render={({ field }) => (
+                <FormItem>
+                  <PlatformsControl
+                    value={field.value}
+                    onChange={field.onChange}
+                  />
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+        </Collapse>
+
+        <Collapse title="DANGER ZONE">
+          <div className="pt-2 pb-4">
+            <Button
+              type="button"
+              variant="destructiveInverted"
+              onClick={handleDelete}
+              loading={deleting}
+            >
+              <Icon name="trash_bin" className="size-4" />
+              <span>DELETE CAMPAIGN</span>
+            </Button>
+          </div>
+        </Collapse>
 
         {error && <span className="text-xs text-destructive">{error.message}</span>}
         </RailPanel>
@@ -298,72 +280,3 @@ export function CampaignSettingsForm({ campaign, onFlushRef, onClose }: Props) {
   )
 }
 
-type PlatformRowProps = {
-  platform: Platform
-  selected: string[]
-  onTogglePostType: (postType: string) => void
-}
-
-function PlatformRow({ platform, selected, onTogglePostType }: PlatformRowProps) {
-  const [open, setOpen] = useState(false)
-  const postTypes = Object.entries(platform.post_types ?? {})
-  const selectedLabels = postTypes
-    .filter(([key]) => selected.includes(key))
-    .map(([, label]) => label)
-
-  const summary =
-    selectedLabels.length === 0
-      ? 'None selected'
-      : `${selectedLabels.length} selected · ${selectedLabels.join(', ')}`
-
-  return (
-    <div className="flex flex-col border-b border-border last:border-b-0">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className="flex items-center justify-between gap-3 px-3 py-2.5 text-left cursor-pointer hover:bg-secondary/50"
-      >
-        <div className="min-w-0 flex flex-col">
-          <span className="text-[13px] font-medium text-foreground">{platform.name}</span>
-          {!open && (
-            <span className="text-xs text-tertiary-foreground truncate">{summary}</span>
-          )}
-        </div>
-        <Icon
-          name="chevron_down"
-          className={cn(
-            'size-4 shrink-0 text-secondary-foreground transition-transform',
-            open && 'rotate-180',
-          )}
-        />
-      </button>
-      {open && (
-        <div className="flex flex-col border-t border-border">
-          {postTypes.length === 0 ? (
-            <span className="text-xs text-tertiary-foreground px-3 py-2">
-              No post types available
-            </span>
-          ) : (
-            postTypes.map(([key, label]) => {
-              const checked = selected.includes(key)
-              return (
-                <label
-                  key={key}
-                  className="flex items-center justify-between gap-3 px-3 py-2 cursor-pointer select-none hover:bg-secondary/50"
-                >
-                  <span className="text-[13px] text-foreground">{label}</span>
-                  <Switch
-                    checked={checked}
-                    onCheckedChange={() => onTogglePostType(key)}
-                    aria-label={`${platform.name} — ${label}`}
-                  />
-                </label>
-              )
-            })
-          )}
-        </div>
-      )}
-    </div>
-  )
-}

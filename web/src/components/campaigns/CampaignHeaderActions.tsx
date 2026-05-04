@@ -1,17 +1,7 @@
 import { Button } from '@/components/ui/button'
 import { useUpdateCampaign } from '@/hooks/useCampaigns'
 import type { Campaign, CampaignStatus, UpdateCampaignPayload } from '@/types/campaigns'
-import { cn } from '@/lib'
-
-const STATUS_LABEL: Record<CampaignStatus, string> = {
-  draft: 'Draft',
-  active: 'Active',
-}
-
-const STATUS_COLOR: Record<CampaignStatus, string> = {
-  draft: 'text-tertiary-foreground',
-  active: 'text-positive',
-}
+import { CampaignStatusBadge } from '@/components/campaigns/CampaignStatusBadge'
 
 function isBriefComplete(campaign: Campaign): boolean {
   const required = [
@@ -59,14 +49,7 @@ export function CampaignHeaderActions({ campaign }: { campaign: Campaign }) {
 
   return (
     <div className="flex items-center gap-3">
-      <span
-        className={cn(
-          'text-[13px] font-medium leading-10 uppercase tracking-wide',
-          STATUS_COLOR[campaign.status],
-        )}
-      >
-        {STATUS_LABEL[campaign.status]}
-      </span>
+      <CampaignStatusBadge status={campaign.status} />
       {campaign.status === 'draft' ? (
         <Button
           variant={settingsComplete ? "defaultInverted" : "default" }

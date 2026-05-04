@@ -3,6 +3,8 @@
 // constraints, but display names and post-type labels live here so we
 // fully control the wording the user sees.
 
+import type { Platform, PlatformPublisher } from "@/types/campaigns";
+
 export type PlatformPostType = {
   slug: string;
   label: string;
@@ -103,4 +105,78 @@ const BY_ID: Map<string, PlatformInfo> = new Map(PLATFORMS.map((p) => [p.id, p])
 
 export function getPlatformInfo(id: string): PlatformInfo | undefined {
   return BY_ID.get(id);
+}
+
+export function unionSupportedSlugs(
+  publishers: { supported_post_types: string[] }[],
+): Set<string> {
+  const out = new Set<string>();
+  for (const p of publishers) for (const slug of p.supported_post_types) out.add(slug);
+  return out;
+}
+
+export function partitionPostTypesBySupport(
+  postTypes: PlatformPostType[],
+  supportedSlugs: Set<string>,
+): { supported: PlatformPostType[]; unsupported: PlatformPostType[] } {
+  const supported: PlatformPostType[] = [];
+  const unsupported: PlatformPostType[] = [];
+  for (const pt of postTypes) {
+    (supportedSlugs.has(pt.slug) ? supported : unsupported).push(pt);
+  }
+  return { supported, unsupported };
+}
+
+// A resolved view of a platform: the dictionary metadata joined with the
+// publisher state from the API. The post-type universe is bounded by what
+// at least one publisher supports — dictionary-only entries are excluded.
+export type PlatformView = {
+  platform: Platform;
+  info: PlatformInfo;
+  // post types supported by at least one publisher (connected or not)
+  allowed: PlatformPostType[];
+  // post types supported by at least one CONNECTED publisher
+  available: PlatformPostType[];
+  // allowed but not currently available (publisher exists, not connected)
+  unavailable: PlatformPostType[];
+  publishers: PlatformPublisher[];
+  connectedPublishers: PlatformPublisher[];
+  connectedPublisherName: string | null;
+};
+
+export function buildPlatformView(
+  platform: Platform,
+  info: PlatformInfo,
+): PlatformView {
+  const publishers = platform.publishers ?? [];
+  const connectedPublishers = publishers.filter((p) => p.connected);
+  const allowedSlugs = unionSupportedSlugs(publishers);
+  const availableSlugs = unionSupportedSlugs(connectedPublishers);
+  const allowed = info.postTypes.filter((pt) => allowedSlugs.has(pt.slug));
+  const available = allowed.filter((pt) => availableSlugs.has(pt.slug));
+  const unavailable = allowed.filter((pt) => !availableSlugs.has(pt.slug));
+  return {
+    platform,
+    info,
+    allowed,
+    available,
+    unavailable,
+    publishers,
+    connectedPublishers,
+    connectedPublisherName: connectedPublishers[0]?.name ?? null,
+  };
+}
+
+export function buildPlatformViews(platforms: Platform[]): PlatformView[] {
+  return platforms.flatMap((platform) => {
+    const info = getPlatformInfo(platform.id);
+    return info ? [buildPlatformView(platform, info)] : [];
+  });
+}
+
+export function getPostTypeLabel(platformId: string, slug: string): string {
+  return (
+    getPlatformInfo(platformId)?.postTypes.find((pt) => pt.slug === slug)
+      ?.label ?? slug
+  );
 }

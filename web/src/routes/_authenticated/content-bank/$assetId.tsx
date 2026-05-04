@@ -8,6 +8,8 @@ import { AssetEditor } from "@/components/content-bank/AssetEditor.tsx";
 import {EditPageHeader} from "@/components/page-primitives/EditPageHeader.tsx";
 import { ScrollArea } from "@/components/ui/scroll-area.tsx";
 import { useRightRailSection } from "@/hooks/useRightRailSection";
+import { useRightRailPage } from "@/hooks/useRightRailPage";
+import { ComingSoonPanel } from "@/components/rail-panels/ComingSoonPanel";
 import type { RightRailButton } from "@/stores/rightRailStore";
 
 export const Route = createFileRoute("/_authenticated/content-bank/$assetId")({
@@ -76,12 +78,13 @@ function AssetPage() {
         id: 'settings',
         icon: 'settings',
         ariaLabel: 'Settings',
-        panel: <div className="text-sm">Settings panel</div>,
+        panel: ({ close }) => <ComingSoonPanel title="Settings" onClose={close} />,
       },
     ],
     [],
   );
   useRightRailSection('asset-detail', railButtons);
+  useRightRailPage('content-bank-asset', 'settings');
 
   if (isLoading) {
     return (

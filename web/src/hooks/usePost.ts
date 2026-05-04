@@ -1,15 +1,20 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getPost, postToPayload, updatePost } from '@/services/api/posts'
-import type { Post } from '@/types/posts'
+import type { Post, PostStatus } from '@/types/posts'
 
 const SAVE_DEBOUNCE_MS = 600
 
 export const postKey = (id: string) => ['post', id] as const
 
+export type TransitionStatusResult =
+  | { ok: true; post: Post }
+  | { ok: false; error: string }
+
 type UsePostResult = {
   doc: Post | undefined
   changeDoc: (fn: (p: Post) => void) => void
+  transitionStatus: (next: PostStatus) => Promise<TransitionStatusResult>
   loading: boolean
   error: Error | undefined
 }
@@ -59,6 +64,37 @@ export function usePost(postId: string): UsePostResult {
     [postId, qc, flush],
   )
 
+  // Status transitions skip the autosave debounce: they're committed
+  // user actions, the server enforces a transition graph, and we want
+  // to surface failures (invalid edge, missing platform) immediately.
+  // We merge any pending autosave changes into the same PUT so a
+  // half-typed title isn't lost when the user clicks "Schedule".
+  const transitionStatus = useCallback(
+    async (next: PostStatus): Promise<TransitionStatusResult> => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current)
+        timerRef.current = null
+      }
+      const base = pendingRef.current ?? qc.getQueryData<Post>(postKey(postId))
+      if (!base) return { ok: false, error: 'Post not loaded' }
+      pendingRef.current = null
+      const optimistic = structuredClone(base)
+      optimistic.status = next
+      genRef.current += 1
+      qc.setQueryData(postKey(postId), optimistic)
+      try {
+        const saved = await updatePost(postId, postToPayload(optimistic))
+        qc.setQueryData(postKey(postId), saved)
+        return { ok: true, post: saved }
+      } catch (err) {
+        qc.invalidateQueries({ queryKey: postKey(postId) })
+        const message = err instanceof Error ? err.message : 'Unable to update post'
+        return { ok: false, error: message }
+      }
+    },
+    [postId, qc],
+  )
+
   useEffect(() => {
     return () => {
       if (timerRef.current) {
@@ -72,6 +108,7 @@ export function usePost(postId: string): UsePostResult {
   return {
     doc: query.data,
     changeDoc,
+    transitionStatus,
     loading: query.isLoading,
     error: query.error ?? undefined,
   }

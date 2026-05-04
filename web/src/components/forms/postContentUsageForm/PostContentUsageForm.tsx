@@ -1,12 +1,13 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 
 import { Icon } from '@/components/ui/icon'
+import { Collapse } from '@/components/ui/collapse'
 import { RailPanel } from '@/components/page-primitives/RailPanel'
-import { cn } from '@/lib'
 import type { Asset } from '@/types/content'
 import type { Post } from '@/types/posts'
 import { useAssets } from '@/hooks/useContent'
-import { useCampaign } from '@/hooks/useCampaigns'
+import { useCampaign, useUpdateCampaign } from '@/hooks/useCampaigns'
+import { campaignToPayload } from '../campaignBriefForm/shared'
 
 type Props = {
   doc: Post
@@ -18,20 +19,28 @@ export function PostContentUsageForm({ doc, changeDoc, onClose }: Props) {
   const assetIds = doc.used_asset_ids
   const { data: assets } = useAssets()
   const { data: campaign } = useCampaign(doc.campaign_id)
+  const { mutate: updateCampaign } = useUpdateCampaign()
 
-  const { selected, available } = useMemo(() => {
+  const { selected, availableInCampaign, available } = useMemo(() => {
     const all = assets ?? []
-    const campaignScope = new Set(campaign?.asset_ids ?? [])
-    const inScope = campaignScope.size > 0 ? all.filter((a) => campaignScope.has(a.id)) : all
     const selectedSet = new Set(assetIds)
-    const byId = new Map(inScope.map((a) => [a.id, a]))
+    const campaignSet = new Set(campaign?.asset_ids ?? [])
+    const byId = new Map(all.map((a) => [a.id, a]))
+
     const selected: Asset[] = []
     for (const id of assetIds) {
       const a = byId.get(id)
       if (a) selected.push(a)
     }
-    const available = inScope.filter((a) => !selectedSet.has(a.id))
-    return { selected, available }
+
+    const availableInCampaign: Asset[] = []
+    const available: Asset[] = []
+    for (const a of all) {
+      if (selectedSet.has(a.id)) continue
+      if (campaignSet.has(a.id)) availableInCampaign.push(a)
+      else available.push(a)
+    }
+    return { selected, availableInCampaign, available }
   }, [assets, assetIds, campaign])
 
   const addAsset = (id: string) => {
@@ -39,6 +48,16 @@ export function PostContentUsageForm({ doc, changeDoc, onClose }: Props) {
       if (d.used_asset_ids.includes(id)) return
       d.used_asset_ids.push(id)
     })
+    if (campaign && !campaign.asset_ids.includes(id)) {
+      const nextIds = [...campaign.asset_ids, id]
+      updateCampaign({
+        id: campaign.id,
+        payload: campaignToPayload(campaign, {
+          asset_ids: nextIds,
+          use_assets: true,
+        }),
+      })
+    }
   }
 
   const removeAsset = (id: string) => {
@@ -51,7 +70,7 @@ export function PostContentUsageForm({ doc, changeDoc, onClose }: Props) {
   return (
     <RailPanel title="Content pieces" onClose={onClose}>
       <AssetSection
-        title="Used"
+        title="SELECTED"
         assets={selected}
         emptyLabel="No assets used"
         actionIcon="x_mark"
@@ -60,9 +79,17 @@ export function PostContentUsageForm({ doc, changeDoc, onClose }: Props) {
         defaultOpen
       />
       <AssetSection
-        title="Available"
+        title="AVAILABLE IN CAMPAIGN"
+        assets={availableInCampaign}
+        emptyLabel="No campaign shortlist assets"
+        actionIcon="plus"
+        actionAriaLabel={(a) => `Add ${a.title || 'Untitled'}`}
+        onAction={(a) => addAsset(a.id)}
+      />
+      <AssetSection
+        title="AVAILABLE"
         assets={available}
-        emptyLabel="No assets available"
+        emptyLabel="No other assets"
         actionIcon="plus"
         actionAriaLabel={(a) => `Add ${a.title || 'Untitled'}`}
         onAction={(a) => addAsset(a.id)}
@@ -90,47 +117,24 @@ function AssetSection({
   onAction,
   defaultOpen = false,
 }: AssetSectionProps) {
-  const [open, setOpen] = useState(defaultOpen)
   return (
-    <div className="flex flex-col">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className="flex items-center justify-between gap-3 py-2 text-left cursor-pointer"
-      >
-        <span className="text-[13px] font-medium text-foreground">
-          {title}
-          <span className="ml-2 text-tertiary-foreground font-normal">
-            {assets.length}
-          </span>
-        </span>
-        <Icon
-          name="chevron_down"
-          className={cn(
-            'size-4 shrink-0 text-secondary-foreground transition-transform',
-            open && 'rotate-180',
-          )}
-        />
-      </button>
-      {open && (
-        <div className="flex flex-col">
-          {assets.length === 0 ? (
-            <span className="text-xs text-tertiary-foreground py-2">{emptyLabel}</span>
-          ) : (
-            assets.map((a) => (
-              <AssetRow
-                key={a.id}
-                asset={a}
-                actionIcon={actionIcon}
-                actionAriaLabel={actionAriaLabel(a)}
-                onAction={() => onAction(a)}
-              />
-            ))
-          )}
+    <Collapse title={title} meta={assets.length} defaultOpen={defaultOpen}>
+      {assets.length === 0 ? (
+        <div className="flex items-center min-h-[52px] py-2">
+          <span className="text-[14px] leading-4 text-tertiary-foreground">{emptyLabel}</span>
         </div>
+      ) : (
+        assets.map((a) => (
+          <AssetRow
+            key={a.id}
+            asset={a}
+            actionIcon={actionIcon}
+            actionAriaLabel={actionAriaLabel(a)}
+            onAction={() => onAction(a)}
+          />
+        ))
       )}
-    </div>
+    </Collapse>
   )
 }
 
@@ -145,7 +149,7 @@ function AssetRow({ asset, actionIcon, actionAriaLabel, onAction }: AssetRowProp
   const title = asset.title.trim() === '' ? 'Untitled' : asset.title
   const type = asset.tags?.[0]?.name ?? 'Asset'
   return (
-    <div className="flex items-center gap-3 py-2">
+    <div className="flex items-center gap-3 min-h-[52px] py-2">
       <div className="min-w-0 flex-1 flex flex-col">
         <span className="text-[13px] text-foreground truncate">{title}</span>
         <span className="text-xs text-tertiary-foreground truncate">{type}</span>

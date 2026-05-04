@@ -1,19 +1,10 @@
 import type { Campaign } from '@/types/campaigns'
 import { useCampaignPosts } from '@/hooks/usePosts'
+import { CampaignStatusBadge } from '@/components/campaigns/CampaignStatusBadge'
 
 type CampaignCardProps = {
   campaign: Campaign
   onClick?: () => void
-}
-
-const STATUS_DOT: Record<Campaign['status'], string> = {
-  draft: 'bg-tertiary-foreground',
-  active: 'bg-positive',
-}
-
-const STATUS_LABEL: Record<Campaign['status'], string> = {
-  draft: 'Draft',
-  active: 'Active',
 }
 
 export function CampaignCard({ campaign, onClick }: CampaignCardProps) {
@@ -43,12 +34,7 @@ export function CampaignCard({ campaign, onClick }: CampaignCardProps) {
             </div>
           )}
         </div>
-        <div className="flex items-center gap-1.5 text-xs text-tertiary-foreground shrink-0">
-          <span
-            className={`size-2 rounded-full ${STATUS_DOT[campaign.status]}`}
-          />
-          <span>{STATUS_LABEL[campaign.status] ?? campaign.status}</span>
-        </div>
+        <CampaignStatusBadge status={campaign.status} className="shrink-0" />
       </div>
 
       <div className="flex items-center gap-4 text-xs text-secondary-foreground">

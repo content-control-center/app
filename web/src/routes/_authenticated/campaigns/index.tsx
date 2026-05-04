@@ -12,6 +12,7 @@ import {
   useCreateCampaign,
   useCampaignTypes,
 } from "@/hooks/useCampaigns.ts";
+import { useRightRailPage } from "@/hooks/useRightRailPage";
 
 export const Route = createFileRoute("/_authenticated/campaigns/")({
   component: Campaigns,
@@ -26,6 +27,7 @@ function Campaigns() {
   } = useCampaignTypes();
   const createCampaign = useCreateCampaign();
   const navigate = useNavigate();
+  useRightRailPage("campaigns-list", null);
 
   const hasCampaigns = !!(campaigns && campaigns.length > 0);
   const firstType = campaignTypes?.[0];

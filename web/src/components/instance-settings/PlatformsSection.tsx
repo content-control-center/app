@@ -8,26 +8,27 @@ import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Chip } from '@/components/ui/chip'
 import { ModalContainer } from '@/components/ui/modal'
-import { getPlatformInfo, type PlatformPostType } from '@/lib/platformDictionary'
+import {
+  getPlatformInfo,
+  type PlatformPostType,
+  type PlatformView,
+} from '@/lib/platformDictionary'
+import { usePlatformViews } from '@/hooks/usePlatforms'
 import { cn } from '@/lib'
 import { SettingsRow } from './SettingsRow'
 
-type PlatformsSectionProps = {
-  platforms: Platform[]
-}
-
-function PlatformsSectionComponent({ platforms }: PlatformsSectionProps) {
-  const known = platforms.filter((p) => getPlatformInfo(p.id))
+function PlatformsSectionComponent() {
+  const views = usePlatformViews()
 
   return (
     <section className="flex flex-col gap-4">
       <h2 className="text-xl font-display font-medium tracking-tight">Platforms</h2>
-      {known.length === 0 ? (
+      {views.length === 0 ? (
         <div className="bg-primary px-6 py-5 text-sm text-tertiary-foreground">No platforms.</div>
       ) : (
         <ul className="flex flex-col gap-4">
-          {known.map((p) => (
-            <PlatformRow key={p.id} platform={p} />
+          {views.map((v) => (
+            <PlatformRow key={v.platform.id} view={v} />
           ))}
         </ul>
       )}
@@ -35,12 +36,11 @@ function PlatformsSectionComponent({ platforms }: PlatformsSectionProps) {
   )
 }
 
-function PlatformRow({ platform }: { platform: Platform }) {
-  const info = getPlatformInfo(platform.id)!
-  const publishers = platform.publishers ?? []
-  const anyConnected = publishers.some((p) => p.connected)
+function PlatformRow({ view }: { view: PlatformView }) {
+  const { platform, info, publishers, connectedPublishers } = view
   const accountPublishers = publishers.filter((p) => p.accounts.length > 0)
   const hasPublisher = publishers.length > 0
+  const anyConnected = connectedPublishers.length > 0
 
   return (
     <SettingsRow
@@ -49,7 +49,7 @@ function PlatformRow({ platform }: { platform: Platform }) {
       actions={hasPublisher ? <PlatformEditIconButton platform={platform} /> : null}
     >
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-5">
-        <PostTypeChips postTypes={info.postTypes} publishers={publishers} />
+        <PostTypeChips view={view} />
         <div className="flex flex-col gap-4">
           <ReadOnlyField label="Cadence" value={platform.cadence} />
           <ReadOnlyField label="Constraints" value={platform.constraints} />
@@ -66,38 +66,29 @@ function PlatformRow({ platform }: { platform: Platform }) {
   )
 }
 
-function PostTypeChips({
-  postTypes,
-  publishers,
-}: {
-  postTypes: PlatformPostType[]
-  publishers: PlatformPublisher[]
-}) {
-  const groups = publishers.map((pub) => {
-    const supported = new Set(pub.supported_post_types)
-    const isZernio = pub.name.toLowerCase() === 'zernio'
-    return {
-      key: pub.id,
-      label: `Available via ${pub.name}`,
-      connected: pub.connected,
-      items: postTypes.filter((pt) => supported.has(pt.slug)),
-      emptyAction:
-        !pub.connected && isZernio ? (
-          <a
-            href="https://zernio.com/dashboard/connections"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-primary-foreground hover:underline inline-flex items-center gap-1"
-          >
-            Connect on Zernio
-            <Icon name="arrow_right_top" className="size-2.5 stroke-2" />
-          </a>
-        ) : null,
-    }
-  })
-  const supportedAnywhere = new Set<string>()
-  for (const p of publishers) for (const slug of p.supported_post_types) supportedAnywhere.add(slug)
-  const unavailable = postTypes.filter((pt) => !supportedAnywhere.has(pt.slug))
+function PostTypeChips({ view }: { view: PlatformView }) {
+  const { allowed, publishers } = view
+  const allowedSlugs = new Set(allowed.map((pt) => pt.slug))
+  const groups = publishers.map((pub) => ({
+    key: pub.id,
+    label: `Available via ${pub.name}`,
+    connected: pub.connected,
+    items: allowed.filter(
+      (pt) => allowedSlugs.has(pt.slug) && pub.supported_post_types.includes(pt.slug),
+    ),
+    emptyAction:
+      !pub.connected && pub.id === 'zernio' ? (
+        <a
+          href="https://zernio.com/dashboard/connections"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[13px] leading-4 text-primary-foreground hover:underline inline-flex items-center gap-1"
+        >
+          Connect on Zernio
+          <Icon name="arrow_right_top" className="size-2.5 stroke-2" />
+        </a>
+      ) : null,
+  }))
 
   return (
     <div className="flex flex-col gap-4">
@@ -113,9 +104,6 @@ function PostTypeChips({
             emptyAction={g.emptyAction}
           />
         ))
-      )}
-      {unavailable.length > 0 && (
-        <ChipGroup label="Unavailable" items={unavailable} emptyText="None" muted />
       )}
     </div>
   )
@@ -138,11 +126,9 @@ function ChipGroup({
     <div className="flex flex-col gap-1.5">
       <span className="text-[13px] font-normal text-input-label h-4">{label}</span>
       {items.length === 0 ? (
-        <div className={'h-10 py-1 border-b border-transparent flex items-center gap-2 flex-wrap'}>
+        <div className="h-10 py-1 border-b border-transparent flex items-center gap-2 flex-wrap">
           <span className="text-[13px] leading-4 text-primary-foreground">{emptyText}</span>
-          {emptyAction && (
-            <span className="text-[13px] leading-4">{emptyAction}</span>
-          )}
+          {emptyAction}
         </div>
       ) : (
         <ul className="flex flex-wrap gap-1.5">

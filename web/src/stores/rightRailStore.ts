@@ -24,23 +24,15 @@ type Section = {
 type RightRailState = {
   sections: Section[]
   activeId: string | null
+  pageType: string | null
+  pageDefaultActiveId: string | null
+  dirtyByPage: Record<string, string | null>
 
   registerSection: (sectionId: string, buttons: RightRailButton[]) => void
   unregisterSection: (sectionId: string) => void
+  setCurrentPage: (pageType: string, defaultActiveId: string | null) => void
   setActiveId: (id: string | null) => void
   toggleActiveId: (id: string) => void
-}
-
-const DEFAULT_ACTIVE_ID: string | null = 'settings'
-
-function resolveActiveId(
-  sections: Section[],
-  activeId: string | null,
-): string | null {
-  if (activeId === null) return null
-  const exists = sections.some((s) => s.buttons.some((b) => b.id === activeId))
-  if (exists) return activeId
-  return sections[0]?.buttons[0]?.id ?? activeId
 }
 
 export const useRightRailStore = create<RightRailState>()(
@@ -48,7 +40,10 @@ export const useRightRailStore = create<RightRailState>()(
     persist(
       (set) => ({
         sections: [],
-        activeId: DEFAULT_ACTIVE_ID,
+        activeId: null,
+        pageType: null,
+        pageDefaultActiveId: null,
+        dirtyByPage: {},
 
         registerSection: (sectionId, buttons) => {
           set((state) => {
@@ -61,7 +56,7 @@ export const useRightRailStore = create<RightRailState>()(
               idx >= 0
                 ? state.sections.map((s, i) => (i === idx ? next : s))
                 : [...state.sections, next]
-            return { sections, activeId: resolveActiveId(sections, state.activeId) }
+            return { sections }
           })
         },
 
@@ -74,14 +69,43 @@ export const useRightRailStore = create<RightRailState>()(
           })
         },
 
-        setActiveId: (id) => set({ activeId: id }),
+        setCurrentPage: (pageType, defaultActiveId) => {
+          set((state) => {
+            if (
+              state.pageType === pageType &&
+              state.pageDefaultActiveId === defaultActiveId
+            ) {
+              return state
+            }
+            const dirty = state.dirtyByPage[pageType]
+            const activeId = dirty !== undefined ? dirty : defaultActiveId
+            return { pageType, pageDefaultActiveId: defaultActiveId, activeId }
+          })
+        },
+
+        setActiveId: (id) => {
+          set((state) => {
+            if (!state.pageType) return { activeId: id }
+            return {
+              activeId: id,
+              dirtyByPage: { ...state.dirtyByPage, [state.pageType]: id },
+            }
+          })
+        },
 
         toggleActiveId: (id) =>
-          set((state) => ({ activeId: state.activeId === id ? null : id })),
+          set((state) => {
+            const next = state.activeId === id ? null : id
+            if (!state.pageType) return { activeId: next }
+            return {
+              activeId: next,
+              dirtyByPage: { ...state.dirtyByPage, [state.pageType]: next },
+            }
+          }),
       }),
       {
         name: 'rightRail',
-        partialize: (s) => ({ activeId: s.activeId }),
+        partialize: (s) => ({ dirtyByPage: s.dirtyByPage }),
       },
     ),
     { name: 'rightRailStore' },

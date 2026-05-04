@@ -44,7 +44,7 @@ export function RailPanel({
             </div>
           </div>
         </div>
-        <div className={cn('px-3 lg:px-6 pb-6 flex flex-col gap-6', bodyClassName)}>
+        <div className={cn('px-3 lg:px-6 pb-6 flex flex-col gap-4', bodyClassName)}>
           {children}
         </div>
       </div>

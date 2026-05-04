@@ -1,11 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 
 import { Icon } from '@/components/ui/icon'
+import { Collapse } from '@/components/ui/collapse'
 import { RailPanel } from '@/components/page-primitives/RailPanel'
-import { cn } from '@/lib'
 import type { Campaign } from '@/types/campaigns'
 import type { Asset } from '@/types/content'
 import { useAssets } from '@/hooks/useContent'
@@ -74,7 +74,7 @@ export function CampaignContentUsageForm({ campaign, onFlushRef, onClose }: Prop
   return (
     <RailPanel title="Content Bank Assets" onClose={onClose}>
       <AssetSection
-        title="Selected"
+        title="SELECTED"
         assets={selected}
         emptyLabel="No assets selected"
         actionIcon="x_mark"
@@ -83,7 +83,7 @@ export function CampaignContentUsageForm({ campaign, onFlushRef, onClose }: Prop
         defaultOpen
       />
       <AssetSection
-        title="Available"
+        title="AVAILABLE"
         assets={available}
         emptyLabel="No assets available"
         actionIcon="plus"
@@ -113,47 +113,24 @@ function AssetSection({
   onAction,
   defaultOpen = false,
 }: AssetSectionProps) {
-  const [open, setOpen] = useState(defaultOpen)
   return (
-    <div className="flex flex-col">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className="flex items-center justify-between gap-3 py-2 text-left cursor-pointer"
-      >
-        <span className="text-[13px] font-medium text-foreground">
-          {title}
-          <span className="ml-2 text-tertiary-foreground font-normal">
-            {assets.length}
-          </span>
-        </span>
-        <Icon
-          name="chevron_down"
-          className={cn(
-            'size-4 shrink-0 text-secondary-foreground transition-transform',
-            open && 'rotate-180',
-          )}
-        />
-      </button>
-      {open && (
-        <div className="flex flex-col">
-          {assets.length === 0 ? (
-            <span className="text-xs text-tertiary-foreground py-2">{emptyLabel}</span>
-          ) : (
-            assets.map((a) => (
-              <AssetRow
-                key={a.id}
-                asset={a}
-                actionIcon={actionIcon}
-                actionAriaLabel={actionAriaLabel(a)}
-                onAction={() => onAction(a)}
-              />
-            ))
-          )}
+    <Collapse title={title} meta={assets.length} defaultOpen={defaultOpen}>
+      {assets.length === 0 ? (
+        <div className="flex items-center min-h-[52px] py-2">
+          <span className="text-[14px] leading-4 text-tertiary-foreground">{emptyLabel}</span>
         </div>
+      ) : (
+        assets.map((a) => (
+          <AssetRow
+            key={a.id}
+            asset={a}
+            actionIcon={actionIcon}
+            actionAriaLabel={actionAriaLabel(a)}
+            onAction={() => onAction(a)}
+          />
+        ))
       )}
-    </div>
+    </Collapse>
   )
 }
 
@@ -168,7 +145,7 @@ function AssetRow({ asset, actionIcon, actionAriaLabel, onAction }: AssetRowProp
   const title = asset.title.trim() === '' ? 'Untitled' : asset.title
   const type = asset.tags?.[0]?.name ?? 'Asset'
   return (
-    <div className="flex items-center gap-3 py-2">
+    <div className="flex items-center gap-3 min-h-[52px] py-2">
       <div className="min-w-0 flex-1 flex flex-col">
         <span className="text-[13px] text-foreground truncate">{title}</span>
         <span className="text-xs text-tertiary-foreground truncate">{type}</span>

@@ -10,6 +10,7 @@ import { DatePicker } from '@/components/ui/date-picker'
 import { Button } from '@/components/ui/button'
 import { Icon } from '@/components/ui/icon'
 import { TextSelect } from '@/components/ui/text-select'
+import { Collapse } from '@/components/ui/collapse'
 import { RailPanel } from '@/components/page-primitives/RailPanel'
 import {
   Form,
@@ -20,10 +21,10 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { useCampaign } from '@/hooks/useCampaigns'
-import { usePlatforms } from '@/hooks/usePlatforms'
 import { useDeletePost } from '@/hooks/usePosts'
 import { cn } from '@/lib'
 import type { Post } from '@/types/posts'
+import { CampaignPostTypeSelect } from './CampaignPostTypeSelect'
 
 const NO_PHASE = '__none__'
 const DEFAULT_HOUR = 9
@@ -95,12 +96,12 @@ export function PostSettingsForm({ doc, changeDoc, onClose }: Props) {
     defaultValues: docToFormValues(doc),
   })
 
-  const { data: platforms } = usePlatforms()
   const { data: campaign } = useCampaign(doc.campaign_id)
   const { mutate: deletePost, isPending: deleting } = useDeletePost(doc.campaign_id)
   const navigate = useNavigate()
 
   const platformId = form.watch('platform_id')
+  const platformPostType = form.watch('platform_post_type')
   const tzLabel = useMemo(() => getLocalTimezoneLabel(), [])
 
   useEffect(() => {
@@ -133,19 +134,6 @@ export function PostSettingsForm({ doc, changeDoc, onClose }: Props) {
     return () => sub.unsubscribe()
   }, [form, changeDoc])
 
-  const platformOptions = useMemo(
-    () => (platforms ?? []).map((p) => ({ id: p.id, displayValue: p.name })),
-    [platforms],
-  )
-
-  const postTypeOptions = useMemo(() => {
-    const p = (platforms ?? []).find((x) => x.id === platformId)
-    return Object.entries(p?.post_types ?? {}).map(([id, label]) => ({
-      id,
-      displayValue: label,
-    }))
-  }, [platforms, platformId])
-
   const phaseOptions = useMemo(() => {
     const phases = campaign?.campaign_type?.phases ?? []
     return [
@@ -171,166 +159,140 @@ export function PostSettingsForm({ doc, changeDoc, onClose }: Props) {
     <Form {...form}>
       <form noValidate autoComplete="off" className="h-full">
         <RailPanel title="Post settings" onClose={onClose}>
-          <div className="flex flex-col gap-4">
-            <FormField
-              control={form.control}
-              name="platform_id"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Platform</FormLabel>
-                  <FormControl>
-                    <TextSelect
-                      variant="default"
-                      value={field.value}
-                      onValueChange={(v) => {
-                        field.onChange(v)
-                        const next = platforms?.find((p) => p.id === v)
-                        const firstType = Object.keys(next?.post_types ?? {})[0] ?? ''
-                        form.setValue('platform_post_type', firstType, {
-                          shouldDirty: true,
-                        })
-                      }}
-                      elements={platformOptions}
-                      placeholder="Select platform"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="platform_post_type"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Post type</FormLabel>
-                  <FormControl>
-                    <TextSelect
-                      variant="default"
-                      value={field.value}
-                      onValueChange={field.onChange}
-                      elements={postTypeOptions}
-                      placeholder="Select type"
-                      disabled={postTypeOptions.length === 0}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="campaign_type_phase_id"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Campaign phase</FormLabel>
-                  <FormControl>
-                    <TextSelect
-                      variant="default"
-                      value={field.value}
-                      onValueChange={field.onChange}
-                      elements={phaseOptions}
-                      placeholder="No phase"
-                      disabled={phaseOptions.length <= 1}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="scheduled_at"
-              render={({ field }) => {
-                const { dateStr, timeStr } = toLocalParts(field.value)
-                return (
-                  <FormItem>
-                    <FormLabel>
-                      Publish date and time
-                      <span className="ml-2 text-xs font-normal text-tertiary-foreground">
-                        ({tzLabel} time zone)
-                      </span>
-                      {field.value && (
-                        <button
-                          type="button"
-                          onClick={() => field.onChange(null)}
-                          className="ml-2 text-xs font-normal text-tertiary-foreground hover:text-foreground transition-colors cursor-pointer underline"
-                        >
-                          Clear
-                        </button>
-                      )}
-                    </FormLabel>
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 min-w-0">
-                        <DatePicker
-                          value={dateStr ? `${dateStr}T00:00:00` : null}
-                          onChange={(nextDate) =>
-                            field.onChange(fromLocalParts(nextDate ?? '', timeStr))
-                          }
-                        />
-                      </div>
-                      <div className="relative w-24">
-                        <Input
-                          type="time"
-                          value={timeStr}
-                          onChange={(e) =>
-                            field.onChange(fromLocalParts(dateStr, e.target.value))
-                          }
-                          disabled={!dateStr}
-                          data-empty={!timeStr}
-                          className={cn(
-                            'w-24 appearance-none',
-                            '[&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:appearance-none',
-                            "data-[empty=true]:[&::-webkit-datetime-edit]:text-transparent",
-                          )}
-                        />
-                        {!timeStr && (
-                          <span className="pointer-events-none absolute inset-y-0 left-4 flex items-center text-[14px] font-medium text-tertiary-foreground">
-                            12:00
-                          </span>
+          <Collapse title="BASIC" defaultOpen>
+            <div className="flex flex-col gap-4 pt-2 pb-4">
+              <FormItem>
+                <FormLabel>Post type</FormLabel>
+                <FormControl>
+                  <CampaignPostTypeSelect
+                    campaign={campaign}
+                    platformId={platformId}
+                    postType={platformPostType}
+                    onChange={(pid, slug) => {
+                      form.setValue('platform_id', pid, { shouldDirty: true })
+                      form.setValue('platform_post_type', slug, {
+                        shouldDirty: true,
+                      })
+                    }}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+              <FormField
+                control={form.control}
+                name="scheduled_at"
+                render={({ field }) => {
+                  const { dateStr, timeStr } = toLocalParts(field.value)
+                  return (
+                    <FormItem>
+                      <FormLabel>
+                        Publish date and time
+                        <span className="ml-2 text-xs font-normal text-tertiary-foreground">
+                          ({tzLabel} time zone)
+                        </span>
+                        {field.value && (
+                          <button
+                            type="button"
+                            onClick={() => field.onChange(null)}
+                            className="ml-2 text-xs font-normal text-tertiary-foreground hover:text-foreground transition-colors cursor-pointer underline"
+                          >
+                            Clear
+                          </button>
                         )}
+                      </FormLabel>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 min-w-0">
+                          <DatePicker
+                            value={dateStr ? `${dateStr}T00:00:00` : null}
+                            onChange={(nextDate) =>
+                              field.onChange(fromLocalParts(nextDate ?? '', timeStr))
+                            }
+                          />
+                        </div>
+                        <div className="relative w-24">
+                          <Input
+                            type="time"
+                            value={timeStr}
+                            onChange={(e) =>
+                              field.onChange(fromLocalParts(dateStr, e.target.value))
+                            }
+                            disabled={!dateStr}
+                            data-empty={!timeStr}
+                            className={cn(
+                              'w-24 appearance-none',
+                              '[&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:appearance-none',
+                              "data-[empty=true]:[&::-webkit-datetime-edit]:text-transparent",
+                            )}
+                          />
+                          {!timeStr && (
+                            <span className="pointer-events-none absolute inset-y-0 left-4 flex items-center text-[14px] font-medium text-tertiary-foreground">
+                              12:00
+                            </span>
+                          )}
+                        </div>
                       </div>
-                    </div>
+                      <FormMessage />
+                    </FormItem>
+                  )
+                }}
+              />
+            </div>
+          </Collapse>
+
+          <Collapse title="ADVANCED">
+            <div className="flex flex-col gap-4 pt-2 pb-4">
+              <FormField
+                control={form.control}
+                name="campaign_type_phase_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Campaign phase</FormLabel>
+                    <FormControl>
+                      <TextSelect
+                        variant="default"
+                        value={field.value}
+                        onValueChange={field.onChange}
+                        elements={phaseOptions}
+                        placeholder="No phase"
+                        disabled={phaseOptions.length <= 1}
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
-                )
-              }}
-            />
-            <FormField
-              control={form.control}
-              name="target_audience_notes"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Target audience notes</FormLabel>
-                  <FormControl>
-                    <Textarea
-                      placeholder="Who should this reach?"
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
-
-          <div className="flex flex-col gap-3 pt-4 border-t border-border">
-            <div className="flex flex-col gap-1">
-              <span className="text-[13px] font-medium text-input-label">Danger zone</span>
-              <span className="text-xs text-tertiary-foreground">
-                Deleting a post removes it permanently. This cannot be undone.
-              </span>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="target_audience_notes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Target audience notes</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        placeholder="Who should this reach?"
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             </div>
-            <Button
-              type="button"
-              variant="destructiveInverted"
-              onClick={handleDelete}
-              loading={deleting}
-            >
-              <Icon name="trash_bin" className="size-4" />
-              <span>DELETE POST</span>
-            </Button>
-          </div>
+          </Collapse>
+
+          <Collapse title="DANGER ZONE">
+            <div className="pt-2 pb-4">
+              <Button
+                type="button"
+                variant="destructiveInverted"
+                onClick={handleDelete}
+                loading={deleting}
+              >
+                <Icon name="trash_bin" className="size-4" />
+                <span>DELETE POST</span>
+              </Button>
+            </div>
+          </Collapse>
         </RailPanel>
       </form>
     </Form>

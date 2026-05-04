@@ -27,7 +27,7 @@ export function Switch({
         'relative inline-flex h-3 w-7 shrink-0 cursor-pointer items-center transition-colors',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
         'disabled:cursor-not-allowed disabled:opacity-50',
-        checked ? 'bg-primary-foreground' : 'bg-quaternary',
+        checked ? 'bg-primary-foreground' : 'bg-tertiary-foreground',
         className,
       )}
     >

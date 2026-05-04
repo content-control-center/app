@@ -17,6 +17,7 @@ import { CampaignContentUsageForm } from "@/components/forms/campaignContentUsag
 import { useCampaign } from "@/hooks/useCampaigns.ts";
 import { useCampaignPosts, useCreatePost, useDeletePost } from "@/hooks/usePosts.ts";
 import { useRightRailSection } from "@/hooks/useRightRailSection";
+import { useRightRailPage } from "@/hooks/useRightRailPage";
 import type { RightRailButton } from "@/stores/rightRailStore";
 
 export const Route = createFileRoute("/_authenticated/campaigns/$campaignId")({
@@ -65,6 +66,7 @@ function CampaignPage() {
     [campaign],
   );
   useRightRailSection("campaign-detail", railButtons);
+  useRightRailPage("campaign-detail", "settings");
 
   if (isLoading) {
     return (

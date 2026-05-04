@@ -39,8 +39,8 @@ export type Post = {
 export const POST_STATUS_LABELS: Record<PostStatus, string> = {
   draft: 'Draft',
   ready_for_publish: 'Ready for Publish',
-  scheduled: 'Scheduled',
-  scheduled_for_manual_publishing: 'Manual Publish',
+  scheduled: 'Auto-publish',
+  scheduled_for_manual_publishing: 'Manual publish',
   failed: 'Failed',
   published: 'Published',
   not_published: 'Not Published',

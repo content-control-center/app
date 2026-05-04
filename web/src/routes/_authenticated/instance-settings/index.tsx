@@ -6,13 +6,15 @@ import { PageError } from '@/components/page-primitives/PageError'
 import { usePlatforms } from '@/hooks/usePlatforms'
 import { ApiKeysSection } from '@/components/instance-settings/ApiKeysSection'
 import { PlatformsSection } from '@/components/instance-settings/PlatformsSection'
+import { useRightRailPage } from '@/hooks/useRightRailPage'
 
 export const Route = createFileRoute('/_authenticated/instance-settings/')({
   component: InstanceSettings,
 })
 
 function InstanceSettings() {
-  const { data: platforms, isLoading, isError } = usePlatforms()
+  const { isLoading, isError } = usePlatforms()
+  useRightRailPage('instance-settings', null)
 
   if (isLoading) {
     return (
@@ -39,7 +41,7 @@ function InstanceSettings() {
         />
         <div className="flex flex-col gap-8 px-3 lg:px-6 pb-10">
           <ApiKeysSection />
-          <PlatformsSection platforms={platforms ?? []} />
+          <PlatformsSection />
         </div>
       </div>
     </PageContainer>
