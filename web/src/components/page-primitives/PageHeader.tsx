@@ -50,7 +50,7 @@ export function PageHeader({
         </div>
         <div
           className={cn(
-            'flex flex-1 justify-center lg:justify-start items-center gap-2 group',
+            'flex flex-1 justify-center lg:justify-start min-h-8 items-center gap-2 group',
             isClickable && 'cursor-pointer',
           )}
           onClick={isClickable ? handleTitleClick : undefined}
@@ -100,7 +100,7 @@ export function PageHeader({
             </div>
           </div>
         </div>
-        {actions && <div className="flex shrink-0 items-start gap-2">{actions}</div>}
+        {actions && <div className="flex shrink-0 min-h-8 justify-start items-center gap-2">{actions}</div>}
       </div>
     </div>
   )

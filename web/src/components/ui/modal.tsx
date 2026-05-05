@@ -237,7 +237,7 @@ export function ModalContainer({
             variant="ghost"
             size="smIcon"
             onClick={onClose}
-            className="absolute top-3 right-3 lg:top-8 lg:right-8"
+            className="absolute top-4 right-4"
             aria-label="Close modal"
           >
             <Icon name="x_mark" className="size-5 stroke-2" />

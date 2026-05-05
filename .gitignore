@@ -27,6 +27,10 @@ prototyping/**/skills-lock.json
 # Env
 .env.*
 
+# Envelope encryption KEK (never commit — decrypts all DB secrets)
+/ogen-keys/
+/kek/
+
 # OS
 .DS_Store
 /.idea/

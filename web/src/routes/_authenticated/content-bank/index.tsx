@@ -8,6 +8,7 @@ import { useAssets, useCreateAsset, useDeleteAsset } from "@/hooks/useContent.ts
 import { AssetsTable } from "@/components/tables/docsTable/index.tsx";
 import {Icon} from "@/components/ui/icon.tsx";
 import {PageGridEmptyState} from "@/components/page-primitives/PageGridEmptyState.tsx";
+import { useRightRailPage } from "@/hooks/useRightRailPage";
 
 export const Route = createFileRoute("/_authenticated/content-bank/")({
   component: ContentBank,
@@ -19,6 +20,7 @@ function ContentBank() {
   const deleteAsset = useDeleteAsset();
   const navigate = useNavigate();
   const hasAssets = !!(assets && assets?.length > 0);
+  useRightRailPage("content-bank", null);
 
   const handleCreate = () => {
     createAsset.mutate(

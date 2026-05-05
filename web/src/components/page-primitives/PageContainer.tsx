@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { cn } from '@/lib'
 import { cva, type VariantProps } from 'class-variance-authority'
 
-const pageContainerVariants = cva('w-full', {
+const pageContainerVariants = cva('w-full min-w-0', {
   variants: {
     variant: {
       default: 'h-full space-y-4 py-6',

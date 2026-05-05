@@ -60,6 +60,7 @@ export default defineConfig(({ command, mode }) => {
     build: {
       outDir: "dist",
       emptyOutDir: true,
+      target: "es2022",
       minify: command === "build" ? "terser" : "esbuild",
       terserOptions:
         command === "build"

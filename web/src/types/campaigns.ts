@@ -7,6 +7,24 @@ export type CampaignPlatform = {
   post_types: string[];
 };
 
+export type PublisherAccount = {
+  id: string;
+  username: string;
+  display_name: string;
+  avatar_url: string;
+  is_active: boolean;
+  connected_at: string;
+};
+
+export type PlatformPublisher = {
+  id: string;
+  name: string;
+  state: string;
+  connected: boolean;
+  supported_post_types: string[];
+  accounts: PublisherAccount[];
+};
+
 export type Platform = {
   id: string;
   name: string;
@@ -15,6 +33,7 @@ export type Platform = {
   constraints: string;
   created_at: string;
   updated_at: string;
+  publishers?: PlatformPublisher[];
 };
 
 export type CampaignTypePhase = {

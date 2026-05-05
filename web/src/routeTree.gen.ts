@@ -19,10 +19,12 @@ import { Route as SetupAdminIndexRouteImport } from './routes/setup/admin/index'
 import { Route as AuthLogoutIndexRouteImport } from './routes/auth/logout/index'
 import { Route as AuthLoginIndexRouteImport } from './routes/auth/login/index'
 import { Route as AuthForgotIndexRouteImport } from './routes/auth/forgot/index'
+import { Route as AuthenticatedInstanceSettingsIndexRouteImport } from './routes/_authenticated/instance-settings/index'
 import { Route as AuthenticatedContentBankIndexRouteImport } from './routes/_authenticated/content-bank/index'
 import { Route as AuthenticatedCampaignsIndexRouteImport } from './routes/_authenticated/campaigns/index'
 import { Route as AuthenticatedContentBankAssetIdRouteImport } from './routes/_authenticated/content-bank/$assetId'
 import { Route as AuthenticatedCampaignsCampaignIdRouteImport } from './routes/_authenticated/campaigns/$campaignId'
+import { Route as AuthenticatedCampaignsCampaignIdPostsPostIdRouteImport } from './routes/_authenticated/campaigns/$campaignId_/posts/$postId'
 
 const AuthenticatedRoute = AuthenticatedRouteImport.update({
   id: '/_authenticated',
@@ -73,6 +75,12 @@ const AuthForgotIndexRoute = AuthForgotIndexRouteImport.update({
   path: '/auth/forgot/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedInstanceSettingsIndexRoute =
+  AuthenticatedInstanceSettingsIndexRouteImport.update({
+    id: '/instance-settings/',
+    path: '/instance-settings/',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 const AuthenticatedContentBankIndexRoute =
   AuthenticatedContentBankIndexRouteImport.update({
     id: '/content-bank/',
@@ -97,6 +105,12 @@ const AuthenticatedCampaignsCampaignIdRoute =
     path: '/campaigns/$campaignId',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
+const AuthenticatedCampaignsCampaignIdPostsPostIdRoute =
+  AuthenticatedCampaignsCampaignIdPostsPostIdRouteImport.update({
+    id: '/campaigns/$campaignId_/posts/$postId',
+    path: '/campaigns/$campaignId/posts/$postId',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
@@ -106,12 +120,14 @@ export interface FileRoutesByFullPath {
   '/content-bank/$assetId': typeof AuthenticatedContentBankAssetIdRoute
   '/campaigns/': typeof AuthenticatedCampaignsIndexRoute
   '/content-bank/': typeof AuthenticatedContentBankIndexRoute
+  '/instance-settings/': typeof AuthenticatedInstanceSettingsIndexRoute
   '/auth/forgot/': typeof AuthForgotIndexRoute
   '/auth/login/': typeof AuthLoginIndexRoute
   '/auth/logout/': typeof AuthLogoutIndexRoute
   '/setup/admin/': typeof SetupAdminIndexRoute
   '/setup/success/': typeof SetupSuccessIndexRoute
   '/setup/welcome/': typeof SetupWelcomeIndexRoute
+  '/campaigns/$campaignId/posts/$postId': typeof AuthenticatedCampaignsCampaignIdPostsPostIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof AuthenticatedIndexRoute
@@ -121,12 +137,14 @@ export interface FileRoutesByTo {
   '/content-bank/$assetId': typeof AuthenticatedContentBankAssetIdRoute
   '/campaigns': typeof AuthenticatedCampaignsIndexRoute
   '/content-bank': typeof AuthenticatedContentBankIndexRoute
+  '/instance-settings': typeof AuthenticatedInstanceSettingsIndexRoute
   '/auth/forgot': typeof AuthForgotIndexRoute
   '/auth/login': typeof AuthLoginIndexRoute
   '/auth/logout': typeof AuthLogoutIndexRoute
   '/setup/admin': typeof SetupAdminIndexRoute
   '/setup/success': typeof SetupSuccessIndexRoute
   '/setup/welcome': typeof SetupWelcomeIndexRoute
+  '/campaigns/$campaignId/posts/$postId': typeof AuthenticatedCampaignsCampaignIdPostsPostIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -138,12 +156,14 @@ export interface FileRoutesById {
   '/_authenticated/content-bank/$assetId': typeof AuthenticatedContentBankAssetIdRoute
   '/_authenticated/campaigns/': typeof AuthenticatedCampaignsIndexRoute
   '/_authenticated/content-bank/': typeof AuthenticatedContentBankIndexRoute
+  '/_authenticated/instance-settings/': typeof AuthenticatedInstanceSettingsIndexRoute
   '/auth/forgot/': typeof AuthForgotIndexRoute
   '/auth/login/': typeof AuthLoginIndexRoute
   '/auth/logout/': typeof AuthLogoutIndexRoute
   '/setup/admin/': typeof SetupAdminIndexRoute
   '/setup/success/': typeof SetupSuccessIndexRoute
   '/setup/welcome/': typeof SetupWelcomeIndexRoute
+  '/_authenticated/campaigns/$campaignId_/posts/$postId': typeof AuthenticatedCampaignsCampaignIdPostsPostIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -155,12 +175,14 @@ export interface FileRouteTypes {
     | '/content-bank/$assetId'
     | '/campaigns/'
     | '/content-bank/'
+    | '/instance-settings/'
     | '/auth/forgot/'
     | '/auth/login/'
     | '/auth/logout/'
     | '/setup/admin/'
     | '/setup/success/'
     | '/setup/welcome/'
+    | '/campaigns/$campaignId/posts/$postId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -170,12 +192,14 @@ export interface FileRouteTypes {
     | '/content-bank/$assetId'
     | '/campaigns'
     | '/content-bank'
+    | '/instance-settings'
     | '/auth/forgot'
     | '/auth/login'
     | '/auth/logout'
     | '/setup/admin'
     | '/setup/success'
     | '/setup/welcome'
+    | '/campaigns/$campaignId/posts/$postId'
   id:
     | '__root__'
     | '/_authenticated'
@@ -186,12 +210,14 @@ export interface FileRouteTypes {
     | '/_authenticated/content-bank/$assetId'
     | '/_authenticated/campaigns/'
     | '/_authenticated/content-bank/'
+    | '/_authenticated/instance-settings/'
     | '/auth/forgot/'
     | '/auth/login/'
     | '/auth/logout/'
     | '/setup/admin/'
     | '/setup/success/'
     | '/setup/welcome/'
+    | '/_authenticated/campaigns/$campaignId_/posts/$postId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -278,6 +304,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthForgotIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/instance-settings/': {
+      id: '/_authenticated/instance-settings/'
+      path: '/instance-settings'
+      fullPath: '/instance-settings/'
+      preLoaderRoute: typeof AuthenticatedInstanceSettingsIndexRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/content-bank/': {
       id: '/_authenticated/content-bank/'
       path: '/content-bank'
@@ -306,6 +339,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCampaignsCampaignIdRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/campaigns/$campaignId_/posts/$postId': {
+      id: '/_authenticated/campaigns/$campaignId_/posts/$postId'
+      path: '/campaigns/$campaignId/posts/$postId'
+      fullPath: '/campaigns/$campaignId/posts/$postId'
+      preLoaderRoute: typeof AuthenticatedCampaignsCampaignIdPostsPostIdRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
   }
 }
 
@@ -315,6 +355,8 @@ interface AuthenticatedRouteChildren {
   AuthenticatedContentBankAssetIdRoute: typeof AuthenticatedContentBankAssetIdRoute
   AuthenticatedCampaignsIndexRoute: typeof AuthenticatedCampaignsIndexRoute
   AuthenticatedContentBankIndexRoute: typeof AuthenticatedContentBankIndexRoute
+  AuthenticatedInstanceSettingsIndexRoute: typeof AuthenticatedInstanceSettingsIndexRoute
+  AuthenticatedCampaignsCampaignIdPostsPostIdRoute: typeof AuthenticatedCampaignsCampaignIdPostsPostIdRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
@@ -323,6 +365,10 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedContentBankAssetIdRoute: AuthenticatedContentBankAssetIdRoute,
   AuthenticatedCampaignsIndexRoute: AuthenticatedCampaignsIndexRoute,
   AuthenticatedContentBankIndexRoute: AuthenticatedContentBankIndexRoute,
+  AuthenticatedInstanceSettingsIndexRoute:
+    AuthenticatedInstanceSettingsIndexRoute,
+  AuthenticatedCampaignsCampaignIdPostsPostIdRoute:
+    AuthenticatedCampaignsCampaignIdPostsPostIdRoute,
 }
 
 const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(

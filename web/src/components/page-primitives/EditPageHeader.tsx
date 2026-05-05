@@ -16,6 +16,7 @@ type EditPageHeaderProps = {
   breadcrumbs?: Breadcrumb[]
   className?: string
   actions?: ReactNode
+  breadcrumbTrailing?: ReactNode
   unsaved?: boolean
 }
 
@@ -24,6 +25,7 @@ export function EditPageHeader({
   breadcrumbs = [],
   className,
   actions,
+  breadcrumbTrailing,
   unsaved = false,
 }: EditPageHeaderProps) {
   const isMobile = useIsMobile()
@@ -42,7 +44,7 @@ export function EditPageHeader({
             <Icon className="size-5" name={'burger'} />
           </Button>
         </div>
-        <div className="flex flex-1 justify-center lg:justify-start items-center gap-2">
+        <div className="flex flex-1 justify-center lg:justify-start min-h-8 items-center gap-2">
           <nav className="flex items-center gap-1.5 text-[13px] leading-4 font-medium font-sans tracking-tight truncate">
             {breadcrumbs.map((crumb) => (
               <span key={crumb.to} className="flex items-center gap-1.5">
@@ -63,8 +65,11 @@ export function EditPageHeader({
               unsaved ? 'opacity-100 animate-pulse' : 'opacity-0',
             )}
           />
+          {breadcrumbTrailing && (
+            <div className="flex items-center shrink-0">{breadcrumbTrailing}</div>
+          )}
         </div>
-        {actions && <div className="flex shrink-0 items-start gap-2">{actions}</div>}
+        {actions && <div className="flex shrink-0 min-h-8 justify-start items-center gap-2">{actions}</div>}
       </div>
     </div>
   )

@@ -134,4 +134,4 @@ function TextSelectItem({ className, children, isSelected: _isSelected, ...props
   )
 }
 
-export { TextSelect }
+export { TextSelect, selectTriggerVariants }

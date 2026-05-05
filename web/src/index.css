@@ -61,7 +61,8 @@
     'Zalando Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu',
     'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
   --font-mono:
-    'Space Grotesk', Monaco, 'Inconsolata', 'Roboto Mono', 'Source Code Pro', menlo, monospace;
+    'Fira Code', 'Fira Mono', Monaco, 'Inconsolata', 'Roboto Mono', 'Source Code Pro', Menlo,
+    monospace;
   --font-display:
     'Zalando Sans Semi Expanded', 'Zalando Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI',
     'Roboto', sans-serif;

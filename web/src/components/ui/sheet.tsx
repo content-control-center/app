@@ -24,31 +24,32 @@ function SheetPortal({ ...props }: React.ComponentProps<typeof SheetPrimitive.Po
   return <SheetPrimitive.Portal data-slot="sheet-portal" {...props} />
 }
 
-function SheetOverlay({
-  className,
-  ...props
-}: React.ComponentProps<typeof SheetPrimitive.Overlay>) {
-  return (
-    <SheetPrimitive.Overlay
-      data-slot="sheet-overlay"
-      className={cn(
-        'fixed inset-0 bg-background/70 backdrop-blur-xs transition-opacity duration-200',
-        'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
-        className)}
-      style={{ zIndex: ZIndex.sheetOverlay }}
-      {...props}
-    />
-  )
-}
+const SheetOverlay = React.forwardRef<
+  React.ComponentRef<typeof SheetPrimitive.Overlay>,
+  React.ComponentPropsWithoutRef<typeof SheetPrimitive.Overlay>
+>(({ className, ...props }, ref) => (
+  <SheetPrimitive.Overlay
+    ref={ref}
+    data-slot="sheet-overlay"
+    className={cn(
+      'fixed inset-0 bg-background/70 backdrop-blur-xs transition-opacity duration-200',
+      'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
+      className)}
+    style={{ zIndex: ZIndex.sheetOverlay }}
+    {...props}
+  />
+))
 
 function SheetContent({
   className,
   children,
   side = 'right',
   onOpenAutoFocus,
+  ariaTitle,
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
   side?: 'top' | 'right' | 'bottom' | 'left' | 'fullscreen'
+  ariaTitle?: string
 }) {
   const contentRef = React.useRef<HTMLDivElement>(null)
 
@@ -90,6 +91,7 @@ function SheetContent({
         style={{ zIndex: ZIndex.sheetContent }}
         {...props}
       >
+        <SheetPrimitive.Title className="sr-only">{ariaTitle ?? 'Sheet'}</SheetPrimitive.Title>
         {children}
         {side === 'fullscreen' ? (
           <SheetPrimitive.Close asChild>

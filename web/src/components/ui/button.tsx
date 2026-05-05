@@ -19,11 +19,13 @@ const buttonVariants = cva(
           'bg-primary text-primary-foreground hover:bg-primary-foreground hover:text-primary ' +
           'data-[active=true]:bg-secondary data-[active=true]:inset-ring-[2px] data-[active=true]:inset-ring-ring ' +
           'data-[active=true]:hover:text-primary-foreground data-[active=true]:hover:bg-primary ' +
-          '[&_[data-spinner-container]]:bg-primary [&_[data-spinner]]:bg-primary-foreground/20 [&_[data-spinner]:before]:bg-primary-foreground',
+          '[&_[data-spinner-container]]:bg-primary [&_[data-spinner]]:bg-primary-foreground/20 [&_[data-spinner]:before]:bg-primary-foreground ' +
+          'disabled:text-senary-foreground',
         defaultInverted:
           'bg-primary-foreground text-primary hover:bg-primary-foreground-elevated ' +
           'data-[active=true]:bg-primary-foreground-elevated ' +
-          '[&_[data-spinner-container]]:bg-primary-foreground',
+          '[&_[data-spinner-container]]:bg-primary-foreground ' +
+          'disabled:bg-senary',
         tableHeader:
           'bg-transparent rounded-none text-tertiary-foreground font-regular text-xs hover:bg-table-row hover:text-primary-foreground ' +
           'data-[active=true]:text-primary-foreground',
@@ -31,9 +33,9 @@ const buttonVariants = cva(
           'bg-transparent text-secondary-foreground hover:text-primary-foreground hover:bg-primary ' +
           'data-[active=true]:text-primary-foreground data-[active=true]:bg-primary',
         destructive:
-          'bg-transparent text-destructive ' +
+          'bg-destructive/5 text-destructive ' +
           'data-[active=true]:bg-destructive/10 ' +
-          'data-[loading]:text-destructive/0 [&_[data-spinner]]:bg-destructive/20 [&_[data-spinner]:before]:bg-destructive ',
+          'data-[loading]:text-destructive/5 [&_[data-spinner]]:bg-destructive/20 [&_[data-spinner]:before]:bg-destructive ',
         destructiveInverted:
           'bg-destructive text-primary hover:bg-destructive/80 ' +
           'data-[active=true]:bg-destructive/80 ' +

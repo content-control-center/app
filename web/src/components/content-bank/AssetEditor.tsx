@@ -22,17 +22,6 @@ const DEFAULT_CONTENT: Block[] = [
   } as unknown as Block,
 ];
 
-function parseBlocks(raw: string): Block[] {
-  if (!raw || raw.trim() === "") return DEFAULT_CONTENT;
-  try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-  } catch {
-    // not valid JSON — ignore
-  }
-  return DEFAULT_CONTENT;
-}
-
 export function AssetEditor({
   initialTitle,
   initialContent,
@@ -44,10 +33,18 @@ export function AssetEditor({
   const titleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const titleRef = useRef<HTMLTextAreaElement | null>(null);
+  const readyRef = useRef(false);
 
   const editor = useCreateBlockNote({
-    initialContent: parseBlocks(initialContent),
+    initialContent: DEFAULT_CONTENT,
   });
+
+  useEffect(() => {
+    const blocks = editor.tryParseMarkdownToBlocks(initialContent ?? "");
+    const next = blocks.length > 0 ? blocks : DEFAULT_CONTENT;
+    editor.replaceBlocks(editor.document, next);
+    readyRef.current = true;
+  }, [editor]);
 
   const autosizeTitle = useCallback(() => {
     const el = titleRef.current;
@@ -111,10 +108,11 @@ export function AssetEditor({
   );
 
   const handleContentChange = useCallback(() => {
+    if (!readyRef.current) return;
     onDirty?.();
     if (contentTimerRef.current) clearTimeout(contentTimerRef.current);
     contentTimerRef.current = setTimeout(() => {
-      onContentChange(JSON.stringify(editor.document));
+      onContentChange(editor.blocksToMarkdownLossy());
     }, 500);
   }, [editor, onContentChange, onDirty]);
 
