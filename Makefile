@@ -42,7 +42,7 @@ tidy:
 # ── OpenAPI ──────────────────────────────────────────────────────────────────
 openapi:
 	go install github.com/swaggo/swag/cmd/swag@latest
-	swag init -g main.go -d cmd/server,src/handlers,src/models -o docs --outputTypes go,json
+	swag init -g main.go -d cmd/server,src/handlers,src/models,src/platforms,src/secrets -o docs --outputTypes go,json
 
 # ── Genkit ───────────────────────────────────────────────────────────────────
 genkit: web/dist
