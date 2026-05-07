@@ -22,12 +22,14 @@ const (
 	// upload endpoint regardless of any platform's smaller per-image
 	// cap. 50 MB matches the spec default in CON-73 §2.2.
 	maxAttachmentUploadBytes int64 = 50 << 20
-	// presignedURLTTL controls how long pre-signed GET URLs returned
-	// in API responses stay valid. Short window keeps stale URLs out
-	// of caches; long enough that the editor UI has plenty of time to
-	// load the image once.
-	presignedURLTTL = 15 * time.Minute
 )
+
+// PresignedURLTTL controls how long pre-signed GET URLs returned in
+// API responses stay valid. Short window keeps stale URLs out of
+// caches; long enough that the editor UI has plenty of time to load
+// the image once. Exposed as a var so integration tests can shrink
+// the window to assert expiry behaviour without sleeping for minutes.
+var PresignedURLTTL = 15 * time.Minute
 
 // PostAttachmentsHandler exposes the upload/list/reorder/delete API
 // for image attachments bound to a Post (CON-73). All mutations are
@@ -100,7 +102,7 @@ func (h *PostAttachmentsHandler) hydratePresigned(c *fiber.Ctx, att *models.Post
 	if h.storage == nil || att == nil || att.S3Key == "" {
 		return
 	}
-	url, err := h.storage.PresignedGetURL(c.Context(), att.S3Key, presignedURLTTL)
+	url, err := h.storage.PresignedGetURL(c.Context(), att.S3Key, PresignedURLTTL)
 	if err == nil {
 		att.PresignedURL = url
 	}
@@ -254,19 +256,9 @@ func (h *PostAttachmentsHandler) Upload(c *fiber.Ctx) error {
 		return fmt.Errorf("post_attachments: storage upload: %w", err)
 	}
 
-	pos, err := h.repo.NextPosition(c.Context(), post.ID)
-	if err != nil {
-		// Clean up the orphan object — the metadata row is what makes
-		// the attachment discoverable; without it, the bytes are dead
-		// weight in the bucket (CON-73 §2.2 transactional rollback).
-		_ = h.storage.Delete(c.Context(), key)
-		return err
-	}
-
 	att := &models.PostAttachment{
 		ID:             id,
 		PostID:         post.ID,
-		Position:       pos,
 		MimeType:       probe.MIME,
 		SizeBytes:      probe.Size,
 		Width:          probe.Width,
@@ -276,7 +268,13 @@ func (h *PostAttachmentsHandler) Upload(c *fiber.Ctx) error {
 		S3Key:          key,
 		CreatedBy:      session.UserID,
 	}
-	if err := h.repo.Create(c.Context(), att); err != nil {
+	// CreateAtNextPosition assigns att.Position atomically, eliminating
+	// the read-then-insert race that NextPosition+Create exposed under
+	// concurrent uploads to the same post.
+	if err := h.repo.CreateAtNextPosition(c.Context(), att); err != nil {
+		// Clean up the orphan object — the metadata row is what makes
+		// the attachment discoverable; without it, the bytes are dead
+		// weight in the bucket (CON-73 §2.2 transactional rollback).
 		_ = h.storage.Delete(c.Context(), key)
 		return err
 	}

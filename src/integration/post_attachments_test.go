@@ -13,6 +13,7 @@ import (
 	"image/color"
 	"image/png"
 	"io"
+	"math/rand"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -37,15 +38,34 @@ import (
 // the migration chain so it works here too.
 const linkedinPlatformID = "AXqWG7U2qnpt"
 
-// makePNG returns a deterministic NxN PNG so size assertions stay
-// stable. Used by the streaming test to push a multi-megabyte body
-// through the upload path.
+// makePNG returns a deterministic NxN PNG with a smooth gradient.
+// PNG's deflate compresses this very well — fine for tests that only
+// need a valid image, useless for size-sensitive ones (use makeNoisyPNG).
 func makePNG(side int) []byte {
 	img := image.NewRGBA(image.Rect(0, 0, side, side))
 	for y := 0; y < side; y++ {
 		for x := 0; x < side; x++ {
 			img.Set(x, y, color.RGBA{R: byte(x), G: byte(y), B: 0, A: 255})
 		}
+	}
+	var buf bytes.Buffer
+	_ = png.Encode(&buf, img)
+	return buf.Bytes()
+}
+
+// makeNoisyPNG returns an NxN PNG filled with seeded pseudo-random
+// pixels so deflate cannot compress it down. Used by the streaming
+// test, which needs the encoded body to actually be multi-megabyte.
+func makeNoisyPNG(side int) []byte {
+	img := image.NewRGBA(image.Rect(0, 0, side, side))
+	r := rand.New(rand.NewSource(1)) // deterministic across runs
+	pix := img.Pix
+	r.Read(pix)
+	// Force alpha to 0xFF so the PNG encoder picks the non-paletted
+	// 32-bit-RGBA path; otherwise it tries to find an optimal encoding
+	// that may compress better than we want.
+	for i := 3; i < len(pix); i += 4 {
+		pix[i] = 0xff
 	}
 	var buf bytes.Buffer
 	_ = png.Encode(&buf, img)
@@ -287,7 +307,8 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 					return
 				}
 				if resp.StatusCode != fiber.StatusCreated {
-					errs <- fmt.Errorf("upload %d: status %d", i, resp.StatusCode)
+					bodyBytes, _ := io.ReadAll(resp.Body)
+					errs <- fmt.Errorf("upload %d: status %d body=%s", i, resp.StatusCode, string(bodyBytes))
 					return
 				}
 				var att map[string]any
@@ -368,10 +389,10 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 	// ── Test #7: large upload completes without OOM ────────────────────────
 
 	It("#7 multi-megabyte upload completes and the bytes round-trip", func() {
-		// 2048×2048 RGBA PNG ≈ ~4 MB encoded. Real but not insane —
-		// catches a regression if the upload path stops streaming and
-		// starts buffering naively. (CON-73 §5.)
-		content := makePNG(2048)
+		// Noisy 1024×1024 RGBA PNG → ~4 MB encoded (deflate can't
+		// compress noise). Catches a regression if the upload path
+		// stops streaming and starts buffering naively. (CON-73 §5.)
+		content := makeNoisyPNG(1024)
 		Expect(len(content)).To(BeNumerically(">", 1<<20))
 
 		postID := createPost()

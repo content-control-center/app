@@ -13,11 +13,16 @@ import (
 // PostAttachmentRepository persists image attachments bound to a Post (CON-73).
 type PostAttachmentRepository interface {
 	ListByPostID(ctx context.Context, postID string) ([]models.PostAttachment, error)
+	ListS3KeysByPostID(ctx context.Context, postID string) ([]string, error)
 	GetByID(ctx context.Context, id string) (*models.PostAttachment, error)
-	Create(ctx context.Context, att *models.PostAttachment) error
+	// CreateAtNextPosition inserts att and assigns it the next free
+	// position for its post in a single atomic statement, so concurrent
+	// uploads to the same post never trip the (post_id, position)
+	// unique constraint. att.Position is overwritten with the assigned
+	// value on success.
+	CreateAtNextPosition(ctx context.Context, att *models.PostAttachment) error
 	UpdatePosition(ctx context.Context, id string, position int) error
 	Delete(ctx context.Context, id string) (bool, error)
-	NextPosition(ctx context.Context, postID string) (int, error)
 }
 
 type postAttachmentRepository struct {
@@ -53,9 +58,40 @@ func (r *postAttachmentRepository) GetByID(ctx context.Context, id string) (*mod
 	return att, nil
 }
 
-func (r *postAttachmentRepository) Create(ctx context.Context, att *models.PostAttachment) error {
-	_, err := r.db.NewInsert().Model(att).Exec(ctx)
-	return err
+func (r *postAttachmentRepository) ListS3KeysByPostID(ctx context.Context, postID string) ([]string, error) {
+	var keys []string
+	err := r.db.NewSelect().
+		Model((*models.PostAttachment)(nil)).
+		Column("s3_key").
+		Where("post_id = ?", postID).
+		Scan(ctx, &keys)
+	if err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
+
+func (r *postAttachmentRepository) CreateAtNextPosition(ctx context.Context, att *models.PostAttachment) error {
+	// Single-statement INSERT computes the next position from the same
+	// SELECT, so two concurrent uploads to the same post can't both
+	// resolve the same value and collide on the unique constraint.
+	// SQLite serialises writers, so the SELECT subquery sees the
+	// committed state at the moment the INSERT starts.
+	const q = `INSERT INTO post_attachments
+		(id, post_id, position, mime_type, size_bytes, width, height,
+		 is_animated, checksum_sha256, s3_key, created_by)
+		VALUES (?, ?, COALESCE((SELECT MAX(position)+1 FROM post_attachments WHERE post_id=?), 0),
+		        ?, ?, ?, ?, ?, ?, ?, ?)
+		RETURNING position`
+	row := r.db.QueryRowContext(ctx, q,
+		att.ID, att.PostID, att.PostID,
+		att.MimeType, att.SizeBytes, att.Width, att.Height,
+		att.IsAnimated, att.ChecksumSHA256, att.S3Key, att.CreatedBy,
+	)
+	if err := row.Scan(&att.Position); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (r *postAttachmentRepository) UpdatePosition(ctx context.Context, id string, position int) error {
@@ -79,21 +115,3 @@ func (r *postAttachmentRepository) Delete(ctx context.Context, id string) (bool,
 	return n > 0, nil
 }
 
-// NextPosition returns max(position)+1 for the post, or 0 when no
-// attachments exist yet. Last-write-wins for the MVP — no optimistic
-// concurrency token (per CON-73 §6 decision).
-func (r *postAttachmentRepository) NextPosition(ctx context.Context, postID string) (int, error) {
-	var max sql.NullInt64
-	err := r.db.NewSelect().
-		Model((*models.PostAttachment)(nil)).
-		ColumnExpr("MAX(position)").
-		Where("post_id = ?", postID).
-		Scan(ctx, &max)
-	if err != nil {
-		return 0, err
-	}
-	if !max.Valid {
-		return 0, nil
-	}
-	return int(max.Int64) + 1, nil
-}

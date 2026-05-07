@@ -43,6 +43,19 @@ type PostsHandler struct {
 	// configured. nil is treated as "always ready" so existing test
 	// fixtures keep working without rewiring.
 	isAssistantReady func() bool
+	// onBeforeDelete runs before the post row is deleted. The server
+	// wires this to clean up S3 objects belonging to the post's
+	// attachments (CON-73 §2.7 — "all of its attachments are deleted
+	// from S3 immediately as part of the same operation"). nil is
+	// treated as no-op for fixtures that don't care about attachments.
+	onBeforeDelete func(ctx context.Context, postID string) error
+}
+
+// SetOnBeforeDelete registers a hook that runs before a post is
+// deleted. Used by the server to clean up post-attachment S3 objects
+// without forcing every PostsHandler caller to know about attachments.
+func (h *PostsHandler) SetOnBeforeDelete(fn func(ctx context.Context, postID string) error) {
+	h.onBeforeDelete = fn
 }
 
 func NewPostsHandler(
@@ -336,7 +349,17 @@ func (h *PostsHandler) Update(c *fiber.Ctx) error {
 // @Failure      404  {object}  map[string]string
 // @Router       /api/posts/{id} [delete]
 func (h *PostsHandler) Delete(c *fiber.Ctx) error {
-	deleted, err := h.repo.Delete(c.Context(), c.Params("id"))
+	id := c.Params("id")
+	// Run the before-delete hook (S3 cleanup) before the row is
+	// dropped — the hook needs the s3_keys, which the FK cascade will
+	// erase on row delete. A hook error fails the whole DELETE so the
+	// caller can retry; we don't end up with an orphaned bucket.
+	if h.onBeforeDelete != nil {
+		if err := h.onBeforeDelete(c.Context(), id); err != nil {
+			return err
+		}
+	}
+	deleted, err := h.repo.Delete(c.Context(), id)
 	if err != nil {
 		return err
 	}
