@@ -7,15 +7,6 @@ import (
 	"github.com/content-control-center/app/src/models"
 )
 
-// Validation rule identifiers. They are stable strings so the frontend
-// and audit log can switch on them without reading the human message.
-const (
-	RuleMaxFileSize         = "max_file_size_bytes"
-	RuleAllowedFormat       = "allowed_formats"
-	RuleAnimatedGIF         = "animated_gif_supported"
-	RuleMaxAttachmentsCount = "max_attachments_per_post"
-)
-
 // ValidationError describes a single rule failure for one
 // (attachment, platform) pair, exactly per CON-73 §2.4.
 type ValidationError struct {
@@ -27,19 +18,20 @@ type ValidationError struct {
 	Message      string `json:"message"`
 }
 
-// ValidateAttachment runs all rules for one (attachment, platform).
-// Returns an empty slice when the attachment passes every rule.
-// Unknown platforms are treated as "no rules" — the caller decides
-// what to do with that.
-func ValidateAttachment(att *models.PostAttachment, platformID string) []ValidationError {
-	c, ok := LookupImageConstraints(platformID)
-	if !ok {
+// ValidateAttachment runs all rules carried by the platform row for
+// one attachment. Returns an empty slice when the attachment passes
+// every rule. A nil platform — e.g. a draft post that has not picked
+// one yet — short-circuits to nil; callers treat that as "nothing to
+// validate yet".
+func ValidateAttachment(att *models.PostAttachment, p *models.Platform) []ValidationError {
+	if p == nil || p.ImageConstraints.IsZero() {
 		return nil
 	}
+	c := p.ImageConstraints
 	var errs []ValidationError
 	if att.SizeBytes > c.MaxFileSizeBytes {
 		errs = append(errs, ValidationError{
-			Platform:     platformID,
+			Platform:     p.ID,
 			AttachmentID: att.ID,
 			Rule:         RuleMaxFileSize,
 			Expected:     fmt.Sprintf("<= %d", c.MaxFileSizeBytes),
@@ -50,7 +42,7 @@ func ValidateAttachment(att *models.PostAttachment, platformID string) []Validat
 	format := mimeToFormat(att.MimeType)
 	if !contains(c.AllowedFormats, format) {
 		errs = append(errs, ValidationError{
-			Platform:     platformID,
+			Platform:     p.ID,
 			AttachmentID: att.ID,
 			Rule:         RuleAllowedFormat,
 			Expected:     strings.Join(c.AllowedFormats, ","),
@@ -60,7 +52,7 @@ func ValidateAttachment(att *models.PostAttachment, platformID string) []Validat
 	}
 	if att.IsAnimated && !c.AnimatedGIFSupported {
 		errs = append(errs, ValidationError{
-			Platform:     platformID,
+			Platform:     p.ID,
 			AttachmentID: att.ID,
 			Rule:         RuleAnimatedGIF,
 			Expected:     "static",
@@ -71,37 +63,17 @@ func ValidateAttachment(att *models.PostAttachment, platformID string) []Validat
 	return errs
 }
 
-// ValidateForPublish runs the publish-time hard check for every
-// (attachment, platformID) pair across all targetPlatformIDs. The
-// caller — the future Zernio publish path — uses the returned map to
-// short-circuit publishing for any platform whose value is non-empty,
-// while still proceeding with the platforms whose value is empty
-// (CON-73 §2.4). Platforms not in the constraint table are absent
-// from the returned map.
-func ValidateForPublish(atts []models.PostAttachment, targetPlatformIDs []string) map[string][]ValidationError {
-	out := map[string][]ValidationError{}
-	for _, pid := range targetPlatformIDs {
-		if _, ok := LookupImageConstraints(pid); !ok {
-			continue
-		}
-		errs := ValidatePostAttachments(atts, pid)
-		out[pid] = errs
-	}
-	return out
-}
-
-// ValidatePostAttachments runs rules for every (attachment, platformID)
-// pair for one post, plus the count rule. Returns the flat list of
-// failures; an empty slice means the post is publishable everywhere.
-func ValidatePostAttachments(atts []models.PostAttachment, platformID string) []ValidationError {
-	c, ok := LookupImageConstraints(platformID)
-	if !ok {
+// ValidatePostAttachments runs rules for every attachment plus the
+// post-level count rule. A nil platform returns nil.
+func ValidatePostAttachments(atts []models.PostAttachment, p *models.Platform) []ValidationError {
+	if p == nil || p.ImageConstraints.IsZero() {
 		return nil
 	}
+	c := p.ImageConstraints
 	var errs []ValidationError
 	if len(atts) > c.MaxAttachmentsPerPost {
 		errs = append(errs, ValidationError{
-			Platform:     platformID,
+			Platform:     p.ID,
 			AttachmentID: "",
 			Rule:         RuleMaxAttachmentsCount,
 			Expected:     fmt.Sprintf("<= %d", c.MaxAttachmentsPerPost),
@@ -110,9 +82,26 @@ func ValidatePostAttachments(atts []models.PostAttachment, platformID string) []
 		})
 	}
 	for i := range atts {
-		errs = append(errs, ValidateAttachment(&atts[i], platformID)...)
+		errs = append(errs, ValidateAttachment(&atts[i], p)...)
 	}
 	return errs
+}
+
+// ValidateForPublish runs the publish-time hard check across every
+// target platform. The future Zernio publish path uses the returned
+// map to skip platforms whose value is non-empty while still
+// proceeding with platforms whose value is empty (CON-73 §2.4).
+// Platforms with no image rules (zero ImageConstraints) are absent
+// from the returned map.
+func ValidateForPublish(atts []models.PostAttachment, ps []*models.Platform) map[string][]ValidationError {
+	out := map[string][]ValidationError{}
+	for _, p := range ps {
+		if p == nil || p.ImageConstraints.IsZero() {
+			continue
+		}
+		out[p.ID] = ValidatePostAttachments(atts, p)
+	}
+	return out
 }
 
 func mimeToFormat(mime string) string {

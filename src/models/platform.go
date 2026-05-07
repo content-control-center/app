@@ -1,19 +1,75 @@
 package models
 
 import (
+	"database/sql/driver"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/uptrace/bun"
 )
 
+// ImageConstraints is the structured rule set carried per platform row
+// for post-attachment validation (CON-73). It serialises as JSON in a
+// SQLite TEXT column.
+//
+// Storing this on the platform row (rather than a Go-side map keyed by
+// some platform identifier) keeps the rules portable across
+// installations and sets up the spec's §6 "per-workspace override"
+// hint cleanly — overrides land as a separate table joined onto
+// platforms, no validator change needed.
+type ImageConstraints struct {
+	MaxFileSizeBytes      int64    `json:"max_file_size_bytes"`
+	AllowedFormats        []string `json:"allowed_formats"`
+	AnimatedGIFSupported  bool     `json:"animated_gif_supported"`
+	MaxAttachmentsPerPost int      `json:"max_attachments_per_post"`
+}
+
+func (c ImageConstraints) Value() (driver.Value, error) {
+	b, err := json.Marshal(c)
+	return string(b), err
+}
+
+func (c *ImageConstraints) Scan(src any) error {
+	switch v := src.(type) {
+	case string:
+		if v == "" {
+			*c = ImageConstraints{}
+			return nil
+		}
+		return json.Unmarshal([]byte(v), c)
+	case []byte:
+		if len(v) == 0 {
+			*c = ImageConstraints{}
+			return nil
+		}
+		return json.Unmarshal(v, c)
+	case nil:
+		*c = ImageConstraints{}
+		return nil
+	default:
+		return fmt.Errorf("ImageConstraints: cannot scan %T", src)
+	}
+}
+
+// IsZero reports whether c carries no rules — used by callers to skip
+// validation cleanly when a platform has not opted in to constraints.
+func (c ImageConstraints) IsZero() bool {
+	return c.MaxFileSizeBytes == 0 &&
+		len(c.AllowedFormats) == 0 &&
+		!c.AnimatedGIFSupported &&
+		c.MaxAttachmentsPerPost == 0
+}
+
 type Platform struct {
 	bun.BaseModel `bun:"table:platforms,alias:pl" swaggerignore:"true"`
 
-	ID          string      `bun:"id,pk"                                        json:"id"`
-	Name        string      `bun:"name,notnull"                                 json:"name"`
-	PostTypes   PostTypeMap `bun:"post_types,notnull"                           json:"post_types"`
-	Cadence     string      `bun:"cadence,notnull"                              json:"cadence"`
-	Constraints string      `bun:"constraints,notnull"                          json:"constraints"`
-	CreatedAt   time.Time   `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
-	UpdatedAt   time.Time   `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
+	ID               string           `bun:"id,pk"                                        json:"id"`
+	Name             string           `bun:"name,notnull"                                 json:"name"`
+	PostTypes        PostTypeMap      `bun:"post_types,notnull"                           json:"post_types"`
+	Cadence          string           `bun:"cadence,notnull"                              json:"cadence"`
+	Constraints      string           `bun:"constraints,notnull"                          json:"constraints"`
+	ImageConstraints ImageConstraints `bun:"image_constraints,notnull"                    json:"image_constraints"`
+	CreatedAt        time.Time        `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
+	UpdatedAt        time.Time        `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
 }

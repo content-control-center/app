@@ -133,13 +133,13 @@ func (h *PostAttachmentsHandler) List(c *fiber.Ctx) error {
 
 	out := listResponse{
 		Attachments:        make([]attachmentResponse, 0, len(atts)),
-		PlatformValidation: platforms.ValidatePostAttachments(atts, post.PlatformID),
+		PlatformValidation: platforms.ValidatePostAttachments(atts, post.Platform),
 	}
 	for i := range atts {
 		h.hydratePresigned(c, &atts[i])
 		out.Attachments = append(out.Attachments, attachmentResponse{
 			PostAttachment:     &atts[i],
-			PlatformValidation: platforms.ValidateAttachment(&atts[i], post.PlatformID),
+			PlatformValidation: platforms.ValidateAttachment(&atts[i], post.Platform),
 		})
 	}
 	return c.JSON(out)
@@ -176,7 +176,7 @@ func (h *PostAttachmentsHandler) Get(c *fiber.Ctx) error {
 	h.hydratePresigned(c, att)
 	return c.JSON(attachmentResponse{
 		PostAttachment:     att,
-		PlatformValidation: platforms.ValidateAttachment(att, post.PlatformID),
+		PlatformValidation: platforms.ValidateAttachment(att, post.Platform),
 	})
 }
 
@@ -284,7 +284,7 @@ func (h *PostAttachmentsHandler) Upload(c *fiber.Ctx) error {
 	h.hydratePresigned(c, att)
 	return c.Status(fiber.StatusCreated).JSON(attachmentResponse{
 		PostAttachment:     att,
-		PlatformValidation: platforms.ValidateAttachment(att, post.PlatformID),
+		PlatformValidation: platforms.ValidateAttachment(att, post.Platform),
 	})
 }
 
@@ -351,7 +351,7 @@ func (h *PostAttachmentsHandler) Reorder(c *fiber.Ctx) error {
 	h.hydratePresigned(c, updated)
 	return c.JSON(attachmentResponse{
 		PostAttachment:     updated,
-		PlatformValidation: platforms.ValidateAttachment(updated, post.PlatformID),
+		PlatformValidation: platforms.ValidateAttachment(updated, post.Platform),
 	})
 }
 

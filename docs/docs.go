@@ -4399,6 +4399,9 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "image_constraints": {
+                    "$ref": "#/definitions/models.ImageConstraints"
+                },
                 "name": {
                     "type": "string"
                 },
@@ -4861,6 +4864,26 @@ const docTemplate = `{
                 }
             }
         },
+        "models.ImageConstraints": {
+            "type": "object",
+            "properties": {
+                "allowed_formats": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "animated_gif_supported": {
+                    "type": "boolean"
+                },
+                "max_attachments_per_post": {
+                    "type": "integer"
+                },
+                "max_file_size_bytes": {
+                    "type": "integer"
+                }
+            }
+        },
         "models.Platform": {
             "type": "object",
             "properties": {
@@ -4875,6 +4898,9 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "string"
+                },
+                "image_constraints": {
+                    "$ref": "#/definitions/models.ImageConstraints"
                 },
                 "name": {
                     "type": "string"
