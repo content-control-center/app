@@ -1,0 +1,101 @@
+@baseUrl = http://localhost:9001
+
+# Post attachments (CON-73). All endpoints require authentication —
+# run "Login" from sessions/sessions.http first.
+#
+# Lifecycle:
+#   1. Create a post (see posts/posts.http) and capture its id.
+#   2. Upload one or more images via POST .../attachments — the server
+#      streams the bytes to S3, decodes the magic bytes to validate
+#      MIME (JPEG/PNG/WebP/GIF), and returns metadata + a short-lived
+#      presigned GET URL.
+#   3. Reorder via PATCH .../attachments/{id} with `{"position": N}`.
+#   4. Delete via DELETE .../attachments/{id}.
+#
+# Mutations are blocked with 409 once the parent post is `published`.
+# When the parent post is deleted, attachments cascade automatically.
+#
+# Set @postId after creating a post you want to attach images to.
+
+@postId = REPLACE_ME
+
+### Upload an image  [protected]
+POST {{baseUrl}}/api/posts/{{postId}}/attachments
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary
+Content-Disposition: form-data; name="file"; filename="sample.png"
+Content-Type: image/png
+
+< ./sample.png
+--boundary--
+
+> {%
+client.global.set("attachmentId", response.body.id);
+%}
+
+### List attachments for the post  [protected]
+GET {{baseUrl}}/api/posts/{{postId}}/attachments
+Accept: application/json
+
+### Get a single attachment  [protected]
+GET {{baseUrl}}/api/posts/{{postId}}/attachments/{{attachmentId}}
+Accept: application/json
+
+### Reorder — move attachment to position 2  [protected]
+PATCH {{baseUrl}}/api/posts/{{postId}}/attachments/{{attachmentId}}
+Content-Type: application/json
+
+{
+  "position": 2
+}
+
+### Reorder — negative position (expects 400)  [protected]
+PATCH {{baseUrl}}/api/posts/{{postId}}/attachments/{{attachmentId}}
+Content-Type: application/json
+
+{
+  "position": -1
+}
+
+### Delete the attachment  [protected]
+DELETE {{baseUrl}}/api/posts/{{postId}}/attachments/{{attachmentId}}
+
+### Upload — no file (expects 400)  [protected]
+POST {{baseUrl}}/api/posts/{{postId}}/attachments
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary--
+
+### Upload — unauthenticated (expects 401)
+POST {{baseUrl}}/api/posts/{{postId}}/attachments
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary
+Content-Disposition: form-data; name="file"; filename="sample.png"
+Content-Type: image/png
+
+< ./sample.png
+--boundary--
+
+### Upload — unsupported media type (expects 415)  [protected]
+POST {{baseUrl}}/api/posts/{{postId}}/attachments
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary
+Content-Disposition: form-data; name="file"; filename="doc.txt"
+Content-Type: text/plain
+
+this is not an image; the server rejects on magic-bytes regardless of the filename
+--boundary--
+
+### Upload — to an unknown post (expects 404)  [protected]
+POST {{baseUrl}}/api/posts/no-such-post/attachments
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary
+Content-Disposition: form-data; name="file"; filename="sample.png"
+Content-Type: image/png
+
+< ./sample.png
+--boundary--

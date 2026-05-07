@@ -1,0 +1,28 @@
+package models
+
+import (
+	"time"
+
+	"github.com/uptrace/bun"
+)
+
+type PostAttachment struct {
+	bun.BaseModel `bun:"table:post_attachments,alias:pa" swaggerignore:"true"`
+
+	ID             string    `bun:"id,pk"                                        json:"id"`
+	PostID         string    `bun:"post_id,notnull"                              json:"post_id"`
+	Position       int       `bun:"position,notnull"                             json:"position"`
+	MimeType       string    `bun:"mime_type,notnull"                            json:"mime_type"`
+	SizeBytes      int64     `bun:"size_bytes,notnull"                           json:"size_bytes"`
+	Width          int       `bun:"width,notnull"                                json:"width"`
+	Height         int       `bun:"height,notnull"                                json:"height"`
+	IsAnimated     bool      `bun:"is_animated,notnull"                          json:"is_animated"`
+	ChecksumSHA256 string    `bun:"checksum_sha256,notnull"                      json:"checksum_sha256"`
+	S3Key          string    `bun:"s3_key,notnull"                               json:"s3_key"`
+	CreatedBy      string    `bun:"created_by,notnull"                           json:"created_by"`
+	CreatedAt      time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
+
+	// PresignedURL is hydrated by the handler from S3Key at response time;
+	// it is not stored in the database.
+	PresignedURL string `bun:"-" json:"presigned_url,omitempty"`
+}

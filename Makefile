@@ -31,7 +31,14 @@ test-integration:
 		[ $$timeout -le 0 ] && { echo " timed out"; docker compose -f docker-compose.integration.yml down; exit 1; }; \
 		printf '.'; sleep 2; \
 	done; echo " ready"
-	go test -tags integration -v -count=1 -timeout 120s ./src/integration/...; \
+	@printf "Waiting for minio"; \
+	timeout=60; \
+	until curl -sf http://localhost:9100/minio/health/live >/dev/null 2>&1; do \
+		timeout=$$((timeout - 2)); \
+		[ $$timeout -le 0 ] && { echo " timed out"; docker compose -f docker-compose.integration.yml down; exit 1; }; \
+		printf '.'; sleep 2; \
+	done; echo " ready"
+	go test -tags integration -v -count=1 -timeout 180s ./src/integration/...; \
 	EXIT=$$?; \
 	docker compose -f docker-compose.integration.yml down; \
 	exit $$EXIT
@@ -42,7 +49,7 @@ tidy:
 # ── OpenAPI ──────────────────────────────────────────────────────────────────
 openapi:
 	go install github.com/swaggo/swag/cmd/swag@latest
-	swag init -g main.go -d cmd/server,src/handlers,src/models -o docs --outputTypes go,json
+	swag init -g main.go -d cmd/server,src/handlers,src/models,src/platforms,src/secrets -o docs --outputTypes go,json
 
 # ── Genkit ───────────────────────────────────────────────────────────────────
 genkit: web/dist

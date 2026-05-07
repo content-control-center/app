@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -21,10 +22,15 @@ type Storage interface {
 	Delete(ctx context.Context, key string) error
 	// PublicURL returns the public URL for an object at key.
 	PublicURL(key string) string
+	// PresignedGetURL returns a short-lived signed GET URL for the object
+	// at key. Used for serving private images to the browser and for
+	// handing image bytes to Zernio at publish time (CON-73).
+	PresignedGetURL(ctx context.Context, key string, ttl time.Duration) (string, error)
 }
 
 type s3Storage struct {
 	client    *s3.Client
+	presign   *s3.PresignClient
 	bucket    string
 	publicURL string // base URL, no trailing slash
 }
@@ -48,7 +54,12 @@ func New(cfg *config.Config) (Storage, error) {
 
 	publicURL := strings.TrimRight(cfg.StoragePublicURL, "/")
 
-	return &s3Storage{client: client, bucket: cfg.StorageBucket, publicURL: publicURL}, nil
+	return &s3Storage{
+		client:    client,
+		presign:   s3.NewPresignClient(client),
+		bucket:    cfg.StorageBucket,
+		publicURL: publicURL,
+	}, nil
 }
 
 func (s *s3Storage) Upload(ctx context.Context, key string, r io.Reader, size int64, contentType string) (string, error) {
@@ -78,4 +89,15 @@ func (s *s3Storage) Delete(ctx context.Context, key string) error {
 
 func (s *s3Storage) PublicURL(key string) string {
 	return s.publicURL + "/" + key
+}
+
+func (s *s3Storage) PresignedGetURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	req, err := s.presign.PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	}, s3.WithPresignExpires(ttl))
+	if err != nil {
+		return "", fmt.Errorf("storage: presign get %s: %w", key, err)
+	}
+	return req.URL, nil
 }

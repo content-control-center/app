@@ -57,6 +57,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	postRepo := repository.NewPostRepository(db)
 	postVersionRepo := repository.NewPostVersionRepository(db)
 	postMessageRepo := repository.NewPostAssistantMessageRepository(db)
+	postAttachmentRepo := repository.NewPostAttachmentRepository(db)
 	socialAccountRepo := repository.NewSocialAccountRepository(db)
 	autoPublishAllowlistRepo := repository.NewAutoPublishAllowlistRepository(db)
 	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
@@ -173,9 +174,31 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, gkRuntime.GenerateDraft, gkRuntime.IsAnthropicAvailable).Register(app)
 	handlers.NewPlatformsHandler(platformRepo, pubs, autoPublishAllowlistRepo, auth).Register(app)
 	handlers.NewTagsHandler(tagRepo, auth).Register(app)
-	handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, auth, gkRuntime.RunPostAssistant, gkRuntime.IsAnthropicAvailable).Register(app)
+	postsHandler := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, auth, gkRuntime.RunPostAssistant, gkRuntime.IsAnthropicAvailable)
+	// Cascade post-attachment S3 cleanup on post delete (CON-73 §2.7).
+	// FK CASCADE handles the DB rows; this hook handles the bucket.
+	postsHandler.SetOnBeforeDelete(func(ctx context.Context, postID string) error {
+		if store == nil {
+			return nil
+		}
+		keys, err := postAttachmentRepo.ListS3KeysByPostID(ctx, postID)
+		if err != nil {
+			return err
+		}
+		for _, k := range keys {
+			if k == "" {
+				continue
+			}
+			if err := store.Delete(ctx, k); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	postsHandler.Register(app)
 
 	handlers.NewImagesHandler(store, auth).Register(app)
+	handlers.NewPostAttachmentsHandler(postAttachmentRepo, postRepo, store, auth).Register(app)
 
 	// Serve the embedded React SPA for all non-API routes.
 	app.Use("/", filesystem.New(filesystem.Config{

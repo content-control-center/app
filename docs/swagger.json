@@ -9,6 +9,95 @@
     "host": "localhost:9001",
     "basePath": "/",
     "paths": {
+        "/api/auto-publish-allowlist": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Returns the set of Zernio platform identifiers Ogen is\npermitted to auto-publish to. Empty by default.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auto-publish-allowlist"
+                ],
+                "summary": "Get auto-publish allowlist",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.autoPublishAllowlistResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Replaces the auto-publish allowlist with the supplied\nset of Zernio platform identifiers. Replace-not-append:\nany platform absent from the body is removed. An empty\narray clears the allowlist.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auto-publish-allowlist"
+                ],
+                "summary": "Replace auto-publish allowlist",
+                "parameters": [
+                    {
+                        "description": "Desired allowlist",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.autoPublishAllowlistRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.autoPublishAllowlistResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "platform_not_supported",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/campaign_types": {
             "get": {
                 "security": [
@@ -1344,7 +1433,7 @@
         },
         "/api/health": {
             "get": {
-                "description": "Returns the health status of the service and database connectivity.",
+                "description": "Returns the health status of the service, database\nconnectivity, and per-secret resolvability. A secret\nthat is present but undecryptable downgrades the\noverall status to \"degraded\" without failing the\nendpoint — boot stayed up under the same rule.",
                 "produces": [
                     "application/json"
                 ],
@@ -1357,9 +1446,7 @@
                         "description": "OK",
                         "schema": {
                             "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "additionalProperties": true
                         }
                     },
                     "503": {
@@ -2482,6 +2569,588 @@
                 }
             }
         },
+        "/api/posts/{post_id}/attachments": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Returns the post's attachments ordered by position, with a\nsoft pre-check (`platform_validation`) per CON-73 §2.4 that\nsurfaces any rule failure for the post's current target\nplatform. Each attachment carries a short-lived presigned\nGET URL when object storage is configured.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "post-attachments"
+                ],
+                "summary": "List post attachments",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Post Sqid",
+                        "name": "post_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.listResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Accepts a single image file via multipart/form-data under\nthe field `file`. The file is decoded server-side to validate\nthe MIME (JPEG/PNG/WebP/GIF), then streamed to object storage.\nHard cap is 50 MB regardless of any platform's smaller per-image\nlimit; per-platform caps are surfaced as soft warnings in the\nresponse.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "post-attachments"
+                ],
+                "summary": "Upload a post attachment",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Post Sqid",
+                        "name": "post_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "Image file",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.attachmentResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "post is in a terminal publishing state",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "415": {
+                        "description": "Unsupported Media Type",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/posts/{post_id}/attachments/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Returns metadata for a single attachment plus its soft\nvalidation block and a short-lived presigned GET URL.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "post-attachments"
+                ],
+                "summary": "Get post attachment",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Post Sqid",
+                        "name": "post_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Attachment id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.attachmentResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Removes an attachment row and its S3 object. If the S3\ndelete fails, the metadata row is retained and 502 is\nreturned so the caller can retry (CON-73 §2.7).",
+                "tags": [
+                    "post-attachments"
+                ],
+                "summary": "Delete a post attachment",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Post Sqid",
+                        "name": "post_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Attachment id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Updates the `position` of an attachment. Last-write-wins;\nno optimistic concurrency token (CON-73 §6 MVP decision).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "post-attachments"
+                ],
+                "summary": "Reorder a post attachment",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Post Sqid",
+                        "name": "post_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Attachment id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "New position",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.reorderRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.attachmentResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/secrets": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Returns metadata for every persisted secret. Never\nreturns ciphertext, nonces, wrapped DEKs, or plaintext.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "secrets"
+                ],
+                "summary": "List configured secrets (metadata only)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/secrets.Metadata"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/secrets/{name}": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Returns metadata for a single secret. 404 if absent;\nthe plaintext is never returned.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "secrets"
+                ],
+                "summary": "Get secret metadata",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Secret name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/secrets.Metadata"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Creates or replaces a secret. The plaintext is never\nechoed back; the response carries metadata only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "secrets"
+                ],
+                "summary": "Upsert a secret",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Secret name (allowlisted)",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Plaintext value",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.secretPutRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/secrets.Metadata"
+                        }
+                    },
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/secrets.Metadata"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Removes a secret. Features depending on the deleted\nkey degrade on next call (no boot failure). 404 if\nthe name is absent.",
+                "tags": [
+                    "secrets"
+                ],
+                "summary": "Delete a secret",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Secret name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/sessions": {
             "post": {
                 "description": "Authenticates a user by email and password, sets a session cookie, and returns the created session.",
@@ -3350,6 +4019,79 @@
                 }
             }
         },
+        "handlers.attachmentResponse": {
+            "type": "object",
+            "properties": {
+                "checksum_sha256": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "height": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_animated": {
+                    "type": "boolean"
+                },
+                "mime_type": {
+                    "type": "string"
+                },
+                "platform_validation": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/platforms.ValidationError"
+                    }
+                },
+                "position": {
+                    "type": "integer"
+                },
+                "post_id": {
+                    "type": "string"
+                },
+                "presigned_url": {
+                    "description": "PresignedURL is hydrated by the handler from S3Key at response time;\nit is not stored in the database.",
+                    "type": "string"
+                },
+                "s3_key": {
+                    "type": "string"
+                },
+                "size_bytes": {
+                    "type": "integer"
+                },
+                "width": {
+                    "type": "integer"
+                }
+            }
+        },
+        "handlers.autoPublishAllowlistRequest": {
+            "type": "object",
+            "properties": {
+                "platforms": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "handlers.autoPublishAllowlistResponse": {
+            "type": "object",
+            "properties": {
+                "platforms": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "handlers.campaignRequest": {
             "type": "object",
             "required": [
@@ -3582,6 +4324,23 @@
                 }
             }
         },
+        "handlers.listResponse": {
+            "type": "object",
+            "properties": {
+                "attachments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.attachmentResponse"
+                    }
+                },
+                "platform_validation": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/platforms.ValidationError"
+                    }
+                }
+            }
+        },
         "handlers.platformInfo": {
             "type": "object",
             "properties": {
@@ -3633,6 +4392,9 @@
                 },
                 "id": {
                     "type": "string"
+                },
+                "image_constraints": {
+                    "$ref": "#/definitions/models.ImageConstraints"
                 },
                 "name": {
                     "type": "string"
@@ -3728,6 +4490,9 @@
                         "$ref": "#/definitions/handlers.accountView"
                     }
                 },
+                "auto_publish_allowed": {
+                    "type": "boolean"
+                },
                 "connected": {
                     "type": "boolean"
                 },
@@ -3745,6 +4510,25 @@
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "handlers.reorderRequest": {
+            "type": "object",
+            "required": [
+                "position"
+            ],
+            "properties": {
+                "position": {
+                    "type": "integer"
+                }
+            }
+        },
+        "handlers.secretPutRequest": {
+            "type": "object",
+            "properties": {
+                "value": {
+                    "type": "string"
                 }
             }
         },
@@ -4074,6 +4858,26 @@
                 }
             }
         },
+        "models.ImageConstraints": {
+            "type": "object",
+            "properties": {
+                "allowed_formats": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "animated_gif_supported": {
+                    "type": "boolean"
+                },
+                "max_attachments_per_post": {
+                    "type": "integer"
+                },
+                "max_file_size_bytes": {
+                    "type": "integer"
+                }
+            }
+        },
         "models.Platform": {
             "type": "object",
             "properties": {
@@ -4088,6 +4892,9 @@
                 },
                 "id": {
                     "type": "string"
+                },
+                "image_constraints": {
+                    "$ref": "#/definitions/models.ImageConstraints"
                 },
                 "name": {
                     "type": "string"
@@ -4325,6 +5132,52 @@
                 },
                 "id": {
                     "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "platforms.ValidationError": {
+            "type": "object",
+            "properties": {
+                "actual": {
+                    "type": "string"
+                },
+                "attachment_id": {
+                    "type": "string"
+                },
+                "expected": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "platform": {
+                    "type": "string"
+                },
+                "rule": {
+                    "type": "string"
+                }
+            }
+        },
+        "secrets.Metadata": {
+            "type": "object",
+            "properties": {
+                "algorithm": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "decryptable": {
+                    "type": "boolean"
+                },
+                "kek_version": {
+                    "type": "integer"
                 },
                 "name": {
                     "type": "string"
