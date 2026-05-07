@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	. "github.com/onsi/ginkgo/v2"
@@ -28,16 +29,30 @@ type stubStorage struct {
 	returnURL string
 	returnErr error
 	lastKey   string
+	objects   map[string][]byte
 }
 
-func (s *stubStorage) Upload(_ context.Context, key string, _ io.Reader, _ int64, _ string) (string, error) {
+func (s *stubStorage) Upload(_ context.Context, key string, r io.Reader, _ int64, _ string) (string, error) {
 	s.lastKey = key
+	if s.objects != nil && s.returnErr == nil {
+		buf, _ := io.ReadAll(r)
+		s.objects[key] = buf
+	}
 	return s.returnURL, s.returnErr
 }
 
-func (s *stubStorage) Delete(_ context.Context, _ string) error { return nil }
+func (s *stubStorage) Delete(_ context.Context, key string) error {
+	if s.objects != nil {
+		delete(s.objects, key)
+	}
+	return nil
+}
 
 func (s *stubStorage) PublicURL(key string) string { return "https://pub.example.com/" + key }
+
+func (s *stubStorage) PresignedGetURL(_ context.Context, key string, _ time.Duration) (string, error) {
+	return "https://pub.example.com/signed/" + key, nil
+}
 
 // minimalPNG returns the bytes of a tiny valid 1×1 PNG image.
 func minimalPNG() []byte {
