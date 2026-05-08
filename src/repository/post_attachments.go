@@ -59,14 +59,29 @@ func (r *postAttachmentRepository) GetByID(ctx context.Context, id string) (*mod
 }
 
 func (r *postAttachmentRepository) ListS3KeysByPostID(ctx context.Context, postID string) ([]string, error) {
-	var keys []string
+	// Returns both the primary blob key and any non-empty thumbnail key
+	// (CON-75) so the cascade-delete hook clears every object owned by
+	// the post in one pass.
+	var rows []struct {
+		S3Key          string `bun:"s3_key"`
+		ThumbnailS3Key string `bun:"thumbnail_s3_key"`
+	}
 	err := r.db.NewSelect().
 		Model((*models.PostAttachment)(nil)).
-		Column("s3_key").
+		Column("s3_key", "thumbnail_s3_key").
 		Where("post_id = ?", postID).
-		Scan(ctx, &keys)
+		Scan(ctx, &rows)
 	if err != nil {
 		return nil, err
+	}
+	keys := make([]string, 0, len(rows)*2)
+	for _, row := range rows {
+		if row.S3Key != "" {
+			keys = append(keys, row.S3Key)
+		}
+		if row.ThumbnailS3Key != "" {
+			keys = append(keys, row.ThumbnailS3Key)
+		}
 	}
 	return keys, nil
 }
@@ -79,14 +94,18 @@ func (r *postAttachmentRepository) CreateAtNextPosition(ctx context.Context, att
 	// committed state at the moment the INSERT starts.
 	const q = `INSERT INTO post_attachments
 		(id, post_id, position, mime_type, size_bytes, width, height,
-		 is_animated, checksum_sha256, s3_key, created_by)
+		 is_animated, page_count, checksum_sha256, s3_key, thumbnail_s3_key, created_by)
 		VALUES (?, ?, COALESCE((SELECT MAX(position)+1 FROM post_attachments WHERE post_id=?), 0),
-		        ?, ?, ?, ?, ?, ?, ?, ?)
+		        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		RETURNING position`
+	var thumb any
+	if att.ThumbnailS3Key != "" {
+		thumb = att.ThumbnailS3Key
+	}
 	row := r.db.QueryRowContext(ctx, q,
 		att.ID, att.PostID, att.PostID,
 		att.MimeType, att.SizeBytes, att.Width, att.Height,
-		att.IsAnimated, att.ChecksumSHA256, att.S3Key, att.CreatedBy,
+		att.IsAnimated, att.PageCount, att.ChecksumSHA256, att.S3Key, thumb, att.CreatedBy,
 	)
 	if err := row.Scan(&att.Position); err != nil {
 		return err
