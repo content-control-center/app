@@ -2632,7 +2632,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Accepts a single image file via multipart/form-data under\nthe field ` + "`" + `file` + "`" + `. The file is decoded server-side to validate\nthe MIME (JPEG/PNG/WebP/GIF), then streamed to object storage.\nHard cap is 50 MB regardless of any platform's smaller per-image\nlimit; per-platform caps are surfaced as soft warnings in the\nresponse.",
+                "description": "Accepts a single image (CON-73) or PDF (CON-75) file via\nmultipart/form-data under the field ` + "`" + `file` + "`" + `. The file is\ndecoded server-side to validate the MIME — JPEG/PNG/WebP/GIF\nfor images, application/pdf for PDFs — then streamed to\nobject storage. Hard caps: 50 MB images, 100 MB PDFs.\nPDF uploads also render a first-page PNG thumbnail\n(best-effort; failures do not abort the upload).\nPer-platform caps are surfaced as soft warnings in the\nresponse.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -2653,7 +2653,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "file",
-                        "description": "Image file",
+                        "description": "Image or PDF file",
                         "name": "file",
                         "in": "formData",
                         "required": true
@@ -2787,7 +2787,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Removes an attachment row and its S3 object. If the S3\ndelete fails, the metadata row is retained and 502 is\nreturned so the caller can retry (CON-73 §2.7).",
+                "description": "Removes an attachment row and its S3 object(s). For PDF\nattachments this includes the rendered thumbnail. If any\nS3 delete fails, the metadata row is retained and 502 is\nreturned so the caller can retry (CON-73 §2.7).",
                 "tags": [
                     "post-attachments"
                 ],
@@ -4049,6 +4049,9 @@ const docTemplate = `{
                 "mime_type": {
                     "type": "string"
                 },
+                "page_count": {
+                    "type": "integer"
+                },
                 "platform_validation": {
                     "type": "array",
                     "items": {
@@ -4062,7 +4065,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "presigned_url": {
-                    "description": "PresignedURL is hydrated by the handler from S3Key at response time;\nit is not stored in the database.",
+                    "description": "PresignedURL and ThumbnailURL are hydrated by the handler at\nresponse time; they are not stored in the database.",
                     "type": "string"
                 },
                 "s3_key": {
@@ -4070,6 +4073,12 @@ const docTemplate = `{
                 },
                 "size_bytes": {
                     "type": "integer"
+                },
+                "thumbnail_s3_key": {
+                    "type": "string"
+                },
+                "thumbnail_url": {
+                    "type": "string"
                 },
                 "width": {
                     "type": "integer"
@@ -4404,6 +4413,9 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "pdf_constraints": {
+                    "$ref": "#/definitions/models.PDFConstraints"
                 },
                 "post_types": {
                     "$ref": "#/definitions/models.PostTypeMap"
@@ -4884,6 +4896,26 @@ const docTemplate = `{
                 }
             }
         },
+        "models.PDFConstraints": {
+            "type": "object",
+            "properties": {
+                "allowed_formats": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "max_attachments_per_post": {
+                    "type": "integer"
+                },
+                "max_file_size_bytes": {
+                    "type": "integer"
+                },
+                "max_pages": {
+                    "type": "integer"
+                }
+            }
+        },
         "models.Platform": {
             "type": "object",
             "properties": {
@@ -4904,6 +4936,9 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "pdf_constraints": {
+                    "$ref": "#/definitions/models.PDFConstraints"
                 },
                 "post_types": {
                     "$ref": "#/definitions/models.PostTypeMap"
