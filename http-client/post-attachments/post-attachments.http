@@ -1,21 +1,27 @@
 @baseUrl = http://localhost:9001
 
-# Post attachments (CON-73). All endpoints require authentication —
+# Post attachments (CON-73 + CON-75). All endpoints require authentication —
 # run "Login" from sessions/sessions.http first.
 #
 # Lifecycle:
 #   1. Create a post (see posts/posts.http) and capture its id.
-#   2. Upload one or more images via POST .../attachments — the server
-#      streams the bytes to S3, decodes the magic bytes to validate
-#      MIME (JPEG/PNG/WebP/GIF), and returns metadata + a short-lived
-#      presigned GET URL.
+#   2. Upload one or more attachments via POST .../attachments — the server
+#      streams the bytes to S3, decodes magic bytes to validate the MIME
+#      (JPEG/PNG/WebP/GIF for images, application/pdf for PDFs), and
+#      returns metadata + a short-lived presigned GET URL. PDF uploads
+#      also render a first-page PNG thumbnail (best-effort) and return
+#      a `thumbnail_url` alongside `presigned_url`.
 #   3. Reorder via PATCH .../attachments/{id} with `{"position": N}`.
 #   4. Delete via DELETE .../attachments/{id}.
 #
+# Hard upload caps: 50 MB for images, 100 MB for PDFs.
 # Mutations are blocked with 409 once the parent post is `published`.
-# When the parent post is deleted, attachments cascade automatically.
+# When the parent post is deleted, attachments cascade automatically
+# (including any PDF thumbnails).
 #
-# Set @postId after creating a post you want to attach images to.
+# Set @postId after creating a post you want to attach files to. For the
+# PDF examples, @postId should reference a LinkedIn post (carousel/document
+# post type).
 
 @postId = REPLACE_ME
 
@@ -98,4 +104,50 @@ Content-Disposition: form-data; name="file"; filename="sample.png"
 Content-Type: image/png
 
 < ./sample.png
+--boundary--
+
+### Upload a PDF (LinkedIn carousel/document)  [protected]
+# @postId must reference a LinkedIn post. Response includes:
+#   - mime_type: application/pdf
+#   - page_count: <int>
+#   - thumbnail_url: presigned URL to the rendered first-page PNG
+#     (best-effort; may be empty if pdftoppm is unavailable)
+POST {{baseUrl}}/api/posts/{{postId}}/attachments
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary
+Content-Disposition: form-data; name="file"; filename="sample.pdf"
+Content-Type: application/pdf
+
+< ./sample.pdf
+--boundary--
+
+> {%
+client.global.set("attachmentId", response.body.id);
+%}
+
+### Upload a PDF on Instagram (expects 201 with platform_validation soft warning)  [protected]
+# Switch @postId to an Instagram post first. The upload still succeeds
+# (CON-73 §2.4 soft pre-check) but the response carries a
+# platform_validation entry with rule="pdf_not_supported".
+POST {{baseUrl}}/api/posts/{{postId}}/attachments
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary
+Content-Disposition: form-data; name="file"; filename="sample.pdf"
+Content-Type: application/pdf
+
+< ./sample.pdf
+--boundary--
+
+### Upload a malformed PDF (expects 400)  [protected]
+POST {{baseUrl}}/api/posts/{{postId}}/attachments
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary
+Content-Disposition: form-data; name="file"; filename="evil.pdf"
+Content-Type: application/pdf
+
+%PDF-1.4
+this looks like a pdf but isn't really one — server rejects on parse failure
 --boundary--

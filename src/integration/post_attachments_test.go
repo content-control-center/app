@@ -339,19 +339,29 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 		Expect(seenPositions).To(HaveLen(N))
 	})
 
-	// ── Test #5: MIME spoof never reaches S3 ───────────────────────────────
+	// ── Test #5: invalid uploads never reach S3 ────────────────────────────
 
-	It("#5 MIME spoof returns 415 and never calls PutObject", func() {
+	It("#5 invalid uploads return a 4xx and never call PutObject", func() {
 		postID := createPost()
 		before := countObjects(context.Background(), raw, bucket)
 
-		body, ct := multipartBody("file", "evil.png", "image/png", []byte("%PDF-1.4\nfake"))
+		// Plain text named .png — image probe rejects it (415).
+		body, ct := multipartBody("file", "evil.png", "image/png", []byte("hello world this is plain text padding to defeat sniffer"))
 		req := httptest.NewRequest("POST", "/api/posts/"+postID+"/attachments", body)
 		req.Header.Set("Content-Type", ct)
 		req.AddCookie(authCookie)
 		resp, err := app.Test(req)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resp.StatusCode).To(Equal(415))
+
+		// Fake PDF bytes (magic prefix only) — pdfprobe rejects it (400).
+		body, ct = multipartBody("file", "evil.pdf", "application/pdf", []byte("%PDF-1.4\nnot really a pdf"))
+		req = httptest.NewRequest("POST", "/api/posts/"+postID+"/attachments", body)
+		req.Header.Set("Content-Type", ct)
+		req.AddCookie(authCookie)
+		resp, err = app.Test(req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(Equal(400))
 
 		after := countObjects(context.Background(), raw, bucket)
 		Expect(after).To(Equal(before), "no new S3 objects should be created when validation rejects upload")
@@ -445,4 +455,140 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 		Expect(got.ImageConstraints.MaxAttachmentsPerPost).To(Equal(7))
 		Expect(got.ImageConstraints.IsZero()).To(BeFalse())
 	})
+
+	// ── CON-75: PDF round-trip ─────────────────────────────────────────────
+
+	uploadPDF := func(postID string, content []byte) map[string]any {
+		body, ct := multipartBody("file", "doc.pdf", "application/pdf", content)
+		req := httptest.NewRequest("POST", "/api/posts/"+postID+"/attachments", body)
+		req.Header.Set("Content-Type", ct)
+		req.AddCookie(authCookie)
+		resp, err := app.Test(req, 60000)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+		var att map[string]any
+		Expect(json.NewDecoder(resp.Body).Decode(&att)).To(Succeed())
+		return att
+	}
+
+	It("#9 round-trip: PDF presigned URL returns the exact bytes we uploaded", func() {
+		postID := createPost()
+		content := buildIntegrationPDF(2)
+		att := uploadPDF(postID, content)
+
+		Expect(att["mime_type"]).To(Equal("application/pdf"))
+		Expect(att["page_count"]).To(BeEquivalentTo(2))
+
+		presigned := att["presigned_url"].(string)
+		Expect(presigned).NotTo(BeEmpty())
+
+		resp, err := http.Get(presigned)
+		Expect(err).NotTo(HaveOccurred())
+		defer resp.Body.Close()
+		Expect(resp.StatusCode).To(Equal(200))
+
+		gotBytes, err := io.ReadAll(resp.Body)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(gotBytes).To(Equal(content))
+
+		gotSum := sha256.Sum256(gotBytes)
+		Expect(hex.EncodeToString(gotSum[:])).To(Equal(att["checksum_sha256"]))
+	})
+
+	It("#10 PDF cascade: DELETE post clears both blob and thumbnail keys from the bucket", func() {
+		postID := createPost()
+		att := uploadPDF(postID, buildIntegrationPDF(1))
+
+		key := att["s3_key"].(string)
+		thumbKey, _ := att["thumbnail_s3_key"].(string)
+		Expect(objectExists(context.Background(), raw, bucket, key)).To(BeTrue())
+		if thumbKey != "" {
+			Expect(objectExists(context.Background(), raw, bucket, thumbKey)).To(BeTrue())
+		}
+
+		req := httptest.NewRequest("DELETE", "/api/posts/"+postID, nil)
+		req.AddCookie(authCookie)
+		resp, err := app.Test(req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(Equal(204))
+
+		Expect(objectExists(context.Background(), raw, bucket, key)).To(BeFalse())
+		if thumbKey != "" {
+			Expect(objectExists(context.Background(), raw, bucket, thumbKey)).To(BeFalse())
+		}
+	})
+
+	It("#11 platforms.pdf_constraints JSON round-trips through bun", func() {
+		ctx := context.Background()
+		p := &models.Platform{
+			ID:          "it-pdf-platform",
+			Name:        "Integration PDF Platform",
+			PostTypes:   models.PostTypeMap{"document": "Document"},
+			Cadence:     "{}",
+			Constraints: "",
+			PDFConstraints: models.PDFConstraints{
+				MaxFileSizeBytes:      50 * 1024 * 1024,
+				AllowedFormats:        []string{"pdf"},
+				MaxPages:              42,
+				MaxAttachmentsPerPost: 1,
+			},
+		}
+		_, err := db.NewInsert().Model(p).Exec(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		defer func() {
+			_, _ = db.NewDelete().Model((*models.Platform)(nil)).Where("id = ?", p.ID).Exec(ctx)
+		}()
+
+		got := &models.Platform{}
+		err = db.NewSelect().Model(got).Where("id = ?", p.ID).Scan(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.PDFConstraints.MaxFileSizeBytes).To(BeEquivalentTo(50 * 1024 * 1024))
+		Expect(got.PDFConstraints.AllowedFormats).To(ConsistOf("pdf"))
+		Expect(got.PDFConstraints.MaxPages).To(Equal(42))
+		Expect(got.PDFConstraints.MaxAttachmentsPerPost).To(Equal(1))
+		Expect(got.PDFConstraints.IsZero()).To(BeFalse())
+	})
 })
+
+// buildIntegrationPDF builds a structurally-valid n-page PDF with
+// correct xref offsets — same shape as the handler-test fixture, kept
+// here so the integration suite stays self-contained.
+func buildIntegrationPDF(n int) []byte {
+	if n < 1 {
+		n = 1
+	}
+	var buf bytes.Buffer
+	buf.WriteString("%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+
+	offsets := make([]int, 0, 2+n)
+	offsets = append(offsets, buf.Len())
+	buf.WriteString("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n")
+
+	offsets = append(offsets, buf.Len())
+	buf.WriteString("2 0 obj\n<< /Type /Pages /Kids [")
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			buf.WriteString(" ")
+		}
+		buf.WriteString(fmt.Sprintf("%d 0 R", 3+i))
+	}
+	buf.WriteString(fmt.Sprintf("] /Count %d >>\nendobj\n", n))
+
+	for i := 0; i < n; i++ {
+		offsets = append(offsets, buf.Len())
+		buf.WriteString(fmt.Sprintf("%d 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n", 3+i))
+	}
+
+	xrefStart := buf.Len()
+	totalObjs := 2 + n
+	buf.WriteString(fmt.Sprintf("xref\n0 %d\n", totalObjs+1))
+	buf.WriteString("0000000000 65535 f \n")
+	for _, off := range offsets {
+		buf.WriteString(fmt.Sprintf("%010d 00000 n \n", off))
+	}
+
+	buf.WriteString(fmt.Sprintf("trailer\n<< /Size %d /Root 1 0 R >>\n", totalObjs+1))
+	buf.WriteString(fmt.Sprintf("startxref\n%d\n", xrefStart))
+	buf.WriteString("%%EOF\n")
+	return buf.Bytes()
+}

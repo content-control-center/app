@@ -2,26 +2,42 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
-	"path/filepath"
+	"io"
+	"net/http"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/content-control-center/app/src/models"
+	"github.com/content-control-center/app/src/pdf"
 	"github.com/content-control-center/app/src/platforms"
 	"github.com/content-control-center/app/src/repository"
 	"github.com/content-control-center/app/src/storage"
 	"github.com/content-control-center/app/src/storage/imageprobe"
+	"github.com/content-control-center/app/src/storage/pdfprobe"
 )
 
 const (
-	// maxAttachmentUploadBytes is the hard upper bound enforced by the
-	// upload endpoint regardless of any platform's smaller per-image
-	// cap. 50 MB matches the spec default in CON-73 §2.2.
-	maxAttachmentUploadBytes int64 = 50 << 20
+	// maxImageUploadBytes is the hard upper bound for image uploads,
+	// regardless of any platform's smaller per-image cap. 50 MB matches
+	// the spec default in CON-73 §2.2.
+	maxImageUploadBytes int64 = 50 << 20
+
+	// maxPDFUploadBytes is the hard cap for PDF uploads (CON-75). 100 MB
+	// matches LinkedIn's documented carousel/document upper bound.
+	maxPDFUploadBytes int64 = 100 << 20
+
+	// pdfThumbnailDPI is the resolution used when rendering the first-page
+	// preview for PDF attachments.
+	pdfThumbnailDPI = 96
+
+	// pdfThumbnailRenderTimeout caps how long pdftoppm can run before the
+	// upload falls back to "no thumbnail" — never blocks the request.
+	pdfThumbnailRenderTimeout = 30 * time.Second
 )
 
 // PresignedURLTTL controls how long pre-signed GET URLs returned in
@@ -32,8 +48,8 @@ const (
 var PresignedURLTTL = 15 * time.Minute
 
 // PostAttachmentsHandler exposes the upload/list/reorder/delete API
-// for image attachments bound to a Post (CON-73). All mutations are
-// blocked once the parent post is `published`.
+// for post attachments — images (CON-73) and PDFs (CON-75). All
+// mutations are blocked once the parent post is `published`.
 type PostAttachmentsHandler struct {
 	repo     repository.PostAttachmentRepository
 	postRepo repository.PostRepository
@@ -68,7 +84,8 @@ type attachmentResponse struct {
 }
 
 // listResponse mirrors attachmentResponse but for list endpoints, with
-// the post-level rules (e.g. count cap) surfaced once at the top.
+// the post-level rules (e.g. count cap, mixed-kind warning) surfaced
+// once at the top.
 type listResponse struct {
 	Attachments        []attachmentResponse        `json:"attachments"`
 	PlatformValidation []platforms.ValidationError `json:"platform_validation"`
@@ -95,16 +112,23 @@ func terminalForMutations(s models.PostStatus) bool {
 	return s == models.PostStatusPublished
 }
 
-// hydratePresigned fills att.PresignedURL when storage is configured.
-// Errors are swallowed — a missing presigned URL still leaves callers
-// with the metadata, and the binary is never the source of truth.
+// hydratePresigned fills att.PresignedURL (and ThumbnailURL when a
+// thumbnail key is present) when storage is configured. Errors are
+// swallowed — a missing presigned URL still leaves callers with the
+// metadata, and the binary is never the source of truth.
 func (h *PostAttachmentsHandler) hydratePresigned(c *fiber.Ctx, att *models.PostAttachment) {
-	if h.storage == nil || att == nil || att.S3Key == "" {
+	if h.storage == nil || att == nil {
 		return
 	}
-	url, err := h.storage.PresignedGetURL(c.Context(), att.S3Key, PresignedURLTTL)
-	if err == nil {
-		att.PresignedURL = url
+	if att.S3Key != "" {
+		if url, err := h.storage.PresignedGetURL(c.Context(), att.S3Key, PresignedURLTTL); err == nil {
+			att.PresignedURL = url
+		}
+	}
+	if att.ThumbnailS3Key != "" {
+		if url, err := h.storage.PresignedGetURL(c.Context(), att.ThumbnailS3Key, PresignedURLTTL); err == nil {
+			att.ThumbnailURL = url
+		}
 	}
 }
 
@@ -184,18 +208,21 @@ func (h *PostAttachmentsHandler) Get(c *fiber.Ctx) error {
 
 // Upload godoc
 // @Summary      Upload a post attachment
-// @Description  Accepts a single image file via multipart/form-data under
-// @Description  the field `file`. The file is decoded server-side to validate
-// @Description  the MIME (JPEG/PNG/WebP/GIF), then streamed to object storage.
-// @Description  Hard cap is 50 MB regardless of any platform's smaller per-image
-// @Description  limit; per-platform caps are surfaced as soft warnings in the
+// @Description  Accepts a single image (CON-73) or PDF (CON-75) file via
+// @Description  multipart/form-data under the field `file`. The file is
+// @Description  decoded server-side to validate the MIME — JPEG/PNG/WebP/GIF
+// @Description  for images, application/pdf for PDFs — then streamed to
+// @Description  object storage. Hard caps: 50 MB images, 100 MB PDFs.
+// @Description  PDF uploads also render a first-page PNG thumbnail
+// @Description  (best-effort; failures do not abort the upload).
+// @Description  Per-platform caps are surfaced as soft warnings in the
 // @Description  response.
 // @Tags         post-attachments
 // @Accept       multipart/form-data
 // @Produce      json
 // @Security     CookieAuth
 // @Param        post_id  path      string  true  "Post Sqid"
-// @Param        file     formData  file    true  "Image file"
+// @Param        file     formData  file    true  "Image or PDF file"
 // @Success      201      {object}  attachmentResponse
 // @Failure      400      {object}  map[string]string
 // @Failure      401      {object}  map[string]string
@@ -221,10 +248,13 @@ func (h *PostAttachmentsHandler) Upload(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "file is required")
 	}
-	if fh.Size > maxAttachmentUploadBytes {
+	// Reject anything larger than the largest per-kind cap before we
+	// even open the file. Per-kind caps are enforced again inside the
+	// probe.
+	if fh.Size > maxPDFUploadBytes {
 		return fiber.NewError(
 			fiber.StatusBadRequest,
-			fmt.Sprintf("file exceeds upload limit of %d MB", maxAttachmentUploadBytes>>20),
+			fmt.Sprintf("file exceeds upload limit of %d MB", maxPDFUploadBytes>>20),
 		)
 	}
 
@@ -234,48 +264,108 @@ func (h *PostAttachmentsHandler) Upload(c *fiber.Ctx) error {
 	}
 	defer f.Close()
 
-	probe, data, err := imageprobe.Probe(f, maxAttachmentUploadBytes)
-	if err != nil {
-		if errors.Is(err, imageprobe.ErrUnsupportedMIME) {
-			return fiber.NewError(fiber.StatusUnsupportedMediaType, err.Error())
-		}
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	// Sniff magic bytes to decide image vs PDF without trusting the
+	// client's declared Content-Type or filename.
+	sniff := make([]byte, 512)
+	n, _ := io.ReadFull(f, sniff)
+	if n == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "file is empty")
+	}
+	kind := http.DetectContentType(sniff[:n])
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("post_attachments: rewind upload: %w", err)
 	}
 
 	session := c.Locals("session").(*models.Session)
-
 	id, err := models.NewID()
 	if err != nil {
 		return err
 	}
-	key := filepath.Base(fmt.Sprintf("post-attachments/%s/%s%s", post.ID, id, probe.Extension))
-	// Strip post-attachments/ prefix from filepath.Base; reattach.
-	key = "post-attachments/" + post.ID + "/" + id + probe.Extension
 
-	if _, err := h.storage.Upload(c.Context(), key, bytes.NewReader(data), probe.Size, probe.MIME); err != nil {
+	att := &models.PostAttachment{
+		ID:        id,
+		PostID:    post.ID,
+		CreatedBy: session.UserID,
+	}
+	var data []byte
+	var keyExt string
+
+	if kind == pdfprobe.MIME {
+		if fh.Size > maxPDFUploadBytes {
+			return fiber.NewError(
+				fiber.StatusBadRequest,
+				fmt.Sprintf("PDF exceeds upload limit of %d MB", maxPDFUploadBytes>>20),
+			)
+		}
+		probe, raw, err := pdfprobe.Probe(f, maxPDFUploadBytes)
+		if err != nil {
+			if errors.Is(err, pdfprobe.ErrUnsupportedMIME) {
+				return fiber.NewError(fiber.StatusUnsupportedMediaType, err.Error())
+			}
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+		att.MimeType = probe.MIME
+		att.SizeBytes = probe.Size
+		att.PageCount = probe.PageCount
+		att.ChecksumSHA256 = probe.SHA256
+		data = raw
+		keyExt = probe.Extension
+	} else {
+		if fh.Size > maxImageUploadBytes {
+			return fiber.NewError(
+				fiber.StatusBadRequest,
+				fmt.Sprintf("image exceeds upload limit of %d MB", maxImageUploadBytes>>20),
+			)
+		}
+		probe, raw, err := imageprobe.Probe(f, maxImageUploadBytes)
+		if err != nil {
+			if errors.Is(err, imageprobe.ErrUnsupportedMIME) {
+				return fiber.NewError(fiber.StatusUnsupportedMediaType, err.Error())
+			}
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+		att.MimeType = probe.MIME
+		att.SizeBytes = probe.Size
+		att.Width = probe.Width
+		att.Height = probe.Height
+		att.IsAnimated = probe.IsAnimated
+		att.ChecksumSHA256 = probe.SHA256
+		data = raw
+		keyExt = probe.Extension
+	}
+
+	att.S3Key = "post-attachments/" + post.ID + "/" + id + keyExt
+
+	if _, err := h.storage.Upload(c.Context(), att.S3Key, bytes.NewReader(data), att.SizeBytes, att.MimeType); err != nil {
 		return fmt.Errorf("post_attachments: storage upload: %w", err)
 	}
 
-	att := &models.PostAttachment{
-		ID:             id,
-		PostID:         post.ID,
-		MimeType:       probe.MIME,
-		SizeBytes:      probe.Size,
-		Width:          probe.Width,
-		Height:         probe.Height,
-		IsAnimated:     probe.IsAnimated,
-		ChecksumSHA256: probe.SHA256,
-		S3Key:          key,
-		CreatedBy:      session.UserID,
+	// Best-effort PDF thumbnail render. Failures (no pdftoppm, malformed
+	// PDF, timeout) are logged via the returned error but never abort
+	// the upload — the attachment row stays valid without a thumbnail.
+	if att.MimeType == pdfprobe.MIME {
+		thumbCtx, cancel := context.WithTimeout(c.Context(), pdfThumbnailRenderTimeout)
+		thumb, terr := pdf.RenderThumbnail(thumbCtx, data, pdfThumbnailDPI)
+		cancel()
+		if terr == nil && len(thumb) > 0 {
+			thumbKey := "post-attachments/" + post.ID + "/" + id + ".thumb.png"
+			if _, uerr := h.storage.Upload(c.Context(), thumbKey, bytes.NewReader(thumb), int64(len(thumb)), "image/png"); uerr == nil {
+				att.ThumbnailS3Key = thumbKey
+			}
+		}
 	}
+
 	// CreateAtNextPosition assigns att.Position atomically, eliminating
 	// the read-then-insert race that NextPosition+Create exposed under
 	// concurrent uploads to the same post.
 	if err := h.repo.CreateAtNextPosition(c.Context(), att); err != nil {
-		// Clean up the orphan object — the metadata row is what makes
+		// Clean up the orphan objects — the metadata row is what makes
 		// the attachment discoverable; without it, the bytes are dead
 		// weight in the bucket (CON-73 §2.2 transactional rollback).
-		_ = h.storage.Delete(c.Context(), key)
+		_ = h.storage.Delete(c.Context(), att.S3Key)
+		if att.ThumbnailS3Key != "" {
+			_ = h.storage.Delete(c.Context(), att.ThumbnailS3Key)
+		}
 		return err
 	}
 
@@ -355,8 +445,9 @@ func (h *PostAttachmentsHandler) Reorder(c *fiber.Ctx) error {
 
 // Delete godoc
 // @Summary      Delete a post attachment
-// @Description  Removes an attachment row and its S3 object. If the S3
-// @Description  delete fails, the metadata row is retained and 502 is
+// @Description  Removes an attachment row and its S3 object(s). For PDF
+// @Description  attachments this includes the rendered thumbnail. If any
+// @Description  S3 delete fails, the metadata row is retained and 502 is
 // @Description  returned so the caller can retry (CON-73 §2.7).
 // @Tags         post-attachments
 // @Security     CookieAuth
@@ -391,9 +482,16 @@ func (h *PostAttachmentsHandler) Delete(c *fiber.Ctx) error {
 	// Delete S3 first so we never end up with a row pointing at a
 	// missing object. If S3 delete fails, the row stays and the caller
 	// retries.
-	if h.storage != nil && att.S3Key != "" {
-		if err := h.storage.Delete(c.Context(), att.S3Key); err != nil {
-			return fiber.NewError(fiber.StatusBadGateway, "failed to delete object from storage; please retry")
+	if h.storage != nil {
+		if att.S3Key != "" {
+			if err := h.storage.Delete(c.Context(), att.S3Key); err != nil {
+				return fiber.NewError(fiber.StatusBadGateway, "failed to delete object from storage; please retry")
+			}
+		}
+		if att.ThumbnailS3Key != "" {
+			if err := h.storage.Delete(c.Context(), att.ThumbnailS3Key); err != nil {
+				return fiber.NewError(fiber.StatusBadGateway, "failed to delete thumbnail from storage; please retry")
+			}
 		}
 	}
 

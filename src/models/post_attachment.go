@@ -17,12 +17,15 @@ type PostAttachment struct {
 	Width          int       `bun:"width,notnull"                                json:"width"`
 	Height         int       `bun:"height,notnull"                                json:"height"`
 	IsAnimated     bool      `bun:"is_animated,notnull"                          json:"is_animated"`
+	PageCount      int       `bun:"page_count,notnull"                           json:"page_count"`
 	ChecksumSHA256 string    `bun:"checksum_sha256,notnull"                      json:"checksum_sha256"`
 	S3Key          string    `bun:"s3_key,notnull"                               json:"s3_key"`
+	ThumbnailS3Key string    `bun:"thumbnail_s3_key"                             json:"thumbnail_s3_key,omitempty"`
 	CreatedBy      string    `bun:"created_by,notnull"                           json:"created_by"`
 	CreatedAt      time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
 
-	// PresignedURL is hydrated by the handler from S3Key at response time;
-	// it is not stored in the database.
+	// PresignedURL and ThumbnailURL are hydrated by the handler at
+	// response time; they are not stored in the database.
 	PresignedURL string `bun:"-" json:"presigned_url,omitempty"`
+	ThumbnailURL string `bun:"-" json:"thumbnail_url,omitempty"`
 }

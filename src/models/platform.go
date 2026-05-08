@@ -61,6 +61,50 @@ func (c ImageConstraints) IsZero() bool {
 		c.MaxAttachmentsPerPost == 0
 }
 
+// PDFConstraints is the sibling rule set for PDF post attachments
+// (CON-75). A zero value means "this platform does not accept PDFs",
+// which the validator surfaces as a soft warning.
+type PDFConstraints struct {
+	MaxFileSizeBytes      int64    `json:"max_file_size_bytes"`
+	AllowedFormats        []string `json:"allowed_formats"`
+	MaxPages              int      `json:"max_pages"`
+	MaxAttachmentsPerPost int      `json:"max_attachments_per_post"`
+}
+
+func (c PDFConstraints) Value() (driver.Value, error) {
+	b, err := json.Marshal(c)
+	return string(b), err
+}
+
+func (c *PDFConstraints) Scan(src any) error {
+	switch v := src.(type) {
+	case string:
+		if v == "" {
+			*c = PDFConstraints{}
+			return nil
+		}
+		return json.Unmarshal([]byte(v), c)
+	case []byte:
+		if len(v) == 0 {
+			*c = PDFConstraints{}
+			return nil
+		}
+		return json.Unmarshal(v, c)
+	case nil:
+		*c = PDFConstraints{}
+		return nil
+	default:
+		return fmt.Errorf("PDFConstraints: cannot scan %T", src)
+	}
+}
+
+func (c PDFConstraints) IsZero() bool {
+	return c.MaxFileSizeBytes == 0 &&
+		len(c.AllowedFormats) == 0 &&
+		c.MaxPages == 0 &&
+		c.MaxAttachmentsPerPost == 0
+}
+
 type Platform struct {
 	bun.BaseModel `bun:"table:platforms,alias:pl" swaggerignore:"true"`
 
@@ -70,6 +114,7 @@ type Platform struct {
 	Cadence          string           `bun:"cadence,notnull"                              json:"cadence"`
 	Constraints      string           `bun:"constraints,notnull"                          json:"constraints"`
 	ImageConstraints ImageConstraints `bun:"image_constraints,notnull"                    json:"image_constraints"`
+	PDFConstraints   PDFConstraints   `bun:"pdf_constraints,notnull"                      json:"pdf_constraints"`
 	CreatedAt        time.Time        `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
 	UpdatedAt        time.Time        `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
 }
