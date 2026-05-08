@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/gif"
@@ -50,6 +51,61 @@ func animatedGIF() []byte {
 	}
 	var buf bytes.Buffer
 	_ = gif.EncodeAll(&buf, g)
+	return buf.Bytes()
+}
+
+// minimalPDF returns the bytes of a tiny structurally-valid 1-page PDF
+// that ledongthuc/pdf.PageCount can parse. Used by CON-75 PDF tests.
+func minimalPDF() []byte {
+	return minimalPDFWithPages(1)
+}
+
+// minimalPDFWithPages builds a structurally-valid PDF with n pages.
+// Cross-reference offsets are computed against the actual byte layout
+// so the file round-trips through pdfprobe.
+func minimalPDFWithPages(n int) []byte {
+	if n < 1 {
+		n = 1
+	}
+	var buf bytes.Buffer
+	buf.WriteString("%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+
+	offsets := make([]int, 0, 2+n)
+
+	// Catalog
+	offsets = append(offsets, buf.Len())
+	buf.WriteString("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n")
+
+	// Pages tree — children are 3..(2+n)
+	offsets = append(offsets, buf.Len())
+	buf.WriteString("2 0 obj\n<< /Type /Pages /Kids [")
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			buf.WriteString(" ")
+		}
+		buf.WriteString(fmt.Sprintf("%d 0 R", 3+i))
+	}
+	buf.WriteString(fmt.Sprintf("] /Count %d >>\nendobj\n", n))
+
+	// Pages
+	for i := 0; i < n; i++ {
+		offsets = append(offsets, buf.Len())
+		buf.WriteString(fmt.Sprintf("%d 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n", 3+i))
+	}
+
+	// xref
+	xrefStart := buf.Len()
+	totalObjs := 2 + n // catalog + pages tree + n page objects
+	buf.WriteString(fmt.Sprintf("xref\n0 %d\n", totalObjs+1))
+	buf.WriteString("0000000000 65535 f \n")
+	for _, off := range offsets {
+		buf.WriteString(fmt.Sprintf("%010d 00000 n \n", off))
+	}
+
+	// Trailer
+	buf.WriteString(fmt.Sprintf("trailer\n<< /Size %d /Root 1 0 R >>\n", totalObjs+1))
+	buf.WriteString(fmt.Sprintf("startxref\n%d\n", xrefStart))
+	buf.WriteString("%%EOF\n")
 	return buf.Bytes()
 }
 
@@ -250,15 +306,31 @@ var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 				Expect(resp.StatusCode).To(Equal(415))
 			})
 
-			It("rejects MIME spoofing — magic bytes win over the .png filename", func() {
+			It("magic bytes win over the .png filename — a real PDF is routed to the PDF path even when named .png", func() {
 				postID := createPostWithPlatform(linkedinPlatformID)
-				body, ct := multipartBodyAttachment("evil.png", []byte("%PDF-1.4\n%fake pdf payload"))
+				body, ct := multipartBodyAttachment("evil.png", minimalPDF())
 				req := httptest.NewRequest("POST", "/api/posts/"+postID+"/attachments", body)
 				req.Header.Set("Content-Type", ct)
 				req.AddCookie(authCookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(resp.StatusCode).To(Equal(415))
+				Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+
+				var got map[string]any
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect(got["mime_type"]).To(Equal("application/pdf"))
+				Expect(got["s3_key"]).To(ContainSubstring(".pdf"))
+			})
+
+			It("rejects a malformed PDF — magic bytes alone are not enough", func() {
+				postID := createPostWithPlatform(linkedinPlatformID)
+				body, ct := multipartBodyAttachment("doc.pdf", []byte("%PDF-1.4\n%fake pdf payload"))
+				req := httptest.NewRequest("POST", "/api/posts/"+postID+"/attachments", body)
+				req.Header.Set("Content-Type", ct)
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(400))
 			})
 
 			It("returns platform_validation warnings for an animated GIF on LinkedIn (animated_gif_supported=false)", func() {
@@ -324,6 +396,123 @@ var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 				warnings := got["platform_validation"].([]any)
 				Expect(warnings).NotTo(BeEmpty())
 				Expect(warnings[0].(map[string]any)["rule"]).To(Equal("allowed_formats"))
+			})
+
+			// ── CON-75: PDF attachments ──────────────────────────────────────
+			Context("with a PDF file", func() {
+				uploadPDF := func(postID, filename string, content []byte) (*http.Response, error) {
+					body, ct := multipartBodyAttachment(filename, content)
+					req := httptest.NewRequest("POST", "/api/posts/"+postID+"/attachments", body)
+					req.Header.Set("Content-Type", ct)
+					req.AddCookie(authCookie)
+					return app.Test(req, 30000)
+				}
+
+				It("creates a PDF attachment for LinkedIn — page_count is set, no warnings", func() {
+					postID := createPostWithPlatform(linkedinPlatformID)
+					resp, err := uploadPDF(postID, "carousel.pdf", minimalPDFWithPages(3))
+					Expect(err).NotTo(HaveOccurred())
+					Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+
+					var got map[string]any
+					Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+					Expect(got["mime_type"]).To(Equal("application/pdf"))
+					Expect(got["page_count"]).To(BeEquivalentTo(3))
+					Expect(got["s3_key"]).To(ContainSubstring(".pdf"))
+					Expect(got["platform_validation"]).To(BeNil())
+					Expect(got["width"]).To(BeEquivalentTo(0))
+					Expect(got["height"]).To(BeEquivalentTo(0))
+					Expect(got["is_animated"]).To(BeFalse())
+				})
+
+				It("returns a pdf_not_supported soft warning on Instagram", func() {
+					postID := createPostWithPlatform("rzgpTkARLH0L") // Instagram
+					resp, err := uploadPDF(postID, "doc.pdf", minimalPDF())
+					Expect(err).NotTo(HaveOccurred())
+					Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+
+					var got map[string]any
+					Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+					warnings := got["platform_validation"].([]any)
+					Expect(warnings).NotTo(BeEmpty())
+					Expect(warnings[0].(map[string]any)["rule"]).To(Equal("pdf_not_supported"))
+				})
+
+				It("surfaces a max_pages soft warning when the PDF exceeds the platform cap", func() {
+					postID := createPostWithPlatform(linkedinPlatformID)
+
+					// Tighten LinkedIn's cap so the test PDF stays small.
+					ctx := context.Background()
+					_, err := db.NewUpdate().
+						Table("platforms").
+						Set("pdf_constraints = json_set(pdf_constraints, '$.max_pages', 1)").
+						Where("id = ?", linkedinPlatformID).
+						Exec(ctx)
+					Expect(err).NotTo(HaveOccurred())
+
+					resp, err := uploadPDF(postID, "long.pdf", minimalPDFWithPages(2))
+					Expect(err).NotTo(HaveOccurred())
+					Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+
+					var got map[string]any
+					Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+					warnings := got["platform_validation"].([]any)
+					Expect(warnings).NotTo(BeEmpty())
+					rules := []string{}
+					for _, w := range warnings {
+						rules = append(rules, w.(map[string]any)["rule"].(string))
+					}
+					Expect(rules).To(ContainElement("max_pages"))
+				})
+
+				It("surfaces a mix warning when a post has both an image and a PDF", func() {
+					postID := createPostWithPlatform(linkedinPlatformID)
+
+					_, err := uploadPNG(postID, minimalPNG())
+					Expect(err).NotTo(HaveOccurred())
+					_, err = uploadPDF(postID, "doc.pdf", minimalPDF())
+					Expect(err).NotTo(HaveOccurred())
+
+					listReq := httptest.NewRequest("GET", "/api/posts/"+postID+"/attachments", nil)
+					listReq.AddCookie(authCookie)
+					listResp, err := app.Test(listReq)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(listResp.StatusCode).To(Equal(200))
+
+					var got map[string]any
+					Expect(json.NewDecoder(listResp.Body).Decode(&got)).To(Succeed())
+					warnings := got["platform_validation"].([]any)
+					Expect(warnings).NotTo(BeEmpty())
+					rules := []string{}
+					for _, w := range warnings {
+						rules = append(rules, w.(map[string]any)["rule"].(string))
+					}
+					Expect(rules).To(ContainElement("attachment_kind_mix"))
+				})
+
+				It("Delete also removes the thumbnail key from storage when one was rendered", func() {
+					postID := createPostWithPlatform(linkedinPlatformID)
+					resp, err := uploadPDF(postID, "doc.pdf", minimalPDF())
+					Expect(err).NotTo(HaveOccurred())
+					Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+
+					var att map[string]any
+					Expect(json.NewDecoder(resp.Body).Decode(&att)).To(Succeed())
+					id := att["id"].(string)
+					key := att["s3_key"].(string)
+					thumbKey, _ := att["thumbnail_s3_key"].(string)
+
+					delReq := httptest.NewRequest("DELETE", "/api/posts/"+postID+"/attachments/"+id, nil)
+					delReq.AddCookie(authCookie)
+					delResp, err := app.Test(delReq)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(delResp.StatusCode).To(Equal(204))
+
+					Expect(stub.objects).NotTo(HaveKey(key))
+					if thumbKey != "" {
+						Expect(stub.objects).NotTo(HaveKey(thumbKey))
+					}
+				})
 			})
 		})
 	})
