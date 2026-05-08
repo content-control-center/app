@@ -12,8 +12,15 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/valyala/fasthttp"
 
+	"github.com/mikestefanello/backlite"
+	"github.com/uptrace/bun"
+
 	"github.com/content-control-center/app/src/genkit/flows/post_assistant"
+	"github.com/content-control-center/app/src/jobs/queues"
 	"github.com/content-control-center/app/src/models"
+	"github.com/content-control-center/app/src/platforms"
+	"github.com/content-control-center/app/src/postlog"
+	"github.com/content-control-center/app/src/publishers/zernio"
 	"github.com/content-control-center/app/src/repository"
 )
 
@@ -49,6 +56,26 @@ type PostsHandler struct {
 	// from S3 immediately as part of the same operation"). nil is
 	// treated as no-op for fixtures that don't care about attachments.
 	onBeforeDelete func(ctx context.Context, postID string) error
+	// attachmentRepo is consulted by the Draft→ReadyForPublish gate to
+	// run platform-specific validation (CON-69 §4). nil short-circuits
+	// the gate so legacy fixtures stay green.
+	attachmentRepo repository.PostAttachmentRepository
+	// postLogRepo records every meaningful operation against a Post
+	// (CON-69 §11). nil makes log writes no-ops so legacy fixtures stay
+	// green.
+	postLogRepo repository.PostLogRepository
+	// allowlistRepo answers "is this Zernio platform allowed to
+	// auto-publish?" when the user moves a post to Scheduled
+	// (CON-69 §5). nil disables the allowlist branch entirely;
+	// posts go straight to Scheduled with no Backlite enqueue.
+	allowlistRepo repository.AutoPublishAllowlistRepository
+	// jobsClient is the Backlite client used to enqueue submit tasks
+	// transactionally with the status change. nil disables enqueue.
+	jobsClient *backlite.Client
+	// db is the Bun DB handle. Held so the schedule path can run the
+	// status update + PostLog write + Backlite enqueue in a single
+	// SQLite transaction (CON-69 §5).
+	db *bun.DB
 }
 
 // SetOnBeforeDelete registers a hook that runs before a post is
@@ -56,6 +83,276 @@ type PostsHandler struct {
 // without forcing every PostsHandler caller to know about attachments.
 func (h *PostsHandler) SetOnBeforeDelete(fn func(ctx context.Context, postID string) error) {
 	h.onBeforeDelete = fn
+}
+
+// SetAttachmentRepo wires the repository the validation gate consults
+// when transitioning Draft→ReadyForPublish. Until set, the gate is a
+// no-op (used by fixtures that don't exercise the publish path).
+func (h *PostsHandler) SetAttachmentRepo(r repository.PostAttachmentRepository) {
+	h.attachmentRepo = r
+}
+
+// SetPostLogRepo wires the audit repository. Until set, every PostLog
+// write performed by this handler is a no-op (used by handler-test
+// fixtures that don't care about the audit trail).
+func (h *PostsHandler) SetPostLogRepo(r repository.PostLogRepository) {
+	h.postLogRepo = r
+}
+
+// SetSchedulingDeps wires everything the schedule path needs: the
+// allowlist repo (to choose Scheduled vs ScheduledForManualPublish),
+// the Backlite client (to enqueue submit tasks), and the bun DB
+// handle (to do the status change + PostLog write + enqueue in one
+// SQLite transaction). Any nil disables the schedule branch — useful
+// for fixtures that don't exercise auto-publish.
+func (h *PostsHandler) SetSchedulingDeps(allowlist repository.AutoPublishAllowlistRepository, client *backlite.Client, db *bun.DB) {
+	h.allowlistRepo = allowlist
+	h.jobsClient = client
+	h.db = db
+}
+
+// logEvent appends a PostLog entry, swallowing repo errors so logging
+// failures never leak through to the user-facing response. Emitting
+// an audit entry is best-effort by design — losing one log line
+// matters less than failing the operation it describes.
+func (h *PostsHandler) logEvent(c *fiber.Ctx, postID string, eventType models.PostLogEventType, fromStatus, toStatus *models.PostStatus, summary, payload string) {
+	if h.postLogRepo == nil {
+		return
+	}
+	id, err := models.NewID()
+	if err != nil {
+		return
+	}
+	actor := models.ActorSystem
+	if sess, ok := c.Locals("session").(*models.Session); ok && sess != nil {
+		actor = sess.UserID
+	}
+	_ = h.postLogRepo.Append(c.Context(), &models.PostLog{
+		ID:         id,
+		PostID:     postID,
+		EventType:  eventType,
+		Actor:      actor,
+		FromStatus: fromStatus,
+		ToStatus:   toStatus,
+		Summary:    summary,
+		Payload:    postlog.SanitizeAndCap(payload),
+	})
+}
+
+// hasAnyErrors reports whether the platform→errors map has at least
+// one non-empty error list. ValidateForPublish always populates an
+// entry per platform with rules; an empty list means "passes".
+func hasAnyErrors(m map[string][]platforms.ValidationError) bool {
+	for _, v := range m {
+		if len(v) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// routeAndPersistSchedule implements CON-69 §5: evaluate the
+// auto-publish allowlist for the post's platform, decide between
+// Scheduled (auto) and ScheduledForManualPublish (manual), and
+// persist all three writes — Post status update, PostLog allowlist
+// decision, and (when applicable) the submit_post_to_zernio Backlite
+// enqueue — in a single SQLite transaction so failure rolls them
+// back together.
+//
+// Returns the routed status as a string (for the response header) so
+// the caller can decide what to expose to the client.
+func (h *PostsHandler) routeAndPersistSchedule(c *fiber.Ctx, post *models.Post, req *postRequest, ctaType models.PostCTAType) (string, error) {
+	// Decide based on the post's current platform — the user may have
+	// switched platforms in the same Update call, so consult req.
+	platformSqid := req.PlatformID
+	if platformSqid == "" {
+		platformSqid = post.PlatformID
+	}
+	supported := zernio.LookupSupportedBySqid(platformSqid)
+	autoPublish := false
+	if supported != nil {
+		ok, err := h.allowlistRepo.Contains(c.Context(), supported.ZernioID)
+		if err != nil {
+			return "", err
+		}
+		autoPublish = ok
+	}
+
+	target := models.PostStatusScheduledForManualPublish
+	if autoPublish {
+		target = models.PostStatusScheduled
+	}
+
+	prevStatus := post.Status
+	post.CampaignID = req.CampaignID
+	post.PlatformID = req.PlatformID
+	post.PlatformPostType = req.PlatformPostType
+	post.Title = req.Title
+	post.Content = req.Content
+	post.MediaURLs = nullSlice(req.MediaURLs)
+	post.ScheduledAt = req.ScheduledAt
+	post.PublishedAt = req.PublishedAt
+	post.Status = target
+	post.CTAType = ctaType
+	post.CTAUrl = req.CTAUrl
+	post.CampaignTypePhaseID = req.CampaignTypePhaseID
+	post.TargetAudienceNotes = req.TargetAudienceNotes
+	post.UsedAssetIDs = nullSlice(req.UsedAssetIDs)
+	post.UpdatedAt = time.Now().UTC()
+
+	actor := models.ActorSystem
+	if sess, ok := c.Locals("session").(*models.Session); ok && sess != nil {
+		actor = sess.UserID
+	}
+	decisionPayload := postlog.MarshalCapped(map[string]any{
+		"platform":           platformSqid,
+		"zernio_platform":    zernioName(supported),
+		"auto_publish":       autoPublish,
+		"chosen_status":      string(target),
+	})
+	transitionLogID, _ := models.NewID()
+	decisionLogID, _ := models.NewID()
+
+	err := h.db.RunInTx(c.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewUpdate().Model(post).WherePK().Exec(ctx); err != nil {
+			return err
+		}
+
+		// PostLog: allowlist decision + state transition.
+		if h.postLogRepo != nil {
+			if err := h.postLogRepo.AppendTx(ctx, tx, &models.PostLog{
+				ID:         decisionLogID,
+				PostID:     post.ID,
+				EventType:  models.PostLogEventAllowlistDecision,
+				Actor:      actor,
+				FromStatus: &prevStatus,
+				ToStatus:   &target,
+				Summary:    "auto-publish allowlist decision",
+				Payload:    postlog.SanitizeAndCap(decisionPayload),
+			}); err != nil {
+				return err
+			}
+			if err := h.postLogRepo.AppendTx(ctx, tx, &models.PostLog{
+				ID:         transitionLogID,
+				PostID:     post.ID,
+				EventType:  models.PostLogEventStateTransition,
+				Actor:      actor,
+				FromStatus: &prevStatus,
+				ToStatus:   &target,
+				Summary:    "status changed via PUT /api/posts/:id (schedule)",
+				Payload:    "{}",
+			}); err != nil {
+				return err
+			}
+		}
+
+		// Enqueue submit task — only when auto-publish was chosen.
+		// We pass the embedded *sql.Tx so backlite joins the same
+		// transaction; commit/rollback applies to all three writes.
+		if autoPublish && h.jobsClient != nil {
+			if _, err := h.jobsClient.Add(queues.SubmitPostTask{PostID: post.ID}).Tx(tx.Tx).Save(); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return string(target), nil
+}
+
+func zernioName(s *zernio.SupportedPlatform) string {
+	if s == nil {
+		return ""
+	}
+	return s.ZernioID
+}
+
+// cancelRequest is the body shape for POST /api/posts/:id/cancel.
+type cancelRequest struct {
+	// Target is the status the user wants the post moved to once
+	// Zernio confirms the cancellation. Defaults to "ready_for_publish"
+	// when omitted (CON-69 §9 — ReadyForPublish is the most common
+	// "cancel and edit" landing state).
+	Target string `json:"target"`
+}
+
+// Cancel godoc
+// @Summary      Cancel a Scheduled post
+// @Description  Enqueues a Backlite cancel_zernio_job task. The Post
+// @Description  remains in `Scheduled` until Zernio confirms the
+// @Description  cancellation; on confirmation it transitions to the
+// @Description  requested target (`ready_for_publish` or `draft`).
+// @Description  If Zernio reports the job has already been published
+// @Description  (race), the cancellation is a no-op and the next poll
+// @Description  cycle lands `Published` per the normal success path
+// @Description  (CON-69 §9).
+// @Tags         posts
+// @Accept       json
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id    path      string         true  "Post Sqid"
+// @Param        body  body      cancelRequest  false "Cancellation target"
+// @Success      202   {object}  map[string]string
+// @Failure      400   {object}  map[string]string
+// @Failure      401   {object}  map[string]string
+// @Failure      404   {object}  map[string]string
+// @Failure      409   {object}  map[string]string
+// @Failure      503   {object}  map[string]string
+// @Router       /api/posts/{id}/cancel [post]
+func (h *PostsHandler) Cancel(c *fiber.Ctx) error {
+	if h.jobsClient == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "background job runtime not configured")
+	}
+	post, err := h.repo.GetByID(c.Context(), c.Params("id"))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "post not found")
+		}
+		return err
+	}
+	if post.Status != models.PostStatusScheduled {
+		return fiber.NewError(fiber.StatusConflict,
+			"only Scheduled posts can be cancelled (current status: "+string(post.Status)+")")
+	}
+
+	var req cancelRequest
+	_ = c.BodyParser(&req) // body is optional
+	target := queues.CancelTargetReadyForPublish
+	if req.Target != "" {
+		switch queues.CancelTarget(req.Target) {
+		case queues.CancelTargetReadyForPublish, queues.CancelTargetDraft:
+			target = queues.CancelTarget(req.Target)
+		default:
+			return fiber.NewError(fiber.StatusBadRequest,
+				`target must be "ready_for_publish" or "draft"`)
+		}
+	}
+
+	actor := models.ActorSystem
+	if sess, ok := c.Locals("session").(*models.Session); ok && sess != nil {
+		actor = sess.UserID
+	}
+
+	if _, err := h.jobsClient.Add(queues.CancelZernioJobTask{
+		PostID: post.ID,
+		Target: target,
+		Actor:  actor,
+	}).Save(); err != nil {
+		return fmt.Errorf("cancel: enqueue: %w", err)
+	}
+
+	h.logEvent(c, post.ID, models.PostLogEventUserCancel, &post.Status, &post.Status,
+		"user requested cancellation; cancel_zernio_job enqueued",
+		postlog.MarshalCapped(map[string]any{"target": string(target)}),
+	)
+
+	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
+		"status":  "cancellation_enqueued",
+		"target":  string(target),
+		"post_id": post.ID,
+	})
 }
 
 func NewPostsHandler(
@@ -80,6 +377,7 @@ func (h *PostsHandler) Register(app *fiber.App) {
 	g.Get("/:id/messages", h.auth, h.ListMessages)
 	g.Get("/:id/versions", h.auth, h.ListVersions)
 	g.Post("/:id/versions", h.auth, h.CreateVersion)
+	g.Post("/:id/cancel", h.auth, h.Cancel)
 
 	app.Get("/api/campaigns/:campaign_id/posts", h.auth, h.ListByCampaign)
 }
@@ -304,10 +602,77 @@ func (h *PostsHandler) Update(c *fiber.Ctx) error {
 	}
 
 	if !post.Status.CanTransition(status) {
+		from := post.Status
+		h.logEvent(c, post.ID, models.PostLogEventStateTransitionBlocked, &from, &status,
+			"transition rejected by state machine",
+			postlog.MarshalCapped(map[string]any{"reason": "invalid_transition"}),
+		)
 		return fiber.NewError(fiber.StatusBadRequest, "invalid status transition from "+string(post.Status)+" to "+string(status))
 	}
 	if err := requirePlatformIfNotDraft(status, req.PlatformID, req.PlatformPostType); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+
+	// CON-69 §4: hard-block Draft→ReadyForPublish when any attachment
+	// fails its platform's rules. The validation outcome (per-platform)
+	// is returned verbatim so the UI can surface each failure.
+	if post.Status == models.PostStatusDraft && status == models.PostStatusReadyForPublish && h.attachmentRepo != nil {
+		atts, err := h.attachmentRepo.ListByPostID(c.Context(), post.ID)
+		if err != nil {
+			return err
+		}
+		// Validate against the new (incoming) platform, not the prior one,
+		// since a Draft can switch platforms in the same Update call.
+		platform := post.Platform
+		if req.PlatformID != "" && (platform == nil || platform.ID != req.PlatformID) {
+			fresh, perr := h.repo.GetByID(c.Context(), post.ID)
+			if perr == nil && fresh.Platform != nil && fresh.Platform.ID == req.PlatformID {
+				platform = fresh.Platform
+			}
+		}
+		errsByPlatform := platforms.ValidateForPublish(atts, []*models.Platform{platform})
+		if hasAnyErrors(errsByPlatform) {
+			from := post.Status
+			h.logEvent(c, post.ID, models.PostLogEventValidationFailed, &from, &status,
+				"draft → ready_for_publish blocked by platform validation",
+				postlog.MarshalCapped(map[string]any{"platform_validation": errsByPlatform}),
+			)
+			return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
+				"error":               "post is not ready for publish",
+				"platform_validation": errsByPlatform,
+			})
+		}
+		from := post.Status
+		h.logEvent(c, post.ID, models.PostLogEventValidationPassed, &from, &status,
+			"draft → ready_for_publish passed platform validation",
+			postlog.MarshalCapped(map[string]any{"platform_validation": errsByPlatform}),
+		)
+	}
+
+	prevStatus := post.Status
+
+	// CON-69 §5: when the user moves a Post from ReadyForPublish to
+	// Scheduled, we evaluate the auto-publish allowlist for the
+	// post's platform. Allowlisted → stays Scheduled and a submit
+	// task is enqueued. Not allowlisted → is silently routed to
+	// ScheduledForManualPublish (no Zernio queue work). The
+	// transactional path lives in scheduleForAutoPublish; if
+	// scheduling deps aren't wired (test fixtures), we fall through
+	// to the default save path below.
+	if prevStatus == models.PostStatusReadyForPublish && status == models.PostStatusScheduled && h.allowlistRepo != nil && h.jobsClient != nil && h.db != nil {
+		routed, err := h.routeAndPersistSchedule(c, post, &req, ctaType)
+		if err != nil {
+			return err
+		}
+		// Re-fetch to return fully hydrated response.
+		updated, err := h.repo.GetByID(c.Context(), post.ID)
+		if err != nil {
+			return err
+		}
+		if routed != "" {
+			c.Set("X-Auto-Publish-Decision", routed)
+		}
+		return c.JSON(updated)
 	}
 
 	post.CampaignID = req.CampaignID
@@ -328,6 +693,28 @@ func (h *PostsHandler) Update(c *fiber.Ctx) error {
 
 	if err := h.repo.Update(c.Context(), post); err != nil {
 		return err
+	}
+
+	// CON-69 §11: every status change is recorded. We log only on
+	// actual transitions; an Update that leaves status unchanged is
+	// not a state-machine event.
+	if prevStatus != status {
+		h.logEvent(c, post.ID, models.PostLogEventStateTransition, &prevStatus, &status,
+			"status changed via PUT /api/posts/:id", "{}",
+		)
+		// CON-69 §10: a Failed→ReadyForPublish transition is the
+		// user's "retry" gesture. Record it as a distinct event tied
+		// to the prior failure_reason so the audit trail makes the
+		// retry intent explicit.
+		if prevStatus == models.PostStatusFailed && status == models.PostStatusReadyForPublish {
+			h.logEvent(c, post.ID, models.PostLogEventUserRetry, &prevStatus, &status,
+				"manual retry: user moved Failed → ReadyForPublish",
+				postlog.MarshalCapped(map[string]any{
+					"prior_failure_reason": post.FailureReason,
+					"prior_zernio_post_id": post.ZernioPostID,
+				}),
+			)
+		}
 	}
 
 	// Re-fetch to return fully hydrated response.
