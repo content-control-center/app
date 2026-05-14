@@ -165,7 +165,7 @@ var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil).Register(app)
 		postVersionRepo := repository.NewPostVersionRepository(db)
 		postMessageRepo := repository.NewPostAssistantMessageRepository(db)
-		handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, auth, nil, nil).Register(app)
+		handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, repository.NewPlatformRepository(db), postAttRepo, auth, nil, nil).Register(app)
 		handlers.NewPostAttachmentsHandler(postAttRepo, postRepo, stub, auth).Register(app)
 
 		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "att@example.com", "password": "att-password"})

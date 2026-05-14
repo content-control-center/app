@@ -129,7 +129,7 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 		handlers.NewSessionsHandler(userRepo, sessionRepo, "test_session", false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil).Register(app)
 
-		postsHandler := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, auth, nil, nil)
+		postsHandler := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, repository.NewPlatformRepository(db), postAttRepo, auth, nil, nil)
 		// Wire the same S3-cleanup hook the production server wires —
 		// this is exactly what test #3 exercises.
 		postsHandler.SetOnBeforeDelete(func(ctx context.Context, postID string) error {

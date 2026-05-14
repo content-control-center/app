@@ -41,10 +41,12 @@ var validCTATypes = map[models.PostCTAType]bool{
 }
 
 type PostsHandler struct {
-	repo        repository.PostRepository
-	versionRepo repository.PostVersionRepository
-	messageRepo repository.PostAssistantMessageRepository
-	auth        fiber.Handler
+	repo           repository.PostRepository
+	versionRepo    repository.PostVersionRepository
+	messageRepo    repository.PostAssistantMessageRepository
+	platformRepo   repository.PlatformRepository
+	attachmentRepo repository.PostAttachmentRepository
+	auth           fiber.Handler
 	assistant   func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error)
 	// isAssistantReady reports whether the Anthropic key is currently
 	// configured. nil is treated as "always ready" so existing test
@@ -56,10 +58,6 @@ type PostsHandler struct {
 	// from S3 immediately as part of the same operation"). nil is
 	// treated as no-op for fixtures that don't care about attachments.
 	onBeforeDelete func(ctx context.Context, postID string) error
-	// attachmentRepo is consulted by the Draft→ReadyForPublish gate to
-	// run platform-specific validation (CON-69 §4). nil short-circuits
-	// the gate so legacy fixtures stay green.
-	attachmentRepo repository.PostAttachmentRepository
 	// postLogRepo records every meaningful operation against a Post
 	// (CON-69 §11). nil makes log writes no-ops so legacy fixtures stay
 	// green.
@@ -270,15 +268,30 @@ func (h *PostsHandler) validateReadyForPublish(c *fiber.Ctx, post *models.Post, 
 		return false, err
 	}
 	// Validate against the new (incoming) platform, not the prior one,
-	// since a Draft can switch platforms in the same Update call.
+	// since a Draft can switch platforms in the same Update call. The
+	// post row hasn't been written yet, so refetching via repo.GetByID
+	// would just return the stale platform — go straight to the
+	// platform repository when the request changed it.
 	platform := post.Platform
-	if req.PlatformID != "" && (platform == nil || platform.ID != req.PlatformID) {
-		fresh, perr := h.repo.GetByID(c.Context(), post.ID)
-		if perr == nil && fresh.Platform != nil && fresh.Platform.ID == req.PlatformID {
-			platform = fresh.Platform
+	if req.PlatformID != "" && (platform == nil || platform.ID != req.PlatformID) && h.platformRepo != nil {
+		fresh, perr := h.platformRepo.GetByID(c.Context(), req.PlatformID)
+		if perr == nil {
+			platform = fresh
 		}
 	}
 	errsByPlatform := platforms.ValidateForPublish(atts, []*models.Platform{platform})
+	// CON-74: per-post-type rules (whitelist + content/min/max-attachments/kind).
+	// Validates against the incoming request's content/post_type so the
+	// gate sees what's about to be persisted, not the prior draft. Errors
+	// are folded into the same per-platform map for one unified response.
+	if platform != nil {
+		incoming := *post
+		incoming.PlatformPostType = req.PlatformPostType
+		incoming.Content = req.Content
+		if typeErrs := platforms.ValidatePostType(&incoming, platform, atts); len(typeErrs) > 0 {
+			errsByPlatform[platform.ID] = append(errsByPlatform[platform.ID], typeErrs...)
+		}
+	}
 	from := post.Status
 	if hasAnyErrors(errsByPlatform) {
 		h.logEvent(c, post.ID, models.PostLogEventValidationFailed, &from, &status,
@@ -412,11 +425,22 @@ func NewPostsHandler(
 	repo repository.PostRepository,
 	versionRepo repository.PostVersionRepository,
 	messageRepo repository.PostAssistantMessageRepository,
+	platformRepo repository.PlatformRepository,
+	attachmentRepo repository.PostAttachmentRepository,
 	auth fiber.Handler,
 	assistant func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error),
 	isAssistantReady func() bool,
 ) *PostsHandler {
-	return &PostsHandler{repo: repo, versionRepo: versionRepo, messageRepo: messageRepo, auth: auth, assistant: assistant, isAssistantReady: isAssistantReady}
+	return &PostsHandler{
+		repo:             repo,
+		versionRepo:      versionRepo,
+		messageRepo:      messageRepo,
+		platformRepo:     platformRepo,
+		attachmentRepo:   attachmentRepo,
+		auth:             auth,
+		assistant:        assistant,
+		isAssistantReady: isAssistantReady,
+	}
 }
 
 func (h *PostsHandler) Register(app *fiber.App) {
@@ -507,6 +531,39 @@ func requirePlatformIfNotDraft(status models.PostStatus, platformID, platformPos
 		return fmt.Errorf("platform_post_type is required when status is %q", status)
 	}
 	return nil
+}
+
+// validateForCreate runs the publish gate (CON-69 §4 attachment rules
+// + CON-74 §post-type rules) when a post is being created directly in
+// a non-draft state. Returns done=true after writing a 422 so the
+// caller stops; done=false means the gate passed (or did not apply)
+// and the caller may continue. New posts have no attachments yet, so
+// only the structural rules can fire.
+func (h *PostsHandler) validateForCreate(c *fiber.Ctx, post *models.Post) (done bool, err error) {
+	if post.Status == models.PostStatusDraft || post.PlatformID == "" || h.platformRepo == nil {
+		return false, nil
+	}
+	platform, err := h.platformRepo.GetByID(c.Context(), post.PlatformID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, fiber.NewError(fiber.StatusBadRequest, "platform not found")
+		}
+		return false, err
+	}
+	errsByPlatform := platforms.ValidateForPublish(nil, []*models.Platform{platform})
+	if typeErrs := platforms.ValidatePostType(post, platform, nil); len(typeErrs) > 0 {
+		errsByPlatform[platform.ID] = append(errsByPlatform[platform.ID], typeErrs...)
+	}
+	if !hasAnyErrors(errsByPlatform) {
+		return false, nil
+	}
+	if err := c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
+		"error":               "post is not ready for publish",
+		"platform_validation": errsByPlatform,
+	}); err != nil {
+		return true, err
+	}
+	return true, nil
 }
 
 // List godoc
@@ -605,6 +662,13 @@ func (h *PostsHandler) Create(c *fiber.Ctx) error {
 		CreatedBy:           session.UserID,
 		UsedAssets:          []models.Asset{},
 	}
+
+	if done, err := h.validateForCreate(c, post); err != nil {
+		return err
+	} else if done {
+		return nil
+	}
+
 	if err := h.repo.Create(c.Context(), post); err != nil {
 		return err
 	}

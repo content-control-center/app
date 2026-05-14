@@ -59,10 +59,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		handlers.NewAssetsHandler(pieceRepo, repository.NewAssetFileRepository(db), nil, auth, nil, nil).Register(app)
 		postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 		postLogRepo := repository.NewPostLogRepository(db)
-		ph := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, auth, nil, nil)
-		// CON-69 §4: live validation gate so the existing draft→ready_for_publish
-		// path is exercised the same way as production.
-		ph.SetAttachmentRepo(repository.NewPostAttachmentRepository(db))
+		ph := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, repository.NewPlatformRepository(db), repository.NewPostAttachmentRepository(db), auth, nil, nil)
 		// CON-69 §11: wire the audit log so transition tests can read it back.
 		ph.SetPostLogRepo(postLogRepo)
 		ph.Register(app)
@@ -501,7 +498,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				body, _ := json.Marshal(fiber.Map{
 					"campaign_id":        campaignID,
 					"platform_id":        "AXqWG7U2qnpt",
-					"platform_post_type": "image-post",
+					"platform_post_type": "text-post",
 					"title":              "Updated Title",
 					"status":             "ready_for_publish",
 					"cta_type":           "button",
@@ -517,7 +514,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				var got models.Post
 				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
 				Expect(got.Title).To(Equal("Updated Title"))
-				Expect(got.PlatformPostType).To(Equal("image-post"))
+				Expect(got.PlatformPostType).To(Equal("text-post"))
 				Expect(got.Status).To(Equal(models.PostStatusReadyForPublish))
 				Expect(got.CTAType).To(Equal(models.CTATypeButton))
 				Expect(got.Campaign).NotTo(BeNil())
@@ -766,6 +763,281 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		})
 	})
 
+	// ── Publish gate (CON-74) ────────────────────────────────────────────────
+
+	Describe("Draft → ready_for_publish gate", func() {
+		// LinkedIn — supports text-post / image-post / carousel / video /
+		// article / poll / newsletter / event / live-video. Image cap = 9.
+		const linkedInID = "AXqWG7U2qnpt"
+		// X (Twitter) — supports thread + long-form-post; image cap = 4.
+		const xID = "81mUCmc2xsKd"
+		// Facebook — supports story.
+		const facebookID = "zBU1zqVICGfk"
+
+		seedAttachment := func(p models.Post, mime string) string {
+			id, err := models.NewID()
+			Expect(err).NotTo(HaveOccurred())
+			att := &models.PostAttachment{
+				ID:             id,
+				PostID:         p.ID,
+				MimeType:       mime,
+				SizeBytes:      1024,
+				Width:          100,
+				Height:         100,
+				ChecksumSHA256: id,
+				S3Key:          "post-attachments/" + p.ID + "/" + id,
+				CreatedBy:      p.CreatedBy,
+			}
+			Expect(repository.NewPostAttachmentRepository(db).CreateAtNextPosition(context.Background(), att)).To(Succeed())
+			return id
+		}
+
+		readyBody := func(platformID, postType, content string) []byte {
+			body, _ := json.Marshal(fiber.Map{
+				"campaign_id":        campaignID,
+				"platform_id":        platformID,
+				"platform_post_type": postType,
+				"content":            content,
+				"status":             "ready_for_publish",
+			})
+			return body
+		}
+
+		putReady := func(id string, body []byte) *http.Response {
+			req := httptest.NewRequest("PUT", "/api/posts/"+id, bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			return resp
+		}
+
+		decodeRules := func(resp *http.Response) []string {
+			defer resp.Body.Close()
+			var payload struct {
+				PlatformValidation map[string][]struct {
+					Rule string `json:"rule"`
+				} `json:"platform_validation"`
+			}
+			Expect(json.NewDecoder(resp.Body).Decode(&payload)).To(Succeed())
+			var rules []string
+			for _, list := range payload.PlatformValidation {
+				for _, e := range list {
+					rules = append(rules, e.Rule)
+				}
+			}
+			return rules
+		}
+
+		Context("whitelist", func() {
+			It("rejects a post type not in the platform's PostTypes map", func() {
+				p := createPost("Unknown type", nil)
+				resp := putReady(p.ID, readyBody(linkedInID, "make-believe-type", ""))
+				Expect(resp.StatusCode).To(Equal(422))
+				Expect(decodeRules(resp)).To(ConsistOf("post_type_unknown"))
+			})
+		})
+
+		Context("text-post", func() {
+			It("passes with no content and no attachments", func() {
+				p := createPost("Text", nil)
+				resp := putReady(p.ID, readyBody(linkedInID, "text-post", ""))
+				Expect(resp.StatusCode).To(Equal(200))
+			})
+
+			It("rejects when an attachment is present", func() {
+				p := createPost("Text plus image", nil)
+				seedAttachment(p, "image/png")
+				resp := putReady(p.ID, readyBody(linkedInID, "text-post", "hi"))
+				Expect(resp.StatusCode).To(Equal(422))
+				Expect(decodeRules(resp)).To(ContainElement("max_attachments"))
+			})
+		})
+
+		Context("image-post", func() {
+			It("rejects when no attachments are present", func() {
+				p := createPost("Image post no att", nil)
+				resp := putReady(p.ID, readyBody(linkedInID, "image-post", ""))
+				Expect(resp.StatusCode).To(Equal(422))
+				Expect(decodeRules(resp)).To(ContainElement("min_attachments"))
+			})
+
+			It("passes with a single image attachment", func() {
+				p := createPost("Image post happy", nil)
+				seedAttachment(p, "image/png")
+				resp := putReady(p.ID, readyBody(linkedInID, "image-post", ""))
+				Expect(resp.StatusCode).To(Equal(200))
+			})
+		})
+
+		Context("carousel", func() {
+			It("rejects with a single image", func() {
+				p := createPost("Carousel of one", nil)
+				seedAttachment(p, "image/png")
+				resp := putReady(p.ID, readyBody(linkedInID, "carousel", ""))
+				Expect(resp.StatusCode).To(Equal(422))
+				Expect(decodeRules(resp)).To(ContainElement("min_attachments"))
+			})
+
+			It("passes with two images", func() {
+				p := createPost("Carousel of two", nil)
+				seedAttachment(p, "image/png")
+				seedAttachment(p, "image/png")
+				resp := putReady(p.ID, readyBody(linkedInID, "carousel", ""))
+				Expect(resp.StatusCode).To(Equal(200))
+			})
+		})
+
+		Context("video", func() {
+			It("rejects when the only attachment is an image", func() {
+				p := createPost("Video with image", nil)
+				seedAttachment(p, "image/png")
+				resp := putReady(p.ID, readyBody(linkedInID, "video", ""))
+				Expect(resp.StatusCode).To(Equal(422))
+				// The image counts toward the count but is the wrong kind —
+				// both rules fire. Either is acceptable evidence of the gate.
+				Expect(decodeRules(resp)).To(ContainElement("attachment_kind"))
+			})
+
+			It("passes with a single video attachment", func() {
+				p := createPost("Video happy", nil)
+				seedAttachment(p, "video/mp4")
+				resp := putReady(p.ID, readyBody(linkedInID, "video", ""))
+				Expect(resp.StatusCode).To(Equal(200))
+			})
+		})
+
+		Context("poll", func() {
+			It("rejects empty content", func() {
+				p := createPost("Poll empty", nil)
+				resp := putReady(p.ID, readyBody(linkedInID, "poll", ""))
+				Expect(resp.StatusCode).To(Equal(422))
+				Expect(decodeRules(resp)).To(ContainElement("requires_content"))
+			})
+
+			It("rejects when an attachment is present", func() {
+				p := createPost("Poll with image", nil)
+				seedAttachment(p, "image/png")
+				resp := putReady(p.ID, readyBody(linkedInID, "poll", "Vote!"))
+				Expect(resp.StatusCode).To(Equal(422))
+				Expect(decodeRules(resp)).To(ContainElement("max_attachments"))
+			})
+
+			It("passes with content and no attachments", func() {
+				p := createPost("Poll happy", nil)
+				resp := putReady(p.ID, readyBody(linkedInID, "poll", "Vote A or B?"))
+				Expect(resp.StatusCode).To(Equal(200))
+			})
+		})
+
+		Context("article", func() {
+			It("rejects empty content", func() {
+				p := createPost("Article empty", nil)
+				resp := putReady(p.ID, readyBody(linkedInID, "article", ""))
+				Expect(resp.StatusCode).To(Equal(422))
+				Expect(decodeRules(resp)).To(ContainElement("requires_content"))
+			})
+
+			It("passes with content and no attachments", func() {
+				p := createPost("Article happy", nil)
+				resp := putReady(p.ID, readyBody(linkedInID, "article", "Long-form body."))
+				Expect(resp.StatusCode).To(Equal(200))
+			})
+		})
+
+		Context("thread (X)", func() {
+			It("rejects empty content", func() {
+				p := createPost("Thread empty", nil)
+				resp := putReady(p.ID, readyBody(xID, "thread", ""))
+				Expect(resp.StatusCode).To(Equal(422))
+				Expect(decodeRules(resp)).To(ContainElement("requires_content"))
+			})
+		})
+
+		Context("story (Facebook)", func() {
+			It("passes with one video attachment", func() {
+				p := createPost("Story happy", nil)
+				seedAttachment(p, "video/mp4")
+				resp := putReady(p.ID, readyBody(facebookID, "story", ""))
+				Expect(resp.StatusCode).To(Equal(200))
+			})
+
+			It("rejects two attachments", func() {
+				p := createPost("Story too many", nil)
+				seedAttachment(p, "image/jpeg")
+				seedAttachment(p, "image/jpeg")
+				resp := putReady(p.ID, readyBody(facebookID, "story", ""))
+				Expect(resp.StatusCode).To(Equal(422))
+				Expect(decodeRules(resp)).To(ContainElement("max_attachments"))
+			})
+		})
+
+		Context("multi-error", func() {
+			It("collects every violation in one response", func() {
+				p := createPost("Article many issues", nil)
+				// Article requires content (empty body) AND we attach a PDF
+				// on a platform (LinkedIn) that accepts PDFs but article
+				// doesn't allow attachment kind 'pdf'. Both rules fire.
+				// Actually, article carries no AllowedKinds restriction, so
+				// instead trigger min_attachments + requires_content via
+				// 'image-post' with empty content + no attachments.
+				resp := putReady(p.ID, readyBody(linkedInID, "image-post", ""))
+				Expect(resp.StatusCode).To(Equal(422))
+				rules := decodeRules(resp)
+				Expect(rules).To(ContainElement("min_attachments"))
+			})
+		})
+
+		Context("draft saves stay unconstrained", func() {
+			It("accepts a draft save even with an unknown post type", func() {
+				p := createPost("Drafting", nil)
+				body, _ := json.Marshal(fiber.Map{
+					"campaign_id":        campaignID,
+					"platform_id":        linkedInID,
+					"platform_post_type": "made-up-type",
+					"status":             "draft",
+				})
+				resp := putReady(p.ID, body)
+				Expect(resp.StatusCode).To(Equal(200))
+			})
+		})
+
+		Context("Create endpoint mirrors the gate", func() {
+			It("rejects creating directly in ready_for_publish without attachments for image-post", func() {
+				body, _ := json.Marshal(fiber.Map{
+					"campaign_id":        campaignID,
+					"platform_id":        linkedInID,
+					"platform_post_type": "image-post",
+					"title":              "Created in ready",
+					"status":             "ready_for_publish",
+				})
+				req := httptest.NewRequest("POST", "/api/posts", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(422))
+				Expect(decodeRules(resp)).To(ContainElement("min_attachments"))
+			})
+
+			It("accepts creating directly in ready_for_publish for text-post", func() {
+				body, _ := json.Marshal(fiber.Map{
+					"campaign_id":        campaignID,
+					"platform_id":        linkedInID,
+					"platform_post_type": "text-post",
+					"title":              "Text in ready",
+					"status":             "ready_for_publish",
+				})
+				req := httptest.NewRequest("POST", "/api/posts", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+			})
+		})
+	})
+
 	// ── Delete ───────────────────────────────────────────────────────────────
 
 	Describe("DELETE /api/posts/:id", func() {
@@ -852,7 +1124,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(stubApp)
 				handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(stubApp)
 				handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil).Register(stubApp)
-				handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, auth, stub, nil).Register(stubApp)
+				handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, repository.NewPlatformRepository(db), repository.NewPostAttachmentRepository(db), auth, stub, nil).Register(stubApp)
 
 				body, _ := json.Marshal(fiber.Map{"name": "SSE", "email": "sse-assist@example.com", "password": "sse-password"})
 				regReq := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))

@@ -270,11 +270,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, gkRuntime.GenerateDraft, gkRuntime.IsAnthropicAvailable).Register(app)
 	handlers.NewPlatformsHandler(platformRepo, pubs, autoPublishAllowlistRepo, auth).Register(app)
 	handlers.NewTagsHandler(tagRepo, auth).Register(app)
-	postsHandler := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, auth, gkRuntime.RunPostAssistant, gkRuntime.IsAnthropicAvailable)
-	// CON-69 §4: Draft→ReadyForPublish runs platform validation against
-	// the post's attachments. The handler is a no-op until this is set,
-	// keeping handler-test fixtures unaffected.
-	postsHandler.SetAttachmentRepo(postAttachmentRepo)
+	postsHandler := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, platformRepo, postAttachmentRepo, auth, gkRuntime.RunPostAssistant, gkRuntime.IsAnthropicAvailable)
 	// CON-69 §11: every transition (success/blocked) and validation
 	// outcome lands in the Post Log.
 	postsHandler.SetPostLogRepo(postLogRepo)
