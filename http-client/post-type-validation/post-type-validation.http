@@ -9,14 +9,23 @@
 #   - The seeded X (Twitter) platform Sqid: 81mUCmc2xsKd
 #   - The seeded Facebook platform Sqid: zBU1zqVICGfk
 #
-# The gate runs when a post transitions out of "draft" (Create or Update).
-# All rule violations come back together in the same response shape:
+# The gate runs on Update during Draft→ReadyForPublish (CON-69 §4
+# attachment rules + CON-74 post-type rules) and on Create when the
+# request creates a post directly in a non-draft status.
+#
+# On failure: HTTP 422 with the shape inherited from CON-69:
 #   {
-#     "validation_errors": [
-#       { "platform": "...", "attachment_id": "...", "rule": "<rule>",
-#         "expected": "...", "actual": "...", "message": "..." }
-#     ]
+#     "error": "post is not ready for publish",
+#     "platform_validation": {
+#       "<platformID>": [
+#         { "platform": "...", "attachment_id": "...", "rule": "<rule>",
+#           "expected": "...", "actual": "...", "message": "..." },
+#         ...
+#       ]
+#     }
 #   }
+# Attachment-rule failures (CON-69/73/75) and post-type-rule failures
+# (CON-74) come back together in the same per-platform list.
 
 @linkedInId = AXqWG7U2qnpt
 @xId        = 81mUCmc2xsKd
@@ -54,7 +63,7 @@ Content-Type: application/json
 # Whitelist
 # ─────────────────────────────────────────────────────────────────────
 
-### Whitelist — unknown post type (expects 400 with rule=post_type_unknown)  [protected]
+### Whitelist — unknown post type (expects 422 with rule=post_type_unknown)  [protected]
 PUT {{baseUrl}}/api/posts/{{postId}}
 Content-Type: application/json
 
@@ -84,7 +93,7 @@ Content-Type: application/json
 # image-post — ≥1 image attachment
 # ─────────────────────────────────────────────────────────────────────
 
-### image-post — no attachments (expects 400 with rule=min_attachments)  [protected]
+### image-post — no attachments (expects 422 with rule=min_attachments)  [protected]
 PUT {{baseUrl}}/api/posts/{{postId}}
 Content-Type: application/json
 
@@ -102,7 +111,7 @@ Content-Type: application/json
 # carousel — ≥2 image attachments
 # ─────────────────────────────────────────────────────────────────────
 
-### carousel — no attachments (expects 400 with rule=min_attachments)  [protected]
+### carousel — no attachments (expects 422 with rule=min_attachments)  [protected]
 PUT {{baseUrl}}/api/posts/{{postId}}
 Content-Type: application/json
 
@@ -120,7 +129,7 @@ Content-Type: application/json
 # video — exactly 1 video attachment
 # ─────────────────────────────────────────────────────────────────────
 
-### video — no attachments (expects 400 with rule=min_attachments)  [protected]
+### video — no attachments (expects 422 with rule=min_attachments)  [protected]
 PUT {{baseUrl}}/api/posts/{{postId}}
 Content-Type: application/json
 
@@ -132,14 +141,14 @@ Content-Type: application/json
 }
 
 # video — wrong kind: with an image attachment present this also returns
-# 400 with rule=attachment_kind. Upload one PNG via the attachments file
+# 422 with rule=attachment_kind. Upload one PNG via the attachments file
 # and re-run to see the error.
 
 # ─────────────────────────────────────────────────────────────────────
 # poll — non-empty content, zero attachments
 # ─────────────────────────────────────────────────────────────────────
 
-### poll — empty content (expects 400 with rule=requires_content)  [protected]
+### poll — empty content (expects 422 with rule=requires_content)  [protected]
 PUT {{baseUrl}}/api/posts/{{postId}}
 Content-Type: application/json
 
@@ -166,7 +175,7 @@ Content-Type: application/json
 # article / long-form-post / newsletter / thread — non-empty content
 # ─────────────────────────────────────────────────────────────────────
 
-### article — empty content (expects 400 with rule=requires_content)  [protected]
+### article — empty content (expects 422 with rule=requires_content)  [protected]
 PUT {{baseUrl}}/api/posts/{{postId}}
 Content-Type: application/json
 
@@ -189,7 +198,7 @@ Content-Type: application/json
   "status": "ready_for_publish"
 }
 
-### thread (X) — empty content (expects 400 with rule=requires_content)  [protected]
+### thread (X) — empty content (expects 422 with rule=requires_content)  [protected]
 PUT {{baseUrl}}/api/posts/{{postId}}
 Content-Type: application/json
 
@@ -204,7 +213,7 @@ Content-Type: application/json
 # story (Facebook / Instagram) — exactly 1 image or video
 # ─────────────────────────────────────────────────────────────────────
 
-### story — no attachments (expects 400 with rule=min_attachments)  [protected]
+### story — no attachments (expects 422 with rule=min_attachments)  [protected]
 PUT {{baseUrl}}/api/posts/{{postId}}
 Content-Type: application/json
 
@@ -220,7 +229,7 @@ Content-Type: application/json
 # in a non-draft state (no need to go through draft first).
 # ─────────────────────────────────────────────────────────────────────
 
-### Create directly in ready_for_publish — image-post w/o attachments (expects 400)  [protected]
+### Create directly in ready_for_publish — image-post w/o attachments (expects 422)  [protected]
 POST {{baseUrl}}/api/posts
 Content-Type: application/json
 
