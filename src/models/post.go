@@ -21,10 +21,14 @@ const (
 
 // ValidPostTransitions defines the allowed state-machine edges.
 // The key is the current status; the value lists statuses it may move to.
+//
+// Scheduled → ReadyForPublish and Scheduled → Draft were added for
+// CON-69 §9 to support user-initiated cancellation of a scheduled post
+// before Zernio publishes it.
 var ValidPostTransitions = map[PostStatus][]PostStatus{
 	PostStatusDraft:                     {PostStatusReadyForPublish},
 	PostStatusReadyForPublish:           {PostStatusScheduled, PostStatusScheduledForManualPublish, PostStatusDraft},
-	PostStatusScheduled:                 {PostStatusFailed, PostStatusPublished},
+	PostStatusScheduled:                 {PostStatusFailed, PostStatusPublished, PostStatusReadyForPublish, PostStatusDraft},
 	PostStatusScheduledForManualPublish: {PostStatusPublished, PostStatusNotPublished},
 	PostStatusFailed:                    {PostStatusReadyForPublish},
 	PostStatusNotPublished:              {PostStatusReadyForPublish, PostStatusScheduledForManualPublish},
@@ -73,6 +77,19 @@ type Post struct {
 	ScheduledAt          *time.Time  `bun:"scheduled_at"                                 json:"scheduled_at"`
 	PublishedAt          *time.Time  `bun:"published_at"                                 json:"published_at"`
 	Status               PostStatus  `bun:"status,notnull"                               json:"status"`
+	// Zernio integration fields (CON-69 §6/§7).
+	// ZernioPostID is the id Zernio assigns when a Post is submitted;
+	// the UNIQUE index in the migration prevents accidental double-submit.
+	// ZernioStatus mirrors Zernio's enum verbatim so the polling task
+	// can short-circuit on already-handled terminal states.
+	// PublishedResults carries Zernio's per-platform outcomes (URLs,
+	// platform IDs) once the post resolves.
+	// FailureReason distinguishes Zernio-reported failure from
+	// reconciliation timeout — see CON-69 §8.
+	ZernioPostID     string `bun:"zernio_post_id,nullzero"                     json:"zernio_post_id,omitempty"`
+	ZernioStatus     string `bun:"zernio_status,notnull,default:''"            json:"zernio_status,omitempty"`
+	PublishedResults string `bun:"published_results,notnull,default:''"        json:"published_results,omitempty"`
+	FailureReason    string `bun:"failure_reason,notnull,default:''"           json:"failure_reason,omitempty"`
 	CTAType              PostCTAType `bun:"cta_type,notnull"                             json:"cta_type"`
 	CTAUrl               string      `bun:"cta_url,notnull"                              json:"cta_url"`
 	TargetAudienceNotes  string      `bun:"target_audience_notes,notnull"                json:"target_audience_notes"`

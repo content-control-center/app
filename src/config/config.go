@@ -63,6 +63,29 @@ type Config struct {
 	// migration. Default is a relative ./kek for local dev; the
 	// Docker image mounts /var/lib/ogen/keys.
 	KEKPath string `envconfig:"OGEN_KEK_PATH" default:"./kek"`
+
+	// Backlite background-job queue (CON-69 §1, §3). Workers process
+	// `submit_post_to_zernio`, `poll_zernio_status`, `cancel_zernio_job`,
+	// `reconcile_scheduled_posts`, and `cleanup_post_logs`. ReleaseAfter
+	// is the per-task lease window — long enough that the longest
+	// expected Zernio call completes before another worker thinks the
+	// task was abandoned. Cleanup interval keeps the backlite tables
+	// trimmed of completed-task rows past their retention window.
+	BackliteWorkers         int           `envconfig:"BACKLITE_WORKERS"          default:"4"`
+	BackliteReleaseAfter    time.Duration `envconfig:"BACKLITE_RELEASE_AFTER"    default:"5m"`
+	BackliteCleanupInterval time.Duration `envconfig:"BACKLITE_CLEANUP_INTERVAL" default:"1h"`
+	// Graceful-shutdown wait for in-flight tasks to finish.
+	BackliteShutdownTimeout time.Duration `envconfig:"BACKLITE_SHUTDOWN_TIMEOUT" default:"30s"`
+
+	// Reconciliation grace window (CON-69 §8). A Scheduled post whose
+	// scheduled_at + this window has passed without a terminal Zernio
+	// status is forced to Failed with a reason that distinguishes
+	// reconciliation_timeout from a Zernio-reported failure.
+	ReconcileGrace time.Duration `envconfig:"RECONCILE_GRACE" default:"1h"`
+
+	// PostLog retention (CON-69 §11). Older entries are removed by the
+	// cleanup_post_logs recurring task. 0 disables cleanup entirely.
+	PostLogRetentionDays int `envconfig:"POSTLOG_RETENTION_DAYS" default:"90"`
 }
 
 func Load() (*Config, error) {

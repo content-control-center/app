@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	"github.com/uptrace/bun"
 
@@ -19,6 +20,9 @@ type PostRepository interface {
 	GetByID(ctx context.Context, id string) (*models.Post, error)
 	Update(ctx context.Context, post *models.Post) error
 	Delete(ctx context.Context, id string) (bool, error)
+	// CON-69 §8: reconciliation sweeper helpers.
+	ListStuckScheduled(ctx context.Context, cutoff time.Time, limit int) ([]models.Post, error)
+	UpdateStatusAndReason(ctx context.Context, postID string, status models.PostStatus, reason string) error
 }
 
 type postRepository struct {
@@ -95,6 +99,44 @@ func (r *postRepository) Delete(ctx context.Context, id string) (bool, error) {
 	}
 	n, _ := res.RowsAffected()
 	return n > 0, nil
+}
+
+// ListStuckScheduled returns Posts in status='scheduled' whose
+// scheduled_at is older than cutoff, capped at limit. Used by the
+// reconciliation sweeper (CON-69 §8). NULL scheduled_at rows are
+// skipped — a Scheduled post without a scheduled_at is a data
+// integrity bug, not a reconciliation candidate.
+func (r *postRepository) ListStuckScheduled(ctx context.Context, cutoff time.Time, limit int) ([]models.Post, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	var posts []models.Post
+	err := r.db.NewSelect().
+		Model(&posts).
+		Where("po.status = ?", models.PostStatusScheduled).
+		Where("po.scheduled_at IS NOT NULL").
+		Where("po.scheduled_at < ?", cutoff).
+		OrderExpr("po.scheduled_at ASC").
+		Limit(limit).
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return posts, nil
+}
+
+// UpdateStatusAndReason atomically sets status + failure_reason on
+// one Post. Used by the reconciliation sweeper to avoid loading the
+// full row just to flip two fields.
+func (r *postRepository) UpdateStatusAndReason(ctx context.Context, postID string, status models.PostStatus, reason string) error {
+	_, err := r.db.NewUpdate().
+		Model((*models.Post)(nil)).
+		Set("status = ?", status).
+		Set("failure_reason = ?", reason).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", postID).
+		Exec(ctx)
+	return err
 }
 
 func (r *postRepository) hydrateRelations(ctx context.Context, posts []models.Post) error {

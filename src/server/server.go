@@ -3,15 +3,20 @@ package server
 import (
 	"context"
 	"errors"
+	"expvar"
 	"io/fs"
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/adaptor"
 	"github.com/gofiber/fiber/v2/middleware/filesystem"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/mikestefanello/backlite"
+	backliteui "github.com/mikestefanello/backlite/ui"
 	"github.com/uptrace/bun"
 
 	"github.com/firebase/genkit/go/ai"
@@ -23,6 +28,8 @@ import (
 	"github.com/content-control-center/app/src/genkit/flows/content_plan"
 	"github.com/content-control-center/app/src/genkit/flows/post_assistant"
 	"github.com/content-control-center/app/src/handlers"
+	"github.com/content-control-center/app/src/jobs"
+	"github.com/content-control-center/app/src/jobs/queues"
 	"github.com/content-control-center/app/src/publishers"
 	pubzernio "github.com/content-control-center/app/src/publishers/zernio"
 	"github.com/content-control-center/app/src/repository"
@@ -58,6 +65,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	postVersionRepo := repository.NewPostVersionRepository(db)
 	postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 	postAttachmentRepo := repository.NewPostAttachmentRepository(db)
+	postLogRepo := repository.NewPostLogRepository(db)
 	socialAccountRepo := repository.NewSocialAccountRepository(db)
 	autoPublishAllowlistRepo := repository.NewAutoPublishAllowlistRepository(db)
 	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
@@ -114,6 +122,94 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	if err != nil {
 		return nil, err
 	}
+
+	// CON-69 §1+§3: Backlite background-job queue. Shares the SQLite
+	// file with the rest of the app (db.DB exposes the underlying
+	// *sql.DB). Schema install is idempotent. The worker pool starts
+	// further below and is drained on shutdown via the Fiber hook.
+	jobsRT, err := jobs.New(jobs.Config{
+		DB:              db.DB,
+		Workers:         cfg.BackliteWorkers,
+		ReleaseAfter:    cfg.BackliteReleaseAfter,
+		CleanupInterval: cfg.BackliteCleanupInterval,
+		ShutdownTimeout: cfg.BackliteShutdownTimeout,
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Recurring Post Log retention sweeper.
+	cleanupEvery := time.Hour
+	jobsRT.Register(backlite.NewQueue[queues.CleanupPostLogsTask]((&queues.CleanupPostLogsProcessor{
+		Repo:      postLogRepo,
+		Retention: time.Duration(cfg.PostLogRetentionDays) * 24 * time.Hour,
+		Every:     cleanupEvery,
+	}).Process))
+
+	// CON-69 §6+§7: Zernio submit + poll queues. Both share the same
+	// dependency bundle. ProfileID resolves lazily so this wiring runs
+	// before the bootstrapper has finished, and so a profile id added
+	// later via the secrets API is picked up on the next dispatch.
+	zernioDeps := queues.ZernioDeps{
+		PostRepo:           postRepo,
+		PostLogRepo:        postLogRepo,
+		PostAttachmentRepo: postAttachmentRepo,
+		SocialAccountRepo:  socialAccountRepo,
+		Client:             zernioRT.Integration.Client,
+		ProfileID: func(ctx context.Context) (string, error) {
+			id, _, err := zernioRT.Settings.Get(ctx, pubzernio.SettingProfileID)
+			return id, err
+		},
+	}
+	jobsRT.Register(backlite.NewQueue[queues.SubmitPostTask]((&queues.SubmitPostProcessor{Deps: zernioDeps}).Process))
+	jobsRT.Register(backlite.NewQueue[queues.PollZernioStatusTask]((&queues.PollZernioStatusProcessor{Deps: zernioDeps}).Process))
+	jobsRT.Register(backlite.NewQueue[queues.CancelZernioJobTask]((&queues.CancelZernioJobProcessor{Deps: zernioDeps}).Process))
+
+	// CON-69 §8: reconciliation sweeper. Runs every 5 min by default;
+	// posts in Scheduled whose scheduled_at + cfg.ReconcileGrace has
+	// passed without a terminal status get forced to Failed with a
+	// distinct reconciliation_timeout reason.
+	reconcileEvery := 5 * time.Minute
+	jobsRT.Register(backlite.NewQueue[queues.ReconcileScheduledPostsTask]((&queues.ReconcileScheduledPostsProcessor{
+		DB:      db,
+		Repo:    postRepo,
+		LogRepo: postLogRepo,
+		Grace:   cfg.ReconcileGrace,
+		Every:   reconcileEvery,
+	}).Process))
+	if _, err := jobsRT.Client().Add(queues.ReconcileScheduledPostsTask{}).Wait(reconcileEvery).Save(); err != nil {
+		log.Printf("jobs: failed to seed reconcile_scheduled_posts: %v", err)
+	}
+	// Mount the Backlite monitoring UI under the standard auth gate.
+	// The handler is an http.ServeMux internally; we adapt it to Fiber
+	// and register a wildcard route at the configured base path.
+	{
+		uiHandler, err := backliteui.NewHandler(backliteui.Config{
+			DB:           db.DB,
+			BasePath:     "/admin/backlite",
+			ReleaseAfter: cfg.BackliteReleaseAfter,
+		})
+		if err != nil {
+			return nil, err
+		}
+		mux := http.NewServeMux()
+		uiHandler.Register(mux)
+		app.All("/admin/backlite/*", auth, adaptor.HTTPHandler(mux))
+		app.Get("/admin/backlite", auth, adaptor.HTTPHandler(mux))
+	}
+	// Expose expvar counters for ops health dashboards (CON-69 §13).
+	// Gated by the same auth as the rest of the app so internal
+	// counters aren't anonymous.
+	app.Get("/debug/vars", auth, adaptor.HTTPHandler(expvar.Handler()))
+	// Seed the recurring cleanup chain. Subsequent ticks are scheduled
+	// from inside Process via backlite.FromContext(ctx).
+	if _, addErr := jobsRT.Client().Add(queues.CleanupPostLogsTask{}).Wait(cleanupEvery).Save(); addErr != nil {
+		log.Printf("jobs: failed to seed cleanup_post_logs: %v", addErr)
+	}
+	jobsRT.Start(ctx)
+	app.Hooks().OnShutdown(func() error {
+		jobsRT.Shutdown(context.Background())
+		return nil
+	})
 
 	// Embedding genkit instance: built once at boot with just the
 	// llama plugin and never rebuilt. The Anthropic flows live on a
@@ -175,6 +271,13 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	handlers.NewPlatformsHandler(platformRepo, pubs, autoPublishAllowlistRepo, auth).Register(app)
 	handlers.NewTagsHandler(tagRepo, auth).Register(app)
 	postsHandler := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, platformRepo, postAttachmentRepo, auth, gkRuntime.RunPostAssistant, gkRuntime.IsAnthropicAvailable)
+	// CON-69 §11: every transition (success/blocked) and validation
+	// outcome lands in the Post Log.
+	postsHandler.SetPostLogRepo(postLogRepo)
+	// CON-69 §5: ReadyForPublish→Scheduled consults the auto-publish
+	// allowlist and (for allowlisted platforms) enqueues a submit task
+	// transactionally with the status change + log write.
+	postsHandler.SetSchedulingDeps(autoPublishAllowlistRepo, jobsRT.Client(), db)
 	// Cascade post-attachment S3 cleanup on post delete (CON-73 §2.7).
 	// FK CASCADE handles the DB rows; this hook handles the bucket.
 	postsHandler.SetOnBeforeDelete(func(ctx context.Context, postID string) error {
@@ -196,6 +299,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 		return nil
 	})
 	postsHandler.Register(app)
+	handlers.NewPostLogsHandler(postLogRepo, postRepo, auth).Register(app)
 
 	handlers.NewImagesHandler(store, auth).Register(app)
 	handlers.NewPostAttachmentsHandler(postAttachmentRepo, postRepo, store, auth).Register(app)
