@@ -174,7 +174,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, gkRuntime.GenerateDraft, gkRuntime.IsAnthropicAvailable).Register(app)
 	handlers.NewPlatformsHandler(platformRepo, pubs, autoPublishAllowlistRepo, auth).Register(app)
 	handlers.NewTagsHandler(tagRepo, auth).Register(app)
-	postsHandler := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, auth, gkRuntime.RunPostAssistant, gkRuntime.IsAnthropicAvailable)
+	postsHandler := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, platformRepo, postAttachmentRepo, auth, gkRuntime.RunPostAssistant, gkRuntime.IsAnthropicAvailable)
 	// Cascade post-attachment S3 cleanup on post delete (CON-73 §2.7).
 	// FK CASCADE handles the DB rows; this hook handles the bucket.
 	postsHandler.SetOnBeforeDelete(func(ctx context.Context, postID string) error {

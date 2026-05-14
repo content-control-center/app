@@ -10,6 +10,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/content-control-center/app/src/models"
+	"github.com/content-control-center/app/src/platforms"
 	"github.com/content-control-center/app/src/publishers"
 	"github.com/content-control-center/app/src/repository"
 )
@@ -42,6 +43,7 @@ func (h *PlatformsHandler) Register(app *fiber.App) {
 	g.Get("/", h.auth, h.List)
 	g.Post("/", h.auth, h.Create)
 	g.Get("/:id", h.auth, h.Get)
+	g.Get("/:id/post-type-rules", h.auth, h.PostTypeRules)
 	g.Put("/:id", h.auth, h.Update)
 	g.Delete("/:id", h.auth, h.Delete)
 }
@@ -237,6 +239,34 @@ func (h *PlatformsHandler) Update(c *fiber.Ctx) error {
 		return err
 	}
 	return c.JSON(platform)
+}
+
+// PostTypeRules godoc
+// @Summary      List per-post-type rules for a platform
+// @Description  Returns each post-type slug supported by the platform
+// @Description  with the structural rules enforced by the publish gate
+// @Description  (CON-74) — required content, allowed attachment kinds,
+// @Description  and min/max attachment counts. `max_attachments` is
+// @Description  resolved against the platform's per-kind cap; `null`
+// @Description  means unbounded. Slugs that are whitelist-only carry
+// @Description  `rule: null` and `whitelist_only: true`.
+// @Tags         platforms
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id   path      string  true  "Platform Sqid"
+// @Success      200  {array}   platforms.PostTypeRuleView
+// @Failure      401  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Router       /api/platforms/{id}/post-type-rules [get]
+func (h *PlatformsHandler) PostTypeRules(c *fiber.Ctx) error {
+	platform, err := h.repo.GetByID(c.Context(), c.Params("id"))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "platform not found")
+		}
+		return err
+	}
+	return c.JSON(platforms.ResolvePostTypeRules(platform))
 }
 
 // Delete godoc

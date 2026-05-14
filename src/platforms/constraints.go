@@ -8,6 +8,8 @@
 // it does not own them.
 package platforms
 
+import "strings"
+
 // Validation rule identifiers. They are stable strings so the frontend
 // and audit log can switch on them without reading the human message.
 const (
@@ -18,13 +20,19 @@ const (
 	RuleMaxPages            = "max_pages"             // CON-75: PDF page-count cap
 	RuleAttachmentMix       = "attachment_kind_mix"   // CON-75: image+PDF on the same post
 	RulePDFNotSupported     = "pdf_not_supported"     // CON-75: platform has no PDF rules
+	RulePostTypeUnknown     = "post_type_unknown"     // CON-74: slug not in Platform.PostTypes
+	RuleRequiresContent     = "requires_content"      // CON-74: post type needs non-empty content
+	RuleMinAttachments      = "min_attachments"       // CON-74: too few attachments for the type
+	RuleMaxAttachments      = "max_attachments"       // CON-74: too many attachments for the type
+	RuleAttachmentKind      = "attachment_kind"       // CON-74: wrong attachment kind for the type
 )
 
-// Attachment kinds, returned by AttachmentKind. PDF and image
+// Attachment kinds, returned by AttachmentKind. PDF, image, and video
 // attachments take different validation paths.
 const (
 	KindImage = "image"
 	KindPDF   = "pdf"
+	KindVideo = "video"
 )
 
 // AttachmentKind returns the kind label for the given MIME type.
@@ -36,6 +44,9 @@ func AttachmentKind(mime string) string {
 		return KindImage
 	case "application/pdf":
 		return KindPDF
+	}
+	if strings.HasPrefix(mime, "video/") {
+		return KindVideo
 	}
 	return ""
 }

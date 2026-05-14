@@ -1,0 +1,261 @@
+@baseUrl = http://localhost:9001
+
+# Pre-publishing per-post-type validation (CON-74).
+# All endpoints require authentication. Run "Login" from sessions/sessions.http first.
+#
+# Prerequisites:
+#   - A campaign ID stored in {{campaignId}} (run campaigns/campaigns.http → createCampaign)
+#   - The seeded LinkedIn platform Sqid: AXqWG7U2qnpt
+#   - The seeded X (Twitter) platform Sqid: 81mUCmc2xsKd
+#   - The seeded Facebook platform Sqid: zBU1zqVICGfk
+#
+# The gate runs when a post transitions out of "draft" (Create or Update).
+# All rule violations come back together in the same response shape:
+#   {
+#     "validation_errors": [
+#       { "platform": "...", "attachment_id": "...", "rule": "<rule>",
+#         "expected": "...", "actual": "...", "message": "..." }
+#     ]
+#   }
+
+@linkedInId = AXqWG7U2qnpt
+@xId        = 81mUCmc2xsKd
+@facebookId = zBU1zqVICGfk
+
+# ─────────────────────────────────────────────────────────────────────
+# Rules catalogue — what the UI calls to render the per-type controls
+# ─────────────────────────────────────────────────────────────────────
+
+### List per-post-type rules for a platform  [protected]
+# Response: [
+#   { "slug": "...", "label": "...", "whitelist_only": false,
+#     "rule": { "requires_content": bool, "allowed_kinds": ["image", ...],
+#               "min_attachments": int, "max_attachments": int|null } },
+#   ...
+# ]
+# `max_attachments: null` means unbounded; `whitelist_only: true` means
+# the platform accepts the slug but Ogen enforces no structural rules.
+GET {{baseUrl}}/api/platforms/{{linkedInId}}/post-type-rules
+Accept: application/json
+
+### Seed: create a draft post to mutate  [protected]
+# @name seedDraft
+POST {{baseUrl}}/api/posts
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "title": "CON-74 fixture"
+}
+
+> {% client.global.set("postId", response.body.id) %}
+
+# ─────────────────────────────────────────────────────────────────────
+# Whitelist
+# ─────────────────────────────────────────────────────────────────────
+
+### Whitelist — unknown post type (expects 400 with rule=post_type_unknown)  [protected]
+PUT {{baseUrl}}/api/posts/{{postId}}
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedInId}}",
+  "platform_post_type": "make-believe-type",
+  "status": "ready_for_publish"
+}
+
+# ─────────────────────────────────────────────────────────────────────
+# text-post — content optional, zero attachments
+# ─────────────────────────────────────────────────────────────────────
+
+### text-post — happy path (expects 200)  [protected]
+PUT {{baseUrl}}/api/posts/{{postId}}
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedInId}}",
+  "platform_post_type": "text-post",
+  "status": "ready_for_publish"
+}
+
+# ─────────────────────────────────────────────────────────────────────
+# image-post — ≥1 image attachment
+# ─────────────────────────────────────────────────────────────────────
+
+### image-post — no attachments (expects 400 with rule=min_attachments)  [protected]
+PUT {{baseUrl}}/api/posts/{{postId}}
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedInId}}",
+  "platform_post_type": "image-post",
+  "status": "ready_for_publish"
+}
+
+# image-post — happy path requires an image. Use post-attachments/post-attachments.http
+# to upload one PNG to {{postId}}, then re-run the PUT above and expect 200.
+
+# ─────────────────────────────────────────────────────────────────────
+# carousel — ≥2 image attachments
+# ─────────────────────────────────────────────────────────────────────
+
+### carousel — no attachments (expects 400 with rule=min_attachments)  [protected]
+PUT {{baseUrl}}/api/posts/{{postId}}
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedInId}}",
+  "platform_post_type": "carousel",
+  "status": "ready_for_publish"
+}
+
+# carousel — happy path requires ≥2 images. Upload 2 PNGs via
+# post-attachments/post-attachments.http then re-run; expect 200.
+
+# ─────────────────────────────────────────────────────────────────────
+# video — exactly 1 video attachment
+# ─────────────────────────────────────────────────────────────────────
+
+### video — no attachments (expects 400 with rule=min_attachments)  [protected]
+PUT {{baseUrl}}/api/posts/{{postId}}
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedInId}}",
+  "platform_post_type": "video",
+  "status": "ready_for_publish"
+}
+
+# video — wrong kind: with an image attachment present this also returns
+# 400 with rule=attachment_kind. Upload one PNG via the attachments file
+# and re-run to see the error.
+
+# ─────────────────────────────────────────────────────────────────────
+# poll — non-empty content, zero attachments
+# ─────────────────────────────────────────────────────────────────────
+
+### poll — empty content (expects 400 with rule=requires_content)  [protected]
+PUT {{baseUrl}}/api/posts/{{postId}}
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedInId}}",
+  "platform_post_type": "poll",
+  "status": "ready_for_publish"
+}
+
+### poll — happy path (expects 200)  [protected]
+PUT {{baseUrl}}/api/posts/{{postId}}
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedInId}}",
+  "platform_post_type": "poll",
+  "content": "Pineapple on pizza: yes or no?",
+  "status": "ready_for_publish"
+}
+
+# ─────────────────────────────────────────────────────────────────────
+# article / long-form-post / newsletter / thread — non-empty content
+# ─────────────────────────────────────────────────────────────────────
+
+### article — empty content (expects 400 with rule=requires_content)  [protected]
+PUT {{baseUrl}}/api/posts/{{postId}}
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedInId}}",
+  "platform_post_type": "article",
+  "status": "ready_for_publish"
+}
+
+### article — happy path (expects 200)  [protected]
+PUT {{baseUrl}}/api/posts/{{postId}}
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedInId}}",
+  "platform_post_type": "article",
+  "content": "Long-form body.",
+  "status": "ready_for_publish"
+}
+
+### thread (X) — empty content (expects 400 with rule=requires_content)  [protected]
+PUT {{baseUrl}}/api/posts/{{postId}}
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{xId}}",
+  "platform_post_type": "thread",
+  "status": "ready_for_publish"
+}
+
+# ─────────────────────────────────────────────────────────────────────
+# story (Facebook / Instagram) — exactly 1 image or video
+# ─────────────────────────────────────────────────────────────────────
+
+### story — no attachments (expects 400 with rule=min_attachments)  [protected]
+PUT {{baseUrl}}/api/posts/{{postId}}
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{facebookId}}",
+  "platform_post_type": "story",
+  "status": "ready_for_publish"
+}
+
+# ─────────────────────────────────────────────────────────────────────
+# Create — the gate applies symmetrically when creating a post directly
+# in a non-draft state (no need to go through draft first).
+# ─────────────────────────────────────────────────────────────────────
+
+### Create directly in ready_for_publish — image-post w/o attachments (expects 400)  [protected]
+POST {{baseUrl}}/api/posts
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedInId}}",
+  "platform_post_type": "image-post",
+  "title": "Premature image post",
+  "status": "ready_for_publish"
+}
+
+### Create directly in ready_for_publish — text-post (expects 201)  [protected]
+POST {{baseUrl}}/api/posts
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedInId}}",
+  "platform_post_type": "text-post",
+  "title": "Text in ready",
+  "status": "ready_for_publish"
+}
+
+# ─────────────────────────────────────────────────────────────────────
+# Drafts stay unconstrained — even with an unknown post type the gate
+# is skipped because status=draft.
+# ─────────────────────────────────────────────────────────────────────
+
+### Draft save with unknown post type (expects 200)  [protected]
+PUT {{baseUrl}}/api/posts/{{postId}}
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedInId}}",
+  "platform_post_type": "make-believe-type",
+  "status": "draft"
+}

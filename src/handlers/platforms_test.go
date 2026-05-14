@@ -352,6 +352,91 @@ var _ = Describe("PlatformsHandler", Ordered, func() {
 
 	// ── Delete ───────────────────────────────────────────────────────────────
 
+	Describe("GET /api/platforms/:id/post-type-rules", func() {
+		const linkedInID = "AXqWG7U2qnpt"
+
+		type resolvedRule struct {
+			RequiresContent bool     `json:"requires_content"`
+			AllowedKinds    []string `json:"allowed_kinds"`
+			MinAttachments  int      `json:"min_attachments"`
+			MaxAttachments  *int     `json:"max_attachments"`
+		}
+		type ruleView struct {
+			Slug          string        `json:"slug"`
+			Label         string        `json:"label"`
+			WhitelistOnly bool          `json:"whitelist_only"`
+			Rule          *resolvedRule `json:"rule"`
+		}
+
+		Context("when not authenticated", func() {
+			It("returns 401", func() {
+				req := httptest.NewRequest("GET", "/api/platforms/"+linkedInID+"/post-type-rules", nil)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+		})
+
+		Context("when authenticated", func() {
+			It("returns the resolved rules for every slug in PostTypes", func() {
+				req := httptest.NewRequest("GET", "/api/platforms/"+linkedInID+"/post-type-rules", nil)
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+
+				var got []ruleView
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+
+				bySlug := map[string]ruleView{}
+				for _, v := range got {
+					bySlug[v.Slug] = v
+				}
+				// LinkedIn seed: text-post, image-post, carousel, video,
+				// article, poll, newsletter, event, live-video.
+				Expect(bySlug).To(HaveKey("text-post"))
+				Expect(bySlug).To(HaveKey("image-post"))
+				Expect(bySlug).To(HaveKey("carousel"))
+				Expect(bySlug).To(HaveKey("event"))
+
+				// image-post.max_attachments must resolve to LinkedIn's image cap (9).
+				img := bySlug["image-post"]
+				Expect(img.WhitelistOnly).To(BeFalse())
+				Expect(img.Rule).NotTo(BeNil())
+				Expect(img.Rule.AllowedKinds).To(ConsistOf("image"))
+				Expect(img.Rule.MinAttachments).To(Equal(1))
+				Expect(img.Rule.MaxAttachments).NotTo(BeNil())
+				Expect(*img.Rule.MaxAttachments).To(Equal(9))
+
+				// carousel — Min 2, Max resolves to 9.
+				car := bySlug["carousel"]
+				Expect(car.Rule).NotTo(BeNil())
+				Expect(car.Rule.MinAttachments).To(Equal(2))
+				Expect(*car.Rule.MaxAttachments).To(Equal(9))
+
+				// event has no rule entry — whitelist-only.
+				ev := bySlug["event"]
+				Expect(ev.WhitelistOnly).To(BeTrue())
+				Expect(ev.Rule).To(BeNil())
+
+				// poll — requires content, zero attachments.
+				poll := bySlug["poll"]
+				Expect(poll.Rule).NotTo(BeNil())
+				Expect(poll.Rule.RequiresContent).To(BeTrue())
+				Expect(poll.Rule.MaxAttachments).NotTo(BeNil())
+				Expect(*poll.Rule.MaxAttachments).To(Equal(0))
+			})
+
+			It("returns 404 for an unknown platform id", func() {
+				req := httptest.NewRequest("GET", "/api/platforms/nonexistent/post-type-rules", nil)
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(404))
+			})
+		})
+	})
+
 	Describe("DELETE /api/platforms/:id", func() {
 		Context("when not authenticated", func() {
 			It("returns 401", func() {

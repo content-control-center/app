@@ -14,6 +14,7 @@ import (
 
 	"github.com/content-control-center/app/src/genkit/flows/post_assistant"
 	"github.com/content-control-center/app/src/models"
+	"github.com/content-control-center/app/src/platforms"
 	"github.com/content-control-center/app/src/repository"
 )
 
@@ -34,10 +35,12 @@ var validCTATypes = map[models.PostCTAType]bool{
 }
 
 type PostsHandler struct {
-	repo        repository.PostRepository
-	versionRepo repository.PostVersionRepository
-	messageRepo repository.PostAssistantMessageRepository
-	auth        fiber.Handler
+	repo           repository.PostRepository
+	versionRepo    repository.PostVersionRepository
+	messageRepo    repository.PostAssistantMessageRepository
+	platformRepo   repository.PlatformRepository
+	attachmentRepo repository.PostAttachmentRepository
+	auth           fiber.Handler
 	assistant   func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error)
 	// isAssistantReady reports whether the Anthropic key is currently
 	// configured. nil is treated as "always ready" so existing test
@@ -62,11 +65,22 @@ func NewPostsHandler(
 	repo repository.PostRepository,
 	versionRepo repository.PostVersionRepository,
 	messageRepo repository.PostAssistantMessageRepository,
+	platformRepo repository.PlatformRepository,
+	attachmentRepo repository.PostAttachmentRepository,
 	auth fiber.Handler,
 	assistant func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error),
 	isAssistantReady func() bool,
 ) *PostsHandler {
-	return &PostsHandler{repo: repo, versionRepo: versionRepo, messageRepo: messageRepo, auth: auth, assistant: assistant, isAssistantReady: isAssistantReady}
+	return &PostsHandler{
+		repo:             repo,
+		versionRepo:      versionRepo,
+		messageRepo:      messageRepo,
+		platformRepo:     platformRepo,
+		attachmentRepo:   attachmentRepo,
+		auth:             auth,
+		assistant:        assistant,
+		isAssistantReady: isAssistantReady,
+	}
 }
 
 func (h *PostsHandler) Register(app *fiber.App) {
@@ -134,6 +148,55 @@ func requirePlatformIfNotDraft(status models.PostStatus, platformID, platformPos
 		return fmt.Errorf("platform_post_type is required when status is %q", status)
 	}
 	return nil
+}
+
+// platformForGate fetches the target platform when the gate is about
+// to run. Returns nil when the gate will skip (draft target, or no
+// platform yet selected) so the caller can short-circuit cleanly.
+func (h *PostsHandler) platformForGate(ctx context.Context, post *models.Post) (*models.Platform, error) {
+	if post.Status == models.PostStatusDraft || post.PlatformID == "" {
+		return nil, nil
+	}
+	platform, err := h.platformRepo.GetByID(ctx, post.PlatformID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fiber.NewError(fiber.StatusBadRequest, "platform not found")
+		}
+		return nil, err
+	}
+	return platform, nil
+}
+
+// validateForNonDraft runs the Draft→non-Draft publish gate (CON-74):
+// per-platform attachment rules (CON-73/75) plus per-post-type
+// structural rules. Returns an empty slice when the post is publishable.
+//
+// A draft target status short-circuits to nil — drafts are deliberately
+// unconstrained. An empty platform_post_type also short-circuits;
+// requirePlatformIfNotDraft handles that case as a 400 before this
+// runs, so we don't double-report.
+func (h *PostsHandler) validateForNonDraft(
+	ctx context.Context,
+	post *models.Post,
+	platform *models.Platform,
+) ([]platforms.ValidationError, error) {
+	if post.Status == models.PostStatusDraft || post.PlatformPostType == "" || platform == nil {
+		return nil, nil
+	}
+	atts, err := h.attachmentRepo.ListByPostID(ctx, post.ID)
+	if err != nil {
+		return nil, err
+	}
+	errs := platforms.ValidatePostAttachments(atts, platform)
+	errs = append(errs, platforms.ValidatePostType(post, platform, atts)...)
+	return errs, nil
+}
+
+// writeValidationErrors renders a 400 carrying the per-rule error
+// list. The shape matches the existing attachment-validation responses
+// so the frontend can switch on `validation_errors[*].rule`.
+func writeValidationErrors(c *fiber.Ctx, errs []platforms.ValidationError) error {
+	return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"validation_errors": errs})
 }
 
 // List godoc
@@ -232,6 +295,17 @@ func (h *PostsHandler) Create(c *fiber.Ctx) error {
 		CreatedBy:           session.UserID,
 		UsedAssets:          []models.Asset{},
 	}
+
+	platform, err := h.platformForGate(c.Context(), post)
+	if err != nil {
+		return err
+	}
+	if vErrs, err := h.validateForNonDraft(c.Context(), post, platform); err != nil {
+		return err
+	} else if len(vErrs) > 0 {
+		return writeValidationErrors(c, vErrs)
+	}
+
 	if err := h.repo.Create(c.Context(), post); err != nil {
 		return err
 	}
@@ -325,6 +399,16 @@ func (h *PostsHandler) Update(c *fiber.Ctx) error {
 	post.TargetAudienceNotes = req.TargetAudienceNotes
 	post.UsedAssetIDs = nullSlice(req.UsedAssetIDs)
 	post.UpdatedAt = time.Now().UTC()
+
+	platform, err := h.platformForGate(c.Context(), post)
+	if err != nil {
+		return err
+	}
+	if vErrs, err := h.validateForNonDraft(c.Context(), post, platform); err != nil {
+		return err
+	} else if len(vErrs) > 0 {
+		return writeValidationErrors(c, vErrs)
+	}
 
 	if err := h.repo.Update(c.Context(), post); err != nil {
 		return err
