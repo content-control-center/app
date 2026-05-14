@@ -88,3 +88,29 @@ func LookupSupportedByOgenID(ogenID string) *SupportedPlatform {
 	}
 	return nil
 }
+
+// sqidToZernioID maps the post-Sqid-migration platform.id (the
+// 12-character Sqid) to its ZernioID. Migration
+// 20240115000001_fix_platform_ids_to_sqids.up.sql is the source of
+// truth for this mapping; CON-69 needs it because the post row
+// carries a Sqid but Zernio's API + the auto-publish allowlist key
+// off the Zernio platform name.
+var sqidToZernioID = map[string]string{
+	"AXqWG7U2qnpt": "linkedin",
+	"8S8bWQTG6qD":  "youtube",
+	"zBU1zqVICGfk": "facebook",
+	"81mUCmc2xsKd": "twitter",
+	"pQ4yxT3SuE57": "threads",
+	"rzgpTkARLH0L": "instagram",
+}
+
+// LookupSupportedBySqid returns the allowlist entry that corresponds
+// to a platform.id (Sqid form, post-CON-65 migration), or nil when
+// the Sqid is unknown.
+func LookupSupportedBySqid(sqid string) *SupportedPlatform {
+	zernioID, ok := sqidToZernioID[sqid]
+	if !ok {
+		return nil
+	}
+	return LookupSupportedPlatform(zernioID)
+}
