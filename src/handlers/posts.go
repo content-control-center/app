@@ -184,21 +184,7 @@ func (h *PostsHandler) routeAndPersistSchedule(c *fiber.Ctx, post *models.Post, 
 	}
 
 	prevStatus := post.Status
-	post.CampaignID = req.CampaignID
-	post.PlatformID = req.PlatformID
-	post.PlatformPostType = req.PlatformPostType
-	post.Title = req.Title
-	post.Content = req.Content
-	post.MediaURLs = nullSlice(req.MediaURLs)
-	post.ScheduledAt = req.ScheduledAt
-	post.PublishedAt = req.PublishedAt
-	post.Status = target
-	post.CTAType = ctaType
-	post.CTAUrl = req.CTAUrl
-	post.CampaignTypePhaseID = req.CampaignTypePhaseID
-	post.TargetAudienceNotes = req.TargetAudienceNotes
-	post.UsedAssetIDs = nullSlice(req.UsedAssetIDs)
-	post.UpdatedAt = time.Now().UTC()
+	req.apply(post, target, ctaType)
 
 	actor := models.ActorSystem
 	if sess, ok := c.Locals("session").(*models.Session); ok && sess != nil {
@@ -267,6 +253,73 @@ func zernioName(s *zernio.SupportedPlatform) string {
 		return ""
 	}
 	return s.ZernioID
+}
+
+// validateReadyForPublish runs the CON-69 §4 attachment gate when a
+// Draft is moving to ReadyForPublish. Returns done=true when the gate
+// has already written the 422 response and the caller must stop. A
+// non-nil error means a transient repository failure — the caller
+// should bubble it up. done=false, err=nil means the gate passed (or
+// did not apply) and the caller should continue.
+func (h *PostsHandler) validateReadyForPublish(c *fiber.Ctx, post *models.Post, req *postRequest, status models.PostStatus) (done bool, err error) {
+	if post.Status != models.PostStatusDraft || status != models.PostStatusReadyForPublish || h.attachmentRepo == nil {
+		return false, nil
+	}
+	atts, err := h.attachmentRepo.ListByPostID(c.Context(), post.ID)
+	if err != nil {
+		return false, err
+	}
+	// Validate against the new (incoming) platform, not the prior one,
+	// since a Draft can switch platforms in the same Update call.
+	platform := post.Platform
+	if req.PlatformID != "" && (platform == nil || platform.ID != req.PlatformID) {
+		fresh, perr := h.repo.GetByID(c.Context(), post.ID)
+		if perr == nil && fresh.Platform != nil && fresh.Platform.ID == req.PlatformID {
+			platform = fresh.Platform
+		}
+	}
+	errsByPlatform := platforms.ValidateForPublish(atts, []*models.Platform{platform})
+	from := post.Status
+	if hasAnyErrors(errsByPlatform) {
+		h.logEvent(c, post.ID, models.PostLogEventValidationFailed, &from, &status,
+			"draft → ready_for_publish blocked by platform validation",
+			postlog.MarshalCapped(map[string]any{"platform_validation": errsByPlatform}),
+		)
+		if err := c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
+			"error":               "post is not ready for publish",
+			"platform_validation": errsByPlatform,
+		}); err != nil {
+			return true, err
+		}
+		return true, nil
+	}
+	h.logEvent(c, post.ID, models.PostLogEventValidationPassed, &from, &status,
+		"draft → ready_for_publish passed platform validation",
+		postlog.MarshalCapped(map[string]any{"platform_validation": errsByPlatform}),
+	)
+	return false, nil
+}
+
+// logTransition writes the §11 state-transition entry (and the §10
+// manual-retry entry, when applicable) for a successful Update. A
+// status that didn't actually change is not a state-machine event and
+// produces no log lines.
+func (h *PostsHandler) logTransition(c *fiber.Ctx, post *models.Post, prev, next models.PostStatus) {
+	if prev == next {
+		return
+	}
+	h.logEvent(c, post.ID, models.PostLogEventStateTransition, &prev, &next,
+		"status changed via PUT /api/posts/:id", "{}",
+	)
+	if prev == models.PostStatusFailed && next == models.PostStatusReadyForPublish {
+		h.logEvent(c, post.ID, models.PostLogEventUserRetry, &prev, &next,
+			"manual retry: user moved Failed → ReadyForPublish",
+			postlog.MarshalCapped(map[string]any{
+				"prior_failure_reason": post.FailureReason,
+				"prior_zernio_post_id": post.ZernioPostID,
+			}),
+		)
+	}
 }
 
 // cancelRequest is the body shape for POST /api/posts/:id/cancel.
@@ -414,6 +467,28 @@ func (r *postRequest) toCTAType() models.PostCTAType {
 		return models.CTATypeNone
 	}
 	return r.CTAType
+}
+
+// apply copies the mutable fields from a parsed request onto an
+// existing Post, including the resolved status/ctaType (passed
+// separately because they're already normalized by toStatus/toCTAType
+// and re-validated by the caller) and a fresh UpdatedAt.
+func (r *postRequest) apply(post *models.Post, status models.PostStatus, ctaType models.PostCTAType) {
+	post.CampaignID = r.CampaignID
+	post.PlatformID = r.PlatformID
+	post.PlatformPostType = r.PlatformPostType
+	post.Title = r.Title
+	post.Content = r.Content
+	post.MediaURLs = nullSlice(r.MediaURLs)
+	post.ScheduledAt = r.ScheduledAt
+	post.PublishedAt = r.PublishedAt
+	post.Status = status
+	post.CTAType = ctaType
+	post.CTAUrl = r.CTAUrl
+	post.CampaignTypePhaseID = r.CampaignTypePhaseID
+	post.TargetAudienceNotes = r.TargetAudienceNotes
+	post.UsedAssetIDs = nullSlice(r.UsedAssetIDs)
+	post.UpdatedAt = time.Now().UTC()
 }
 
 // requirePlatformIfNotDraft enforces that platform fields are populated
@@ -613,108 +688,32 @@ func (h *PostsHandler) Update(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
 
-	// CON-69 §4: hard-block Draft→ReadyForPublish when any attachment
-	// fails its platform's rules. The validation outcome (per-platform)
-	// is returned verbatim so the UI can surface each failure.
-	if post.Status == models.PostStatusDraft && status == models.PostStatusReadyForPublish && h.attachmentRepo != nil {
-		atts, err := h.attachmentRepo.ListByPostID(c.Context(), post.ID)
-		if err != nil {
-			return err
-		}
-		// Validate against the new (incoming) platform, not the prior one,
-		// since a Draft can switch platforms in the same Update call.
-		platform := post.Platform
-		if req.PlatformID != "" && (platform == nil || platform.ID != req.PlatformID) {
-			fresh, perr := h.repo.GetByID(c.Context(), post.ID)
-			if perr == nil && fresh.Platform != nil && fresh.Platform.ID == req.PlatformID {
-				platform = fresh.Platform
-			}
-		}
-		errsByPlatform := platforms.ValidateForPublish(atts, []*models.Platform{platform})
-		if hasAnyErrors(errsByPlatform) {
-			from := post.Status
-			h.logEvent(c, post.ID, models.PostLogEventValidationFailed, &from, &status,
-				"draft → ready_for_publish blocked by platform validation",
-				postlog.MarshalCapped(map[string]any{"platform_validation": errsByPlatform}),
-			)
-			return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
-				"error":               "post is not ready for publish",
-				"platform_validation": errsByPlatform,
-			})
-		}
-		from := post.Status
-		h.logEvent(c, post.ID, models.PostLogEventValidationPassed, &from, &status,
-			"draft → ready_for_publish passed platform validation",
-			postlog.MarshalCapped(map[string]any{"platform_validation": errsByPlatform}),
-		)
+	if done, err := h.validateReadyForPublish(c, post, &req, status); err != nil {
+		return err
+	} else if done {
+		return nil
 	}
 
 	prevStatus := post.Status
 
-	// CON-69 §5: when the user moves a Post from ReadyForPublish to
-	// Scheduled, we evaluate the auto-publish allowlist for the
-	// post's platform. Allowlisted → stays Scheduled and a submit
-	// task is enqueued. Not allowlisted → is silently routed to
-	// ScheduledForManualPublish (no Zernio queue work). The
-	// transactional path lives in scheduleForAutoPublish; if
-	// scheduling deps aren't wired (test fixtures), we fall through
-	// to the default save path below.
+	// CON-69 §5: ReadyForPublish→Scheduled consults the auto-publish
+	// allowlist and persists status, PostLog, and the submit Backlite
+	// task transactionally. Falls through to the default save when
+	// scheduling deps aren't wired (test fixtures).
 	if prevStatus == models.PostStatusReadyForPublish && status == models.PostStatusScheduled && h.allowlistRepo != nil && h.jobsClient != nil && h.db != nil {
 		routed, err := h.routeAndPersistSchedule(c, post, &req, ctaType)
-		if err != nil {
-			return err
-		}
-		// Re-fetch to return fully hydrated response.
-		updated, err := h.repo.GetByID(c.Context(), post.ID)
 		if err != nil {
 			return err
 		}
 		if routed != "" {
 			c.Set("X-Auto-Publish-Decision", routed)
 		}
-		return c.JSON(updated)
-	}
-
-	post.CampaignID = req.CampaignID
-	post.PlatformID = req.PlatformID
-	post.PlatformPostType = req.PlatformPostType
-	post.Title = req.Title
-	post.Content = req.Content
-	post.MediaURLs = nullSlice(req.MediaURLs)
-	post.ScheduledAt = req.ScheduledAt
-	post.PublishedAt = req.PublishedAt
-	post.Status = status
-	post.CTAType = ctaType
-	post.CTAUrl = req.CTAUrl
-	post.CampaignTypePhaseID = req.CampaignTypePhaseID
-	post.TargetAudienceNotes = req.TargetAudienceNotes
-	post.UsedAssetIDs = nullSlice(req.UsedAssetIDs)
-	post.UpdatedAt = time.Now().UTC()
-
-	if err := h.repo.Update(c.Context(), post); err != nil {
-		return err
-	}
-
-	// CON-69 §11: every status change is recorded. We log only on
-	// actual transitions; an Update that leaves status unchanged is
-	// not a state-machine event.
-	if prevStatus != status {
-		h.logEvent(c, post.ID, models.PostLogEventStateTransition, &prevStatus, &status,
-			"status changed via PUT /api/posts/:id", "{}",
-		)
-		// CON-69 §10: a Failed→ReadyForPublish transition is the
-		// user's "retry" gesture. Record it as a distinct event tied
-		// to the prior failure_reason so the audit trail makes the
-		// retry intent explicit.
-		if prevStatus == models.PostStatusFailed && status == models.PostStatusReadyForPublish {
-			h.logEvent(c, post.ID, models.PostLogEventUserRetry, &prevStatus, &status,
-				"manual retry: user moved Failed → ReadyForPublish",
-				postlog.MarshalCapped(map[string]any{
-					"prior_failure_reason": post.FailureReason,
-					"prior_zernio_post_id": post.ZernioPostID,
-				}),
-			)
+	} else {
+		req.apply(post, status, ctaType)
+		if err := h.repo.Update(c.Context(), post); err != nil {
+			return err
 		}
+		h.logTransition(c, post, prevStatus, status)
 	}
 
 	// Re-fetch to return fully hydrated response.
