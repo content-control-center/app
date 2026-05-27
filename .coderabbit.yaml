@@ -1,0 +1,98 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: "en-US"
+early_access: false
+tone_instructions: "Be terse. Skip preamble and pleasantries. State the issue, why it matters, and the fix. Prefer diffs over prose."
+
+reviews:
+  profile: "chill"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - "main"
+
+  path_filters:
+    - "!web/dist/**"
+    - "!web/node_modules/**"
+    - "!web/skills-lock.json"
+    - "!web/pnpm-lock.yaml"
+    - "!web/package-lock.json"
+    - "!ogen-data/**"
+    - "!ogen-keys/**"
+    - "!tmp/**"
+    - "!coverage.out"
+    - "!**/*.pdf"
+    - "!**/.DS_Store"
+
+  path_instructions:
+    - path: "src/handlers/**/*_test.go"
+      instructions: |
+        Handler tests must use a real in-memory SQLite database (no DB mocks).
+        Tests live only at the handler layer; do not add lower-level unit tests
+        for repositories or models. Flag any use of mock/stub DB interfaces.
+
+    - path: "src/handlers/**/*.go"
+      instructions: |
+        Authorization must run BEFORE any resource lookup. When a caller is not
+        authorized for a resource, return 403 regardless of whether the resource
+        exists — never reveal existence via 404. Flag any handler that looks up
+        a record first and then checks ownership.
+
+        This is a single-tenant app. There is NO admin/user split. Gate routes
+        with RequireAuth only. Flag any introduction of admin-only middleware,
+        role checks, or per-role gating.
+
+    - path: "src/**/*.go"
+      instructions: |
+        Prefer terse, minimal diffs. Do not add error handling, fallbacks, or
+        validation for cases that cannot happen at internal call sites — trust
+        framework and internal guarantees. Validate only at system boundaries
+        (HTTP input, external APIs). Avoid premature abstractions; three similar
+        lines is better than a speculative helper.
+
+        Default to no comments. Only flag a missing comment when the WHY is
+        genuinely non-obvious (a hidden constraint, a workaround for a known bug,
+        a subtle invariant). Do not request comments that merely describe WHAT
+        the code does.
+
+    - path: "web/**/*.{ts,tsx}"
+      instructions: |
+        Normalize and guard API response data BEFORE passing to setState.
+        Arrays especially: coerce `data ?? []` (or equivalent) so a missing /
+        null / non-array response cannot crash a `.map()` downstream. Flag any
+        `setState(response.data)` that does not defensively normalize.
+
+    - path: "prototyping/**/*.{ts,tsx}"
+      instructions: |
+        Same as web/: normalize/guard API responses (especially arrays) before
+        setState. Prototyping code still ships to users, so apply the same
+        defensive-input rules.
+
+    - path: "**/*.md"
+      instructions: |
+        Skip stylistic prose nits. Only flag factual errors, broken code samples,
+        or stale references (renamed files, removed flags, deleted endpoints).
+
+  tools:
+    semgrep:
+      enabled: true
+    gitleaks:
+      enabled: true
+    markdownlint:
+      enabled: false
+    languagetool:
+      enabled: false
+    ast-grep:
+      essential_rules: true
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  opt_out: false
