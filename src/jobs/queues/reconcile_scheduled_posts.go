@@ -9,9 +9,9 @@ import (
 	"github.com/mikestefanello/backlite"
 	"github.com/uptrace/bun"
 
-	"github.com/content-control-center/app/src/jobs"
-	"github.com/content-control-center/app/src/models"
-	"github.com/content-control-center/app/src/postlog"
+	"github.com/ogen-app/ogen/src/jobs"
+	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/postlog"
 )
 
 // ReconcileScheduledPostsQueue is the recurring sweeper queue

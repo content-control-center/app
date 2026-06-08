@@ -11,7 +11,7 @@ import (
 	"github.com/mikestefanello/backlite"
 	_ "github.com/ncruces/go-sqlite3/driver"
 
-	"github.com/content-control-center/app/src/jobs"
+	"github.com/ogen-app/ogen/src/jobs"
 )
 
 // noopTask is a marker payload used by the smoke test below.

@@ -9,7 +9,7 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"github.com/content-control-center/app/src/models"
+	"github.com/ogen-app/ogen/src/models"
 )
 
 // AssetChunksRepository handles persistence of asset text chunks and their

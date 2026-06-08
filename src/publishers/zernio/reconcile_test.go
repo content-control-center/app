@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/content-control-center/app/src/models"
+	"github.com/ogen-app/ogen/src/models"
 )
 
 // remoteAccount builds a minimal Account suitable for table tests.

@@ -13,9 +13,9 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/valyala/fasthttp"
 
-	"github.com/content-control-center/app/src/eventhub"
-	"github.com/content-control-center/app/src/models"
-	"github.com/content-control-center/app/src/repository"
+	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/repository"
 )
 
 // defaultHeartbeatInterval keeps idle SSE connections alive past

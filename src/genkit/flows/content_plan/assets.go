@@ -8,8 +8,8 @@ import (
 
 	"github.com/firebase/genkit/go/ai"
 
-	"github.com/content-control-center/app/src/genkit/flows"
-	"github.com/content-control-center/app/src/models"
+	"github.com/ogen-app/ogen/src/genkit/flows"
+	"github.com/ogen-app/ogen/src/models"
 )
 
 // minAssetSimilarity is the minimum cosine similarity a chunk must score

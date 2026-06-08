@@ -15,8 +15,8 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
-	"github.com/content-control-center/app/src/models"
-	"github.com/content-control-center/app/src/repository"
+	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/repository"
 )
 
 // jsonPostScanner incrementally scans a stream of JSON text and yields complete

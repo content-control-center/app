@@ -8,7 +8,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 
-	"github.com/content-control-center/app/src/storage"
+	"github.com/ogen-app/ogen/src/storage"
 )
 
 const (

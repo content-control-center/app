@@ -12,9 +12,9 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/valyala/fasthttp"
 
-	"github.com/content-control-center/app/src/genkit/flows/content_plan"
-	"github.com/content-control-center/app/src/models"
-	"github.com/content-control-center/app/src/repository"
+	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
+	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/repository"
 )
 
 var validStatuses = map[models.CampaignStatus]bool{

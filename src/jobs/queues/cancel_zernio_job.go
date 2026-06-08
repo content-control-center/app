@@ -8,10 +8,10 @@ import (
 
 	"github.com/mikestefanello/backlite"
 
-	"github.com/content-control-center/app/src/jobs"
-	"github.com/content-control-center/app/src/models"
-	"github.com/content-control-center/app/src/postlog"
-	"github.com/content-control-center/app/src/publishers/zernio"
+	"github.com/ogen-app/ogen/src/jobs"
+	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/postlog"
+	"github.com/ogen-app/ogen/src/publishers/zernio"
 )
 
 // CancelZernioJobQueue is the Backlite queue name (CON-69 §3, §9).

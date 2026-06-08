@@ -10,7 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/content-control-center/app/src/models"
+	"github.com/ogen-app/ogen/src/models"
 )
 
 // maxSummaryChars caps the combined asset summaries at ~1000 tokens.

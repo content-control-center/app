@@ -7,7 +7,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/content-control-center/app/src/repository"
+	"github.com/ogen-app/ogen/src/repository"
 )
 
 // RequireAuth returns a middleware that rejects requests without a valid,

@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/content-control-center/app/src/eventhub"
-	"github.com/content-control-center/app/src/models"
-	"github.com/content-control-center/app/src/repository"
+	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/repository"
 )
 
 // SyncIntervalFloor is the hard lower bound the worker enforces in

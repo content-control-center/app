@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/content-control-center/app/src/models"
+	"github.com/ogen-app/ogen/src/models"
 )
 
 // ValidationError describes a single rule failure for one

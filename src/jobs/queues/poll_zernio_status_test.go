@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/content-control-center/app/src/jobs/queues"
-	"github.com/content-control-center/app/src/models"
-	"github.com/content-control-center/app/src/publishers/zernio"
+	"github.com/ogen-app/ogen/src/jobs/queues"
+	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/publishers/zernio"
 )
 
 func TestPollTerminalPublishedTransitionsPost(t *testing.T) {

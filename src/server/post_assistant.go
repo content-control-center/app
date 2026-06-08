@@ -7,9 +7,9 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
-	"github.com/content-control-center/app/src/config"
-	"github.com/content-control-center/app/src/eventhub"
-	"github.com/content-control-center/app/src/genkit/flows/post_assistant"
+	"github.com/ogen-app/ogen/src/config"
+	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
 )
 
 // initPostAssistant registers the post assistant flow on the shared Genkit

@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/content-control-center/app/src/pdf"
+	"github.com/ogen-app/ogen/src/pdf"
 )
 
 // MIME is the canonical PDF media type.

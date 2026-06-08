@@ -15,13 +15,13 @@ import (
 	"github.com/mikestefanello/backlite"
 	"github.com/uptrace/bun"
 
-	"github.com/content-control-center/app/src/genkit/flows/post_assistant"
-	"github.com/content-control-center/app/src/jobs/queues"
-	"github.com/content-control-center/app/src/models"
-	"github.com/content-control-center/app/src/platforms"
-	"github.com/content-control-center/app/src/postlog"
-	"github.com/content-control-center/app/src/publishers/zernio"
-	"github.com/content-control-center/app/src/repository"
+	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
+	"github.com/ogen-app/ogen/src/jobs/queues"
+	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/platforms"
+	"github.com/ogen-app/ogen/src/postlog"
+	"github.com/ogen-app/ogen/src/publishers/zernio"
+	"github.com/ogen-app/ogen/src/repository"
 )
 
 var validPostStatuses = map[models.PostStatus]bool{

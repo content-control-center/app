@@ -15,13 +15,13 @@ import (
 	"log"
 	"path/filepath"
 
-	_ "github.com/content-control-center/app/docs"
-	"github.com/content-control-center/app/src/config"
-	"github.com/content-control-center/app/src/database"
-	"github.com/content-control-center/app/src/repository"
-	"github.com/content-control-center/app/src/secrets"
-	"github.com/content-control-center/app/src/server"
-	webstatic "github.com/content-control-center/app/web"
+	_ "github.com/ogen-app/ogen/docs"
+	"github.com/ogen-app/ogen/src/config"
+	"github.com/ogen-app/ogen/src/database"
+	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/secrets"
+	"github.com/ogen-app/ogen/src/server"
+	webstatic "github.com/ogen-app/ogen/web"
 )
 
 func main() {

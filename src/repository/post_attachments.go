@@ -7,7 +7,7 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"github.com/content-control-center/app/src/models"
+	"github.com/ogen-app/ogen/src/models"
 )
 
 // PostAttachmentRepository persists image attachments bound to a Post (CON-73).

@@ -1,7 +1,7 @@
 # Ogen Community Edition
 
-[![Codacy Badge](https://app.codacy.com/project/badge/Grade/d5caed68fdc94fb49a1e52ea198d51b7)](https://app.codacy.com/gh/content-control-center/app/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
-[![Semgrep](https://github.com/content-control-center/app/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/content-control-center/app/actions/workflows/docker-publish.yml)
+[![Codacy Badge](https://app.codacy.com/project/badge/Grade/d5caed68fdc94fb49a1e52ea198d51b7)](https://app.codacy.com/gh/ogen-app/ogen/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
+[![Semgrep](https://github.com/ogen-app/ogen/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/ogen-app/ogen/actions/workflows/docker-publish.yml)
 
 > [!WARNING]  
 > Use at your own risk. Ogen Community Edition is the open source community edition of Ogen and it is intended for users who want to self-host their own Ogen Community Edition instance. It is strictly recommended for personal, non-production use. Please review all installation and configuration steps carefully. Self-hosting requires advanced knowledge of server administration, database management, and securing sensitive data. Proceed only if you are comfortable with these responsibilities.
@@ -180,7 +180,7 @@ sudo apt install -y golang-1.26 poppler-utils
 #### 2. Clone and pull deps
 
 ```bash
-git clone https://github.com/content-control-center/app.git
+git clone https://github.com/ogen-app/ogen.git
 cd app
 go mod download
 ```
@@ -338,7 +338,7 @@ You do **not** need Go, a local database, or any other backend tooling — the A
 #### 1. Clone the repository
 
 ```bash
-git clone https://github.com/content-control-center/app.git
+git clone https://github.com/ogen-app/ogen.git
 cd app
 ```
 
@@ -412,7 +412,7 @@ The `.agents/skills/` directory ships with two **scaffolding skills** for [Claud
 | **`add-entity`** | "Add a new resource / table / domain entity" — anything that needs a full vertical slice (migration → handler). | Migration up/down, `bun`-tagged model, narrow `Repository` interface + impl, Fiber handler with swag annotations, `server.New` wiring, ginkgo handler tests against in-memory SQLite, `http-client/<entity>/<entity>.http` example file. Asks up-front about entity name, fields/types/nullability, enums, relationships, and owner-scoping (`created_by` + `ON DELETE CASCADE`). |
 | **`add-genkit-flow`** | "Add an AI assistant / generator / classifier" — anything LLM-driven that needs prompt templates, structured output, tool use, or progress streaming. | Genkit flow package mirroring `post_assistant` / `content_plan`: types, Markdown prompt template, `run.go` with the direct closure used for SSE streaming, optional tool definitions, context cache with `assembleContext` + `postFingerprint`-style invalidation, init function on `gkRuntime`, Fiber handler that streams `*_delta` events, ginkgo tests. |
 
-Both skills follow the project's [feedback rules](../../.claude/projects/-Users-serhii-go-src-github-com-content-control-center-app/memory/) — real in-memory SQLite tests at the handler layer (no mocks), authz-before-lookup with 403-over-404, `feature/` branch naming — and refuse to invent new patterns where canonical references (`post_assistant`, `content_plan`, the existing repos and handlers) already exist to diff against.
+Both skills follow the project's [feedback rules](../../.claude/projects/-Users-serhii-go-src-github-com-ogen-app-ogen/memory/) — real in-memory SQLite tests at the handler layer (no mocks), authz-before-lookup with 403-over-404, `feature/` branch naming — and refuse to invent new patterns where canonical references (`post_assistant`, `content_plan`, the existing repos and handlers) already exist to diff against.
 
 To use them:
 

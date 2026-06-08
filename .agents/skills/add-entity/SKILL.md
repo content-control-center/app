@@ -152,7 +152,7 @@ package repository
 import (
     "context"
 
-    "github.com/content-control-center/app/src/models"
+    "github.com/ogen-app/ogen/src/models"
 )
 
 // <Entity>Repository defines all persistence operations for the <Entity> domain.
@@ -235,8 +235,8 @@ import (
 
     "github.com/gofiber/fiber/v2"
 
-    "github.com/content-control-center/app/src/models"
-    "github.com/content-control-center/app/src/repository"
+    "github.com/ogen-app/ogen/src/models"
+    "github.com/ogen-app/ogen/src/repository"
 )
 
 type <Entity>Handler struct {
@@ -484,9 +484,9 @@ import (
     . "github.com/onsi/gomega"
     "github.com/uptrace/bun"
 
-    "github.com/content-control-center/app/src/handlers"
-    "github.com/content-control-center/app/src/models"
-    "github.com/content-control-center/app/src/repository"
+    "github.com/ogen-app/ogen/src/handlers"
+    "github.com/ogen-app/ogen/src/models"
+    "github.com/ogen-app/ogen/src/repository"
 )
 
 var _ = Describe("<Entity>Handler", Ordered, func() {

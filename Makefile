@@ -67,7 +67,7 @@ web-dev: web/node_modules
 
 # ── Docker ───────────────────────────────────────────────────────────────────
 docker:
-	docker build -t content-control-center .
+	docker build -t ogen .
 
 docker-genkit:
 	docker compose -f docker-compose.genkit.yml up --build

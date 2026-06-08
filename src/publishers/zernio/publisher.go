@@ -3,8 +3,8 @@ package zernio
 import (
 	"context"
 
-	"github.com/content-control-center/app/src/publishers"
-	"github.com/content-control-center/app/src/repository"
+	"github.com/ogen-app/ogen/src/publishers"
+	"github.com/ogen-app/ogen/src/repository"
 )
 
 // Publisher adapts the Zernio integration to publishers.Publisher so

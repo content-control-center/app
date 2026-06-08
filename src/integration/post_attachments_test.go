@@ -27,10 +27,10 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
 
-	"github.com/content-control-center/app/src/handlers"
-	"github.com/content-control-center/app/src/models"
-	"github.com/content-control-center/app/src/repository"
-	"github.com/content-control-center/app/src/storage"
+	"github.com/ogen-app/ogen/src/handlers"
+	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/storage"
 )
 
 // LinkedIn Sqid from the platform seed migration. Same constant the
