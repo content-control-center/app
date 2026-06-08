@@ -246,7 +246,7 @@ var _ = Describe("Post clone — CON-59 (real S3/MinIO)", Ordered, func() {
 		dreq.AddCookie(authCookie)
 		dresp, err := app.Test(dreq)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(dresp.StatusCode).To(Equal(fiber.StatusOK))
+		Expect(dresp.StatusCode).To(Equal(fiber.StatusNoContent))
 
 		Expect(objectExists(ctx, raw, bucket, srcKey)).To(BeFalse())
 		Expect(objectExists(ctx, raw, bucket, cloneAtts[0].S3Key)).To(BeTrue())

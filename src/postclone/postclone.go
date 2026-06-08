@@ -253,13 +253,20 @@ func (s *Service) Clone(ctx context.Context, sourceID string, opts Options) (*Re
 		s.cleanupKeys(context.Background(), copiedKeys)
 		return nil, err
 	}
+	// post_versions.creator is a role enum ('user' | 'assistant'), not a
+	// user id — an assistant-driven clone (which may adapt content) is
+	// "assistant"; anything else is "user".
+	versionCreator := "user"
+	if opts.Trigger == TriggerAssistant {
+		versionCreator = "assistant"
+	}
 	version := &models.PostVersion{
 		ID:            versionID,
 		PostID:        newID,
 		VersionNumber: 1,
 		Content:       content,
 		Note:          fmt.Sprintf("Cloned from #%s", src.ID),
-		Creator:       opts.Actor,
+		Creator:       versionCreator,
 	}
 
 	logEntry, err := buildLogEntry(newID, src.ID, targetPlatformID, opts.Actor, opts.Trigger, adapted)
