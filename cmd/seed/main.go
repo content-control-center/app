@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/content-control-center/app/src/config"
-	"github.com/content-control-center/app/src/database"
-	"github.com/content-control-center/app/src/embedding"
-	"github.com/content-control-center/app/src/models"
-	"github.com/content-control-center/app/src/repository"
+	"github.com/ogen-app/ogen/src/config"
+	"github.com/ogen-app/ogen/src/database"
+	"github.com/ogen-app/ogen/src/embedding"
+	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/repository"
 )
 
 // seedDir is resolved relative to the working directory, which is the repo

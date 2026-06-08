@@ -7,8 +7,8 @@ import (
 
 	"github.com/mikestefanello/backlite"
 
-	"github.com/content-control-center/app/src/jobs"
-	"github.com/content-control-center/app/src/repository"
+	"github.com/ogen-app/ogen/src/jobs"
+	"github.com/ogen-app/ogen/src/repository"
 )
 
 // CleanupPostLogsQueue is the recurring task that drops Post Log

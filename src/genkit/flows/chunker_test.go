@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/content-control-center/app/src/genkit/flows"
+	"github.com/ogen-app/ogen/src/genkit/flows"
 )
 
 func TestChunkText_ShortText(t *testing.T) {

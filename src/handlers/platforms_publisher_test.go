@@ -13,11 +13,11 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
 
-	"github.com/content-control-center/app/src/handlers"
-	"github.com/content-control-center/app/src/models"
-	"github.com/content-control-center/app/src/publishers"
-	pubzernio "github.com/content-control-center/app/src/publishers/zernio"
-	"github.com/content-control-center/app/src/repository"
+	"github.com/ogen-app/ogen/src/handlers"
+	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/publishers"
+	pubzernio "github.com/ogen-app/ogen/src/publishers/zernio"
+	"github.com/ogen-app/ogen/src/repository"
 )
 
 // PlatformsHandler enrichment tests (CON-63). Sibling file to

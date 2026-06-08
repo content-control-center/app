@@ -12,8 +12,8 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/content-control-center/app/src/publishers/zernio"
-	"github.com/content-control-center/app/src/repository"
+	"github.com/ogen-app/ogen/src/publishers/zernio"
+	"github.com/ogen-app/ogen/src/repository"
 )
 
 // connectLinkTTL is the client-side TTL hint returned with each connect

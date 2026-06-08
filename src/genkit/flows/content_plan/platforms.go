@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/content-control-center/app/src/models"
-	"github.com/content-control-center/app/src/repository"
+	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/repository"
 )
 
 func resolvePlatforms(ctx context.Context, targetPlatforms models.CampaignPlatforms, platformRepo repository.PlatformRepository) ([]resolvedPlatform, error) {

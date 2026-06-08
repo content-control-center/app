@@ -9,10 +9,10 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/content-control-center/app/src/models"
-	"github.com/content-control-center/app/src/platforms"
-	"github.com/content-control-center/app/src/publishers"
-	"github.com/content-control-center/app/src/repository"
+	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/platforms"
+	"github.com/ogen-app/ogen/src/publishers"
+	"github.com/ogen-app/ogen/src/repository"
 )
 
 type PlatformsHandler struct {

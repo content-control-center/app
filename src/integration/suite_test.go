@@ -13,7 +13,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/content-control-center/app/src/database"
+	"github.com/ogen-app/ogen/src/database"
 	"github.com/uptrace/bun"
 )
 

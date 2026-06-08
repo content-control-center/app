@@ -57,7 +57,7 @@ package <flow_name>
 import (
     "github.com/firebase/genkit/go/ai"
 
-    "github.com/content-control-center/app/src/repository"
+    "github.com/ogen-app/ogen/src/repository"
 )
 
 // <FlowName>Request is the input to the flow.
@@ -239,7 +239,7 @@ import (
     "text/template"
     "time"
 
-    "github.com/content-control-center/app/src/models"
+    "github.com/ogen-app/ogen/src/models"
 )
 
 const contextCacheTTL = 5 * time.Minute
@@ -814,8 +814,8 @@ import (
     "github.com/firebase/genkit/go/ai"
     "github.com/firebase/genkit/go/genkit"
 
-    "github.com/content-control-center/app/src/config"
-    "github.com/content-control-center/app/src/genkit/flows/<flow_name>"
+    "github.com/ogen-app/ogen/src/config"
+    "github.com/ogen-app/ogen/src/genkit/flows/<flow_name>"
 )
 
 func init<FlowName>(
@@ -873,7 +873,7 @@ Two shapes: JSON (non-streaming) or SSE (streaming). Use SSE if the flow emits e
 //   "errors"
 //   "fmt"
 //   "github.com/valyala/fasthttp"
-//   "github.com/content-control-center/app/src/genkit/flows/<flow_name>"
+//   "github.com/ogen-app/ogen/src/genkit/flows/<flow_name>"
 
 // <Verb> godoc
 // @Summary      <Resource> <verb> (SSE)

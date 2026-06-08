@@ -11,10 +11,10 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"github.com/content-control-center/app/src/crypto/envelope"
-	"github.com/content-control-center/app/src/database"
-	"github.com/content-control-center/app/src/models"
-	"github.com/content-control-center/app/src/repository"
+	"github.com/ogen-app/ogen/src/crypto/envelope"
+	"github.com/ogen-app/ogen/src/database"
+	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/repository"
 )
 
 var dbCounter atomic.Uint64

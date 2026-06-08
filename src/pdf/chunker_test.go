@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/content-control-center/app/src/genkit/flows"
-	"github.com/content-control-center/app/src/pdf"
+	"github.com/ogen-app/ogen/src/genkit/flows"
+	"github.com/ogen-app/ogen/src/pdf"
 )
 
 func TestChunkPages_SingleShortPage(t *testing.T) {

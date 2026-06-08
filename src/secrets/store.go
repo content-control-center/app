@@ -17,9 +17,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/content-control-center/app/src/crypto/envelope"
-	"github.com/content-control-center/app/src/models"
-	"github.com/content-control-center/app/src/repository"
+	"github.com/ogen-app/ogen/src/crypto/envelope"
+	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/repository"
 )
 
 // Canonical secret names. The allowlist is defined in code (not config)

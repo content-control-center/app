@@ -98,7 +98,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/content-control-center
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/ogen
           tags: |
             type=sha,prefix=,format=short
             type=raw,value=latest
@@ -144,7 +144,7 @@ jobs:
       - name: Clone api repo
         env:
           GH_TOKEN: ${{ secrets.OPENAPI_DEPLOY_TOKEN }}
-        run: git clone "https://x-access-token:${GH_TOKEN}@github.com/content-control-center/api.git" _api_repo
+        run: git clone "https://x-access-token:${GH_TOKEN}@github.com/ogen-app/api.git" _api_repo
 
       - name: Copy swagger.json
         run: cp docs/swagger.json _api_repo/swagger.json
@@ -160,6 +160,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "swagger.json unchanged, skipping commit"
           else
-            git commit -m "chore: update OpenAPI spec (content-control-center/app@${SHORT_SHA:0:7})"
+            git commit -m "chore: update OpenAPI spec (ogen-app/ogen@${SHORT_SHA:0:7})"
             git push
           fi

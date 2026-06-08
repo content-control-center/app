@@ -17,9 +17,9 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
 
-	"github.com/content-control-center/app/src/eventhub"
-	"github.com/content-control-center/app/src/handlers"
-	"github.com/content-control-center/app/src/repository"
+	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/handlers"
+	"github.com/ogen-app/ogen/src/repository"
 )
 
 // stubHub satisfies eventhub.Hub for handler tests. Events pushed by the

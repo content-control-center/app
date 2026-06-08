@@ -17,10 +17,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/content-control-center/app/src/crypto/envelope"
-	"github.com/content-control-center/app/src/handlers"
-	"github.com/content-control-center/app/src/repository"
-	"github.com/content-control-center/app/src/secrets"
+	"github.com/ogen-app/ogen/src/crypto/envelope"
+	"github.com/ogen-app/ogen/src/handlers"
+	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/secrets"
 )
 
 // secretsTestRig wires a freshly migrated DB, a SecretStore on a

@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/content-control-center/app/src/models"
+	"github.com/ogen-app/ogen/src/models"
 )
 
 // PostTypeRule captures the structural requirements for one post-type

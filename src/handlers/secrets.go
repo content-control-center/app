@@ -7,7 +7,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/content-control-center/app/src/secrets"
+	"github.com/ogen-app/ogen/src/secrets"
 )
 
 // SecretsHandler is the REST surface over the SecretStore. Plaintext

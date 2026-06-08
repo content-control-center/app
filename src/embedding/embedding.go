@@ -13,10 +13,10 @@ import (
 	"github.com/firebase/genkit/go/core/api"
 	"github.com/firebase/genkit/go/genkit"
 
-	"github.com/content-control-center/app/src/config"
-	"github.com/content-control-center/app/src/genkit/flows"
-	"github.com/content-control-center/app/src/repository"
-	"github.com/content-control-center/app/src/storage"
+	"github.com/ogen-app/ogen/src/config"
+	"github.com/ogen-app/ogen/src/genkit/flows"
+	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/storage"
 )
 
 // Callbacks bundles the fire-and-forget callbacks registered by Init.

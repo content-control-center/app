@@ -11,7 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
-	"github.com/content-control-center/app/src/config"
+	"github.com/ogen-app/ogen/src/config"
 )
 
 // Storage is the interface for object storage backends.

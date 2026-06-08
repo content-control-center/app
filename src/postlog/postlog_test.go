@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/content-control-center/app/src/postlog"
+	"github.com/ogen-app/ogen/src/postlog"
 )
 
 func TestCapperPassesThroughSmallPayloads(t *testing.T) {

@@ -19,9 +19,9 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
 
-	"github.com/content-control-center/app/src/handlers"
-	"github.com/content-control-center/app/src/repository"
-	"github.com/content-control-center/app/src/storage"
+	"github.com/ogen-app/ogen/src/handlers"
+	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/storage"
 )
 
 // stubStorage is an in-memory Storage implementation for tests.

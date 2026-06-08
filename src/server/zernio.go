@@ -8,12 +8,12 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/content-control-center/app/src/config"
-	"github.com/content-control-center/app/src/eventhub"
-	"github.com/content-control-center/app/src/models"
-	"github.com/content-control-center/app/src/publishers/zernio"
-	"github.com/content-control-center/app/src/repository"
-	"github.com/content-control-center/app/src/secrets"
+	"github.com/ogen-app/ogen/src/config"
+	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/publishers/zernio"
+	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/secrets"
 )
 
 // initZernio constructs the Zernio integration, the Bootstrapper, and a

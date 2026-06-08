@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/content-control-center/app/src/storage/pdfprobe"
+	"github.com/ogen-app/ogen/src/storage/pdfprobe"
 )
 
 // buildPDF synthesises a structurally-valid n-page PDF with correct

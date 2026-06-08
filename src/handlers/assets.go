@@ -12,10 +12,10 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/content-control-center/app/src/genkit/flows"
-	"github.com/content-control-center/app/src/models"
-	"github.com/content-control-center/app/src/repository"
-	"github.com/content-control-center/app/src/storage"
+	"github.com/ogen-app/ogen/src/genkit/flows"
+	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/storage"
 )
 
 const (

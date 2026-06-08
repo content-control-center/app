@@ -1,6 +1,6 @@
 services:
   api:
-    image: serhiiherasymovbndigital/content-control-center:latest
+    image: serhiiherasymovbndigital/ogen:latest
     platform: linux/amd64
     environment:
       ADDR: ":9001"

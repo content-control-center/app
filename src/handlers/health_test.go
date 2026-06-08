@@ -10,8 +10,8 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
 
-	"github.com/content-control-center/app/src/database"
-	"github.com/content-control-center/app/src/handlers"
+	"github.com/ogen-app/ogen/src/database"
+	"github.com/ogen-app/ogen/src/handlers"
 )
 
 var _ = Describe("HealthHandler", func() {
