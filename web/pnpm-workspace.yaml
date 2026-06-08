@@ -1,0 +1,7 @@
+# Dependencies whose install/build scripts pnpm is allowed to run.
+# pnpm 10+ blocks all dependency build scripts by default; any package that
+# legitimately needs one must be set to `true` here, otherwise
+# `pnpm install --frozen-lockfile` exits non-zero with ERR_PNPM_IGNORED_BUILDS
+# (which is what broke the Docker build).
+allowBuilds:
+  esbuild: true

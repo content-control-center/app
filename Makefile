@@ -56,14 +56,18 @@ genkit: web/dist
 	npx genkit start -- go run ./cmd/server
 
 # ── React ────────────────────────────────────────────────────────────────────
+# Use pnpm (pinned via web/package.json "packageManager") to stay consistent
+# with the Docker build. Running `npm install` here regenerates a stray
+# package-lock.json and drifts from pnpm-lock.yaml, which breaks the
+# `pnpm install --frozen-lockfile` step in the Dockerfile.
 web/node_modules:
-	cd web && npm install
+	cd web && corepack pnpm install --frozen-lockfile
 
 web/dist: web/node_modules
-	cd web && npm run build
+	cd web && corepack pnpm run build
 
 web-dev: web/node_modules
-	cd web && npm run dev
+	cd web && corepack pnpm run dev
 
 # ── Docker ───────────────────────────────────────────────────────────────────
 docker:

@@ -1,11 +1,25 @@
 # syntax=docker/dockerfile:1
 # ─── Stage 1: build React ────────────────────────────────────────────────────
-FROM node:20-alpine AS web-builder
+# Node 24: pnpm 11.x requires the `node:sqlite` builtin, which is only
+# available on Node 22.5+ (stable on 24). node:20 fails with
+# ERR_UNKNOWN_BUILTIN_MODULE: node:sqlite.
+FROM node:24-alpine AS web-builder
 
+# corepack ships with Node; enable it so the pnpm version pinned in
+# package.json ("packageManager") is the one actually used. Allow corepack to
+# download that exact version without an interactive integrity prompt.
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable
 
 WORKDIR /app/web
-COPY web/package.json web/pnpm-lock.yaml ./
+# pnpm-workspace.yaml is required: it holds the `allowBuilds` allow-list that
+# lets esbuild run its postinstall. Without it, pnpm 10+ aborts the install
+# with ERR_PNPM_IGNORED_BUILDS.
+COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
+
+# Activate the pinned pnpm version up front so it is cached separately from the
+# dependency install layer.
+RUN corepack install
 
 # Cache the pnpm content-addressable store across builds.
 RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \

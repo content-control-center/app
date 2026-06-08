@@ -1,0 +1,2 @@
+# Use pnpm (pnpm-lock.yaml). Block npm lockfile to prevent tooling drift.
+package-lock.json
