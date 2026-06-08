@@ -114,6 +114,7 @@ var _ = Describe("Post clone — CON-59 (real S3/MinIO)", Ordered, func() {
 		loginResp, err := app.Test(loginReq)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(loginResp.StatusCode).To(Equal(fiber.StatusCreated))
+		Expect(len(loginResp.Cookies())).To(BeNumerically(">", 0))
 		authCookie = loginResp.Cookies()[0]
 
 		cBody, _ := json.Marshal(fiber.Map{"name": "Clone Campaign", "campaign_type_id": "Uk"})
