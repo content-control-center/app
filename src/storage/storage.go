@@ -18,6 +18,11 @@ import (
 type Storage interface {
 	// Upload writes r to the bucket under key and returns the public URL.
 	Upload(ctx context.Context, key string, r io.Reader, size int64, contentType string) (string, error)
+	// Copy duplicates the object at srcKey to dstKey within the same
+	// bucket. Used by post cloning (CON-59) to give a clone its own
+	// independent copies of its source's attachments, so deleting
+	// either post never removes the other's blobs.
+	Copy(ctx context.Context, srcKey, dstKey string) error
 	// Delete removes the object at key. Returns nil when the object does not exist.
 	Delete(ctx context.Context, key string) error
 	// PublicURL returns the public URL for an object at key.
@@ -74,6 +79,18 @@ func (s *s3Storage) Upload(ctx context.Context, key string, r io.Reader, size in
 		return "", fmt.Errorf("storage: upload %s: %w", key, err)
 	}
 	return s.PublicURL(key), nil
+}
+
+func (s *s3Storage) Copy(ctx context.Context, srcKey, dstKey string) error {
+	_, err := s.client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket:     aws.String(s.bucket),
+		CopySource: aws.String(s.bucket + "/" + srcKey),
+		Key:        aws.String(dstKey),
+	})
+	if err != nil {
+		return fmt.Errorf("storage: copy %s -> %s: %w", srcKey, dstKey, err)
+	}
+	return nil
 }
 
 func (s *s3Storage) Delete(ctx context.Context, key string) error {

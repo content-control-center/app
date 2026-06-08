@@ -98,6 +98,10 @@ type Post struct {
 	CreatedBy            string      `bun:"created_by,notnull"                           json:"created_by"`
 	CreatedAt            time.Time   `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
 	UpdatedAt            time.Time   `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
+	// ClonedFromPostID links a clone back to the Post it was duplicated
+	// from (CON-59). Nil for posts created directly. `nullzero` sends
+	// NULL (not "") so the lineage is a clean "has a source / does not".
+	ClonedFromPostID *string `bun:"cloned_from_post_id,nullzero" json:"cloned_from_post_id,omitempty"`
 
 	// Hydrated relations — not stored in the database.
 	Campaign           *Campaign           `bun:"-" json:"campaign"`

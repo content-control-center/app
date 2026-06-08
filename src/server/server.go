@@ -30,6 +30,7 @@ import (
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/jobs/queues"
+	"github.com/ogen-app/ogen/src/postclone"
 	"github.com/ogen-app/ogen/src/publishers"
 	pubzernio "github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
@@ -37,6 +38,7 @@ import (
 	"github.com/ogen-app/ogen/src/storage"
 )
 
+// TODO: refactor this function
 func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, secretStore secrets.Store) (*fiber.App, error) {
 	app := fiber.New(fiber.Config{
 		ErrorHandler: defaultErrorHandler,
@@ -241,6 +243,11 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	// 503 via the handler's IsAnthropicAvailable check); a PUT to
 	// /api/secrets/anthropic_api_key triggers a rebuild on the next
 	// call.
+	// CON-59: one clone service, shared by the REST endpoint and the
+	// assistant's clonePost tool. Deep-copies attachments in object
+	// storage so clone and source have independent blob lifecycles.
+	cloneSvc := postclone.New(db, postRepo, postVersionRepo, postAttachmentRepo, platformRepo, postLogRepo, store, hub)
+
 	gkRuntime, err := newGenkitRuntime(ctx, genkitDeps{
 		cfg:      cfg,
 		hub:      hub,
@@ -259,7 +266,9 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 			Campaigns: campaignRepo,
 			Versions:  postVersionRepo,
 			Messages:  postMessageRepo,
+			Platforms: platformRepo,
 		},
+		cloneSvc: cloneSvc,
 	}, secretStore)
 	if err != nil {
 		return nil, err
@@ -278,6 +287,9 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	// allowlist and (for allowlisted platforms) enqueues a submit task
 	// transactionally with the status change + log write.
 	postsHandler.SetSchedulingDeps(autoPublishAllowlistRepo, jobsRT.Client(), db)
+	// CON-59: same clone service the assistant uses, behind the REST
+	// endpoint that backs the (future) Duplicate button.
+	postsHandler.SetCloneService(cloneSvc)
 	// Cascade post-attachment S3 cleanup on post delete (CON-73 §2.7).
 	// FK CASCADE handles the DB rows; this hook handles the bucket.
 	postsHandler.SetOnBeforeDelete(func(ctx context.Context, postID string) error {

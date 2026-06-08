@@ -4,6 +4,7 @@ import (
 	"github.com/firebase/genkit/go/ai"
 
 	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/postclone"
 	"github.com/ogen-app/ogen/src/repository"
 )
 
@@ -20,9 +21,21 @@ type PostAssistantRequest struct {
 type PostAssistantResponse struct {
 	Explanation    string `json:"explanation"                  jsonschema:"description=Human-readable explanation of what was changed or why the request was declined"`
 	UpdatedContent string `json:"updatedContent"               jsonschema:"description=The full updated post content as Markdown; empty when action is declined"`
-	Action         string `json:"action"                       jsonschema:"description=edited when content was changed or declined when the request is out of scope,enum=edited,enum=declined"`
+	Action         string `json:"action"                       jsonschema:"description=edited when content was changed; declined when the request is out of scope; cloned when a clone was created,enum=edited,enum=declined,enum=cloned"`
 	SaveVersion    bool   `json:"saveVersion"                  jsonschema:"description=True when a new version snapshot should be created"`
 	VersionNote    string `json:"versionNote,omitempty"        jsonschema:"description=Short note describing the version; only present when saveVersion is true"`
+	// CloneResult is populated by the server (not the model) when the
+	// clonePost tool created a clone during this turn. Action is then
+	// "cloned" and UpdatedContent is empty — the source post is untouched.
+	CloneResult *CloneResultPayload `json:"cloneResult,omitempty" jsonschema:"-"`
+}
+
+// CloneResultPayload describes the post created by the clonePost tool.
+type CloneResultPayload struct {
+	NewPostID  string `json:"newPostId"`
+	PlatformID string `json:"platformId,omitempty"`
+	PostType   string `json:"postType,omitempty"`
+	Adapted    bool   `json:"adapted"`
 }
 
 // PostAssistantRepos bundles all repository dependencies for the flow.
@@ -33,6 +46,10 @@ type PostAssistantRepos struct {
 	Campaigns repository.CampaignRepository
 	Versions  repository.PostVersionRepository
 	Messages  repository.PostAssistantMessageRepository
+	// Platforms lets the clonePost tool resolve a platform name (e.g.
+	// "Threads") to its ID and surface the available platforms to the
+	// model. nil disables cross-platform clone resolution.
+	Platforms repository.PlatformRepository
 }
 
 // PostAssistantFlowConfig holds settings for the post assistant flow.
@@ -56,6 +73,9 @@ type PostAssistantFlowConfig struct {
 	// Hub is the event broker used to publish "operation finalised"
 	// events on success/failure. nil = silent (no events emitted).
 	Hub eventhub.Hub
+	// CloneService backs the clonePost tool (CON-59). nil disables the
+	// tool — the assistant then has no clone capability.
+	CloneService *postclone.Service
 }
 
 // ValidationError is returned when preconditions are not met (HTTP 400).
@@ -78,9 +98,26 @@ const (
 	SSEEventContentDelta     SSEEventKind = "content_delta"
 	SSEEventToolCall         SSEEventKind = "tool_call"
 	SSEEventToolResult       SSEEventKind = "tool_result"
+	SSEEventCloneStarted     SSEEventKind = "clone_started"
+	SSEEventCloneComplete    SSEEventKind = "clone_complete"
 	SSEEventComplete         SSEEventKind = "complete"
 	SSEEventError            SSEEventKind = "error"
 )
+
+// CloneStartedEventPayload is emitted when the clonePost tool begins
+// creating a clone, so the UI can show progress.
+type CloneStartedEventPayload struct {
+	TargetPlatform string `json:"targetPlatform,omitempty"`
+}
+
+// CloneCompleteEventPayload is emitted once the clone exists, carrying a
+// navigable id for the new draft.
+type CloneCompleteEventPayload struct {
+	NewPostID  string `json:"newPostId"`
+	PlatformID string `json:"platformId,omitempty"`
+	PostType   string `json:"postType,omitempty"`
+	Adapted    bool   `json:"adapted"`
+}
 
 // DeltaEventPayload carries a fragment of a streamed string value.
 type DeltaEventPayload struct {

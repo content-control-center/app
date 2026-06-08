@@ -19,6 +19,7 @@ import (
 	"github.com/ogen-app/ogen/src/jobs/queues"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/platforms"
+	"github.com/ogen-app/ogen/src/postclone"
 	"github.com/ogen-app/ogen/src/postlog"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
@@ -74,6 +75,9 @@ type PostsHandler struct {
 	// status update + PostLog write + Backlite enqueue in a single
 	// SQLite transaction (CON-69 §5).
 	db *bun.DB
+	// cloneSvc duplicates a post (CON-59). nil disables the clone
+	// endpoint (503), keeping fixtures that don't wire it green.
+	cloneSvc *postclone.Service
 }
 
 // SetOnBeforeDelete registers a hook that runs before a post is
@@ -107,6 +111,12 @@ func (h *PostsHandler) SetSchedulingDeps(allowlist repository.AutoPublishAllowli
 	h.allowlistRepo = allowlist
 	h.jobsClient = client
 	h.db = db
+}
+
+// SetCloneService wires the post-clone service (CON-59). Until set, the
+// clone endpoint returns 503.
+func (h *PostsHandler) SetCloneService(s *postclone.Service) {
+	h.cloneSvc = s
 }
 
 // logEvent appends a PostLog entry, swallowing repo errors so logging
@@ -451,6 +461,7 @@ func (h *PostsHandler) Register(app *fiber.App) {
 	g.Put("/:id", h.auth, h.Update)
 	g.Delete("/:id", h.auth, h.Delete)
 	g.Post("/:id/assistant", h.auth, h.Assistant)
+	g.Post("/:id/clone", h.auth, h.Clone)
 	g.Get("/:id/messages", h.auth, h.ListMessages)
 	g.Get("/:id/versions", h.auth, h.ListVersions)
 	g.Post("/:id/versions", h.auth, h.CreateVersion)
@@ -673,6 +684,66 @@ func (h *PostsHandler) Create(c *fiber.Ctx) error {
 		return err
 	}
 	return c.Status(fiber.StatusCreated).JSON(post)
+}
+
+// cloneRequest is the (entirely optional) body for the clone endpoint.
+// An empty body duplicates the post verbatim into the same campaign.
+type cloneRequest struct {
+	TargetPlatformID string  `json:"target_platform_id"`
+	TargetPostType   string  `json:"target_post_type"`
+	Title            *string `json:"title"`
+}
+
+// Clone godoc
+// @Summary      Clone post
+// @Description  Duplicates a post as a new draft in the same campaign and phase, copying
+// @Description  title, content, media/attachments, used assets, CTA, and audience notes.
+// @Description  Attachments are deep-copied in object storage so the clone is independent
+// @Description  of its source. Pass target_platform_id/target_post_type to retarget the
+// @Description  clone (verbatim content — the assistant path adapts content for you).
+// @Tags         posts
+// @Accept       json
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id    path      string        true   "Source post Sqid"
+// @Param        body  body      cloneRequest  false  "Optional clone overrides"
+// @Success      201   {object}  models.Post
+// @Failure      400   {object}  map[string]string
+// @Failure      401   {object}  map[string]string
+// @Failure      404   {object}  map[string]string
+// @Failure      503   {object}  map[string]string
+// @Router       /api/posts/{id}/clone [post]
+func (h *PostsHandler) Clone(c *fiber.Ctx) error {
+	if h.cloneSvc == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "clone is not available")
+	}
+
+	var req cloneRequest
+	// The body is optional; only parse when one was sent so an empty
+	// POST (the common "just duplicate it" case) doesn't 400.
+	if len(c.Body()) > 0 {
+		if err := c.BodyParser(&req); err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+	}
+
+	session := c.Locals("session").(*models.Session)
+	opts := postclone.DefaultOptions(session.UserID, postclone.TriggerAPI)
+	opts.TargetPlatformID = req.TargetPlatformID
+	opts.TargetPostType = req.TargetPostType
+	opts.TitleOverride = req.Title
+
+	res, err := h.cloneSvc.Clone(c.Context(), c.Params("id"), opts)
+	if err != nil {
+		switch {
+		case errors.Is(err, postclone.ErrSourceNotFound):
+			return fiber.NewError(fiber.StatusNotFound, "post not found")
+		case errors.Is(err, postclone.ErrInvalidPlatform):
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+		return err
+	}
+	return c.Status(fiber.StatusCreated).JSON(res.Post)
 }
 
 // Get godoc

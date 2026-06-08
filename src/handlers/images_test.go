@@ -41,6 +41,16 @@ func (s *stubStorage) Upload(_ context.Context, key string, r io.Reader, _ int64
 	return s.returnURL, s.returnErr
 }
 
+func (s *stubStorage) Copy(_ context.Context, srcKey, dstKey string) error {
+	if s.returnErr != nil {
+		return s.returnErr
+	}
+	if s.objects != nil {
+		s.objects[dstKey] = s.objects[srcKey]
+	}
+	return nil
+}
+
 func (s *stubStorage) Delete(_ context.Context, key string) error {
 	if s.objects != nil {
 		delete(s.objects, key)
