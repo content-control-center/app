@@ -36,6 +36,11 @@ var ErrSourceNotFound = errors.New("source post not found")
 // not exist or has no usable post types.
 var ErrInvalidPlatform = errors.New("invalid target platform")
 
+// ErrStorageUnavailable is returned when the source has attachments to
+// copy but no object storage is configured — cloning would otherwise
+// create attachment rows pointing at blobs that were never copied.
+var ErrStorageUnavailable = errors.New("cannot clone attachments without object storage")
+
 // Trigger identifies which entry point initiated a clone (recorded in
 // the audit log).
 const (
@@ -326,6 +331,16 @@ func (s *Service) copyAttachments(
 	srcAtts, err := s.attachments.ListByPostID(ctx, srcPostID)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	// Without object storage we cannot copy the blobs, so refuse rather
+	// than write attachment rows that reference never-copied objects.
+	if s.store == nil {
+		for _, a := range srcAtts {
+			if a.S3Key != "" || a.ThumbnailS3Key != "" {
+				return nil, nil, ErrStorageUnavailable
+			}
+		}
 	}
 
 	var newAtts []*models.PostAttachment
