@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"text/template"
@@ -132,6 +133,16 @@ func assembleContext(
 		return nil, err
 	}
 
+	// Available platforms power the clonePost tool's platform resolution.
+	// Best-effort: a load failure (or no platforms repo) just omits the
+	// section — the tool still validates server-side.
+	var platforms []platformOption
+	if repos.Platforms != nil {
+		if ps, perr := repos.Platforms.List(ctx); perr == nil {
+			platforms = toPlatformOptions(ps)
+		}
+	}
+
 	data := contextTemplateData{
 		CampaignName:        campaign.Name,
 		CampaignDescription: campaign.Description,
@@ -143,6 +154,7 @@ func assembleContext(
 		PhaseDescription:    phaseDescription,
 		PostContent:         post.Content,
 		Assets:              summaries,
+		Platforms:           platforms,
 	}
 
 	systemPrompt, err := renderTemplate(systemTmpl, data)
@@ -171,6 +183,27 @@ type contextTemplateData struct {
 	PhaseDescription    string
 	PostContent         string
 	Assets              []assetSummary
+	Platforms           []platformOption
+}
+
+// platformOption is a platform the user can clone a post onto, with its
+// available post-type slugs — surfaced to the model for the clonePost tool.
+type platformOption struct {
+	Name      string
+	PostTypes []string
+}
+
+func toPlatformOptions(platforms []models.Platform) []platformOption {
+	opts := make([]platformOption, 0, len(platforms))
+	for _, p := range platforms {
+		types := make([]string, 0, len(p.PostTypes))
+		for slug := range p.PostTypes {
+			types = append(types, slug)
+		}
+		sort.Strings(types)
+		opts = append(opts, platformOption{Name: p.Name, PostTypes: types})
+	}
+	return opts
 }
 
 func buildAssetSummaries(ctx context.Context, assetIDs []string, repos PostAssistantRepos) ([]assetSummary, error) {

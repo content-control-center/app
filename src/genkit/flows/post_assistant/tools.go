@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
 	"github.com/ogen-app/ogen/src/genkit/flows"
 	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/postclone"
 )
 
 // Per-turn token budget for tool-retrieved chunks.
@@ -27,6 +29,17 @@ type requestState struct {
 	assetIDs []string
 	repos    PostAssistantRepos
 	embedder ai.Embedder
+
+	// Clone support (CON-59). cloneSvc/actor drive the clonePost tool;
+	// platforms lets it resolve a platform name → ID; onEvent lets it
+	// emit a clone_started SSE event mid-generation; cloneResult is set
+	// by the tool and read by the runner after generation to finalise
+	// the response.
+	cloneSvc    *postclone.Service
+	actor       string
+	platforms   []models.Platform
+	onEvent     OnEventFunc
+	cloneResult *postclone.Result
 }
 
 func withRequestState(ctx context.Context, s *requestState) context.Context {
@@ -72,6 +85,23 @@ type SearchChunksInput struct {
 	Query   string `json:"query"   jsonschema:"description=Natural-language search query"`
 }
 
+// ClonePostInput is the input for the clonePost tool.
+type ClonePostInput struct {
+	TargetPlatform string `json:"targetPlatform,omitempty" jsonschema:"description=Platform name or ID for the clone (e.g. Threads). Omit to keep the source's platform."`
+	TargetPostType string `json:"targetPostType,omitempty" jsonschema:"description=Post-type slug for the target platform (e.g. text-post). Omit to inherit or default."`
+	Content        string `json:"content,omitempty"        jsonschema:"description=Full Markdown content for the clone. For a cross-platform clone provide content adapted to the target platform; omit to copy the source content verbatim."`
+	Title          string `json:"title,omitempty"          jsonschema:"description=Title for the clone. Omit to apply the default naming."`
+}
+
+// ClonePostOutput is returned to the model after a clone is created.
+type ClonePostOutput struct {
+	NewPostID        string `json:"newPostId"`
+	PlatformID       string `json:"platformId,omitempty"`
+	PostType         string `json:"postType,omitempty"`
+	Adapted          bool   `json:"adapted"`
+	PostTypeFellBack bool   `json:"postTypeFellBack"`
+}
+
 // ── Tool registration ────────────────────────────────────────────────────────
 
 type toolSet struct {
@@ -79,6 +109,7 @@ type toolSet struct {
 	getAssetChunks    ai.ToolRef
 	searchAssetChunks ai.ToolRef
 	getCurrentContent ai.ToolRef
+	clonePost         ai.ToolRef
 }
 
 func defineTools(g *genkit.Genkit) *toolSet {
@@ -110,11 +141,21 @@ func defineTools(g *genkit.Genkit) *toolSet {
 		},
 	)
 
+	clonePost := genkit.DefineTool(g, "clonePost",
+		"Duplicates the current post as a new draft in the same campaign. "+
+			"To clone for another platform, set targetPlatform and provide content adapted to that platform. "+
+			"Omit content for a verbatim copy. Returns the new draft's id.",
+		func(ctx *ai.ToolContext, in ClonePostInput) (*ClonePostOutput, error) {
+			return toolClonePost(ctx, in)
+		},
+	)
+
 	return &toolSet{
 		listAssets:        list,
 		getAssetChunks:    getChunks,
 		searchAssetChunks: searchChunks,
 		getCurrentContent: getCurrentContent,
+		clonePost:         clonePost,
 	}
 }
 
@@ -217,6 +258,67 @@ func toolGetCurrentContent(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("fetch post: %w", err)
 	}
 	return post.Content, nil
+}
+
+func toolClonePost(ctx context.Context, in ClonePostInput) (*ClonePostOutput, error) {
+	st := getRequestState(ctx)
+	if st.cloneSvc == nil {
+		return nil, fmt.Errorf("cloning is not available")
+	}
+
+	opts := postclone.DefaultOptions(st.actor, postclone.TriggerAssistant)
+	if in.TargetPlatform != "" {
+		id, err := resolvePlatform(st.platforms, in.TargetPlatform)
+		if err != nil {
+			return nil, err
+		}
+		opts.TargetPlatformID = id
+	}
+	opts.TargetPostType = in.TargetPostType
+	if in.Content != "" {
+		opts.ContentOverride = &in.Content
+	}
+	if in.Title != "" {
+		opts.TitleOverride = &in.Title
+	}
+
+	emit(st.onEvent, SSEEventCloneStarted, CloneStartedEventPayload{TargetPlatform: in.TargetPlatform})
+
+	res, err := st.cloneSvc.Clone(ctx, st.postID, opts)
+	if err != nil {
+		return nil, err
+	}
+	st.cloneResult = res
+
+	return &ClonePostOutput{
+		NewPostID:        res.Post.ID,
+		PlatformID:       res.Post.PlatformID,
+		PostType:         res.ResolvedPostType,
+		Adapted:          res.Adapted,
+		PostTypeFellBack: res.PostTypeFellBack,
+	}, nil
+}
+
+// resolvePlatform maps a platform identifier from the model (an exact ID
+// or a case-insensitive name) to a platform ID. Returns an error listing
+// the available platforms when nothing matches, so the model can ask the
+// user to clarify rather than guess.
+func resolvePlatform(platforms []models.Platform, ident string) (string, error) {
+	for _, p := range platforms {
+		if p.ID == ident {
+			return p.ID, nil
+		}
+	}
+	for _, p := range platforms {
+		if strings.EqualFold(p.Name, ident) {
+			return p.ID, nil
+		}
+	}
+	names := make([]string, 0, len(platforms))
+	for _, p := range platforms {
+		names = append(names, p.Name)
+	}
+	return "", fmt.Errorf("unknown platform %q; available platforms: %s", ident, strings.Join(names, ", "))
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

@@ -120,12 +120,27 @@ func runPostAssistant(
 	}
 
 	// ── Inject per-request state for tools ───────────────────────────────────
-	ctx = withRequestState(ctx, &requestState{
-		postID:   req.PostID,
-		assetIDs: post.UsedAssetIDs,
-		repos:    repos,
-		embedder: cfg.Embedder,
-	})
+	// Platforms power the clonePost tool's "Threads" → ID resolution.
+	// Best-effort: a load failure just disables cross-platform clones.
+	var platforms []models.Platform
+	if repos.Platforms != nil {
+		if ps, perr := repos.Platforms.List(ctx); perr == nil {
+			platforms = ps
+		} else {
+			log.Printf("post_assistant[%s]: load platforms failed (clone name-resolution degraded): %v", req.PostID, perr)
+		}
+	}
+	st := &requestState{
+		postID:    req.PostID,
+		assetIDs:  post.UsedAssetIDs,
+		repos:     repos,
+		embedder:  cfg.Embedder,
+		cloneSvc:  cfg.CloneService,
+		actor:     post.CreatedBy,
+		platforms: platforms,
+		onEvent:   onEvent,
+	}
+	ctx = withRequestState(ctx, st)
 
 	// ── Call model ───────────────────────────────────────────────────────────
 	// Assistant responses are short (description + explanation), so cap
@@ -219,7 +234,7 @@ func runPostAssistant(
 		ai.WithSystem(systemBlock),
 		ai.WithMessages(history...),
 		ai.WithPrompt(req.Instruction),
-		ai.WithTools(tools.listAssets, tools.getAssetChunks, tools.searchAssetChunks, tools.getCurrentContent),
+		ai.WithTools(tools.listAssets, tools.getAssetChunks, tools.searchAssetChunks, tools.getCurrentContent, tools.clonePost),
 		ai.WithMaxTurns(maxTurns),
 		ai.WithStreaming(streamCb),
 		ai.WithConfig(anthropic.MessageNewParams{
@@ -274,6 +289,26 @@ func runPostAssistant(
 	}
 	if s, ok := vals["versionNote"].(string); ok {
 		result.VersionNote = s
+	}
+
+	// ── Clone handling (CON-59) ──────────────────────────────────────────────
+	// If the clonePost tool ran this turn, it is the authoritative outcome:
+	// the source post is untouched, action is "cloned", and we attach the
+	// new draft's id. Done before the "no usable fields" guard below so a
+	// terse model reply can't mask a successful clone.
+	if st.cloneResult != nil {
+		result.Action = "cloned"
+		result.UpdatedContent = ""
+		result.SaveVersion = false
+		if result.Explanation == "" {
+			result.Explanation = fmt.Sprintf("Cloned this post into a new draft (#%s).", st.cloneResult.Post.ID)
+		}
+		result.CloneResult = &CloneResultPayload{
+			NewPostID:  st.cloneResult.Post.ID,
+			PlatformID: st.cloneResult.Post.PlatformID,
+			PostType:   st.cloneResult.ResolvedPostType,
+			Adapted:    st.cloneResult.Adapted,
+		}
 	}
 
 	// Pure-prose recovery: occasionally the model ignores the JSON
@@ -408,6 +443,17 @@ func runPostAssistant(
 
 	log.Printf("post_assistant[%s]: done in %s action=%s saveVersion=%v",
 		req.PostID, time.Since(start).Round(time.Millisecond), result.Action, result.SaveVersion)
+
+	// Surface the clone before the canonical "complete" so the UI can
+	// link to the new draft as soon as it exists.
+	if result.CloneResult != nil {
+		emit(onEvent, SSEEventCloneComplete, CloneCompleteEventPayload{
+			NewPostID:  result.CloneResult.NewPostID,
+			PlatformID: result.CloneResult.PlatformID,
+			PostType:   result.CloneResult.PostType,
+			Adapted:    result.CloneResult.Adapted,
+		})
+	}
 
 	// Emit the final structured response. The client treats this as the
 	// canonical result; delta events before this are preview-only.

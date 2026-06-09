@@ -44,6 +44,10 @@ const (
 	PostLogEventUserSchedule PostLogEventType = "user_schedule"
 	PostLogEventUserCancel   PostLogEventType = "user_cancel"
 	PostLogEventUserRetry    PostLogEventType = "user_retry"
+
+	// Clone (CON-59): recorded on the NEW post; payload carries the
+	// source id, target platform, adaptation flag and trigger.
+	PostLogEventPostCloned PostLogEventType = "post_cloned"
 )
 
 // ActorSystem is the actor sentinel used when the event was produced
