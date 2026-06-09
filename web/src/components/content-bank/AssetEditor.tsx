@@ -5,6 +5,7 @@ import { BlockNoteView } from "@blocknote/mantine";
 import type { Block } from "@blocknote/core";
 import "@blocknote/mantine/style.css";
 import "@/blocknote-theme.css";
+import { uploadImage } from "@/services/api/images";
 
 type AssetEditorProps = {
   initialTitle: string;
@@ -37,6 +38,7 @@ export function AssetEditor({
 
   const editor = useCreateBlockNote({
     initialContent: DEFAULT_CONTENT,
+    uploadFile: uploadImage,
   });
 
   useEffect(() => {

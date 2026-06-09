@@ -8,6 +8,7 @@
  */
 
 import type { LoginPayload, Session } from "@/types/session";
+import { ServerUnavailableError, fetchOrThrowUnavailable } from "./errors";
 
 export async function login(payload: LoginPayload): Promise<Session> {
   const res = await fetch("/api/sessions", {
@@ -37,6 +38,10 @@ let sessionCached: Promise<boolean> | null = null;
 export function checkSession(): Promise<boolean> {
   if (sessionCached === null) {
     sessionCached = fetchSession();
+    // Never cache a server-unreachable failure — a later retry must re-probe.
+    void sessionCached.catch(() => {
+      sessionCached = null;
+    });
   }
   return sessionCached;
 }
@@ -46,15 +51,16 @@ export function invalidateSession(): void {
 }
 
 async function fetchSession(): Promise<boolean> {
-  try {
-    const res = await fetch("/api/users/", {
-      method: "GET",
-      credentials: "include",
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
+  // A network rejection surfaces as `ServerUnavailableError` (server down)
+  // rather than being flattened into "not authenticated".
+  const res = await fetchOrThrowUnavailable("/api/users/", {
+    method: "GET",
+    credentials: "include",
+  });
+  // A 5xx (incl. the dev proxy's 500 when the backend is down) is an outage,
+  // not a "logged out" signal — let it surface as ServerUnavailableError.
+  if (res.status >= 500) throw new ServerUnavailableError();
+  return res.ok;
 }
 
 async function errorMessage(res: Response, fallback: string): Promise<string> {
