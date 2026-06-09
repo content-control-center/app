@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { ServerUnavailableError, fetchOrThrowUnavailable } from "./errors";
+
 /**
  * Checks whether first-run setup has been completed. Used by the root route
  * guard to decide whether to send the user to `/setup`.
@@ -19,6 +21,10 @@ let cached: Promise<boolean> | null = null;
 export function isSetupComplete(): Promise<boolean> {
   if (cached === null) {
     cached = fetchSetupComplete();
+    // Never cache a server-unreachable failure — a later retry must re-probe.
+    void cached.catch(() => {
+      cached = null;
+    });
   }
   return cached;
 }
@@ -40,18 +46,25 @@ export async function markSetupComplete(): Promise<void> {
 }
 
 async function fetchSetupComplete(): Promise<boolean> {
+  // A network rejection here means the server is unreachable; it surfaces as a
+  // `ServerUnavailableError` so the caller can distinguish it from a real
+  // response. Everything below has a live server answering.
+  const res = await fetchOrThrowUnavailable("/api/settings/setup_complete", {
+    method: "GET",
+    credentials: "include",
+  });
+  // Backend leaves this endpoint open only while setup is incomplete; once
+  // setup_complete=true it requires auth and returns 401 to anonymous callers.
+  if (res.status === 401) return true;
+  // A 5xx means the backend — or a proxy in front of it (the Vite dev proxy
+  // returns 500, nginx/traefik return 502/503/504) — is down or broken, NOT
+  // that setup is incomplete. A healthy fresh install answers 200 here. Treat
+  // it as an outage so we don't misroute the user into the setup wizard.
+  if (res.status >= 500) throw new ServerUnavailableError();
+  if (!res.ok) return false;
   try {
-    const res = await fetch("/api/settings/setup_complete", {
-      method: "GET",
-      credentials: "include",
-    });
-    // Backend leaves this endpoint open only while setup is incomplete; once
-    // setup_complete=true it requires auth and returns 401 to anonymous callers.
-    if (res.status === 401) return true;
-    if (!res.ok) return false;
     const parsed = settingResponseSchema.safeParse(await res.json());
-    if (!parsed.success) return false;
-    return parsed.data.value === "true";
+    return parsed.success && parsed.data.value === "true";
   } catch {
     return false;
   }

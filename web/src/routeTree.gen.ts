@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
+import { Route as ServerUnavailableIndexRouteImport } from './routes/server-unavailable/index'
 import { Route as AuthIndexRouteImport } from './routes/auth/index'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
 import { Route as SetupWelcomeIndexRouteImport } from './routes/setup/welcome/index'
@@ -33,6 +34,11 @@ const AuthenticatedRoute = AuthenticatedRouteImport.update({
 const SetupIndexRoute = SetupIndexRouteImport.update({
   id: '/setup/',
   path: '/setup/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ServerUnavailableIndexRoute = ServerUnavailableIndexRouteImport.update({
+  id: '/server-unavailable/',
+  path: '/server-unavailable/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthIndexRoute = AuthIndexRouteImport.update({
@@ -115,6 +121,7 @@ const AuthenticatedCampaignsCampaignIdPostsPostIdRoute =
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
   '/auth/': typeof AuthIndexRoute
+  '/server-unavailable/': typeof ServerUnavailableIndexRoute
   '/setup/': typeof SetupIndexRoute
   '/campaigns/$campaignId': typeof AuthenticatedCampaignsCampaignIdRoute
   '/content-bank/$assetId': typeof AuthenticatedContentBankAssetIdRoute
@@ -132,6 +139,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof AuthenticatedIndexRoute
   '/auth': typeof AuthIndexRoute
+  '/server-unavailable': typeof ServerUnavailableIndexRoute
   '/setup': typeof SetupIndexRoute
   '/campaigns/$campaignId': typeof AuthenticatedCampaignsCampaignIdRoute
   '/content-bank/$assetId': typeof AuthenticatedContentBankAssetIdRoute
@@ -151,6 +159,7 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteWithChildren
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/auth/': typeof AuthIndexRoute
+  '/server-unavailable/': typeof ServerUnavailableIndexRoute
   '/setup/': typeof SetupIndexRoute
   '/_authenticated/campaigns/$campaignId': typeof AuthenticatedCampaignsCampaignIdRoute
   '/_authenticated/content-bank/$assetId': typeof AuthenticatedContentBankAssetIdRoute
@@ -170,6 +179,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/auth/'
+    | '/server-unavailable/'
     | '/setup/'
     | '/campaigns/$campaignId'
     | '/content-bank/$assetId'
@@ -187,6 +197,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/auth'
+    | '/server-unavailable'
     | '/setup'
     | '/campaigns/$campaignId'
     | '/content-bank/$assetId'
@@ -205,6 +216,7 @@ export interface FileRouteTypes {
     | '/_authenticated'
     | '/_authenticated/'
     | '/auth/'
+    | '/server-unavailable/'
     | '/setup/'
     | '/_authenticated/campaigns/$campaignId'
     | '/_authenticated/content-bank/$assetId'
@@ -223,6 +235,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
   AuthIndexRoute: typeof AuthIndexRoute
+  ServerUnavailableIndexRoute: typeof ServerUnavailableIndexRoute
   SetupIndexRoute: typeof SetupIndexRoute
   AuthForgotIndexRoute: typeof AuthForgotIndexRoute
   AuthLoginIndexRoute: typeof AuthLoginIndexRoute
@@ -246,6 +259,13 @@ declare module '@tanstack/react-router' {
       path: '/setup'
       fullPath: '/setup/'
       preLoaderRoute: typeof SetupIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/server-unavailable/': {
+      id: '/server-unavailable/'
+      path: '/server-unavailable'
+      fullPath: '/server-unavailable/'
+      preLoaderRoute: typeof ServerUnavailableIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/auth/': {
@@ -378,6 +398,7 @@ const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRoute: AuthenticatedRouteWithChildren,
   AuthIndexRoute: AuthIndexRoute,
+  ServerUnavailableIndexRoute: ServerUnavailableIndexRoute,
   SetupIndexRoute: SetupIndexRoute,
   AuthForgotIndexRoute: AuthForgotIndexRoute,
   AuthLoginIndexRoute: AuthLoginIndexRoute,
