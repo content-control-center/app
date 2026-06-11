@@ -62,9 +62,18 @@ func TestLoadTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderUser: %v", err)
 	}
-	for _, marker := range []string{"LinkedIn", "carousel", "UNIQUE_BODY_TOKEN", "Brand doc", "caption-scoped", "at most 3"} {
+	for _, marker := range []string{"LinkedIn", "carousel", "UNIQUE_BODY_TOKEN", "Brand doc", "caption-scoped"} {
 		if !strings.Contains(usr, marker) {
 			t.Errorf("user prompt missing %q\n---\n%s", marker, usr)
+		}
+	}
+
+	// The per-dimension scoring directive (with the suggestion cap) is added
+	// in code, not the template — verify it renders for a named dimension.
+	instr := dimensionInstruction("Clarity", 3)
+	for _, marker := range []string{"Clarity", "at most 3"} {
+		if !strings.Contains(instr, marker) {
+			t.Errorf("dimension instruction missing %q: %s", marker, instr)
 		}
 	}
 
