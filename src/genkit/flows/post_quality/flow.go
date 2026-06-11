@@ -27,7 +27,9 @@ type PostQualityFlowConfig struct {
 	// ModelID is the Anthropic model used for scoring — Haiku-tier by
 	// default, specified separately from the generation flows.
 	ModelID string
-	// MaxOutputTokens caps the model response; 0 falls back to 64000.
+	// MaxOutputTokens caps the model response; 0 falls back to
+	// defaultMaxOutputTokens. Keep it under the Anthropic non-streaming
+	// limit — evaluate issues a blocking GenerateData call.
 	MaxOutputTokens int64
 	// SuggestionCap is the top-N suggestions per dimension; 0 falls back to
 	// defaultSuggestionCap.

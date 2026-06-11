@@ -27,11 +27,14 @@ func initPostQuality(
 		return nil, fmt.Errorf("post quality weight profiles: %w", err)
 	}
 
+	// MaxOutputTokens is left at 0 so the flow uses its own small default
+	// (defaultMaxOutputTokens). The generation flows' 64000 cap (cfg.MaxOutputTokens)
+	// would trip the Anthropic non-streaming guard — evaluate uses a blocking
+	// GenerateData call, and a scoring response is only a few thousand tokens.
 	flowCfg := post_quality.PostQualityFlowConfig{
-		ModelID:         cfg.QualityModelID,
-		MaxOutputTokens: cfg.MaxOutputTokens,
-		Weights:         weights,
-		Hub:             hub,
+		ModelID: cfg.QualityModelID,
+		Weights: weights,
+		Hub:     hub,
 	}
 	if err := post_quality.InitPostQuality(g, flowCfg, repos); err != nil {
 		return nil, fmt.Errorf("init post quality flow: %w", err)

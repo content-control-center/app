@@ -17,6 +17,16 @@ import (
 // invalid evaluation (CON-85: "1-retry / 2s-backoff convention").
 const retryBackoff = 2 * time.Second
 
+// defaultMaxOutputTokens caps the scoring response when the config leaves
+// MaxOutputTokens at 0. It is deliberately small: a four-dimension critique
+// with capped suggestions runs only a few thousand tokens, and evaluate
+// issues a NON-streaming GenerateData call. The Anthropic SDK rejects a
+// non-streaming request whose max_tokens implies a >10-minute run — its
+// estimate is 1h × max_tokens/128000, so anything above ~21k tokens is
+// refused (and Opus-tier models cap non-streaming at 8192). 8192 stays
+// under every limit while leaving ample headroom for the response.
+const defaultMaxOutputTokens = 8192
+
 // evaluate runs the single model call that scores the post, returning the
 // validated structured output. On a model error or an output that fails
 // validateOutput, it backs off once and retries; a second failure returns
@@ -45,7 +55,7 @@ func evaluate(
 ) (*assessmentOutput, error) {
 	maxTokens := cfg.MaxOutputTokens
 	if maxTokens == 0 {
-		maxTokens = 64000
+		maxTokens = defaultMaxOutputTokens
 	}
 	modelName := "anthropic/" + cfg.ModelID
 
