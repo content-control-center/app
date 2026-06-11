@@ -46,38 +46,81 @@ func goodOutput() *assessmentOutput {
 	}
 }
 
-func TestValidateOutput(t *testing.T) {
-	if err := validateOutput(goodOutput(), 3); err != nil {
+func TestValidateOutputValid(t *testing.T) {
+	o := goodOutput()
+	if err := validateOutput(o, 3); err != nil {
 		t.Errorf("valid output rejected: %v", err)
 	}
+	if len(o.Correctness.Suggestions) != 1 {
+		t.Errorf("valid suggestion should be kept, got %d", len(o.Correctness.Suggestions))
+	}
+}
 
-	tests := []struct {
+func TestValidateOutputHardFailsOnScore(t *testing.T) {
+	// An out-of-range score is the only fatal condition.
+	for _, tt := range []struct {
 		name   string
 		mutate func(*assessmentOutput)
-		cap    int
 	}{
-		{"score too high", func(o *assessmentOutput) { o.Clarity.Score = 11 }, 3},
-		{"score negative", func(o *assessmentOutput) { o.Delivery.Score = -1 }, 3},
-		{"missing weakness", func(o *assessmentOutput) { o.Engagement.Weakness = "  " }, 3},
-		{"missing span", func(o *assessmentOutput) { o.Correctness.Suggestions[0].Span = "" }, 3},
-		{"missing issue", func(o *assessmentOutput) { o.Correctness.Suggestions[0].Issue = "" }, 3},
-		{"missing fix", func(o *assessmentOutput) { o.Correctness.Suggestions[0].Fix = "  " }, 3},
-		{"bad severity", func(o *assessmentOutput) { o.Correctness.Suggestions[0].Severity = "urgent" }, 3},
-		{"over cap", func(o *assessmentOutput) {
-			o.Clarity.Suggestions = []suggestionOutput{
-				{Severity: "low", Issue: "i", Fix: "f", Span: "s"},
-				{Severity: "low", Issue: "i", Fix: "f", Span: "s"},
-			}
-		}, 1},
-	}
-	for _, tt := range tests {
+		{"score too high", func(o *assessmentOutput) { o.Clarity.Score = 11 }},
+		{"score negative", func(o *assessmentOutput) { o.Delivery.Score = -1 }},
+	} {
 		t.Run(tt.name, func(t *testing.T) {
 			o := goodOutput()
 			tt.mutate(o)
-			if err := validateOutput(o, tt.cap); err == nil {
-				t.Error("expected validation error, got nil")
+			if err := validateOutput(o, 3); err == nil {
+				t.Error("expected hard failure, got nil")
 			}
 		})
+	}
+}
+
+func TestValidateOutputToleratesBlankProse(t *testing.T) {
+	// Blank rationale/weakness no longer fail the evaluation — the scores
+	// are still usable.
+	o := goodOutput()
+	o.Clarity.Rationale = ""
+	o.Engagement.Weakness = "  "
+	if err := validateOutput(o, 3); err != nil {
+		t.Errorf("blank rationale/weakness should be tolerated, got %v", err)
+	}
+}
+
+func TestValidateOutputDropsBadSuggestions(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		mutate func(*assessmentOutput)
+	}{
+		{"missing span", func(o *assessmentOutput) { o.Correctness.Suggestions[0].Span = "" }},
+		{"missing issue", func(o *assessmentOutput) { o.Correctness.Suggestions[0].Issue = "" }},
+		{"missing fix", func(o *assessmentOutput) { o.Correctness.Suggestions[0].Fix = "  " }},
+		{"bad severity", func(o *assessmentOutput) { o.Correctness.Suggestions[0].Severity = "urgent" }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			o := goodOutput()
+			tt.mutate(o)
+			if err := validateOutput(o, 3); err != nil {
+				t.Fatalf("should sanitize, not fail: %v", err)
+			}
+			if len(o.Correctness.Suggestions) != 0 {
+				t.Errorf("bad suggestion should be dropped, got %d", len(o.Correctness.Suggestions))
+			}
+		})
+	}
+}
+
+func TestValidateOutputTrimsOverCap(t *testing.T) {
+	o := goodOutput()
+	o.Clarity.Suggestions = []suggestionOutput{
+		{Severity: "low", Issue: "i", Fix: "f", Span: "s"},
+		{Severity: "low", Issue: "i", Fix: "f", Span: "s"},
+		{Severity: "low", Issue: "i", Fix: "f", Span: "s"},
+	}
+	if err := validateOutput(o, 2); err != nil {
+		t.Fatalf("over-cap should trim, not fail: %v", err)
+	}
+	if len(o.Clarity.Suggestions) != 2 {
+		t.Errorf("expected trim to 2, got %d", len(o.Clarity.Suggestions))
 	}
 }
 
