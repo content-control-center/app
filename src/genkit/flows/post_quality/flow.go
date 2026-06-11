@@ -24,7 +24,7 @@ const defaultSuggestionCap = 3
 
 // PostQualityFlowConfig holds the settings for the assessPostQuality flow.
 type PostQualityFlowConfig struct {
-	// ModelID is the Anthropic model used for scoring — Haiku-tier by
+	// ModelID is the Anthropic model used for scoring — Sonnet 4.5 by
 	// default, specified separately from the generation flows.
 	ModelID string
 	// MaxOutputTokens caps the model response; 0 falls back to
