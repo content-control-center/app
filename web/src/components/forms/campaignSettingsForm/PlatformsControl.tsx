@@ -3,7 +3,7 @@ import { Link } from '@tanstack/react-router'
 
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { Icon } from '@/components/ui/icon'
+import { CaretDown, Plus, X } from '@phosphor-icons/react'
 import { cn } from '@/lib'
 import { usePlatformViews } from '@/hooks/usePlatforms'
 import type { PlatformView } from '@/lib/platformDictionary'
@@ -104,7 +104,7 @@ function UnselectedPlatformRow({ view, onAdd }: { view: PlatformView; onAdd: () 
         aria-label={`Add ${view.info.name}`}
         title={`Add ${view.info.name}`}
       >
-        <Icon name="plus" className="size-4" />
+        <Plus className="size-4" />
       </Button>
     </div>
   )
@@ -187,7 +187,7 @@ function SelectedPlatformBlock({
           aria-label={`Unselect ${info.name}`}
           title={`Unselect ${info.name}`}
         >
-          <Icon name="x_mark" className="size-4" />
+          <X className="size-4" />
         </Button>
         <Button
           type="button"
@@ -197,10 +197,9 @@ function SelectedPlatformBlock({
           aria-label={open ? 'Collapse' : 'Expand'}
           aria-expanded={open}
         >
-          <Icon
-            name="chevron_down"
+          <CaretDown
             className={cn(
-              'size-4 text-secondary-foreground stroke-2 transition-transform',
+              'size-4 text-secondary-foreground transition-transform',
               open && 'rotate-180',
             )}
           />

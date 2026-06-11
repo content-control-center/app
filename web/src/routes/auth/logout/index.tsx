@@ -4,7 +4,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { PageContainer } from '@/components/page-primitives/PageContainer'
 import { PageStatusFooter } from '@/components/page-primitives/PageStatusFooter'
 import { Button } from '@/components/ui/button'
-import { Icon } from '@/components/ui/icon'
+import { ArrowUpRight } from '@phosphor-icons/react'
 import { Spinner } from '@/components/ui/spinner'
 import { clearAllApplicationData } from '@/lib/cache-utils'
 
@@ -55,7 +55,7 @@ function LogoutPage() {
                 onClick={() => navigate({ to: '/' })}
               >
                 <span>TAKE ME HOME</span>
-                <Icon className={'size-4'} name={'arrow_right_top'} />
+                <ArrowUpRight className={'size-4'} />
               </Button>
             ) : (
               <Spinner

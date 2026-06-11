@@ -9,12 +9,15 @@ import { useCampaign } from '@/hooks/useCampaigns'
 import { useRightRailSection } from '@/hooks/useRightRailSection'
 import { useRightRailPage } from '@/hooks/useRightRailPage'
 import type { RightRailButton } from '@/stores/rightRailStore'
+import { GearSix, Layout } from '@phosphor-icons/react'
 import { PostSettingsForm } from '@/components/forms/postSettingsForm'
 import { PostContentUsageForm } from '@/components/forms/postContentUsageForm'
 import { PostContentEditor } from '@/components/posts/PostContentEditor'
 import { PostStatusHeaderActions } from '@/components/posts/PostStatusHeaderActions'
 import { usePost, type TransitionStatusResult } from '@/hooks/usePost'
+import type { CancelTarget } from '@/services/api/posts'
 import type { Post, PostStatus } from '@/types/posts'
+import { formatTitle } from '@/lib'
 
 export const Route = createFileRoute(
   '/_authenticated/campaigns/$campaignId_/posts/$postId',
@@ -24,7 +27,15 @@ export const Route = createFileRoute(
 
 function PostPage() {
   const { campaignId, postId } = Route.useParams()
-  const { doc, changeDoc, transitionStatus, loading, error } = usePost(postId)
+  const {
+    doc,
+    changeDoc,
+    transitionStatus,
+    cancelScheduled,
+    cancelling,
+    loading,
+    error,
+  } = usePost(postId)
   const { data: campaign } = useCampaign(campaignId)
 
   const railButtons = useMemo<RightRailButton[]>(
@@ -33,7 +44,7 @@ function PostPage() {
         ? [
             {
               id: 'settings',
-              icon: 'settings',
+              icon: GearSix,
               ariaLabel: 'Post settings',
               panel: ({ close }) => (
                 <PostSettingsForm doc={doc} changeDoc={changeDoc} onClose={close} />
@@ -41,7 +52,7 @@ function PostPage() {
             },
             {
               id: 'content-usage',
-              icon: 'layout',
+              icon: Layout,
               ariaLabel: 'Content pieces',
               panel: ({ close }) => (
                 <PostContentUsageForm doc={doc} changeDoc={changeDoc} onClose={close} />
@@ -75,6 +86,8 @@ function PostPage() {
       doc={doc}
       changeDoc={changeDoc}
       transitionStatus={transitionStatus}
+      cancelScheduled={cancelScheduled}
+      cancelling={cancelling}
       campaignId={campaignId}
       campaignName={campaign?.name?.trim() || 'Campaign'}
     />
@@ -85,6 +98,8 @@ type PostEditorSurfaceProps = {
   doc: Post
   changeDoc: (fn: (p: Post) => void) => void
   transitionStatus: (next: PostStatus) => Promise<TransitionStatusResult>
+  cancelScheduled: (target: CancelTarget) => Promise<TransitionStatusResult>
+  cancelling: boolean
   campaignId: string
   campaignName: string
 }
@@ -93,6 +108,8 @@ function PostEditorSurface({
   doc,
   changeDoc,
   transitionStatus,
+  cancelScheduled,
+  cancelling,
   campaignId,
   campaignName,
 }: PostEditorSurfaceProps) {
@@ -129,7 +146,7 @@ function PostEditorSurface({
     [changeDoc],
   )
 
-  const displayTitle = titleDraft.trim() === '' ? 'Untitled' : titleDraft
+  const displayTitle = formatTitle(titleDraft)
 
   return (
     <PageContainer variant="fullFlex">
@@ -138,7 +155,12 @@ function PostEditorSurface({
           title={displayTitle}
           breadcrumbs={[{ label: campaignName, to: `/campaigns/${campaignId}` }]}
           actions={
-            <PostStatusHeaderActions post={doc} transitionStatus={transitionStatus} />
+            <PostStatusHeaderActions
+              post={doc}
+              transitionStatus={transitionStatus}
+              cancelScheduled={cancelScheduled}
+              cancelling={cancelling}
+            />
           }
         />
         <div className="flex flex-col items-center gap-0 relative z-0">

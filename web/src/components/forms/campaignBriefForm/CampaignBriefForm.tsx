@@ -4,7 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 
 import { Textarea } from '@/components/ui/textarea'
-import { Icon, type IconName } from '@/components/ui/icon'
+import { BookmarkSimple, ChatCircle, Eye, Gauge, Target, type Icon as PhosphorIcon } from '@phosphor-icons/react'
 import { cn } from '@/lib'
 import {
   Form,
@@ -18,15 +18,15 @@ import { useCampaignTypes } from '@/hooks/useCampaigns'
 import type { Campaign } from '@/types/campaigns'
 import { useCampaignAutosave } from './shared'
 
-const TYPE_ICON: Record<string, IconName> = {
-  awareness: 'nav_screening',
-  engagement: 'nav_ideas',
-  conversion: 'nav_strategy',
-  retention: 'nav_watchlist',
+const TYPE_ICON: Record<string, PhosphorIcon> = {
+  awareness: Eye,
+  engagement: ChatCircle,
+  conversion: Target,
+  retention: BookmarkSimple,
 }
 
-function typeIcon(name: string): IconName {
-  return TYPE_ICON[name.toLowerCase()] ?? 'nav_dashboard'
+function typeIcon(name: string): PhosphorIcon {
+  return TYPE_ICON[name.toLowerCase()] ?? Gauge
 }
 
 const briefSchema = z.object({
@@ -115,7 +115,10 @@ export function BriefForm({ campaign, onFlushRef }: BriefFormProps) {
                               : 'bg-transparent'
                           )}
                         >
-                          <Icon name={typeIcon(t.name)} className="size-5" />
+                          {(() => {
+                            const TypeIcon = typeIcon(t.name)
+                            return <TypeIcon className="size-5" />
+                          })()}
                         </span>
                         <span className="text-[11px] font-medium tracking-[0.08em] uppercase">
                           {t.label || t.name}

@@ -1,12 +1,13 @@
 import { memo, useMemo } from 'react'
 import { Link } from '@tanstack/react-router'
-import { Trash2 } from 'lucide-react'
+import { Trash } from '@phosphor-icons/react'
 import { VirtualTable } from '../VirtualTable'
 import { TextCell } from '../TableCells'
 import type { ColumnConfig } from '../types'
 import type { Post } from '@/types/posts'
 import { POST_STATUS_LABELS, DELETABLE_STATUSES } from '@/types/posts'
 import { Button } from '@/components/ui/button'
+import { formatTitle } from '@/lib'
 
 type PostRow = Post & Record<string, unknown>
 
@@ -62,7 +63,7 @@ function PostsTableComponent({
         header: 'Title',
         isAutoSize: true,
         cell: (_value, row) => {
-          const displayTitle = !row.title || row.title.trim() === '' ? 'Untitled' : row.title
+          const displayTitle = formatTitle(row.title)
           return (
             <Link
               to="/campaigns/$campaignId/posts/$postId"
@@ -146,7 +147,7 @@ function PostsTableComponent({
                   onDelete(row.id)
                 }}
               >
-                <Trash2 className="size-4 text-tertiary-foreground hover:text-destructive" />
+                <Trash className="size-4 text-tertiary-foreground hover:text-destructive" />
               </Button>
             </div>
           )

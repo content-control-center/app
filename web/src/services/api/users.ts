@@ -8,6 +8,7 @@
  */
 
 import type { User, RegisterPayload } from "@/types/user";
+import { apiJson } from "./http";
 
 /**
  * TODO: replace with real `GET /api/me` once the backend supports it.
@@ -24,31 +25,23 @@ export async function getMe(): Promise<User> {
   };
 }
 
+type RawUser = {
+  id: string;
+  name: string;
+  email: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export async function register(payload: RegisterPayload): Promise<User> {
-  const res = await fetch("/api/users", {
+  const body = await apiJson<RawUser>("/api/users", "Unable to create account", {
     method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+    body: {
       name: `${payload.firstName} ${payload.lastName}`.trim(),
       email: payload.email,
       password: payload.password,
-    }),
+    },
   });
-  if (!res.ok) {
-    throw new Error(await errorMessage(res, "Unable to create account"));
-  }
-  const body = (await res.json()) as { id: string; name: string; email: string; created_at: string; updated_at: string };
   const [firstName = "", ...rest] = body.name.split(" ");
   return { ...body, firstName, lastName: rest.join(" ") };
-}
-
-async function errorMessage(res: Response, fallback: string): Promise<string> {
-  try {
-    const body = (await res.json()) as { error?: string };
-    if (typeof body.error === "string" && body.error.length > 0) return body.error;
-  } catch {
-    // fall through
-  }
-  return fallback;
 }

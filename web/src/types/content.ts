@@ -4,10 +4,21 @@ export type Tag = {
   color: string;
 };
 
+export type AssetStatus =
+  | "pending"
+  | "processing"
+  | "ready"
+  | "partial"
+  | "failed";
+
+export type AssetType = "MD" | "PDF" | null;
+
 export type Asset = {
   id: string;
   title: string;
   content: string;
+  status: AssetStatus;
+  type: AssetType;
   tag_ids: string[];
   tags: Tag[];
   created_by: string;

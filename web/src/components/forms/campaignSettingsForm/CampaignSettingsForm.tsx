@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { DatePicker } from '@/components/ui/date-picker'
 import { TagsInput } from '@/components/ui/tags-input'
 import { Button } from '@/components/ui/button'
-import { Icon } from '@/components/ui/icon'
+import { Trash } from '@phosphor-icons/react'
 import { Collapse } from '@/components/ui/collapse'
 import { RailPanel } from '@/components/page-primitives/RailPanel'
 import {
@@ -267,7 +267,7 @@ export function CampaignSettingsForm({ campaign, onFlushRef, onClose }: Props) {
               onClick={handleDelete}
               loading={deleting}
             >
-              <Icon name="trash_bin" className="size-4" />
+              <Trash className="size-4" />
               <span>DELETE CAMPAIGN</span>
             </Button>
           </div>

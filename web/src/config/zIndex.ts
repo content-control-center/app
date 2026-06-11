@@ -115,6 +115,14 @@ export const ZIndex = {
    */
   secondaryNavbar: 150,
 
+  /**
+   * Upload tracker panel
+   * Used for: UploadTracker - docked, non-blocking upload progress panel.
+   * Sits above page content and chrome but below modals so an open modal can
+   * still cover it.
+   */
+  uploadTracker: 190,
+
   // ============================================================================
   // OVERLAY LAYER (200-299)
   // Temporary full-screen or panel overlays: sheets, modals, dialogs

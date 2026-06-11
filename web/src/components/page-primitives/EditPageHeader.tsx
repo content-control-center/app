@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
-import { Icon } from '@/components/ui/icon'
+import { List } from '@phosphor-icons/react'
 import { ZIndex } from '@/config/zIndex'
 import { cn } from '@/lib'
 import { Button } from '@/components/ui/button.tsx'
@@ -41,7 +41,7 @@ export function EditPageHeader({
             style={{ zIndex: ZIndex.sidebarOverlay + 1 }}
             aria-label="Toggle sidebar"
           >
-            <Icon className="size-5" name={'burger'} />
+            <List className="size-5" />
           </Button>
         </div>
         <div className="flex flex-1 justify-center lg:justify-start min-h-8 items-center gap-2">

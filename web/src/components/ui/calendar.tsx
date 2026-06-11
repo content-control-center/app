@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { Icon } from '@/components/ui/icon'
+import { CaretDown, CaretLeft, CaretRight } from '@phosphor-icons/react'
 import { DayButton, DayPicker, getDefaultClassNames } from 'react-day-picker'
 
 import { cn } from '@/lib'
@@ -118,13 +118,13 @@ function Calendar({
           return <div data-slot="calendar" ref={rootRef} className={cn(className)} {...props} />
         },
         Chevron: ({ className, orientation }) => {
-          const name =
+          const ChevronIcon =
             orientation === 'left'
-              ? 'chevron_left'
+              ? CaretLeft
               : orientation === 'right'
-                ? 'chevron_right'
-                : 'chevron_down'
-          return <Icon name={name} className={cn('size-4', className)} />
+                ? CaretRight
+                : CaretDown
+          return <ChevronIcon className={cn('size-4', className)} />
         },
         DayButton: CalendarDayButton,
         WeekNumber: ({ children, ...props }) => {

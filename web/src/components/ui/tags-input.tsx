@@ -1,7 +1,7 @@
 import * as React from 'react'
 
 import { cn } from '@/lib'
-import { Icon } from '@/components/ui/icon'
+import { X } from '@phosphor-icons/react'
 import { ZIndex } from '@/config/zIndex'
 import type { Tag } from '@/types/content'
 import { useCreateTag, useTags } from '@/hooks/useTags'
@@ -161,7 +161,7 @@ export function TagsInput({
               aria-label={`Remove ${t.name}`}
               disabled={disabled}
             >
-              <Icon name="x_mark" className="size-3" />
+              <X className="size-3" />
             </button>
           </span>
         ))}

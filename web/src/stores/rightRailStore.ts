@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { create } from 'zustand'
 import { devtools, persist } from 'zustand/middleware'
 import type { ReactNode } from 'react'
-import type { IconName } from '@/components/ui/icon'
+import type { Icon } from '@phosphor-icons/react'
 
 export type RightRailPanelContext = {
   close: () => void
@@ -10,7 +10,7 @@ export type RightRailPanelContext = {
 
 export type RightRailButton = {
   id: string
-  icon: IconName
+  icon: Icon
   ariaLabel: string
   panel: ReactNode | ((ctx: RightRailPanelContext) => ReactNode)
   persistent?: boolean

@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 
-import { Icon } from '@/components/ui/icon'
+import { CaretDown } from '@phosphor-icons/react'
 import { cn } from '@/lib'
 
 type CollapseProps = {
@@ -38,10 +38,9 @@ export function Collapse({
               </span>
             )}
           </span>
-          <Icon
-            name="chevron_down"
+          <CaretDown
             className={cn(
-              'size-4 stroke-2 shrink-0 text-secondary-foreground transition-transform',
+              'size-4 shrink-0 text-secondary-foreground transition-transform',
               open && 'rotate-180',
             )}
           />

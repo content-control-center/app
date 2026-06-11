@@ -3,6 +3,16 @@
 // constraints, but display names and post-type labels live here so we
 // fully control the wording the user sees.
 
+import type { Icon } from "@phosphor-icons/react";
+import {
+  FacebookLogo,
+  InstagramLogo,
+  LinkedinLogo,
+  ThreadsLogo,
+  XLogo,
+  YoutubeLogo,
+} from "@phosphor-icons/react";
+
 import type { Platform, PlatformPublisher } from "@/types/campaigns";
 
 export type PlatformPostType = {
@@ -13,6 +23,10 @@ export type PlatformPostType = {
 export type PlatformInfo = {
   id: string;
   name: string;
+  icon: Icon;
+  // Official brand color, hard-coded so the icon renders in its native hue
+  // wherever it appears across the app.
+  color: string;
   postTypes: PlatformPostType[];
 };
 
@@ -20,6 +34,8 @@ export const PLATFORMS: PlatformInfo[] = [
   {
     id: "AXqWG7U2qnpt",
     name: "LinkedIn",
+    icon: LinkedinLogo,
+    color: "#0A66C2",
     postTypes: [
       { slug: "text-post", label: "Text post" },
       { slug: "image-post", label: "Image post" },
@@ -35,6 +51,8 @@ export const PLATFORMS: PlatformInfo[] = [
   {
     id: "8S8bWQTG6qD",
     name: "YouTube",
+    icon: YoutubeLogo,
+    color: "#FF0000",
     postTypes: [
       { slug: "video", label: "Video" },
       { slug: "short", label: "Short" },
@@ -47,6 +65,8 @@ export const PLATFORMS: PlatformInfo[] = [
   {
     id: "zBU1zqVICGfk",
     name: "Facebook",
+    icon: FacebookLogo,
+    color: "#1877F2",
     postTypes: [
       { slug: "text-post", label: "Text post" },
       { slug: "image-post", label: "Image post" },
@@ -63,6 +83,8 @@ export const PLATFORMS: PlatformInfo[] = [
   {
     id: "81mUCmc2xsKd",
     name: "X (Twitter)",
+    icon: XLogo,
+    color: "#000000",
     postTypes: [
       { slug: "text-post", label: "Text post" },
       { slug: "image-post", label: "Image post" },
@@ -76,6 +98,8 @@ export const PLATFORMS: PlatformInfo[] = [
   {
     id: "pQ4yxT3SuE57",
     name: "Threads",
+    icon: ThreadsLogo,
+    color: "#000000",
     postTypes: [
       { slug: "text-post", label: "Text post" },
       { slug: "image-post", label: "Image post" },
@@ -88,6 +112,8 @@ export const PLATFORMS: PlatformInfo[] = [
   {
     id: "rzgpTkARLH0L",
     name: "Instagram",
+    icon: InstagramLogo,
+    color: "#E4405F",
     postTypes: [
       { slug: "image-post", label: "Image post" },
       { slug: "carousel", label: "Carousel" },

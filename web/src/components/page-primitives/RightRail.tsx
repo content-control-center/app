@@ -1,6 +1,5 @@
 import { useCallback, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
-import { Icon } from '@/components/ui/icon'
 import { cn } from '@/lib'
 import { useRightRailStore, type RightRailButton } from '@/stores/rightRailStore'
 
@@ -89,7 +88,7 @@ export function RightRail({ panelWidth = 'w-120' }: RightRailProps) {
                   'data-[active=true]:bg-secondary data-[active=true]:text-primary-foreground',
                 )}
               >
-                <Icon name={b.icon} className="size-4" />
+                <b.icon className="size-4" />
               </Button>
               <div
                 onClick={() => toggleActiveId(b.id)}

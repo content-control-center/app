@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
+import { Check } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
-import { Icon } from '@/components/ui/icon'
 import { useResendVerificationEmail } from '@/hooks/useAuth'
 
 const RESEND_COOLDOWN_SECONDS = 60
@@ -68,7 +68,7 @@ export function AuthEmailSent({ email }: AuthEmailSentProps) {
           disabled
         >
           <span>VERIFICATION EMAIL SENT</span>
-          <Icon className="size-4" name="check" />
+          <Check className="size-4" />
         </Button>
       </div>
       <div></div>

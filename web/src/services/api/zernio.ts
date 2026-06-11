@@ -5,6 +5,7 @@ import {
   type ZernioErrorCode,
   type ZernioHealth,
 } from "@/types/integrations";
+import { errorMessage } from "./errors";
 
 const BASE = "/api/integrations/zernio";
 
@@ -63,14 +64,4 @@ async function zernioError(res: Response, fallback: string): Promise<ZernioError
     if (Number.isFinite(n) && n > 0) retryAfterSeconds = n;
   }
   return new ZernioError(code, res.status, msg, retryAfterSeconds);
-}
-
-async function errorMessage(res: Response, fallback: string): Promise<string> {
-  try {
-    const body = (await res.json()) as { error?: string };
-    if (typeof body.error === "string" && body.error.length > 0) return body.error;
-  } catch {
-    // fall through
-  }
-  return fallback;
 }

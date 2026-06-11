@@ -1,7 +1,7 @@
 import type { ReactElement } from 'react'
 import type { Post } from '@/types/posts'
 import { Button, buttonVariants } from '@/components/ui/button'
-import { Icon } from '@/components/ui/icon'
+import { DotsThreeVertical } from '@phosphor-icons/react'
 import { cn } from '@/lib'
 import {
   DropdownMenu,
@@ -17,10 +17,13 @@ import {
 } from '@/hooks/usePostStatusActions'
 import type { PostStatusBlocker } from '@/lib/postStatusMachine'
 import type { TransitionStatusResult } from '@/hooks/usePost'
+import type { CancelTarget } from '@/services/api/posts'
 
 type Props = {
   post: Post
   transitionStatus: (next: Post['status']) => Promise<TransitionStatusResult>
+  cancelScheduled: (target: CancelTarget) => Promise<TransitionStatusResult>
+  cancelling: boolean
 }
 
 const INTENT_RANK: Record<PostStatusAction['intent'], number> = {
@@ -44,8 +47,22 @@ const SCHEDULED_DATE_FORMAT = new Intl.DateTimeFormat(undefined, {
   minute: '2-digit',
 })
 
-export function PostStatusHeaderActions({ post, transitionStatus }: Props) {
-  const { current, actions, pending } = usePostStatusActions(post, transitionStatus)
+export function PostStatusHeaderActions({
+  post,
+  transitionStatus,
+  cancelScheduled,
+  cancelling,
+}: Props) {
+  const { current, actions, pending } = usePostStatusActions(
+    post,
+    transitionStatus,
+    cancelScheduled,
+    cancelling,
+  )
+
+  // Either a synchronous action is in flight, or a cancellation is pending
+  // server-side. Both should show a spinner and block further clicks.
+  const busy = pending || cancelling
 
   // Hide system-driven transitions (e.g. publisher worker marking
   // `scheduled` → `published`); the user shouldn't trigger those.
@@ -62,17 +79,17 @@ export function PostStatusHeaderActions({ post, transitionStatus }: Props) {
   return (
     <div className="flex items-center gap-3">
       <PostStatusBadge status={current} />
-      <ScheduleSummary post={post} />
+      <ScheduleSummary post={post} cancelling={cancelling} />
       <div className="flex items-center gap-1">
         {showOverflow && primaryAction && (
           <OverflowMenu
             actions={userActions}
-            pending={pending}
+            pending={busy}
             variant={INTENT_VARIANT[primaryAction.intent]}
           />
         )}
         {primaryAction && (
-          <PrimaryActionButton action={primaryAction} pending={pending} />
+          <PrimaryActionButton action={primaryAction} pending={busy} />
         )}
       </div>
     </div>
@@ -144,7 +161,7 @@ function OverflowMenu({
         aria-label="More status actions"
         disabled={pending}
       >
-        <Icon name="dots_2_vertical" className="size-4" />
+        <DotsThreeVertical className="size-4" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         {actions.map((action) => (
@@ -169,9 +186,14 @@ function OverflowMenu({
   )
 }
 
-function ScheduleSummary({ post }: { post: Post }) {
+function ScheduleSummary({ post, cancelling }: { post: Post; cancelling: boolean }) {
   if (post.status !== 'scheduled' && post.status !== 'scheduled_for_manual_publishing') {
     return null
+  }
+  // The badge still reads `scheduled` until the worker confirms, so this
+  // is the textual signal that an unschedule is in progress.
+  if (cancelling) {
+    return <span className="text-xs text-tertiary-foreground">Unscheduling…</span>
   }
   if (!post.scheduled_at) {
     return <span className="text-xs text-tertiary-foreground">No date set</span>

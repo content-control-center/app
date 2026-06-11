@@ -28,3 +28,21 @@ export async function fetchOrThrowUnavailable(
     throw new ServerUnavailableError();
   }
 }
+
+/**
+ * Extracts a human-readable error message from a non-OK API response. Prefers
+ * the backend's `{ error: string }` JSON body; falls back to `fallback` when the
+ * body is absent, malformed, or has no error string.
+ */
+export async function errorMessage(
+  res: Response,
+  fallback: string
+): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: string };
+    if (typeof body.error === "string" && body.error.length > 0) return body.error;
+  } catch {
+    // fall through
+  }
+  return fallback;
+}

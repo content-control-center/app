@@ -1,53 +1,52 @@
 import { memo, useCallback, useMemo, useState } from 'react'
 import type { Post } from '@/types/posts'
 import { Button } from '@/components/ui/button'
-import { Icon } from '@/components/ui/icon'
+import { CaretDown, CaretLeft, CaretRight } from '@phosphor-icons/react'
 import { useUpdatePost } from '@/hooks/usePosts'
 import { postToPayload } from '@/services/api/posts'
 import { PostCard } from './PostCard'
+import { addDays, isSameDay, startOfWeek } from './date'
 import { cn } from '@/lib'
 
 type WeeklyCalendarProps = {
   campaignId: string
   posts: Post[]
-}
-
-function startOfWeek(date: Date): Date {
-  const d = new Date(date)
-  const day = d.getDay()
-  const diff = day === 0 ? 6 : day - 1 // Monday = start
-  d.setDate(d.getDate() - diff)
-  d.setHours(0, 0, 0, 0)
-  return d
-}
-
-function addDays(date: Date, days: number): Date {
-  const d = new Date(date)
-  d.setDate(d.getDate() + days)
-  return d
-}
-
-function isSameDay(a: Date, b: Date): boolean {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  )
+  /** The anchor day from the route; the visible week is derived from it. */
+  anchor: Date
+  /** Navigate the calendar by changing the anchor day (updates the URL). */
+  onAnchorChange: (anchor: Date) => void
 }
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const UNSCHEDULED_KEY = 'unscheduled'
 const DEFAULT_HOUR = 9
 
-function WeeklyCalendarComponent({ campaignId, posts }: WeeklyCalendarProps) {
-  const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()))
+type Column = {
+  key: string
+  label: string
+  /** Day-of-month, padded. */
+  dateLabel: string
+  day: Date
+  isToday: boolean
+  posts: Post[]
+}
+
+function WeeklyCalendarComponent({
+  campaignId,
+  posts,
+  anchor,
+  onAnchorChange,
+}: WeeklyCalendarProps) {
   const [dragOverKey, setDragOverKey] = useState<string | null>(null)
+  const [unscheduledOpen, setUnscheduledOpen] = useState(false)
   const today = useMemo(() => new Date(), [])
   const { mutate: updatePost } = useUpdatePost(campaignId)
 
-  const days = useMemo(() => {
-    return Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
-  }, [weekStart])
+  const weekStart = useMemo(() => startOfWeek(anchor), [anchor])
+  const days = useMemo(
+    () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
+    [weekStart],
+  )
 
   const postsByDay = useMemo(() => {
     const map = new Map<string, Post[]>()
@@ -72,9 +71,28 @@ function WeeklyCalendarComponent({ campaignId, posts }: WeeklyCalendarProps) {
     [posts],
   )
 
-  const handlePrev = useCallback(() => setWeekStart((s) => addDays(s, -7)), [])
-  const handleNext = useCallback(() => setWeekStart((s) => addDays(s, 7)), [])
-  const handleToday = useCallback(() => setWeekStart(startOfWeek(new Date())), [])
+  const columns = useMemo<Column[]>(
+    () =>
+      days.map((day, i) => ({
+        key: day.toDateString(),
+        label: DAY_NAMES[i],
+        dateLabel: day.getDate().toString().padStart(2, '0'),
+        day,
+        isToday: isSameDay(day, today),
+        posts: postsByDay.get(day.toDateString()) ?? [],
+      })),
+    [days, today, postsByDay],
+  )
+
+  const handlePrev = useCallback(
+    () => onAnchorChange(addDays(anchor, -7)),
+    [anchor, onAnchorChange],
+  )
+  const handleNext = useCallback(
+    () => onAnchorChange(addDays(anchor, 7)),
+    [anchor, onAnchorChange],
+  )
+  const handleToday = useCallback(() => onAnchorChange(new Date()), [onAnchorChange])
 
   const applyDrop = useCallback(
     (post: Post, targetDay: Date | null) => {
@@ -139,89 +157,113 @@ function WeeklyCalendarComponent({ campaignId, posts }: WeeklyCalendarProps) {
   }
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col h-full min-h-0 relative">
       {/* Navigator */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between shrink-0">
         <span className="text-[16px] font-medium">{formatMonthRange()}</span>
         <div className="flex items-center gap-3 px-0 py-2 shrink-0">
           <Button variant="ghost" size="sm" onClick={handleToday}>
             TODAY
           </Button>
           <Button variant="ghost" size="smIcon" onClick={handlePrev}>
-            <Icon name="chevron_left" className="size-3.5 stroke-[2.5]" />
+            <CaretLeft className="size-3.5" />
           </Button>
           <Button variant="ghost" size="smIcon" onClick={handleNext}>
-            <Icon name="chevron_right" className="size-3.5 stroke-[2.5]" />
+            <CaretRight className="size-3.5" />
           </Button>
         </div>
       </div>
 
-
-      {/* Day rows */}
-      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col">
-        {days.map((day, i) => {
-          const dayPosts = postsByDay.get(day.toDateString()) ?? []
-          const isToday = isSameDay(day, today)
-          const key = day.toDateString()
-
-          return (
+      {/* Day columns — horizontally scrollable when cramped */}
+      <div className="flex-1 min-h-0 overflow-x-auto">
+        <div className="flex h-full">
+          {columns.map((col, i) => (
             <div
-              key={day.toISOString()}
+              key={col.key}
               className={cn(
-                'flex border-t border-border min-h-[72px]',
-                i === 6 && 'border-b',
+                'flex flex-col min-w-[200px] flex-1 min-h-0',
+                i > 0 && 'border-l border-border',
               )}
             >
-              {/* Day label */}
-              <div
-                className={'w-10 shrink-0 py-2.5 pr-3 flex flex-col items-end'}
-              >
-                <span className={cn("text-xs text-tertiary-foreground text-right", isToday && 'text-positive')}>
-                  {DAY_NAMES[i]}
+              {/* Column header — day name and date share one style:
+                  semi-expanded (font-display) semi-bold. */}
+              <div className="shrink-0 px-2 pt-2.5 pb-2 flex items-baseline gap-1.5">
+                <span
+                  className={cn(
+                    'text-base font-display font-semibold leading-6 tabular-nums',
+                    col.isToday && 'text-positive',
+                  )}
+                >
+                  {col.label}
                 </span>
                 <span
                   className={cn(
-                    'text-lg font-display font-medium leading-6 text-right tabular-nums',
-                    isToday && 'text-positive',
+                    'text-base font-display font-semibold leading-6 tabular-nums',
+                    col.isToday && 'text-positive',
                   )}
                 >
-                  {day.getDate().toString().padStart(2, '0')}
+                  {col.dateLabel}
                 </span>
               </div>
 
-              {/* Posts lane */}
+              {/* Posts lane — drop target */}
               <div
-                {...laneHandlers(key, day)}
+                {...laneHandlers(col.key, col.day)}
                 className={cn(
-                  'flex-1 min-w-0 py-2 flex flex-wrap gap-2 items-start transition-colors',
-                  dragOverKey === key && 'bg-secondary',
+                  'flex-1 min-h-0 overflow-y-auto px-2 pb-2 flex flex-col gap-2 items-stretch transition-colors',
+                  dragOverKey === col.key && 'bg-secondary',
                 )}
               >
-                {dayPosts.map((post) => (
+                {col.posts.map((post) => (
                   <PostCard key={post.id} post={post} />
                 ))}
               </div>
             </div>
-          )
-        })}
-
-        {/* Unscheduled posts — always rendered so it can act as a drop target */}
-        <div className="flex border-t border-border min-h-[72px]">
-          <div className="w-10 shrink-0 py-2.5 pr-3 flex flex-col items-start">
-            <span className="text-xs text-tertiary-foreground">No date</span>
-          </div>
-          <div
-            {...laneHandlers(UNSCHEDULED_KEY, null)}
-            className={cn(
-              'flex-1 min-w-0 py-2 flex flex-wrap gap-2 items-start transition-colors',
-              dragOverKey === UNSCHEDULED_KEY && 'bg-secondary',
-            )}
-          >
-            {unscheduledPosts.map((post) => (
-              <PostCard key={post.id} post={post} />
-            ))}
-          </div>
+          ))}
         </div>
+      </div>
+
+      {/* Unscheduled posts — floating bottom panel, collapsed by default,
+          overlapping the bottom of the calendar. Also a drop target that
+          un-schedules any post dropped onto it. */}
+      <div
+        {...laneHandlers(UNSCHEDULED_KEY, null)}
+        className={cn(
+          'absolute inset-x-0 bottom-0 z-10 bg-background shadow-[0_-2px_12px_rgba(0,0,0,0.08)] transition-colors',
+          dragOverKey === UNSCHEDULED_KEY && 'bg-secondary',
+        )}
+      >
+        <button
+          type="button"
+          onClick={() => setUnscheduledOpen((o) => !o)}
+          className="w-full flex items-center gap-2 px-3 py-2.5 text-left"
+        >
+          {unscheduledOpen ? (
+            <CaretDown className="size-4 text-tertiary-foreground" />
+          ) : (
+            <CaretRight className="size-4 text-tertiary-foreground" />
+          )}
+          <span className="text-[16px] font-medium">Unscheduled</span>
+          <span className="text-[16px] font-medium text-tertiary-foreground tabular-nums">
+            {unscheduledPosts.length}
+          </span>
+        </button>
+
+        {unscheduledOpen && (
+          <div className="max-h-[45vh] min-h-[56px] overflow-y-auto px-3 pb-3 flex flex-wrap gap-2">
+            {unscheduledPosts.length === 0 ? (
+              <span className="self-center text-xs text-tertiary-foreground">
+                No unscheduled posts
+              </span>
+            ) : (
+              unscheduledPosts.map((post) => (
+                <div key={post.id} className="w-[240px] shrink-0">
+                  <PostCard post={post} />
+                </div>
+              ))
+            )}
+          </div>
+        )}
       </div>
     </div>
   )

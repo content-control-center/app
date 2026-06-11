@@ -1,9 +1,20 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { getPost, postToPayload, updatePost } from '@/services/api/posts'
+import {
+  cancelPost,
+  getPost,
+  postToPayload,
+  updatePost,
+  type CancelTarget,
+} from '@/services/api/posts'
 import type { Post, PostStatus } from '@/types/posts'
 
 const SAVE_DEBOUNCE_MS = 600
+
+// How often to refetch a `scheduled` post. While scheduled, the backend
+// changes the status on its own (publisher auto-publish, or a cancel job
+// landing an unschedule), so we poll to surface those without a reload.
+const SCHEDULED_POLL_MS = 5_000
 
 export const postKey = (id: string) => ['post', id] as const
 
@@ -15,6 +26,17 @@ type UsePostResult = {
   doc: Post | undefined
   changeDoc: (fn: (p: Post) => void) => void
   transitionStatus: (next: PostStatus) => Promise<TransitionStatusResult>
+  // Requests cancellation of a Scheduled post via the cancel endpoint. The
+  // status doesn't change synchronously — the poll above picks up the flip
+  // once the worker confirms. Kept separate from transitionStatus so a
+  // user-cancel is never executed as a plain status PUT (which would leave
+  // the Zernio job running).
+  cancelScheduled: (target: CancelTarget) => Promise<TransitionStatusResult>
+  // True from the moment a cancellation is requested until the post
+  // actually leaves `scheduled` (worker confirmed, or it published in the
+  // race). Drives the "Unscheduling…" indicator and disables actions so a
+  // second cancel job isn't enqueued while the first is in flight.
+  cancelling: boolean
   loading: boolean
   error: Error | undefined
 }
@@ -25,8 +47,11 @@ export function usePost(postId: string): UsePostResult {
     queryKey: postKey(postId),
     queryFn: () => getPost(postId),
     enabled: !!postId,
+    refetchInterval: (q) =>
+      q.state.data?.status === 'scheduled' ? SCHEDULED_POLL_MS : false,
   })
 
+  const [cancelling, setCancelling] = useState(false)
   const pendingRef = useRef<Post | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const genRef = useRef(0)
@@ -95,6 +120,47 @@ export function usePost(postId: string): UsePostResult {
     [postId, qc],
   )
 
+  // Cancellation is asynchronous on the server: it enqueues a Zernio
+  // cancel job and the post stays `scheduled` until the worker confirms,
+  // then transitions to `target`. We don't optimistically flip the status
+  // — the scheduled poll lands the real change. We do drop any pending
+  // autosave so a debounced PUT can't race the cancel.
+  const cancelScheduled = useCallback(
+    async (target: CancelTarget): Promise<TransitionStatusResult> => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current)
+        timerRef.current = null
+      }
+      pendingRef.current = null
+      genRef.current += 1
+      setCancelling(true)
+      try {
+        await cancelPost(postId, target)
+        const fresh = await getPost(postId)
+        qc.setQueryData(postKey(postId), fresh)
+        // Stay `cancelling`: fresh is still `scheduled` and the worker
+        // hasn't landed the transition yet. The effect below clears it
+        // once the status actually changes.
+        return { ok: true, post: fresh }
+      } catch (err) {
+        setCancelling(false)
+        const message = err instanceof Error ? err.message : 'Unable to unschedule post'
+        return { ok: false, error: message }
+      }
+    },
+    [postId, qc],
+  )
+
+  // Clear the unscheduling indicator once the post leaves `scheduled` —
+  // either the cancel job landed the target status, or it published in the
+  // race. Until then the poll keeps the badge on `scheduled`.
+  const status = query.data?.status
+  useEffect(() => {
+    if (cancelling && status !== undefined && status !== 'scheduled') {
+      setCancelling(false)
+    }
+  }, [cancelling, status])
+
   useEffect(() => {
     return () => {
       if (timerRef.current) {
@@ -109,6 +175,8 @@ export function usePost(postId: string): UsePostResult {
     doc: query.data,
     changeDoc,
     transitionStatus,
+    cancelScheduled,
+    cancelling,
     loading: query.isLoading,
     error: query.error ?? undefined,
   }

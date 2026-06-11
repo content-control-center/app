@@ -3,7 +3,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Icon } from '@/components/ui/icon'
+import { ArrowUpRight } from '@phosphor-icons/react'
 import { useLogin } from '@/hooks/useAuth'
 import { useFormValidation } from '@/hooks/useFormValidation'
 import { loginSchema, cn } from '@/lib'
@@ -86,7 +86,7 @@ export function AuthLoginForm() {
           disabled={isPending}
         >
           <span>LOG IN</span>
-          <Icon className="size-4" name="arrow_right_top" />
+          <ArrowUpRight className="size-4" />
         </Button>
         <div className="h-4 my-4">
           <span

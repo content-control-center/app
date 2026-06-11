@@ -2,7 +2,7 @@ import * as React from 'react'
 import { cva, type VariantProps } from 'class-variance-authority'
 
 import { cn } from '@/lib'
-import { Icon } from '@/components/ui/icon'
+import { CalendarDots } from '@phosphor-icons/react'
 import { Calendar } from '@/components/ui/calendar'
 import {
   DropdownMenu,
@@ -94,7 +94,7 @@ function DatePicker({
         >
           {selected ? formatDisplay(selected) : placeholder}
         </span>
-        <Icon name="calendar" className="size-4 text-tertiary-foreground" />
+        <CalendarDots className="size-4 text-tertiary-foreground" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="p-0">
         <Calendar

@@ -1,7 +1,7 @@
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib'
 import portfolioEmptyImage from '@/assets/illustrations/folder-empty.webp'
-import { Icon } from '@/components/ui/icon.tsx'
+import { FunnelSimple } from '@phosphor-icons/react'
 
 type TableEmptyStateProps = {
   message?: string
@@ -30,7 +30,7 @@ export function TableEmptyState({ onAction, className }: TableEmptyStateProps) {
         </div>
         {onAction ? (
           <Button variant={'defaultInverted'} onClick={onAction}>
-            <Icon name={'filter_empty'} className={'size-4 stroke-[2px]'} />
+            <FunnelSimple className={'size-4'} />
             <span>RESET FILTERS</span>
           </Button>
         ) : (

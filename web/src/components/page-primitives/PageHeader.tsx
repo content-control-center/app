@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Icon } from '@/components/ui/icon'
+import { CaretDown, List } from '@phosphor-icons/react'
 import { useSidebar } from '@/components/ui/sidebar'
 import { ZIndex } from '@/config/zIndex'
 import { cn } from '@/lib'
@@ -45,7 +45,7 @@ export function PageHeader({
             style={{ zIndex: ZIndex.sidebarOverlay + 1 }}
             aria-label="Toggle sidebar"
           >
-            <Icon className="size-5" name={'burger'} />
+            <List className="size-5" />
           </Button>
         </div>
         <div
@@ -58,11 +58,11 @@ export function PageHeader({
           <div className={'flex flex-col'}>
             <div className={'relative flex justify-center lg:justify-start gap-2'}>
               {isClickable && (
-                <Icon
-                  name={'empty'}
+                <span
+                  aria-hidden
                   className={cn(
-                    'shrink-0 stroke-[2.5]',
-                    isMobile ? 'size-3 mt-[7px] text-tertiary-foreground' : 'hidden'
+                    'shrink-0',
+                    isMobile ? 'size-3 mt-[7px]' : 'hidden'
                   )}
                 />
               )}
@@ -75,10 +75,9 @@ export function PageHeader({
                 {title}
               </h1>
               {isClickable && (
-                <Icon
-                  name={'chevron_down'}
+                <CaretDown
                   className={cn(
-                    'shrink-0 stroke-[2.5]',
+                    'shrink-0',
                     isMobile
                       ? 'size-3 mt-[7px] text-tertiary-foreground'
                       : 'size-5 mt-[17px] opacity-0 group-hover:opacity-100 transition-opacity duration-300'

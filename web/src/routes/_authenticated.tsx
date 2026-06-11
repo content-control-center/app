@@ -6,12 +6,14 @@ import { Backdrop } from "@/components/ui/backdrop";
 import { SecondaryNavbarContainer } from "@/components/layout/SecondaryNavbar";
 import { CampaignsListContent } from "@/components/layout/CampaignsListContent";
 import { OverlayOutlet } from "@/components/layout/OverlayOutlet";
+import { UploadTracker } from "@/components/uploads/UploadTracker";
 import { GLOBAL_RAIL_SECTION_ID, RightRail } from "@/components/page-primitives/RightRail";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { ZIndex } from "@/config/zIndex";
 import { useRightRailSection } from "@/hooks/useRightRailSection";
 import type { RightRailButton } from "@/stores/rightRailStore";
 import { AIAssistantPanel, StatsPanel } from "@/components/rail-panels/ComingSoonPanel";
+import { ChartBar, TrendUp } from "@phosphor-icons/react";
 
 export const Route = createFileRoute("/_authenticated")({
   component: AuthenticatedLayout,
@@ -27,14 +29,14 @@ function AuthenticatedLayout() {
     () => [
       {
         id: "ai",
-        icon: "strategy",
+        icon: ChartBar,
         ariaLabel: "AI assistant",
         persistent: true,
         panel: ({ close }) => <AIAssistantPanel onClose={close} />,
       },
       {
         id: "stats",
-        icon: "trend_up",
+        icon: TrendUp,
         ariaLabel: "Stats",
         persistent: true,
         panel: ({ close }) => <StatsPanel onClose={close} />,
@@ -63,6 +65,7 @@ function AuthenticatedLayout() {
         <CampaignsListContent />
       </SecondaryNavbarContainer>
       <OverlayOutlet />
+      <UploadTracker />
     </SidebarProvider>
   );
 }

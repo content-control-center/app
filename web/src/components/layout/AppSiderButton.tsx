@@ -1,4 +1,4 @@
-import { Icon, type IconName } from '@/components/ui/icon.tsx'
+import { type Icon as PhosphorIcon, MagnifyingGlass } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button.tsx'
 import { Link } from '@tanstack/react-router'
 import { cn } from '@/lib'
@@ -11,7 +11,7 @@ export function AppSidebarButtonSearch({ onClick }: AppSidebarButtonSearchProps)
   return (
     <Button variant="searchBar" size={'excluded'} onClick={onClick}>
       <div>
-        <Icon name="search" className="size-5 flex-none" />
+        <MagnifyingGlass className="size-5 flex-none" />
         <div className="flex-none text-left w-[108px]">
           <span className="font-mono uppercase">Search</span>
         </div>
@@ -24,7 +24,7 @@ export function AppSidebarButtonSearch({ onClick }: AppSidebarButtonSearchProps)
 }
 
 type AppSidebarButtonMenuLinkProps = {
-  iconName: IconName
+  icon: PhosphorIcon
   text: string
   isActive: boolean
   to: string
@@ -33,7 +33,7 @@ type AppSidebarButtonMenuLinkProps = {
 }
 
 type AppSidebarButtonMenuActionProps = {
-  iconName: IconName
+  icon: PhosphorIcon
   text: string
   isActive: boolean
   onClick?: () => void
@@ -49,7 +49,7 @@ function isLinkProps(props: AppSidebarButtonMenuProps): props is AppSidebarButto
 }
 
 export function AppSidebarButtonMenu(props: AppSidebarButtonMenuProps) {
-  const { iconName, text, isActive, className } = props
+  const { icon: Icon, text, isActive, className } = props
 
   if (isLinkProps(props)) {
     // Navigation type - uses Link
@@ -62,8 +62,8 @@ export function AppSidebarButtonMenu(props: AppSidebarButtonMenuProps) {
       >
         <Link to={props.to} onClick={props.onClick}>
           <Icon
-            name={iconName}
-            className={cn('size-5 flex-none stroke-1.5', isActive && 'icon-sidebar-active')}
+            weight={isActive ? 'fill' : 'regular'}
+            className="size-5 flex-none"
           />
           <div className="flex-none text-left w-[108px]">
             <span className="font-mono uppercase">{text}</span>
@@ -84,8 +84,8 @@ export function AppSidebarButtonMenu(props: AppSidebarButtonMenuProps) {
       onMouseLeave={props.onMouseLeave}
     >
       <Icon
-        name={iconName}
-        className={cn('size-5 flex-none stroke-1.5', isActive && 'icon-sidebar-active')}
+        weight={isActive ? 'fill' : 'regular'}
+        className="size-5 flex-none"
       />
       <div className="flex-none text-left w-[108px]">
         <span className="font-mono uppercase">{text}</span>

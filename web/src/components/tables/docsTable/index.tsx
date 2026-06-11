@@ -1,11 +1,15 @@
 import { memo, useMemo } from 'react'
 import { Link } from '@tanstack/react-router'
-import { Trash2 } from 'lucide-react'
+import { Trash } from '@phosphor-icons/react'
 import { VirtualTable } from '../VirtualTable'
 import { TextCell } from '../TableCells'
 import type { ColumnConfig } from '../types'
 import type { Asset } from '@/types/content'
 import { Button } from '@/components/ui/button'
+import { StatusBadge } from '@/components/ui/status-badge'
+import { statusToBadge } from '@/lib/assetStatus'
+import { assetCategory, categoryLabel } from '@/lib/assetCategory'
+import { formatTitle } from '@/lib'
 
 type AssetRow = Asset & Record<string, unknown>
 
@@ -43,7 +47,7 @@ function AssetsTableComponent({
         header: 'Title',
         isAutoSize: true,
         cell: (_value, row) => {
-          const displayTitle = row.title.trim() === '' ? 'Untitled' : row.title
+          const displayTitle = formatTitle(row.title)
           return (
             <Link
               to="/content-bank/$assetId"
@@ -54,6 +58,41 @@ function AssetsTableComponent({
             </Link>
           )
         },
+      },
+      {
+        id: 'status',
+        accessorKey: 'status',
+        header: 'Status',
+        size: 130,
+        minSize: 110,
+        cell: (_value, row) => {
+          const badge = statusToBadge(row.status)
+          return (
+            <Link
+              to="/content-bank/$assetId"
+              params={{ assetId: row.id }}
+              className="block h-[34px] border-b-2 border-background px-3 leading-8"
+            >
+              <StatusBadge tone={badge.tone} label={badge.label} />
+            </Link>
+          )
+        },
+      },
+      {
+        id: 'type',
+        accessorKey: 'type',
+        header: 'Type',
+        size: 120,
+        minSize: 100,
+        cell: (_value, row) => (
+          <Link
+            to="/content-bank/$assetId"
+            params={{ assetId: row.id }}
+            className="block h-[34px] border-b-2 border-background px-3 leading-8"
+          >
+            <TextCell value={categoryLabel(assetCategory(row))} />
+          </Link>
+        ),
       },
       {
         id: 'created_at',
@@ -103,7 +142,7 @@ function AssetsTableComponent({
                 onDelete(row.id)
               }}
             >
-              <Trash2 className="size-4 text-tertiary-foreground hover:text-destructive" />
+              <Trash className="size-4 text-tertiary-foreground hover:text-destructive" />
             </Button>
           </div>
         ),
@@ -113,7 +152,7 @@ function AssetsTableComponent({
   )
 
   const activeColumns = useMemo(
-    () => ['title', 'created_at', 'updated_at', 'actions'],
+    () => ['title', 'status', 'type', 'created_at', 'updated_at', 'actions'],
     [],
   )
 

@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { DatePicker } from '@/components/ui/date-picker'
 import { Button } from '@/components/ui/button'
-import { Icon } from '@/components/ui/icon'
+import { Trash } from '@phosphor-icons/react'
 import { TextSelect } from '@/components/ui/text-select'
 import { Collapse } from '@/components/ui/collapse'
 import { RailPanel } from '@/components/page-primitives/RailPanel'
@@ -288,7 +288,7 @@ export function PostSettingsForm({ doc, changeDoc, onClose }: Props) {
                 onClick={handleDelete}
                 loading={deleting}
               >
-                <Icon name="trash_bin" className="size-4" />
+                <Trash className="size-4" />
                 <span>DELETE POST</span>
               </Button>
             </div>

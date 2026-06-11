@@ -3,7 +3,7 @@ import * as SelectPrimitive from '@radix-ui/react-select'
 import { cva } from 'class-variance-authority'
 import { cn } from '@/lib'
 import { ZIndex } from '@/config/zIndex.ts'
-import { Icon } from '@/components/ui/icon.tsx'
+import { CaretDown, CaretUp } from '@phosphor-icons/react'
 
 const popoverContentStyles =
   'bg-popover text-popover-foreground rounded-sm border-0 shadow-lg relative overflow-x-hidden overflow-y-auto'
@@ -86,7 +86,7 @@ function TextSelect({
       >
         <SelectPrimitive.Value placeholder={placeholder ?? 'Select...'} />
         <div className="w-8 h-8 flex justify-center items-center text-center relative">
-          <Icon name={'chevron_down'} className={'size-4'} />
+          <CaretDown className={'size-4'} />
         </div>
       </SelectPrimitive.Trigger>
 
@@ -97,7 +97,7 @@ function TextSelect({
           position="popper"
         >
           <SelectPrimitive.ScrollUpButton className={selectScrollButtonStyles}>
-            <Icon name="chevron_up" className="size-3" />
+            <CaretUp className="size-3" />
           </SelectPrimitive.ScrollUpButton>
 
           <SelectPrimitive.Viewport className={cn('p-1', selectViewportPopperStyles)}>
@@ -114,7 +114,7 @@ function TextSelect({
           </SelectPrimitive.Viewport>
 
           <SelectPrimitive.ScrollDownButton className={selectScrollButtonStyles}>
-            <Icon name="chevron_down" className="size-4" />
+            <CaretDown className="size-4" />
           </SelectPrimitive.ScrollDownButton>
         </SelectPrimitive.Content>
       </SelectPrimitive.Portal>
