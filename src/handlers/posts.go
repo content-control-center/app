@@ -1002,6 +1002,8 @@ func (h *PostsHandler) Assistant(c *fiber.Ctx) error {
 // @Param        id   path      string  true  "Post Sqid"
 // @Success      200  {object}  post_quality.PostQualityResponse
 // @Failure      401  {object}  map[string]string
+// @Failure      403  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
 // @Failure      503  {object}  map[string]string
 // @Router       /api/posts/{id}/assess [post]
 func (h *PostsHandler) Assess(c *fiber.Ctx) error {
