@@ -54,6 +54,12 @@ func validateOutput(out *assessmentOutput, suggestionCap int) error {
 			if strings.TrimSpace(s.Span) == "" {
 				return fmt.Errorf("%s: suggestion %d has no span", d.key, i)
 			}
+			if strings.TrimSpace(s.Issue) == "" {
+				return fmt.Errorf("%s: suggestion %d has no issue", d.key, i)
+			}
+			if strings.TrimSpace(s.Fix) == "" {
+				return fmt.Errorf("%s: suggestion %d has no fix", d.key, i)
+			}
 			if !validSeverity(s.Severity) {
 				return fmt.Errorf("%s: suggestion %d has invalid severity %q", d.key, i, s.Severity)
 			}

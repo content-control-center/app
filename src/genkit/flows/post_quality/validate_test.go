@@ -60,6 +60,8 @@ func TestValidateOutput(t *testing.T) {
 		{"score negative", func(o *assessmentOutput) { o.Delivery.Score = -1 }, 3},
 		{"missing weakness", func(o *assessmentOutput) { o.Engagement.Weakness = "  " }, 3},
 		{"missing span", func(o *assessmentOutput) { o.Correctness.Suggestions[0].Span = "" }, 3},
+		{"missing issue", func(o *assessmentOutput) { o.Correctness.Suggestions[0].Issue = "" }, 3},
+		{"missing fix", func(o *assessmentOutput) { o.Correctness.Suggestions[0].Fix = "  " }, 3},
 		{"bad severity", func(o *assessmentOutput) { o.Correctness.Suggestions[0].Severity = "urgent" }, 3},
 		{"over cap", func(o *assessmentOutput) {
 			o.Clarity.Suggestions = []suggestionOutput{
