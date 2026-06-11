@@ -27,6 +27,7 @@ import (
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
+	"github.com/ogen-app/ogen/src/genkit/flows/post_quality"
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/jobs/queues"
@@ -68,6 +69,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 	postAttachmentRepo := repository.NewPostAttachmentRepository(db)
 	postLogRepo := repository.NewPostLogRepository(db)
+	postEvaluationRepo := repository.NewPostEvaluationRepository(db)
 	socialAccountRepo := repository.NewSocialAccountRepository(db)
 	autoPublishAllowlistRepo := repository.NewAutoPublishAllowlistRepository(db)
 	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
@@ -268,6 +270,15 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 			Messages:  postMessageRepo,
 			Platforms: platformRepo,
 		},
+		postQualityRepos: post_quality.PostQualityRepos{
+			Posts:       postRepo,
+			Campaigns:   campaignRepo,
+			Assets:      pieceRepo,
+			Chunks:      chunksRepo,
+			Platforms:   platformRepo,
+			Evaluations: postEvaluationRepo,
+			PostLogs:    postLogRepo,
+		},
 		cloneSvc: cloneSvc,
 	}, secretStore)
 	if err != nil {
@@ -290,6 +301,8 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	// CON-59: same clone service the assistant uses, behind the REST
 	// endpoint that backs the (future) Duplicate button.
 	postsHandler.SetCloneService(cloneSvc)
+	// CON-85: Post quality assessment agent behind POST /api/posts/:id/assess.
+	postsHandler.SetQualityAssessor(gkRuntime.AssessPostQuality)
 	// Cascade post-attachment S3 cleanup on post delete (CON-73 §2.7).
 	// FK CASCADE handles the DB rows; this hook handles the bucket.
 	postsHandler.SetOnBeforeDelete(func(ctx context.Context, postID string) error {

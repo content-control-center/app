@@ -16,6 +16,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
+	"github.com/ogen-app/ogen/src/genkit/flows/post_quality"
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
@@ -1249,6 +1250,219 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				Expect(events[0].event).To(Equal("error"))
 				Expect(events[0].data).To(ContainSubstring(`"code":400`))
 				Expect(events[0].data).To(ContainSubstring("instruction is required"))
+			})
+		})
+	})
+
+	// ── Quality assessment (CON-85) ───────────────────────────────────────────
+
+	Describe("POST /api/posts/:id/assess", func() {
+		Context("when not authenticated", func() {
+			It("returns 401", func() {
+				req := httptest.NewRequest("POST", "/api/posts/someid/assess", nil)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+		})
+
+		Context("when authenticated", func() {
+			It("returns 503 when the assessor is not wired", func() {
+				p := createPost("Assess Me", nil)
+				req := httptest.NewRequest("POST", "/api/posts/"+p.ID+"/assess", nil)
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(503))
+			})
+		})
+
+		Context("with a stub assessor callback", func() {
+			// buildAssessApp wires a PostsHandler whose quality assessor is the
+			// given stub (set via SetQualityAssessor), seeds a user + campaign +
+			// post owned by that user, and returns (app, cookie, postID).
+			buildAssessApp := func(
+				stub func(context.Context, string, post_quality.OnEventFunc) (*post_quality.PostQualityResponse, error),
+			) (*fiber.App, *http.Cookie, string) {
+				stubApp := fiber.New(fiber.Config{
+					ErrorHandler: func(c *fiber.Ctx, err error) error {
+						code := fiber.StatusInternalServerError
+						if e, ok := err.(*fiber.Error); ok {
+							code = e.Code
+						}
+						return c.Status(code).JSON(fiber.Map{"error": err.Error()})
+					},
+				})
+				userRepo := repository.NewUserRepository(db)
+				sessionRepo := repository.NewSessionRepository(db)
+				settingRepo := repository.NewSettingRepository(db)
+				tagRepo := repository.NewTagRepository(db)
+				campaignTypeRepo := repository.NewCampaignTypeRepository(db)
+				campaignRepo := repository.NewCampaignRepository(db, tagRepo, repository.NewPlatformRepository(db), campaignTypeRepo)
+				postRepo := repository.NewPostRepository(db)
+				postVersionRepo := repository.NewPostVersionRepository(db)
+				postMessageRepo := repository.NewPostAssistantMessageRepository(db)
+				auth := handlers.RequireAuth(sessionRepo, testCookieName)
+				handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(stubApp)
+				handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(stubApp)
+				handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil).Register(stubApp)
+				ph := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, repository.NewPlatformRepository(db), repository.NewPostAttachmentRepository(db), auth, nil, nil)
+				ph.SetQualityAssessor(stub)
+				ph.Register(stubApp)
+
+				body, _ := json.Marshal(fiber.Map{"name": "Assess", "email": "sse-assess@example.com", "password": "sse-password"})
+				regReq := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
+				regReq.Header.Set("Content-Type", "application/json")
+				_, err := stubApp.Test(regReq)
+				Expect(err).NotTo(HaveOccurred())
+				loginBody, _ := json.Marshal(fiber.Map{"email": "sse-assess@example.com", "password": "sse-password"})
+				loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
+				loginReq.Header.Set("Content-Type", "application/json")
+				loginResp, err := stubApp.Test(loginReq)
+				Expect(err).NotTo(HaveOccurred())
+				var cookie *http.Cookie
+				for _, ck := range loginResp.Cookies() {
+					cookie = ck
+				}
+
+				campBody, _ := json.Marshal(fiber.Map{"name": "Assess Campaign", "campaign_type_id": "Uk"})
+				campReq := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(campBody))
+				campReq.Header.Set("Content-Type", "application/json")
+				campReq.AddCookie(cookie)
+				campResp, err := stubApp.Test(campReq)
+				Expect(err).NotTo(HaveOccurred())
+				var camp models.Campaign
+				Expect(json.NewDecoder(campResp.Body).Decode(&camp)).To(Succeed())
+
+				postBody, _ := json.Marshal(fiber.Map{
+					"campaign_id":        camp.ID,
+					"platform_id":        "AXqWG7U2qnpt",
+					"platform_post_type": "text-post",
+					"title":              "Stub Post",
+					"content":            "original content",
+				})
+				postReq := httptest.NewRequest("POST", "/api/posts", bytes.NewReader(postBody))
+				postReq.Header.Set("Content-Type", "application/json")
+				postReq.AddCookie(cookie)
+				postResp, err := stubApp.Test(postReq)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(postResp.StatusCode).To(Equal(fiber.StatusCreated))
+				var p models.Post
+				Expect(json.NewDecoder(postResp.Body).Decode(&p)).To(Succeed())
+
+				return stubApp, cookie, p.ID
+			}
+
+			type sseEvent struct{ event, data string }
+			parseSSE := func(body io.Reader) []sseEvent {
+				var events []sseEvent
+				scanner := bufio.NewScanner(body)
+				var curEvent, curData string
+				for scanner.Scan() {
+					line := scanner.Text()
+					switch {
+					case strings.HasPrefix(line, "event: "):
+						curEvent = strings.TrimPrefix(line, "event: ")
+					case strings.HasPrefix(line, "data: "):
+						curData = strings.TrimPrefix(line, "data: ")
+					case line == "":
+						if curEvent != "" {
+							events = append(events, sseEvent{curEvent, curData})
+						}
+						curEvent, curData = "", ""
+					}
+				}
+				return events
+			}
+
+			It("streams step and complete events with text/event-stream content-type", func() {
+				final := &post_quality.PostQualityResponse{
+					PostID:     "p1",
+					Evaluation: &models.PostEvaluation{OverallPct: 72.5},
+				}
+				stub := func(_ context.Context, _ string, onEvent post_quality.OnEventFunc) (*post_quality.PostQualityResponse, error) {
+					onEvent(post_quality.SSEEventStep, post_quality.StepEventPayload{Step: "evaluate", Status: "done"})
+					onEvent(post_quality.SSEEventComplete, final)
+					return final, nil
+				}
+				stubApp, cookie, postID := buildAssessApp(stub)
+
+				req := httptest.NewRequest("POST", "/api/posts/"+postID+"/assess", nil)
+				req.AddCookie(cookie)
+				resp, err := stubApp.Test(req, 5000)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+				Expect(resp.Header.Get("Content-Type")).To(ContainSubstring("text/event-stream"))
+
+				events := parseSSE(resp.Body)
+				names := make([]string, len(events))
+				for i, e := range events {
+					names[i] = e.event
+				}
+				Expect(names).To(Equal([]string{"step", "complete"}))
+				Expect(events[1].data).To(ContainSubstring(`"overall_pct":72.5`))
+			})
+
+			It("emits an error event with code 400 on ValidationError", func() {
+				stub := func(_ context.Context, _ string, _ post_quality.OnEventFunc) (*post_quality.PostQualityResponse, error) {
+					return nil, &post_quality.ValidationError{Msg: "post has no body text to evaluate"}
+				}
+				stubApp, cookie, postID := buildAssessApp(stub)
+
+				req := httptest.NewRequest("POST", "/api/posts/"+postID+"/assess", nil)
+				req.AddCookie(cookie)
+				resp, err := stubApp.Test(req, 5000)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+
+				events := parseSSE(resp.Body)
+				Expect(events).To(HaveLen(1))
+				Expect(events[0].event).To(Equal("error"))
+				Expect(events[0].data).To(ContainSubstring(`"code":400`))
+				Expect(events[0].data).To(ContainSubstring("no body text"))
+			})
+
+			It("lets a different user assess the post (shared workspace)", func() {
+				final := &post_quality.PostQualityResponse{
+					PostID:     "p1",
+					Evaluation: &models.PostEvaluation{OverallPct: 50},
+				}
+				stub := func(_ context.Context, _ string, onEvent post_quality.OnEventFunc) (*post_quality.PostQualityResponse, error) {
+					onEvent(post_quality.SSEEventComplete, final)
+					return final, nil
+				}
+				stubApp, _, postID := buildAssessApp(stub)
+
+				// A second user assesses the first user's post — allowed: posts
+				// are shared across the workspace, no per-user ownership gate.
+				other, _ := json.Marshal(fiber.Map{"name": "Other", "email": "sse-assess-other@example.com", "password": "sse-password"})
+				regReq := httptest.NewRequest("POST", "/api/users", bytes.NewReader(other))
+				regReq.Header.Set("Content-Type", "application/json")
+				_, err := stubApp.Test(regReq)
+				Expect(err).NotTo(HaveOccurred())
+				loginBody, _ := json.Marshal(fiber.Map{"email": "sse-assess-other@example.com", "password": "sse-password"})
+				loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
+				loginReq.Header.Set("Content-Type", "application/json")
+				loginResp, err := stubApp.Test(loginReq)
+				Expect(err).NotTo(HaveOccurred())
+				var otherCookie *http.Cookie
+				for _, ck := range loginResp.Cookies() {
+					otherCookie = ck
+				}
+
+				req := httptest.NewRequest("POST", "/api/posts/"+postID+"/assess", nil)
+				req.AddCookie(otherCookie)
+				resp, err := stubApp.Test(req, 5000)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+				Expect(resp.Header.Get("Content-Type")).To(ContainSubstring("text/event-stream"))
+
+				events := parseSSE(resp.Body)
+				names := make([]string, len(events))
+				for i, e := range events {
+					names[i] = e.event
+				}
+				Expect(names).To(ContainElement("complete"))
 			})
 		})
 	})

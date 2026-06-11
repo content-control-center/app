@@ -16,6 +16,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
+	"github.com/ogen-app/ogen/src/genkit/flows/post_quality"
 	"github.com/ogen-app/ogen/src/jobs/queues"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/platforms"
@@ -48,7 +49,10 @@ type PostsHandler struct {
 	platformRepo   repository.PlatformRepository
 	attachmentRepo repository.PostAttachmentRepository
 	auth           fiber.Handler
-	assistant   func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error)
+	assistant      func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error)
+	// assessQuality runs the Post quality assessment agent (CON-85). nil
+	// makes the /assess endpoint return 503. Wired via SetQualityAssessor.
+	assessQuality func(ctx context.Context, postID string, onEvent post_quality.OnEventFunc) (*post_quality.PostQualityResponse, error)
 	// isAssistantReady reports whether the Anthropic key is currently
 	// configured. nil is treated as "always ready" so existing test
 	// fixtures keep working without rewiring.
@@ -99,6 +103,13 @@ func (h *PostsHandler) SetAttachmentRepo(r repository.PostAttachmentRepository) 
 // fixtures that don't care about the audit trail).
 func (h *PostsHandler) SetPostLogRepo(r repository.PostLogRepository) {
 	h.postLogRepo = r
+}
+
+// SetQualityAssessor wires the Post quality assessment callback (CON-85).
+// Kept as a setter (not a constructor arg) so existing NewPostsHandler
+// call sites and test fixtures stay unchanged.
+func (h *PostsHandler) SetQualityAssessor(fn func(ctx context.Context, postID string, onEvent post_quality.OnEventFunc) (*post_quality.PostQualityResponse, error)) {
+	h.assessQuality = fn
 }
 
 // SetSchedulingDeps wires everything the schedule path needs: the
@@ -199,10 +210,10 @@ func (h *PostsHandler) routeAndPersistSchedule(c *fiber.Ctx, post *models.Post, 
 		actor = sess.UserID
 	}
 	decisionPayload := postlog.MarshalCapped(map[string]any{
-		"platform":           platformSqid,
-		"zernio_platform":    zernioName(supported),
-		"auto_publish":       autoPublish,
-		"chosen_status":      string(target),
+		"platform":        platformSqid,
+		"zernio_platform": zernioName(supported),
+		"auto_publish":    autoPublish,
+		"chosen_status":   string(target),
 	})
 	transitionLogID, _ := models.NewID()
 	decisionLogID, _ := models.NewID()
@@ -461,6 +472,7 @@ func (h *PostsHandler) Register(app *fiber.App) {
 	g.Put("/:id", h.auth, h.Update)
 	g.Delete("/:id", h.auth, h.Delete)
 	g.Post("/:id/assistant", h.auth, h.Assistant)
+	g.Post("/:id/assess", h.auth, h.Assess)
 	g.Post("/:id/clone", h.auth, h.Clone)
 	g.Get("/:id/messages", h.auth, h.ListMessages)
 	g.Get("/:id/versions", h.auth, h.ListVersions)
@@ -969,6 +981,84 @@ func (h *PostsHandler) Assistant(c *fiber.Ctx) error {
 				msg = ae.Msg
 			}
 			writeEvent(string(post_assistant.SSEEventError), post_assistant.ErrorEventPayload{Message: msg, Code: code})
+			return
+		}
+		// "complete" is emitted by the runner itself; nothing to write here.
+	}))
+
+	return nil
+}
+
+// Assess godoc
+// @Summary      Assess post quality
+// @Description  Runs the Post quality assessment agent (CON-85) and streams
+// @Description  Server-Sent Events: a "step" event per flow stage, then a
+// @Description  final "complete" event carrying the persisted evaluation
+// @Description  (four 0-10 dimension scores with rationale, weakness, and
+// @Description  span-anchored suggestions, plus the backend-computed overall).
+// @Tags         posts
+// @Produce      text/event-stream
+// @Security     CookieAuth
+// @Param        id   path      string  true  "Post Sqid"
+// @Success      200  {object}  post_quality.PostQualityResponse
+// @Failure      401  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Failure      503  {object}  map[string]string
+// @Router       /api/posts/{id}/assess [post]
+func (h *PostsHandler) Assess(c *fiber.Ctx) error {
+	if h.assessQuality == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "post quality assessment is not available")
+	}
+	if h.isAssistantReady != nil && !h.isAssistantReady() {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "post quality assessment is not available")
+	}
+
+	// Confirm the post exists before opening the SSE stream so a bad id
+	// gets a clean 404 rather than an in-stream error event. Posts are
+	// shared across the workspace — any authenticated user may assess any
+	// post, consistent with GET/PUT/DELETE/assistant/clone.
+	post, err := h.repo.GetByID(c.Context(), c.Params("id"))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "post not found")
+		}
+		return err
+	}
+
+	c.Set("Content-Type", "text/event-stream")
+	c.Set("Cache-Control", "no-cache")
+	c.Set("Connection", "keep-alive")
+	c.Set("X-Accel-Buffering", "no")
+
+	postID := post.ID
+	assess := h.assessQuality
+
+	c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
+		writeEvent := func(event string, data any) {
+			b, _ := json.Marshal(data)
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
+			_ = w.Flush()
+		}
+
+		onEvent := post_quality.OnEventFunc(func(name post_quality.SSEEventKind, data any) {
+			writeEvent(string(name), data)
+		})
+
+		_, err := assess(context.Background(), postID, onEvent)
+		if err != nil {
+			code := fiber.StatusInternalServerError
+			msg := err.Error()
+			var ve *post_quality.ValidationError
+			var ae *post_quality.AIError
+			switch {
+			case errors.As(err, &ve):
+				code = fiber.StatusBadRequest
+				msg = ve.Msg
+			case errors.As(err, &ae):
+				code = fiber.StatusBadGateway
+				msg = ae.Msg
+			}
+			writeEvent(string(post_quality.SSEEventError), post_quality.ErrorEventPayload{Message: msg, Code: code})
 			return
 		}
 		// "complete" is emitted by the runner itself; nothing to write here.
