@@ -1422,13 +1422,19 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				Expect(events[0].data).To(ContainSubstring("no body text"))
 			})
 
-			It("returns 403 when the post belongs to another user", func() {
-				stub := func(_ context.Context, _ string, _ post_quality.OnEventFunc) (*post_quality.PostQualityResponse, error) {
-					return nil, nil // should never be reached — ownership blocks first
+			It("lets a different user assess the post (shared workspace)", func() {
+				final := &post_quality.PostQualityResponse{
+					PostID:     "p1",
+					Evaluation: &models.PostEvaluation{OverallPct: 50},
+				}
+				stub := func(_ context.Context, _ string, onEvent post_quality.OnEventFunc) (*post_quality.PostQualityResponse, error) {
+					onEvent(post_quality.SSEEventComplete, final)
+					return final, nil
 				}
 				stubApp, _, postID := buildAssessApp(stub)
 
-				// A second user attempts to assess the first user's post.
+				// A second user assesses the first user's post — allowed: posts
+				// are shared across the workspace, no per-user ownership gate.
 				other, _ := json.Marshal(fiber.Map{"name": "Other", "email": "sse-assess-other@example.com", "password": "sse-password"})
 				regReq := httptest.NewRequest("POST", "/api/users", bytes.NewReader(other))
 				regReq.Header.Set("Content-Type", "application/json")
@@ -1448,7 +1454,15 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				req.AddCookie(otherCookie)
 				resp, err := stubApp.Test(req, 5000)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(resp.StatusCode).To(Equal(403))
+				Expect(resp.StatusCode).To(Equal(200))
+				Expect(resp.Header.Get("Content-Type")).To(ContainSubstring("text/event-stream"))
+
+				events := parseSSE(resp.Body)
+				names := make([]string, len(events))
+				for i, e := range events {
+					names[i] = e.event
+				}
+				Expect(names).To(ContainElement("complete"))
 			})
 		})
 	})

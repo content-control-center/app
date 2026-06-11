@@ -1002,7 +1002,6 @@ func (h *PostsHandler) Assistant(c *fiber.Ctx) error {
 // @Param        id   path      string  true  "Post Sqid"
 // @Success      200  {object}  post_quality.PostQualityResponse
 // @Failure      401  {object}  map[string]string
-// @Failure      403  {object}  map[string]string
 // @Failure      404  {object}  map[string]string
 // @Failure      503  {object}  map[string]string
 // @Router       /api/posts/{id}/assess [post]
@@ -1014,20 +1013,16 @@ func (h *PostsHandler) Assess(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "post quality assessment is not available")
 	}
 
-	// Authorize before streaming: load the post and confirm the caller
-	// owns it, mirroring CampaignsHandler.GenerateDraft. Without this any
-	// authenticated user could assess (and overwrite the evaluation of)
-	// another user's post by guessing its id (IDOR).
+	// Confirm the post exists before opening the SSE stream so a bad id
+	// gets a clean 404 rather than an in-stream error event. Posts are
+	// shared across the workspace — any authenticated user may assess any
+	// post, consistent with GET/PUT/DELETE/assistant/clone.
 	post, err := h.repo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fiber.NewError(fiber.StatusNotFound, "post not found")
 		}
 		return err
-	}
-	session := c.Locals("session").(*models.Session)
-	if post.CreatedBy != session.UserID {
-		return fiber.NewError(fiber.StatusForbidden, "forbidden")
 	}
 
 	c.Set("Content-Type", "text/event-stream")
