@@ -3,7 +3,7 @@ import { PageLoader } from "@/components/page-primitives/PageLoader.tsx";
 import { PageError } from "@/components/page-primitives/PageError.tsx";
 import { PageGridEmptyState } from "@/components/page-primitives/PageGridEmptyState.tsx";
 import { Button } from "@/components/ui/button.tsx";
-import { Plus } from "@phosphor-icons/react";
+import { PlusIcon } from "@phosphor-icons/react";
 import { AssetsTable } from "@/components/tables/docsTable/index.tsx";
 import { useAssets, useCreateAsset, useDeleteAsset } from "@/hooks/useContent.ts";
 import { assetCategory, type ContentBankTab } from "@/lib/assetCategory";
@@ -53,7 +53,7 @@ export function ContentBankList({ category }: { category: ContentBankTab }) {
             disabled={createAsset.isPending}
             variant="defaultInverted"
           >
-            <Plus className="size-4" />
+            <PlusIcon className="size-4" />
             <span>ADD ASSET</span>
           </Button>
         }

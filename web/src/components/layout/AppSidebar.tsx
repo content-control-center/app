@@ -1,13 +1,6 @@
 import * as React from 'react'
 import { Link, useLocation } from '@tanstack/react-router'
-import {
-  CaretDoubleLeft,
-  GearSix,
-  Megaphone,
-  SignOut,
-  Vault,
-  X,
-} from '@phosphor-icons/react'
+import { CaretDoubleLeftIcon, GearSixIcon, MegaphoneIcon, SignOutIcon, VaultIcon, XIcon } from '@phosphor-icons/react'
 import {
   Sidebar,
   SidebarContent,
@@ -61,7 +54,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 onClick={toggleSidebar}
                 aria-label="Close sidebar"
               >
-                <X weight="bold" className="size-5" />
+                <XIcon weight="bold" className="size-5" />
               </Button>
             ) : (
               <Link
@@ -85,7 +78,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 )}
                 onClick={() => setOpen(false)}
               >
-                <CaretDoubleLeft
+                <CaretDoubleLeftIcon
                   weight="bold"
                   className="size-3 text-quaternary-foreground group-hover/button:text-primary-foreground transition-colors"
                 />
@@ -98,21 +91,21 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             className={cn('flex flex-col gap-2 px-3 py-0 lg:p-6', isCollapsed && 'items-center')}
           >
             <AppSidebarButtonMenu
-              icon={Megaphone}
+              icon={MegaphoneIcon}
               text="Campaigns"
               isActive={location.pathname.startsWith('/campaigns')}
               to="/campaigns"
               onClick={closeSecondaryNavbar}
             />
             <AppSidebarButtonMenu
-              icon={Vault}
+              icon={VaultIcon}
               text="Content Bank"
               isActive={location.pathname.startsWith('/content-bank')}
               to="/content-bank"
               onClick={closeSecondaryNavbar}
             />
             <AppSidebarButtonMenu
-              icon={GearSix}
+              icon={GearSixIcon}
               text="Instance Settings"
               isActive={location.pathname.startsWith('/instance-settings')}
               to="/instance-settings"
@@ -161,7 +154,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
 
                   <DropdownMenuItem onClick={handleLogout} size="lg">
-                    <SignOut />
+                    <SignOutIcon />
                     <span>Log out</span>
                   </DropdownMenuItem>
               </DropdownMenuContent>

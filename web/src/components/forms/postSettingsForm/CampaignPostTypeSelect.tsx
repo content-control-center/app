@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import * as SelectPrimitive from '@radix-ui/react-select'
 
-import { CaretDown } from '@phosphor-icons/react'
+import { CaretDownIcon } from '@phosphor-icons/react'
 import { cn } from '@/lib'
 import { ZIndex } from '@/config/zIndex'
 import { selectTriggerVariants } from '@/components/ui/text-select'
@@ -116,7 +116,7 @@ export function CampaignPostTypeSelect({
           {currentLabel ?? placeholder}
         </SelectPrimitive.Value>
         <div className="flex h-8 w-8 items-center justify-center">
-          <CaretDown className="size-4" />
+          <CaretDownIcon className="size-4" />
         </div>
       </SelectPrimitive.Trigger>
 

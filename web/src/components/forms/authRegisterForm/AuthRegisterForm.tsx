@@ -3,7 +3,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { ArrowUpRight } from '@phosphor-icons/react'
+import { ArrowUpRightIcon } from '@phosphor-icons/react'
 import { useRegister } from '@/hooks/useAuth'
 import { useFormValidation } from '@/hooks/useFormValidation'
 import { registerSchema, PASSWORD_RULES, cn } from '@/lib'
@@ -143,7 +143,7 @@ export function AuthRegisterForm({ onSuccess }: AuthRegisterFormProps) {
             disabled={isPending}
           >
             <span>SIGN UP</span>
-            <ArrowUpRight className="size-4" />
+            <ArrowUpRightIcon className="size-4" />
           </Button>
           <div className="h-4 my-4">
             <span

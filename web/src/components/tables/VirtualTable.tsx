@@ -20,7 +20,7 @@ import { useColumnWidths, useContainerWidth } from './hooks/useColumnWidths'
 import { Button } from '@/components/ui/button'
 import { ScrollBar } from '@/components/ui/scroll-area'
 import { ZIndex } from '@/config/zIndex.ts'
-import { CaretDown, CaretUp } from '@phosphor-icons/react'
+import { CaretDownIcon, CaretUpIcon } from '@phosphor-icons/react'
 import { FooterCell } from '@/components/tables/TableCells.tsx'
 import { TableEmptyState } from './TableEmptyState'
 
@@ -113,10 +113,10 @@ function VirtualTableComponent<TData extends Record<string, unknown>>({
             <span className="truncate">{config.header}</span>
             <div className="size-2.5 shrink-0 leading-0">
               {sortDirection === 'asc' && (
-                <CaretDown className={'size-2.5'} />
+                <CaretDownIcon className={'size-2.5'} />
               )}
               {sortDirection === 'desc' && (
-                <CaretUp className={'size-2.5'} />
+                <CaretUpIcon className={'size-2.5'} />
               )}
             </div>
           </Button>

@@ -10,7 +10,7 @@ import { PageLoader } from "@/components/page-primitives/PageLoader.tsx";
 import { PageError } from "@/components/page-primitives/PageError.tsx";
 import { PageHeader } from "@/components/page-primitives/PageHeader.tsx";
 import { Button } from "@/components/ui/button.tsx";
-import { GearSix, Layout, Plus } from "@phosphor-icons/react";
+import { GearSixIcon, LayoutIcon, PlusIcon } from "@phosphor-icons/react";
 import { CampaignHeaderActions } from "@/components/campaigns/CampaignHeaderActions.tsx";
 import { CampaignTabBar } from "@/components/campaigns/CampaignTabBar.tsx";
 import { CampaignSettingsForm } from "@/components/forms/campaignSettingsForm";
@@ -53,7 +53,7 @@ function CampaignLayout() {
         ? [
             {
               id: "settings",
-              icon: GearSix,
+              icon: GearSixIcon,
               ariaLabel: "Campaign settings",
               panel: ({ close }) => (
                 <CampaignSettingsForm campaign={campaign} onClose={close} />
@@ -61,7 +61,7 @@ function CampaignLayout() {
             },
             {
               id: "content-usage",
-              icon: Layout,
+              icon: LayoutIcon,
               ariaLabel: "Content usage",
               panel: ({ close }) => (
                 <CampaignContentUsageForm campaign={campaign} onClose={close} />
@@ -111,7 +111,7 @@ function CampaignLayout() {
 
   const addPostButton = (
     <Button variant="default" size="default" onClick={addPost}>
-      <Plus className="size-4" />
+      <PlusIcon className="size-4" />
       <span>ADD POST</span>
     </Button>
   );

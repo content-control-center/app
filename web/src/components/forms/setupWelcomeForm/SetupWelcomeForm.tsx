@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 
-import { ArrowUpRight } from "@phosphor-icons/react";
+import { ArrowUpRightIcon } from "@phosphor-icons/react";
 
 import { Button } from "@/components/ui/button";
 
@@ -21,7 +21,7 @@ export function SetupWelcomeForm() {
         className="w-full justify-between"
       >
         <span>PROCEED TO SETUP</span>
-        <ArrowUpRight className="size-4" />
+        <ArrowUpRightIcon className="size-4" />
       </Button>
     </div>
   );

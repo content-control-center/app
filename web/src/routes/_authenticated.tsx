@@ -13,7 +13,7 @@ import { ZIndex } from "@/config/zIndex";
 import { useRightRailSection } from "@/hooks/useRightRailSection";
 import type { RightRailButton } from "@/stores/rightRailStore";
 import { AIAssistantPanel, StatsPanel } from "@/components/rail-panels/ComingSoonPanel";
-import { ChartBar, TrendUp } from "@phosphor-icons/react";
+import { ChartBarIcon, TrendUpIcon } from "@phosphor-icons/react";
 
 export const Route = createFileRoute("/_authenticated")({
   component: AuthenticatedLayout,
@@ -29,14 +29,14 @@ function AuthenticatedLayout() {
     () => [
       {
         id: "ai",
-        icon: ChartBar,
+        icon: ChartBarIcon,
         ariaLabel: "AI assistant",
         persistent: true,
         panel: ({ close }) => <AIAssistantPanel onClose={close} />,
       },
       {
         id: "stats",
-        icon: TrendUp,
+        icon: TrendUpIcon,
         ariaLabel: "Stats",
         persistent: true,
         panel: ({ close }) => <StatsPanel onClose={close} />,

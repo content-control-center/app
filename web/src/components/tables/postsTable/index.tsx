@@ -1,6 +1,6 @@
 import { memo, useMemo } from 'react'
 import { Link } from '@tanstack/react-router'
-import { Trash } from '@phosphor-icons/react'
+import { TrashIcon } from '@phosphor-icons/react'
 import { VirtualTable } from '../VirtualTable'
 import { TextCell } from '../TableCells'
 import type { ColumnConfig } from '../types'
@@ -147,7 +147,7 @@ function PostsTableComponent({
                   onDelete(row.id)
                 }}
               >
-                <Trash className="size-4 text-tertiary-foreground hover:text-destructive" />
+                <TrashIcon className="size-4 text-tertiary-foreground hover:text-destructive" />
               </Button>
             </div>
           )

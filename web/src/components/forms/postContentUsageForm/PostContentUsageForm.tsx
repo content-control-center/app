@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 
-import { Plus, X } from '@phosphor-icons/react'
+import { PlusIcon, XIcon } from '@phosphor-icons/react'
 import { RailPanel } from '@/components/page-primitives/RailPanel'
 import { AssetSection } from '../shared/AssetSection'
 import type { Asset } from '@/types/content'
@@ -73,7 +73,7 @@ export function PostContentUsageForm({ doc, changeDoc, onClose }: Props) {
         title="SELECTED"
         assets={selected}
         emptyLabel="No assets used"
-        actionIcon={X}
+        actionIcon={XIcon}
         actionAriaLabel={(a) => `Remove ${a.title || 'Untitled'}`}
         onAction={(a) => removeAsset(a.id)}
         defaultOpen
@@ -82,7 +82,7 @@ export function PostContentUsageForm({ doc, changeDoc, onClose }: Props) {
         title="AVAILABLE IN CAMPAIGN"
         assets={availableInCampaign}
         emptyLabel="No campaign shortlist assets"
-        actionIcon={Plus}
+        actionIcon={PlusIcon}
         actionAriaLabel={(a) => `Add ${a.title || 'Untitled'}`}
         onAction={(a) => addAsset(a.id)}
       />
@@ -90,7 +90,7 @@ export function PostContentUsageForm({ doc, changeDoc, onClose }: Props) {
         title="AVAILABLE"
         assets={available}
         emptyLabel="No other assets"
-        actionIcon={Plus}
+        actionIcon={PlusIcon}
         actionAriaLabel={(a) => `Add ${a.title || 'Untitled'}`}
         onAction={(a) => addAsset(a.id)}
       />

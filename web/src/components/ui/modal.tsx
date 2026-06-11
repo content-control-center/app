@@ -4,7 +4,7 @@ import { cn } from '@/lib'
 import { Backdrop } from '@/components/ui/backdrop'
 import { ZIndex } from '@/config/zIndex'
 import { Button } from '@/components/ui/button'
-import { X } from '@phosphor-icons/react'
+import { XIcon } from '@phosphor-icons/react'
 
 export interface ModalContainerProps {
   /**
@@ -240,7 +240,7 @@ export function ModalContainer({
             className="absolute top-4 right-4"
             aria-label="Close modal"
           >
-            <X className="size-5" />
+            <XIcon className="size-5" />
             <span className="sr-only">Close</span>
           </Button>
         )}

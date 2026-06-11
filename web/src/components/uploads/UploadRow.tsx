@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getAsset } from "@/services/api/content";
 import { Button } from "@/components/ui/button";
-import { ArrowsLeftRight, X } from "@phosphor-icons/react";
+import { ArrowsLeftRightIcon, XIcon } from "@phosphor-icons/react";
 import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
 import { isTerminalStatus } from "@/lib/assetStatus";
 import { useUploadStore, type UploadItem } from "@/stores/uploadStore";
@@ -72,7 +72,7 @@ export function UploadRow({ item }: { item: UploadItem }) {
               onClick={() => retry(item.id)}
               aria-label="Retry upload"
             >
-              <ArrowsLeftRight className="size-4" />
+              <ArrowsLeftRightIcon className="size-4" />
             </Button>
           )}
           <Button
@@ -81,7 +81,7 @@ export function UploadRow({ item }: { item: UploadItem }) {
             onClick={() => remove(item.id)}
             aria-label="Dismiss"
           >
-            <X className="size-4" />
+            <XIcon className="size-4" />
           </Button>
         </div>
       </div>

@@ -5,7 +5,7 @@ import * as SheetPrimitive from '@radix-ui/react-dialog'
 
 import { cn } from '@/lib'
 import { ZIndex } from '@/config/zIndex.ts'
-import { X } from '@phosphor-icons/react'
+import { XIcon } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button.tsx'
 
 function Sheet({ modal = true, ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
@@ -100,7 +100,7 @@ function SheetContent({
               size="smIcon"
               className="absolute top-5 right-4 lg:top-10 lg:right-10"
             >
-              <X className="size-6" />
+              <XIcon className="size-6" />
               <span className="sr-only">Close</span>
             </Button>
           </SheetPrimitive.Close>
@@ -111,7 +111,7 @@ function SheetContent({
               size="smIcon"
               className="absolute top-3 right-3 lg:top-8 lg:right-8"
             >
-              <X className="size-5" />
+              <XIcon className="size-5" />
               <span className="sr-only">Close</span>
             </Button>
           </SheetPrimitive.Close>

@@ -2,7 +2,7 @@ import { useNavigate, useLocation } from "@tanstack/react-router";
 
 import { AppAuth } from "@/components/layout/AppAuth";
 import { Button } from "@/components/ui/button";
-import { ArrowUpRight } from "@phosphor-icons/react";
+import { ArrowUpRightIcon } from "@phosphor-icons/react";
 import { useLogin } from "@/hooks/useAuth";
 import { invalidateSetupComplete, markSetupComplete } from "@/services/api/setup";
 import type { LoginPayload } from "@/types/session";
@@ -44,7 +44,7 @@ function SetupSuccessPage() {
             disabled={isPending}
           >
             <span>LOG IN AND PROCEED</span>
-            <ArrowUpRight className="size-4" />
+            <ArrowUpRightIcon className="size-4" />
           </Button>
         </div>
       }

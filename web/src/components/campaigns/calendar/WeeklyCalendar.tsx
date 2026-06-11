@@ -1,7 +1,7 @@
 import { memo, useCallback, useMemo, useState } from 'react'
 import type { Post } from '@/types/posts'
 import { Button } from '@/components/ui/button'
-import { CaretDown, CaretLeft, CaretRight } from '@phosphor-icons/react'
+import { CaretDownIcon, CaretLeftIcon, CaretRightIcon } from '@phosphor-icons/react'
 import { useUpdatePost } from '@/hooks/usePosts'
 import { postToPayload } from '@/services/api/posts'
 import { PostCard } from './PostCard'
@@ -166,10 +166,10 @@ function WeeklyCalendarComponent({
             TODAY
           </Button>
           <Button variant="ghost" size="smIcon" onClick={handlePrev}>
-            <CaretLeft className="size-3.5" />
+            <CaretLeftIcon className="size-3.5" />
           </Button>
           <Button variant="ghost" size="smIcon" onClick={handleNext}>
-            <CaretRight className="size-3.5" />
+            <CaretRightIcon className="size-3.5" />
           </Button>
         </div>
       </div>
@@ -239,9 +239,9 @@ function WeeklyCalendarComponent({
           className="w-full flex items-center gap-2 px-3 py-2.5 text-left"
         >
           {unscheduledOpen ? (
-            <CaretDown className="size-4 text-tertiary-foreground" />
+            <CaretDownIcon className="size-4 text-tertiary-foreground" />
           ) : (
-            <CaretRight className="size-4 text-tertiary-foreground" />
+            <CaretRightIcon className="size-4 text-tertiary-foreground" />
           )}
           <span className="text-[16px] font-medium">Unscheduled</span>
           <span className="text-[16px] font-medium text-tertiary-foreground tabular-nums">

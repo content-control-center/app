@@ -1,7 +1,7 @@
 import type { ReactElement } from 'react'
 import type { Post } from '@/types/posts'
 import { Button, buttonVariants } from '@/components/ui/button'
-import { DotsThreeVertical } from '@phosphor-icons/react'
+import { DotsThreeVerticalIcon } from '@phosphor-icons/react'
 import { cn } from '@/lib'
 import {
   DropdownMenu,
@@ -161,7 +161,7 @@ function OverflowMenu({
         aria-label="More status actions"
         disabled={pending}
       >
-        <DotsThreeVertical className="size-4" />
+        <DotsThreeVerticalIcon className="size-4" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         {actions.map((action) => (

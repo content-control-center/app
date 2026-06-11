@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { X } from '@phosphor-icons/react'
+import { XIcon } from '@phosphor-icons/react'
 import { cn } from '@/lib'
 
 type RailPanelProps = {
@@ -38,7 +38,7 @@ export function RailPanel({
                   aria-label="Close"
                   className="flex items-center justify-center size-6 text-secondary-foreground hover:text-foreground cursor-pointer"
                 >
-                  <X className="size-5" />
+                  <XIcon className="size-5" />
                 </button>
               )}
             </div>

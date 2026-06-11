@@ -1,5 +1,5 @@
 import { memo, useId, useState, type ReactNode } from 'react'
-import { ArrowUpRight, PencilSimple } from '@phosphor-icons/react'
+import { ArrowUpRightIcon, PencilSimpleIcon } from '@phosphor-icons/react'
 import type { Platform, PlatformPublisher, PublisherAccount } from '@/types/campaigns'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -85,7 +85,7 @@ function PostTypeChips({ view }: { view: PlatformView }) {
           className="text-[13px] leading-4 text-primary-foreground hover:underline inline-flex items-center gap-1"
         >
           Connect on Zernio
-          <ArrowUpRight className="size-2.5" />
+          <ArrowUpRightIcon className="size-2.5" />
         </a>
       ) : null,
   }))
@@ -172,7 +172,7 @@ function PlatformEditIconButton({ platform }: { platform: Platform }) {
         aria-label="Edit platform"
         title="Edit platform"
       >
-        <PencilSimple className="size-3.5" />
+        <PencilSimpleIcon className="size-3.5" />
       </Button>
       <PlatformDetailsModal
         platform={platform}

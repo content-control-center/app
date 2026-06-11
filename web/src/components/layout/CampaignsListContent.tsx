@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 // import { useNavigate, useLocation } from '@tanstack/react-router'
 import { useIsMobile } from '@/hooks/use-mobile.ts'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Plus } from '@phosphor-icons/react'
+import { PlusIcon } from '@phosphor-icons/react'
 
 
 
@@ -70,7 +70,7 @@ export function CampaignsListContent() {
               className="justify-start w-full px-0"
           //    onClick={() => createOverlay.open()}
             >
-              <Plus />
+              <PlusIcon />
               <span>CREATE CAMPAIGN</span>
             </Button>
           </div>
@@ -84,7 +84,7 @@ export function CampaignsListContent() {
             className="w-full justify-between flex-row-reverse"
           //  onClick={() => createOverlay.open()}
           >
-            <Plus />
+            <PlusIcon />
             <span>CREATE PORTFOLIO</span>
           </Button>
         </div>

@@ -4,14 +4,7 @@
 // fully control the wording the user sees.
 
 import type { Icon } from "@phosphor-icons/react";
-import {
-  FacebookLogo,
-  InstagramLogo,
-  LinkedinLogo,
-  ThreadsLogo,
-  XLogo,
-  YoutubeLogo,
-} from "@phosphor-icons/react";
+import { FacebookLogoIcon, InstagramLogoIcon, LinkedinLogoIcon, ThreadsLogoIcon, XLogoIcon, YoutubeLogoIcon } from "@phosphor-icons/react";
 
 import type { Platform, PlatformPublisher } from "@/types/campaigns";
 
@@ -34,7 +27,7 @@ export const PLATFORMS: PlatformInfo[] = [
   {
     id: "AXqWG7U2qnpt",
     name: "LinkedIn",
-    icon: LinkedinLogo,
+    icon: LinkedinLogoIcon,
     color: "#0A66C2",
     postTypes: [
       { slug: "text-post", label: "Text post" },
@@ -51,7 +44,7 @@ export const PLATFORMS: PlatformInfo[] = [
   {
     id: "8S8bWQTG6qD",
     name: "YouTube",
-    icon: YoutubeLogo,
+    icon: YoutubeLogoIcon,
     color: "#FF0000",
     postTypes: [
       { slug: "video", label: "Video" },
@@ -65,7 +58,7 @@ export const PLATFORMS: PlatformInfo[] = [
   {
     id: "zBU1zqVICGfk",
     name: "Facebook",
-    icon: FacebookLogo,
+    icon: FacebookLogoIcon,
     color: "#1877F2",
     postTypes: [
       { slug: "text-post", label: "Text post" },
@@ -83,7 +76,7 @@ export const PLATFORMS: PlatformInfo[] = [
   {
     id: "81mUCmc2xsKd",
     name: "X (Twitter)",
-    icon: XLogo,
+    icon: XLogoIcon,
     color: "#000000",
     postTypes: [
       { slug: "text-post", label: "Text post" },
@@ -98,7 +91,7 @@ export const PLATFORMS: PlatformInfo[] = [
   {
     id: "pQ4yxT3SuE57",
     name: "Threads",
-    icon: ThreadsLogo,
+    icon: ThreadsLogoIcon,
     color: "#000000",
     postTypes: [
       { slug: "text-post", label: "Text post" },
@@ -112,7 +105,7 @@ export const PLATFORMS: PlatformInfo[] = [
   {
     id: "rzgpTkARLH0L",
     name: "Instagram",
-    icon: InstagramLogo,
+    icon: InstagramLogoIcon,
     color: "#E4405F",
     postTypes: [
       { slug: "image-post", label: "Image post" },

@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { UploadSimple } from "@phosphor-icons/react";
+import { UploadSimpleIcon } from "@phosphor-icons/react";
 import { cn } from "@/lib";
 import { UPLOAD_ACCEPT, UPLOAD_LIMITS_LABEL } from "@/lib/assetStatus";
 
@@ -43,7 +43,7 @@ export function Dropzone({ onFiles, className }: Props) {
         className,
       )}
     >
-      <UploadSimple className="size-6 text-tertiary-foreground" />
+      <UploadSimpleIcon className="size-6 text-tertiary-foreground" />
       <p className="text-sm text-foreground">Drop files here or click to browse</p>
       <p className="text-xs text-tertiary-foreground">{UPLOAD_LIMITS_LABEL}</p>
       <input

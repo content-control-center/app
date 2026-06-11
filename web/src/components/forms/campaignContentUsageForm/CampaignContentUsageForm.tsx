@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 
-import { Plus, X } from '@phosphor-icons/react'
+import { PlusIcon, XIcon } from '@phosphor-icons/react'
 import { RailPanel } from '@/components/page-primitives/RailPanel'
 import { AssetSection } from '../shared/AssetSection'
 import type { Campaign } from '@/types/campaigns'
@@ -77,7 +77,7 @@ export function CampaignContentUsageForm({ campaign, onFlushRef, onClose }: Prop
         title="SELECTED"
         assets={selected}
         emptyLabel="No assets selected"
-        actionIcon={X}
+        actionIcon={XIcon}
         actionAriaLabel={(a) => `Remove ${a.title || 'Untitled'}`}
         onAction={(a) => removeAsset(a.id)}
         defaultOpen
@@ -86,7 +86,7 @@ export function CampaignContentUsageForm({ campaign, onFlushRef, onClose }: Prop
         title="AVAILABLE"
         assets={available}
         emptyLabel="No assets available"
-        actionIcon={Plus}
+        actionIcon={PlusIcon}
         actionAriaLabel={(a) => `Add ${a.title || 'Untitled'}`}
         onAction={(a) => addAsset(a.id)}
       />

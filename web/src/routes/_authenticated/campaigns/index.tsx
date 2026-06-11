@@ -5,7 +5,7 @@ import { PageLoader } from "@/components/page-primitives/PageLoader.tsx";
 import { PageError } from "@/components/page-primitives/PageError.tsx";
 import { PageHeader } from "@/components/page-primitives/PageHeader.tsx";
 import { PageGridEmptyState } from "@/components/page-primitives/PageGridEmptyState.tsx";
-import { Plus } from "@phosphor-icons/react";
+import { PlusIcon } from "@phosphor-icons/react";
 import { CampaignCard } from "@/components/campaigns/CampaignCard.tsx";
 import {
   useCampaigns,
@@ -79,7 +79,7 @@ function Campaigns() {
         className={'pt-6'}
         actions={
           <Button onClick={handleCreate} disabled={!canCreate} size="lg">
-            <Plus className={'size-4'} />
+            <PlusIcon className={'size-4'} />
             <span>ADD CAMPAIGN</span>
           </Button>
         }
@@ -107,7 +107,7 @@ function Campaigns() {
             subtitle="Create your first campaign to get started"
             actions={
               <Button onClick={handleCreate} disabled={!canCreate} variant="defaultInverted">
-                <Plus className={'size-4'} />
+                <PlusIcon className={'size-4'} />
                 <span>ADD CAMPAIGN</span>
               </Button>
             }

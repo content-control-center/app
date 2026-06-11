@@ -5,7 +5,7 @@ import {
   useNavigate,
   useRouterState,
 } from "@tanstack/react-router";
-import { Plus, UploadSimple } from "@phosphor-icons/react";
+import { PlusIcon, UploadSimpleIcon } from "@phosphor-icons/react";
 import { PageContainer } from "@/components/page-primitives/PageContainer.tsx";
 import { PageHeader } from "@/components/page-primitives/PageHeader.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -103,10 +103,10 @@ function ContentBankLayout() {
           actions={
             <div className="flex items-center gap-2">
               <Button onClick={() => setUploadModalOpen(true)} variant="outline" size="lg">
-                <UploadSimple className="size-4" /><span>UPLOAD</span>
+                <UploadSimpleIcon className="size-4" /><span>UPLOAD</span>
               </Button>
               <Button onClick={handleCreate} disabled={createAsset.isPending} size="lg">
-                <Plus className={"size-4"} /><span>ADD ASSET</span>
+                <PlusIcon className={"size-4"} /><span>ADD ASSET</span>
               </Button>
             </div>
           }
@@ -123,7 +123,7 @@ function ContentBankLayout() {
         {isDragging && (
           <div className="absolute inset-0 flex items-center justify-center bg-popover/90 pointer-events-none">
             <div className="flex flex-col items-center gap-2">
-              <UploadSimple className="size-8 text-foreground" />
+              <UploadSimpleIcon className="size-8 text-foreground" />
               <p className="text-sm text-foreground">Drop .md or .pdf files to upload</p>
               <p className="text-xs text-tertiary-foreground">{UPLOAD_LIMITS_LABEL}</p>
             </div>

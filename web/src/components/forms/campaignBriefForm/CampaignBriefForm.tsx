@@ -4,7 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 
 import { Textarea } from '@/components/ui/textarea'
-import { BookmarkSimple, ChatCircle, Eye, Gauge, Target, type Icon as PhosphorIcon } from '@phosphor-icons/react'
+import { BookmarkSimpleIcon, ChatCircleIcon, EyeIcon, GaugeIcon, TargetIcon, type Icon as PhosphorIcon } from '@phosphor-icons/react'
 import { cn } from '@/lib'
 import {
   Form,
@@ -19,14 +19,14 @@ import type { Campaign } from '@/types/campaigns'
 import { useCampaignAutosave } from './shared'
 
 const TYPE_ICON: Record<string, PhosphorIcon> = {
-  awareness: Eye,
-  engagement: ChatCircle,
-  conversion: Target,
-  retention: BookmarkSimple,
+  awareness: EyeIcon,
+  engagement: ChatCircleIcon,
+  conversion: TargetIcon,
+  retention: BookmarkSimpleIcon,
 }
 
 function typeIcon(name: string): PhosphorIcon {
-  return TYPE_ICON[name.toLowerCase()] ?? Gauge
+  return TYPE_ICON[name.toLowerCase()] ?? GaugeIcon
 }
 
 const briefSchema = z.object({

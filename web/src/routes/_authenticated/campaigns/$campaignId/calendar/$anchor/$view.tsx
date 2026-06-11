@@ -4,7 +4,7 @@ import {
   useNavigate,
 } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button.tsx";
-import { Plus } from "@phosphor-icons/react";
+import { PlusIcon } from "@phosphor-icons/react";
 import { PageGridEmptyState } from "@/components/page-primitives/PageGridEmptyState.tsx";
 import { WeeklyCalendar } from "@/components/campaigns/calendar/WeeklyCalendar";
 import { formatAnchor, parseAnchor } from "@/components/campaigns/calendar/date";
@@ -44,7 +44,7 @@ function CalendarView() {
         subtitle="Add your first post to start building this campaign"
         actions={
           <Button variant="defaultInverted" onClick={addPost}>
-            <Plus className="size-4" />
+            <PlusIcon className="size-4" />
             <span>ADD POST</span>
           </Button>
         }

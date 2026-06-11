@@ -9,7 +9,7 @@ import { useCampaign } from '@/hooks/useCampaigns'
 import { useRightRailSection } from '@/hooks/useRightRailSection'
 import { useRightRailPage } from '@/hooks/useRightRailPage'
 import type { RightRailButton } from '@/stores/rightRailStore'
-import { GearSix, Layout } from '@phosphor-icons/react'
+import { GearSixIcon, LayoutIcon } from '@phosphor-icons/react'
 import { PostSettingsForm } from '@/components/forms/postSettingsForm'
 import { PostContentUsageForm } from '@/components/forms/postContentUsageForm'
 import { PostContentEditor } from '@/components/posts/PostContentEditor'
@@ -44,7 +44,7 @@ function PostPage() {
         ? [
             {
               id: 'settings',
-              icon: GearSix,
+              icon: GearSixIcon,
               ariaLabel: 'Post settings',
               panel: ({ close }) => (
                 <PostSettingsForm doc={doc} changeDoc={changeDoc} onClose={close} />
@@ -52,7 +52,7 @@ function PostPage() {
             },
             {
               id: 'content-usage',
-              icon: Layout,
+              icon: LayoutIcon,
               ariaLabel: 'Content pieces',
               panel: ({ close }) => (
                 <PostContentUsageForm doc={doc} changeDoc={changeDoc} onClose={close} />

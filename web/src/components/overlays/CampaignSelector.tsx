@@ -2,7 +2,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { useCampaigns } from '@/hooks/useCampaigns'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
-import { X } from '@phosphor-icons/react'
+import { XIcon } from '@phosphor-icons/react'
 
 type CampaignSelectorProps = {
   onClose: () => void
@@ -22,7 +22,7 @@ export function CampaignSelector({ onClose }: CampaignSelectorProps) {
       <div className="flex items-center justify-between px-4 pt-4 pb-2 shrink-0">
         <h2 className="text-lg font-display font-medium tracking-tight">Campaigns</h2>
         <Button variant="ghost" size="smIcon" onClick={onClose} aria-label="Close">
-          <X className="size-4" />
+          <XIcon className="size-4" />
         </Button>
       </div>
       <ScrollArea className="flex-1 min-h-0" type="scroll">

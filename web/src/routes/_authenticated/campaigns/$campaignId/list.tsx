@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button.tsx";
-import { Plus } from "@phosphor-icons/react";
+import { PlusIcon } from "@phosphor-icons/react";
 import { PageGridEmptyState } from "@/components/page-primitives/PageGridEmptyState.tsx";
 import { PostsTable } from "@/components/tables/postsTable";
 import { useAddPost, useCampaignPosts, useDeletePost } from "@/hooks/usePosts.ts";
@@ -24,7 +24,7 @@ function CampaignListView() {
         subtitle="Add your first post to start building this campaign"
         actions={
           <Button variant="defaultInverted" onClick={addPost}>
-            <Plus className="size-4" />
+            <PlusIcon className="size-4" />
             <span>ADD POST</span>
           </Button>
         }

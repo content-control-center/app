@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ModalContainer } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
-import { X } from "@phosphor-icons/react";
+import { XIcon } from "@phosphor-icons/react";
 import { Dropzone } from "./Dropzone";
 import { useUploadStore } from "@/stores/uploadStore";
 import {
@@ -87,7 +87,7 @@ export function UploadModal({ isOpen, onClose }: Props) {
                     onClick={() => removeStaged(index)}
                     aria-label={`Remove ${file.name}`}
                   >
-                    <X className="size-4" />
+                    <XIcon className="size-4" />
                   </Button>
                 </li>
               );

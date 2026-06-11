@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { CaretDown, List } from '@phosphor-icons/react'
+import { CaretDownIcon, ListIcon } from '@phosphor-icons/react'
 import { useSidebar } from '@/components/ui/sidebar'
 import { ZIndex } from '@/config/zIndex'
 import { cn } from '@/lib'
@@ -45,7 +45,7 @@ export function PageHeader({
             style={{ zIndex: ZIndex.sidebarOverlay + 1 }}
             aria-label="Toggle sidebar"
           >
-            <List className="size-5" />
+            <ListIcon className="size-5" />
           </Button>
         </div>
         <div
@@ -75,7 +75,7 @@ export function PageHeader({
                 {title}
               </h1>
               {isClickable && (
-                <CaretDown
+                <CaretDownIcon
                   className={cn(
                     'shrink-0',
                     isMobile

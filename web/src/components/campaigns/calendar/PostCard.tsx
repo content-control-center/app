@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { Link } from '@tanstack/react-router'
-import { CircleDashed, Clock } from '@phosphor-icons/react'
+import { CircleDashedIcon, ClockIcon } from '@phosphor-icons/react'
 import type { Post } from '@/types/posts'
 import { POST_STATUS_LABELS } from '@/types/posts'
 import { cn, formatTitle } from '@/lib'
@@ -28,7 +28,7 @@ function PostCardComponent({ post }: PostCardProps) {
   const platformInfo = getPlatformInfo(post.platform_id)
   // Fall back to a neutral, "undefined"-feeling dashed circle (in the muted
   // tertiary color, not a warning hue) when no platform is assigned.
-  const PlatformIcon = platformInfo?.icon ?? CircleDashed
+  const PlatformIcon = platformInfo?.icon ?? CircleDashedIcon
   const label = platformInfo
     ? getPostTypeLabel(post.platform_id, post.platform_post_type)
     : 'No platform'
@@ -69,7 +69,7 @@ function PostCardComponent({ post }: PostCardProps) {
       {/* Row 3 — time */}
       {time && (
         <div className="flex items-center gap-1.5 text-xs text-tertiary-foreground">
-          <Clock className="size-3.5 shrink-0" />
+          <ClockIcon className="size-3.5 shrink-0" />
           <span className="truncate">{time}</span>
         </div>
       )}

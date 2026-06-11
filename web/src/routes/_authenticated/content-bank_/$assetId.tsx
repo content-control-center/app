@@ -11,7 +11,7 @@ import { useRightRailSection } from "@/hooks/useRightRailSection";
 import { useRightRailPage } from "@/hooks/useRightRailPage";
 import { ComingSoonPanel } from "@/components/rail-panels/ComingSoonPanel";
 import type { RightRailButton } from "@/stores/rightRailStore";
-import { GearSix } from "@phosphor-icons/react";
+import { GearSixIcon } from "@phosphor-icons/react";
 
 export const Route = createFileRoute("/_authenticated/content-bank_/$assetId")({
   component: AssetPage,
@@ -77,7 +77,7 @@ function AssetPage() {
     () => [
       {
         id: 'settings',
-        icon: GearSix,
+        icon: GearSixIcon,
         ariaLabel: 'Settings',
         panel: ({ close }) => <ComingSoonPanel title="Settings" onClose={close} />,
       },
