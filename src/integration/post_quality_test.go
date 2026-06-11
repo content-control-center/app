@@ -102,8 +102,13 @@ var _ = Describe("Post quality assessment flow", Ordered, func() {
 	})
 
 	AfterEach(func() {
-		_, _ = db.NewDelete().TableExpr("post_evaluations").Where("1 = 1").Exec(ctx)
-		_, _ = db.NewDelete().TableExpr("post_logs").Where("1 = 1").Exec(ctx)
+		// Scope child-table cleanup to this suite's campaign posts. (Each
+		// Describe already runs on its own DB file, and both tables cascade
+		// on the posts delete below, so this is defensive rather than
+		// load-bearing.) Runs before the posts delete so the subquery resolves.
+		scoped := "post_id IN (SELECT id FROM posts WHERE campaign_id = ?)"
+		_, _ = db.NewDelete().TableExpr("post_evaluations").Where(scoped, campaignID).Exec(ctx)
+		_, _ = db.NewDelete().TableExpr("post_logs").Where(scoped, campaignID).Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("posts").Where("campaign_id = ?", campaignID).Exec(ctx)
 	})
 
