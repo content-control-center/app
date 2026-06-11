@@ -159,6 +159,20 @@ func WeightsFromJSON(s string) (Weights, error) {
 }
 
 func validateProfileSum(slug string, p Profile) error {
+	// Each weight must be a fraction in [0,1]. A profile can sum to 1.0 yet
+	// hold an out-of-range value (e.g. {1.5, -0.5, 0, 0}); a negative weight
+	// would make a higher dimension score lower the overall, so reject it
+	// with the offending dimension and value before the sum check.
+	for _, dim := range []models.EvaluationDimensionKey{
+		models.DimensionCorrectness,
+		models.DimensionClarity,
+		models.DimensionEngagement,
+		models.DimensionDelivery,
+	} {
+		if w := p.Weight(dim); w < 0 || w > 1 {
+			return fmt.Errorf("weight profile %q dimension %q is %.4f, must be in [0,1]", slug, dim, w)
+		}
+	}
 	if math.Abs(p.Sum()-1.0) > weightSumTolerance {
 		return fmt.Errorf("weight profile %q sums to %.4f, must sum to 1.0", slug, p.Sum())
 	}

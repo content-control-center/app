@@ -85,6 +85,12 @@ func TestWeightsFromJSONErrors(t *testing.T) {
 	if _, err := WeightsFromJSON(bad); err == nil {
 		t.Error("expected error for profile not summing to 1.0")
 	}
+	// Profile that sums to 1.0 but has an out-of-range weight must be rejected
+	// (1.5 + -0.5 + 0 + 0 = 1.0, so only the per-dimension check catches it).
+	oor := `{"profiles":{"reel":{"correctness":1.5,"clarity":-0.5,"engagement":0,"delivery":0}}}`
+	if _, err := WeightsFromJSON(oor); err == nil {
+		t.Error("expected error for weight outside [0,1]")
+	}
 }
 
 func TestProfileWeight(t *testing.T) {
