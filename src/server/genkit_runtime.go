@@ -15,6 +15,7 @@ import (
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
+	"github.com/ogen-app/ogen/src/genkit/flows/post_quality"
 	"github.com/ogen-app/ogen/src/postclone"
 	"github.com/ogen-app/ogen/src/secrets"
 )
@@ -43,12 +44,14 @@ type genkitRuntime struct {
 
 	contentPlanFn   func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)
 	postAssistantFn func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error)
+	postQualityFn   func(ctx context.Context, postID string, onEvent post_quality.OnEventFunc) (*post_quality.PostQualityResponse, error)
 
 	cfg              *config.Config
 	hub              eventhub.Hub
 	embedder         ai.Embedder
 	contentPlanRepos content_plan.ContentPlanRepos
 	postAssistRepos  post_assistant.PostAssistantRepos
+	postQualityRepos post_quality.PostQualityRepos
 	cloneSvc         *postclone.Service
 }
 
@@ -60,6 +63,7 @@ type genkitDeps struct {
 	embedder         ai.Embedder
 	contentPlanRepos content_plan.ContentPlanRepos
 	postAssistRepos  post_assistant.PostAssistantRepos
+	postQualityRepos post_quality.PostQualityRepos
 	cloneSvc         *postclone.Service
 }
 
@@ -76,6 +80,7 @@ func newGenkitRuntime(ctx context.Context, deps genkitDeps, store secrets.Store)
 		embedder:         deps.embedder,
 		contentPlanRepos: deps.contentPlanRepos,
 		postAssistRepos:  deps.postAssistRepos,
+		postQualityRepos: deps.postQualityRepos,
 		cloneSvc:         deps.cloneSvc,
 	}
 
@@ -97,7 +102,7 @@ func newGenkitRuntime(ctx context.Context, deps genkitDeps, store secrets.Store)
 func (r *genkitRuntime) IsAnthropicAvailable() bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.contentPlanFn != nil && r.postAssistantFn != nil
+	return r.contentPlanFn != nil && r.postAssistantFn != nil && r.postQualityFn != nil
 }
 
 func (r *genkitRuntime) GenerateDraft(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error) {
@@ -120,6 +125,16 @@ func (r *genkitRuntime) RunPostAssistant(ctx context.Context, req post_assistant
 	return fn(ctx, req, onEvent)
 }
 
+func (r *genkitRuntime) AssessPostQuality(ctx context.Context, postID string, onEvent post_quality.OnEventFunc) (*post_quality.PostQualityResponse, error) {
+	r.mu.RLock()
+	fn := r.postQualityFn
+	r.mu.RUnlock()
+	if fn == nil {
+		return nil, ErrAnthropicUnavailable
+	}
+	return fn(ctx, postID, onEvent)
+}
+
 // rebuild fetches the current Anthropic key (if any), constructs a
 // fresh Genkit instance with a fresh Anthropic plugin, re-registers
 // the two flows, and atomically swaps the cached callbacks. Holding
@@ -140,6 +155,7 @@ func (r *genkitRuntime) rebuild(ctx context.Context, store secrets.Store) error 
 		log.Printf("genkit: anthropic_api_key not configured; flows disabled")
 		r.contentPlanFn = nil
 		r.postAssistantFn = nil
+		r.postQualityFn = nil
 		r.g = nil
 		r.plugin = nil
 		return nil
@@ -159,11 +175,16 @@ func (r *genkitRuntime) rebuild(ctx context.Context, store secrets.Store) error 
 	if err != nil {
 		return fmt.Errorf("init post assistant: %w", err)
 	}
+	postQualityFn, err := initPostQuality(g, r.cfg, r.hub, r.postQualityRepos)
+	if err != nil {
+		return fmt.Errorf("init post quality: %w", err)
+	}
 
 	r.g = g
 	r.plugin = plugin
 	r.contentPlanFn = contentPlanFn
 	r.postAssistantFn = postAssistantFn
+	r.postQualityFn = postQualityFn
 	log.Printf("genkit: anthropic flows rebuilt")
 	return nil
 }

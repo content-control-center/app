@@ -1,0 +1,317 @@
+//go:build integration
+
+package integration_test
+
+import (
+	"context"
+	"errors"
+	"os"
+
+	"github.com/firebase/genkit/go/genkit"
+	"github.com/firebase/genkit/go/plugins/anthropic"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"github.com/uptrace/bun"
+
+	"github.com/ogen-app/ogen/src/genkit/flows/post_quality"
+	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/repository"
+)
+
+var _ = Describe("Post quality assessment flow", Ordered, func() {
+	var (
+		ctx        context.Context
+		db         *bun.DB
+		userID     string
+		campaignID string
+		postRepo   repository.PostRepository
+		evalRepo   repository.PostEvaluationRepository
+		logRepo    repository.PostLogRepository
+		repos      post_quality.PostQualityRepos
+		callback   func(ctx context.Context, postID string, onEvent post_quality.OnEventFunc) (*post_quality.PostQualityResponse, error)
+
+		platformID = "AXqWG7U2qnpt" // seeded LinkedIn platform (Sqid)
+	)
+
+	BeforeAll(func() {
+		if os.Getenv("ANTHROPIC_API_KEY") == "" {
+			Skip("ANTHROPIC_API_KEY not set — skipping post quality integration tests")
+		}
+
+		ctx = context.Background()
+		db = mustOpenIntegrationDB()
+
+		tagRepo := repository.NewTagRepository(db)
+		assetRepo := repository.NewAssetRepository(db, tagRepo, repository.NewAssetFileRepository(db))
+		chunksRepo := repository.NewAssetChunksRepository(db)
+		platformRepo := repository.NewPlatformRepository(db)
+		campaignTypeRepo := repository.NewCampaignTypeRepository(db)
+		campaignRepo := repository.NewCampaignRepository(db, tagRepo, platformRepo, campaignTypeRepo)
+		postRepo = repository.NewPostRepository(db)
+		evalRepo = repository.NewPostEvaluationRepository(db)
+		logRepo = repository.NewPostLogRepository(db)
+
+		var err error
+		userID, err = models.NewID()
+		Expect(err).NotTo(HaveOccurred())
+		_, err = db.NewInsert().Model(&models.User{
+			ID:           userID,
+			Name:         "Post Quality Tester",
+			Email:        "pq-integration@test.local",
+			PasswordHash: "placeholder",
+		}).Exec(ctx)
+		Expect(err).NotTo(HaveOccurred())
+
+		campaignID, err = models.NewID()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(campaignRepo.Create(ctx, &models.Campaign{
+			ID:              campaignID,
+			Name:            "Integration Test Campaign",
+			Description:     "Promote Go as a production language for AI engineering teams.",
+			TargetPersona:   "Backend engineers evaluating Go for AI workloads.",
+			KeyMessages:     "Static types, single-binary deploys, goroutine concurrency.",
+			ToneGuidelines:  "Confident, technical, no marketing fluff.",
+			CampaignTypeID:  "Uk",
+			Status:          models.StatusDraft,
+			Language:        "en",
+			TargetPlatforms: models.CampaignPlatforms{{ID: platformID, PostTypes: []string{"text-post", "article"}}},
+			CreatedBy:       userID,
+		})).To(Succeed())
+
+		repos = post_quality.PostQualityRepos{
+			Posts:       postRepo,
+			Campaigns:   campaignRepo,
+			Assets:      assetRepo,
+			Chunks:      chunksRepo,
+			Platforms:   platformRepo,
+			Evaluations: evalRepo,
+			PostLogs:    logRepo,
+		}
+
+		g := genkit.Init(ctx, genkit.WithPlugins(&anthropic.Anthropic{}))
+		modelID := os.Getenv("QUALITY_MODEL_ID")
+		if modelID == "" {
+			modelID = "claude-haiku-4-5-20251001"
+		}
+		// Weights are required — without a profile ComposeScore returns 0.
+		Expect(post_quality.InitPostQuality(g, post_quality.PostQualityFlowConfig{
+			ModelID: modelID,
+			Weights: post_quality.DefaultWeights(),
+		}, repos)).To(Succeed())
+		callback = post_quality.NewPostQualityCallback()
+	})
+
+	AfterEach(func() {
+		_, _ = db.NewDelete().TableExpr("post_evaluations").Where("1 = 1").Exec(ctx)
+		_, _ = db.NewDelete().TableExpr("post_logs").Where("1 = 1").Exec(ctx)
+		_, _ = db.NewDelete().TableExpr("posts").Where("campaign_id = ?", campaignID).Exec(ctx)
+	})
+
+	AfterAll(func() {
+		if db == nil {
+			return
+		}
+		_, _ = db.NewDelete().TableExpr("posts").Where("campaign_id = ?", campaignID).Exec(ctx)
+		_, _ = db.NewDelete().TableExpr("campaigns").Where("id = ?", campaignID).Exec(ctx)
+		_, _ = db.NewDelete().TableExpr("users").Where("id = ?", userID).Exec(ctx)
+	})
+
+	// seedPost inserts a post with the given content, type, and media, and
+	// returns its id.
+	seedPost := func(content, postType string, media models.StringSlice) string {
+		id, err := models.NewID()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(postRepo.Create(ctx, &models.Post{
+			ID:               id,
+			CampaignID:       campaignID,
+			PlatformID:       platformID,
+			PlatformPostType: postType,
+			Title:            "Why Go for AI Engineering",
+			Content:          content,
+			MediaURLs:        media,
+			Status:           models.PostStatusDraft,
+			CTAType:          models.CTATypeNone,
+			UsedAssetIDs:     models.StringSlice{},
+			CreatedBy:        userID,
+		})).To(Succeed())
+		return id
+	}
+
+	const strongPost = `Most teams reach for Python for AI features. Here's why we didn't.
+
+Go caught three schema mismatches at compile time last sprint — bugs that would have hit production in a dynamically typed stack. Goroutines made streaming tool-calls trivial to fan out. And our deploy is a single 18MB binary, not a 600MB image.
+
+If you're shipping AI features under real latency budgets, Go deserves a second look.
+
+What's stopped your team from trying it? 👇`
+
+	const weakPost = `We are excited to share some thoughts about technology today. Technology is very important and many companies use it. Go is a programming language and Python is also a programming language. There are many benefits to using good tools. Learn more!`
+
+	Describe("happy path", func() {
+		It("scores all four dimensions, computes the overall, and persists the result", func() {
+			postID := seedPost(strongPost, "text-post", models.StringSlice{})
+
+			resp, err := callback(ctx, postID, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp).NotTo(BeNil())
+			Expect(resp.Evaluation).NotTo(BeNil())
+
+			ev := resp.Evaluation
+			Expect(ev.OverallPct).To(BeNumerically(">", 0))
+			Expect(ev.OverallPct).To(BeNumerically("<=", 100))
+			Expect(ev.ModelID).NotTo(BeEmpty())
+			Expect(ev.CaptionScoped).To(BeFalse(), "text post has no unseen media")
+
+			// Every dimension scored in range, with rationale and a mandatory
+			// weakness, and weights stamped by ComposeScore.
+			for _, d := range []models.EvaluationDimension{
+				ev.Result.Correctness, ev.Result.Clarity, ev.Result.Engagement, ev.Result.Delivery,
+			} {
+				Expect(d.Score).To(BeNumerically(">=", 0))
+				Expect(d.Score).To(BeNumerically("<=", 10))
+				Expect(d.Rationale).NotTo(BeEmpty())
+				Expect(d.Weakness).NotTo(BeEmpty(), "a weakness is mandatory on every dimension")
+				Expect(d.Weight).To(BeNumerically(">", 0), "ComposeScore must stamp the weight")
+			}
+
+			// Contributions sum to the overall (deterministic composition).
+			sum := ev.Result.Correctness.Contribution + ev.Result.Clarity.Contribution +
+				ev.Result.Engagement.Contribution + ev.Result.Delivery.Contribution
+			Expect(sum).To(BeNumerically("~", ev.OverallPct, 0.01))
+
+			// Any suggestion must be span-anchored.
+			for _, d := range []models.EvaluationDimension{
+				ev.Result.Correctness, ev.Result.Clarity, ev.Result.Engagement, ev.Result.Delivery,
+			} {
+				for _, s := range d.Suggestions {
+					Expect(s.Span).NotTo(BeEmpty(), "every suggestion must quote a span")
+				}
+			}
+
+			// Persisted and readable back.
+			persisted, err := evalRepo.GetByPostID(ctx, postID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(persisted).NotTo(BeNil())
+			Expect(persisted.OverallPct).To(BeNumerically("~", ev.OverallPct, 0.01))
+
+			// Operation recorded in the Post Log.
+			logs, err := logRepo.ListByPostID(ctx, postID, 10)
+			Expect(err).NotTo(HaveOccurred())
+			var sawAssessed bool
+			for _, l := range logs {
+				if l.EventType == models.PostLogEventQualityAssessed {
+					sawAssessed = true
+				}
+			}
+			Expect(sawAssessed).To(BeTrue(), "a quality_assessed PostLog entry must exist")
+		})
+	})
+
+	Describe("caption-scoped posts", func() {
+		It("flags the score as caption-scoped when the post carries media", func() {
+			postID := seedPost(strongPost, "image-post", models.StringSlice{"https://example.com/a.png"})
+
+			resp, err := callback(ctx, postID, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Evaluation.CaptionScoped).To(BeTrue(), "media present → caption-scoped")
+		})
+	})
+
+	Describe("re-evaluation", func() {
+		It("overwrites the prior result rather than appending a second row", func() {
+			postID := seedPost(strongPost, "text-post", models.StringSlice{})
+
+			_, err := callback(ctx, postID, nil)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = callback(ctx, postID, nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			var count int
+			Expect(db.NewSelect().Model((*models.PostEvaluation)(nil)).
+				Where("post_id = ?", postID).ColumnExpr("count(*)").Scan(ctx, &count)).To(Succeed())
+			Expect(count).To(Equal(1), "re-eval overwrites; exactly one row per post")
+		})
+	})
+
+	Describe("input validation", func() {
+		It("rejects an empty-body post with a ValidationError and no model call", func() {
+			postID := seedPost("   ", "text-post", models.StringSlice{})
+
+			_, err := callback(ctx, postID, nil)
+			Expect(err).To(HaveOccurred())
+			var ve *post_quality.ValidationError
+			Expect(errors.As(err, &ve)).To(BeTrue(), "empty body must fail input validation")
+		})
+	})
+
+	Describe("SSE event stream", func() {
+		It("emits step events and a final complete event", func() {
+			postID := seedPost(strongPost, "text-post", models.StringSlice{})
+
+			var (
+				gotStep     bool
+				gotComplete bool
+				gotError    bool
+				order       []post_quality.SSEEventKind
+			)
+			onEvent := post_quality.OnEventFunc(func(name post_quality.SSEEventKind, _ any) {
+				order = append(order, name)
+				switch name {
+				case post_quality.SSEEventStep:
+					gotStep = true
+				case post_quality.SSEEventComplete:
+					gotComplete = true
+				case post_quality.SSEEventError:
+					gotError = true
+				}
+			})
+
+			_, err := callback(ctx, postID, onEvent)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(gotError).To(BeFalse())
+			Expect(gotStep).To(BeTrue(), "step events should fire per flow stage")
+			Expect(gotComplete).To(BeTrue())
+			Expect(order[len(order)-1]).To(Equal(post_quality.SSEEventComplete), "complete is last")
+		})
+	})
+
+	// Ranking eval (CON-85): a cheap model is sufficient if its RANKINGS
+	// agree with a stronger model's, even where absolute numbers differ.
+	// Run a clearly-strong and a clearly-weak post through each model and
+	// assert strong outscores weak. Sonnet is only checked when configured.
+	Describe("ranking eval", func() {
+		assessBoth := func(modelID string) (strong, weak float64) {
+			g := genkit.Init(ctx, genkit.WithPlugins(&anthropic.Anthropic{}))
+			Expect(post_quality.InitPostQuality(g, post_quality.PostQualityFlowConfig{
+				ModelID: modelID,
+				Weights: post_quality.DefaultWeights(),
+			}, repos)).To(Succeed())
+			cb := post_quality.NewPostQualityCallback()
+
+			strongID := seedPost(strongPost, "text-post", models.StringSlice{})
+			weakID := seedPost(weakPost, "text-post", models.StringSlice{})
+
+			rs, err := cb(ctx, strongID, nil)
+			Expect(err).NotTo(HaveOccurred())
+			rw, err := cb(ctx, weakID, nil)
+			Expect(err).NotTo(HaveOccurred())
+			return rs.Evaluation.OverallPct, rw.Evaluation.OverallPct
+		}
+
+		It("ranks the strong post above the weak post on Haiku (and Sonnet if set)", func() {
+			haiku := os.Getenv("QUALITY_MODEL_ID")
+			if haiku == "" {
+				haiku = "claude-haiku-4-5-20251001"
+			}
+			hStrong, hWeak := assessBoth(haiku)
+			Expect(hStrong).To(BeNumerically(">", hWeak),
+				"Haiku should rank the strong post above the weak post")
+
+			if sonnet := os.Getenv("SONNET_MODEL_ID"); sonnet != "" {
+				sStrong, sWeak := assessBoth(sonnet)
+				Expect(sStrong).To(BeNumerically(">", sWeak),
+					"Sonnet should agree: strong above weak")
+			}
+		})
+	})
+})

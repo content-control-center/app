@@ -209,6 +209,26 @@ Content-Type: application/json
 }
 
 ###
+# ── Quality assessment — CON-85 ───────────────────────────────────────────────
+###
+
+### Assess post quality  [protected]
+# Scores the post across four dimensions (correctness, clarity, engagement,
+# delivery) on a Haiku-tier model and returns a deterministic overall %.
+# Takes no body — the post id in the path is the only input.
+# Requires ANTHROPIC_API_KEY to be set in the server environment.
+# Returns 503 when the feature is disabled (no API key).
+# Returns 404 if the post does not exist, 403 if it belongs to another user.
+# 400 (via an "error" event) when the post has no body / platform / type.
+# Response is a Server-Sent Events stream.
+# Events: "step" (per flow stage: validateInput, buildContext, evaluate,
+#   validateOutput, composeScore, persist), "complete" (PostQualityResponse —
+#   the four scored dimensions with rationale, weakness, span-anchored
+#   suggestions, plus the backend-computed overall %), "error" (code + message).
+POST {{baseUrl}}/api/posts/{{postId}}/assess
+Accept: text/event-stream
+
+###
 # ── Versions ──────────────────────────────────────────────────────────────────
 ###
 

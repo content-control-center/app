@@ -48,6 +48,11 @@ const (
 	// Clone (CON-59): recorded on the NEW post; payload carries the
 	// source id, target platform, adaptation flag and trigger.
 	PostLogEventPostCloned PostLogEventType = "post_cloned"
+
+	// Quality assessment (CON-85): recorded when the Post quality agent
+	// finalises an evaluation; payload carries the overall percentage, the
+	// per-dimension scores, and the model used.
+	PostLogEventQualityAssessed PostLogEventType = "quality_assessed"
 )
 
 // ActorSystem is the actor sentinel used when the event was produced

@@ -33,6 +33,17 @@ type Config struct {
 	MaxPostsPerBatch   int `envconfig:"MAX_POSTS_PER_BATCH"   default:"30"`
 	MaxParallelBatches int `envconfig:"MAX_PARALLEL_BATCHES"  default:"5"`
 
+	// Post quality assessment (CON-85). Scoring runs on a cheaper Anthropic
+	// model than the generation flows — Haiku by default — specified
+	// separately so the scoring tier can be tuned without touching ModelID.
+	// QualityWeightProfiles is an optional JSON override for the
+	// per-PlatformPostType weight profiles; empty uses the built-in defaults
+	// (post_quality.DefaultWeights). Each profile's four weights must sum to
+	// 1.0. Example:
+	//   {"profiles":{"reel":{"correctness":0.2,"clarity":0.15,"engagement":0.4,"delivery":0.25}}}
+	QualityModelID        string `envconfig:"QUALITY_MODEL_ID"        default:"claude-haiku-4-5-20251001"`
+	QualityWeightProfiles string `envconfig:"QUALITY_WEIGHT_PROFILES" default:""`
+
 	// Object storage (S3-compatible: Cloudflare R2, DigitalOcean Spaces, AWS S3).
 	// Leave StorageEndpoint empty to disable image uploads.
 	StorageEndpoint  string `envconfig:"STORAGE_ENDPOINT"   default:""`
