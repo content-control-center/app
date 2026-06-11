@@ -44,6 +44,9 @@ func validateOutput(out *assessmentOutput, suggestionCap int) error {
 		if d.dim.Score < 0 || d.dim.Score > 10 {
 			return fmt.Errorf("%s: score %d out of range 0-10", d.key, d.dim.Score)
 		}
+		if strings.TrimSpace(d.dim.Rationale) == "" {
+			return fmt.Errorf("%s: missing rationale", d.key)
+		}
 		if strings.TrimSpace(d.dim.Weakness) == "" {
 			return fmt.Errorf("%s: missing mandatory weakness", d.key)
 		}
