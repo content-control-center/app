@@ -91,11 +91,21 @@ func assembleContextCached(
 		return nil, err
 	}
 
+	now := time.Now()
 	contextCacheMu.Lock()
+	// Opportunistic eviction: drop every expired entry before inserting, so
+	// the map can't grow unbounded with stale entries for campaigns enriched
+	// once and never re-read. Inserts only happen on a cache miss (followed
+	// by a model call), so this O(n) sweep is negligible.
+	for id, e := range contextCache {
+		if now.After(e.expiresAt) {
+			delete(contextCache, id)
+		}
+	}
 	contextCache[campaign.ID] = &contextCacheEntry{
 		ctx:         bctx,
 		fingerprint: fp,
-		expiresAt:   time.Now().Add(contextCacheTTL),
+		expiresAt:   now.Add(contextCacheTTL),
 	}
 	contextCacheMu.Unlock()
 
