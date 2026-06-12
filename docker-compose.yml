@@ -2,16 +2,17 @@ services:
   api:
     image: serhiiherasymovbndigital/ogen:latest
     platform: linux/amd64
+    # Storage credentials (Cloudflare R2) live in .env.storage, which is
+    # gitignored. Copy .env.storage.example -> .env.storage to populate it.
+    # required: false keeps `up` working when the file is absent (uploads
+    # just stay disabled, matching an empty STORAGE_ENDPOINT).
+    env_file:
+      - path: .env.storage
+        required: false
     environment:
       ADDR: ":9001"
       DATABASE_DSN: "file:/data/app.db?cache=shared&_pragma=journal_mode(WAL)"
       EMBED_SERVER_URL: "http://llama-embedserver:8080"
-      STORAGE_ENDPOINT: ""
-      STORAGE_REGION: "auto"
-      STORAGE_ACCESS_KEY: ""
-      STORAGE_SECRET_KEY: ""
-      STORAGE_BUCKET: ""
-      STORAGE_PUBLIC_URL: ""
       ANTHROPIC_API_KEY: ""
 
       # Envelope-encryption KEK directory. Mounted from a named volume
