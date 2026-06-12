@@ -13,6 +13,7 @@ import (
 	"github.com/valyala/fasthttp"
 
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
+	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
 )
@@ -36,8 +37,12 @@ type CampaignsHandler struct {
 	// return 503 before opening the SSE stream rather than emitting
 	// an error event mid-stream when the runtime is unavailable.
 	// May be nil in tests; nil is treated as "always available" so
-	// existing fixture wiring keeps working.
+	// existing fixture wiring keeps working. The same readiness gate
+	// covers enrichBrief — both flows live behind the one Anthropic key.
 	isContentPlanReady func() bool
+	// enrichBrief streams an AI-generated campaign brief (CON-56). nil
+	// when the feature is unwired (e.g. tests) → the handler returns 503.
+	enrichBrief func(ctx context.Context, req enrich_brief.EnrichBriefRequest, onEvent enrich_brief.OnEventFunc) (*enrich_brief.EnrichBriefResponse, error)
 }
 
 func NewCampaignsHandler(
@@ -46,6 +51,7 @@ func NewCampaignsHandler(
 	auth fiber.Handler,
 	generateDraft func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error),
 	isContentPlanReady func() bool,
+	enrichBrief func(ctx context.Context, req enrich_brief.EnrichBriefRequest, onEvent enrich_brief.OnEventFunc) (*enrich_brief.EnrichBriefResponse, error),
 ) *CampaignsHandler {
 	return &CampaignsHandler{
 		repo:               repo,
@@ -53,6 +59,7 @@ func NewCampaignsHandler(
 		auth:               auth,
 		generateDraft:      generateDraft,
 		isContentPlanReady: isContentPlanReady,
+		enrichBrief:        enrichBrief,
 	}
 }
 
@@ -64,6 +71,7 @@ func (h *CampaignsHandler) Register(app *fiber.App) {
 	g.Put("/:id", h.auth, h.Update)
 	g.Delete("/:id", h.auth, h.Delete)
 	g.Post("/:id/generate-draft", h.auth, h.GenerateDraft)
+	g.Post("/:id/enrich-brief", h.auth, h.EnrichBrief)
 }
 
 type campaignRequest struct {
@@ -354,6 +362,101 @@ func (h *CampaignsHandler) GenerateDraft(c *fiber.Ctx) error {
 		}
 
 		writeEvent(string(content_plan.SSEEventComplete), resp)
+	}))
+
+	return nil
+}
+
+// EnrichBrief godoc
+// @Summary      Enrich campaign brief with AI (SSE)
+// @Description  Generates a campaign brief (description, target persona, key messages, tone guidelines)
+// @Description  from the campaign's title and type, streaming progress via Server-Sent Events.
+// @Description  Per-field "*_delta" events preview each value as it is written; a final "complete"
+// @Description  event carries the full EnrichBriefResponse and is the signal that the brief is ready.
+// @Description  On failure an "error" event carries {"message":"<text>","code":<http_code>}.
+// @Description  The brief is returned as a suggestion only — it is not persisted to the campaign.
+// @Tags         campaigns
+// @Accept       json
+// @Produce      text/event-stream
+// @Security     CookieAuth
+// @Param        id    path  string  true  "Campaign Sqid"
+// @Param        body  body  object  false "Optional steering: {\"instruction\":\"...\"}"
+// @Success      200  "SSE stream: step / *_delta / complete / error events"
+// @Failure      400  {object}  map[string]string
+// @Failure      401  {object}  map[string]string
+// @Failure      403  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Failure      503  {object}  map[string]string
+// @Router       /api/campaigns/{id}/enrich-brief [post]
+func (h *CampaignsHandler) EnrichBrief(c *fiber.Ctx) error {
+	if h.enrichBrief == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "brief enrichment feature is not enabled")
+	}
+	if h.isContentPlanReady != nil && !h.isContentPlanReady() {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "brief enrichment feature is not enabled")
+	}
+
+	// Body is optional; only parse when present so an empty POST is valid.
+	var body struct {
+		Instruction string `json:"instruction"`
+	}
+	if len(c.Body()) > 0 {
+		if err := c.BodyParser(&body); err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+	}
+
+	campaign, err := h.repo.GetByID(c.Context(), c.Params("id"))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "campaign not found")
+		}
+		return err
+	}
+
+	session := c.Locals("session").(*models.Session)
+	if campaign.CreatedBy != session.UserID {
+		return fiber.NewError(fiber.StatusForbidden, "forbidden")
+	}
+
+	c.Set("Content-Type", "text/event-stream")
+	c.Set("Cache-Control", "no-cache")
+	c.Set("Connection", "keep-alive")
+	c.Set("X-Accel-Buffering", "no")
+
+	req := enrich_brief.EnrichBriefRequest{CampaignID: campaign.ID, Instruction: body.Instruction}
+	enrichBrief := h.enrichBrief
+
+	c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
+		writeEvent := func(event string, data any) {
+			b, _ := json.Marshal(data)
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
+			_ = w.Flush()
+		}
+
+		onEvent := enrich_brief.OnEventFunc(func(name enrich_brief.SSEEventKind, data any) {
+			writeEvent(string(name), data)
+		})
+
+		resp, err := enrichBrief(context.Background(), req, onEvent)
+		if err != nil {
+			code := fiber.StatusInternalServerError
+			msg := err.Error()
+			var ve *enrich_brief.ValidationError
+			var ae *enrich_brief.AIError
+			switch {
+			case errors.As(err, &ve):
+				code = fiber.StatusBadRequest
+				msg = ve.Msg
+			case errors.As(err, &ae):
+				code = fiber.StatusBadGateway
+				msg = ae.Msg
+			}
+			writeEvent(string(enrich_brief.SSEEventError), enrich_brief.ErrorEventPayload{Message: msg, Code: code})
+			return
+		}
+
+		writeEvent(string(enrich_brief.SSEEventComplete), resp)
 	}))
 
 	return nil

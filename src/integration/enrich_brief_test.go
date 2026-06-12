@@ -1,0 +1,131 @@
+//go:build integration
+
+package integration_test
+
+import (
+	"context"
+	"os"
+	"unicode"
+
+	"github.com/firebase/genkit/go/genkit"
+	"github.com/firebase/genkit/go/plugins/anthropic"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"github.com/uptrace/bun"
+
+	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
+	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/repository"
+)
+
+var _ = Describe("Enrich brief flow", Ordered, func() {
+	var (
+		ctx          context.Context
+		db           *bun.DB
+		userID       string
+		campaignRepo repository.CampaignRepository
+		callback     func(ctx context.Context, req enrich_brief.EnrichBriefRequest, onEvent enrich_brief.OnEventFunc) (*enrich_brief.EnrichBriefResponse, error)
+	)
+
+	BeforeAll(func() {
+		if os.Getenv("ANTHROPIC_API_KEY") == "" {
+			Skip("ANTHROPIC_API_KEY not set — skipping enrich brief integration tests")
+		}
+
+		ctx = context.Background()
+		db = mustOpenIntegrationDB()
+
+		tagRepo := repository.NewTagRepository(db)
+		platformRepo := repository.NewPlatformRepository(db)
+		campaignTypeRepo := repository.NewCampaignTypeRepository(db)
+		campaignRepo = repository.NewCampaignRepository(db, tagRepo, platformRepo, campaignTypeRepo)
+
+		var err error
+		userID, err = models.NewID()
+		Expect(err).NotTo(HaveOccurred())
+		_, err = db.NewInsert().Model(&models.User{
+			ID:           userID,
+			Name:         "Enrich Brief Tester",
+			Email:        "eb-integration@test.local",
+			PasswordHash: "placeholder",
+		}).Exec(ctx)
+		Expect(err).NotTo(HaveOccurred())
+
+		g := genkit.Init(ctx, genkit.WithPlugins(&anthropic.Anthropic{}))
+		modelID := os.Getenv("MODEL_ID")
+		if modelID == "" {
+			modelID = "claude-haiku-4-5-20251001"
+		}
+		Expect(enrich_brief.InitEnrichBrief(g, enrich_brief.EnrichBriefFlowConfig{
+			ModelID: modelID,
+		}, enrich_brief.EnrichBriefRepos{
+			Campaigns:     campaignRepo,
+			CampaignTypes: campaignTypeRepo,
+		})).To(Succeed())
+		callback = enrich_brief.NewEnrichBriefCallback()
+	})
+
+	AfterEach(func() {
+		_, _ = db.NewDelete().TableExpr("campaigns").Where("created_by = ?", userID).Exec(ctx)
+	})
+
+	AfterAll(func() {
+		if db == nil {
+			return
+		}
+		_, _ = db.NewDelete().TableExpr("campaigns").Where("created_by = ?", userID).Exec(ctx)
+		_, _ = db.NewDelete().TableExpr("users").Where("id = ?", userID).Exec(ctx)
+	})
+
+	// seedCampaign creates a minimal campaign — only a title, a real type
+	// ("Uk" = a seeded campaign type with phases), and a language — and
+	// returns its id. The brief fields are intentionally left empty: this is
+	// generation-from-minimal-input.
+	seedCampaign := func(name, language string) string {
+		id, err := models.NewID()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(campaignRepo.Create(ctx, &models.Campaign{
+			ID:             id,
+			Name:           name,
+			CampaignTypeID: "Uk",
+			Status:         models.StatusDraft,
+			Language:       language,
+			CreatedBy:      userID,
+		})).To(Succeed())
+		return id
+	}
+
+	hasCyrillic := func(s string) bool {
+		for _, r := range s {
+			if unicode.Is(unicode.Cyrillic, r) {
+				return true
+			}
+		}
+		return false
+	}
+
+	It("generates all four brief fields from a title and type", func() {
+		id := seedCampaign("Launch of our Go-native analytics platform", "English")
+
+		resp, err := callback(ctx, enrich_brief.EnrichBriefRequest{CampaignID: id}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp).NotTo(BeNil())
+		Expect(resp.Description).NotTo(BeEmpty())
+		Expect(resp.TargetPersona).NotTo(BeEmpty())
+		Expect(resp.KeyMessages).NotTo(BeEmpty())
+		Expect(resp.ToneGuidelines).NotTo(BeEmpty())
+	})
+
+	It("writes the brief in the campaign's language", func() {
+		id := seedCampaign("Запуск нашої платформи аналітики", "Ukrainian")
+
+		resp, err := callback(ctx, enrich_brief.EnrichBriefRequest{CampaignID: id}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp).NotTo(BeNil())
+		Expect(resp.Description).NotTo(BeEmpty())
+		// The brief must follow the campaign's chosen language, not default
+		// to English — so a Ukrainian campaign yields Cyrillic prose.
+		Expect(hasCyrillic(resp.Description)).To(BeTrue(),
+			"expected the description to be written in Ukrainian (Cyrillic), got: %s", resp.Description)
+	})
+})

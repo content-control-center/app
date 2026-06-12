@@ -15,6 +15,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
+	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
@@ -52,7 +53,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewCampaignTypesHandler(campaignTypeRepo, auth).Register(app)
-		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil).Register(app)
+		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil).Register(app)
 		handlers.NewTagsHandler(tagRepo, auth).Register(app)
 
 		// Seed an auth user and log in
@@ -559,7 +560,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				noop := func(_ context.Context, _ string, _ content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error) {
 					return &content_plan.ContentPlanResponse{}, nil
 				}
-				handlers.NewCampaignsHandler(campaignRepo2, campaignTypeRepo2, auth2, noop, nil).Register(appWithDraft)
+				handlers.NewCampaignsHandler(campaignRepo2, campaignTypeRepo2, auth2, noop, nil, nil).Register(appWithDraft)
 
 				req := httptest.NewRequest("POST", "/api/campaigns/nonexistent/generate-draft", nil)
 				req.AddCookie(authCookie)
@@ -590,7 +591,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				noop := func(_ context.Context, _ string, _ content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error) {
 					return &content_plan.ContentPlanResponse{}, nil
 				}
-				handlers.NewCampaignsHandler(campaignRepo2, campaignTypeRepo2, auth2, noop, nil).Register(appWithDraft)
+				handlers.NewCampaignsHandler(campaignRepo2, campaignTypeRepo2, auth2, noop, nil, nil).Register(appWithDraft)
 
 				// Register and log in as a second user.
 				body, _ := json.Marshal(fiber.Map{"name": "Other", "email": "other@example.com", "password": "other-password"})
@@ -659,7 +660,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 					onEvent(content_plan.SSEEventStep, content_plan.StepEventPayload{Step: "generatePosts", Status: "done"})
 					return &content_plan.ContentPlanResponse{CampaignID: "test"}, nil
 				}
-				handlers.NewCampaignsHandler(campaignRepo2, campaignTypeRepo2, auth2, stub, nil).Register(appWithDraft)
+				handlers.NewCampaignsHandler(campaignRepo2, campaignTypeRepo2, auth2, stub, nil, nil).Register(appWithDraft)
 
 				// Seed user/session for appWithDraft.
 				body, _ := json.Marshal(fiber.Map{"name": "SSE User", "email": "sse@example.com", "password": "sse-password"})
@@ -754,7 +755,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				stub := func(_ context.Context, _ string, _ content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error) {
 					return nil, &content_plan.ValidationError{Msg: "missing required fields"}
 				}
-				handlers.NewCampaignsHandler(campaignRepo2, campaignTypeRepo2, auth2, stub, nil).Register(appWithDraft)
+				handlers.NewCampaignsHandler(campaignRepo2, campaignTypeRepo2, auth2, stub, nil, nil).Register(appWithDraft)
 
 				// Seed user/session.
 				body, _ := json.Marshal(fiber.Map{"name": "Err User", "email": "err@example.com", "password": "err-password"})
@@ -802,6 +803,196 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				Expect(json.Unmarshal([]byte(eventData), &errPayload)).To(Succeed())
 				Expect(errPayload.Code).To(Equal(400))
 				Expect(errPayload.Message).To(Equal("missing required fields"))
+			})
+		})
+	})
+
+	// ── EnrichBrief ──────────────────────────────────────────────────────────
+
+	Describe("POST /api/campaigns/:id/enrich-brief", func() {
+		// errorHandler matches the production fiber error shape so status
+		// codes surface as the response code rather than a panic.
+		errorHandler := func(c *fiber.Ctx, err error) error {
+			code := fiber.StatusInternalServerError
+			if e, ok := err.(*fiber.Error); ok {
+				code = e.Code
+			}
+			return c.Status(code).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		// buildBriefApp wires a fresh app whose campaigns handler uses the
+		// given enrichBrief stub (nil exercises the 503 path).
+		buildBriefApp := func(brief func(context.Context, enrich_brief.EnrichBriefRequest, enrich_brief.OnEventFunc) (*enrich_brief.EnrichBriefResponse, error)) *fiber.App {
+			a := fiber.New(fiber.Config{ErrorHandler: errorHandler})
+			ctRepo := repository.NewCampaignTypeRepository(db)
+			cRepo := repository.NewCampaignRepository(db, repository.NewTagRepository(db), repository.NewPlatformRepository(db), ctRepo)
+			sRepo := repository.NewSessionRepository(db)
+			setRepo := repository.NewSettingRepository(db)
+			uRepo := repository.NewUserRepository(db)
+			a2 := handlers.RequireAuth(sRepo, testCookieName)
+			handlers.NewUsersHandler(uRepo, setRepo, a2).Register(a)
+			handlers.NewSessionsHandler(uRepo, sRepo, testCookieName, false).Register(a)
+			handlers.NewCampaignsHandler(cRepo, ctRepo, a2, nil, nil, brief).Register(a)
+			return a
+		}
+
+		// seedCookie registers + logs in a user on the given app and returns
+		// its session cookie.
+		seedCookie := func(a *fiber.App, email string) *http.Cookie {
+			body, _ := json.Marshal(fiber.Map{"name": "Brief User", "email": email, "password": "brief-password"})
+			regReq := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
+			regReq.Header.Set("Content-Type", "application/json")
+			_, err := a.Test(regReq)
+			Expect(err).NotTo(HaveOccurred())
+			loginBody, _ := json.Marshal(fiber.Map{"email": email, "password": "brief-password"})
+			loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
+			loginReq.Header.Set("Content-Type", "application/json")
+			loginResp, err := a.Test(loginReq)
+			Expect(err).NotTo(HaveOccurred())
+			var ck *http.Cookie
+			for _, c := range loginResp.Cookies() {
+				ck = c
+			}
+			return ck
+		}
+
+		// createCampaignOn creates a campaign on the given app with the given
+		// cookie and returns it.
+		createCampaignOn := func(a *fiber.App, ck *http.Cookie, name, typeID string) models.Campaign {
+			body, _ := json.Marshal(fiber.Map{"name": name, "campaign_type_id": typeID})
+			req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(ck)
+			resp, err := a.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+			var c models.Campaign
+			Expect(json.NewDecoder(resp.Body).Decode(&c)).To(Succeed())
+			return c
+		}
+
+		// parseSSE reads an event-stream body into ordered (event, data) pairs.
+		type sseEvent struct{ event, data string }
+		parseSSE := func(r *bufio.Scanner) []sseEvent {
+			var events []sseEvent
+			var curEvent, curData string
+			for r.Scan() {
+				line := r.Text()
+				switch {
+				case strings.HasPrefix(line, "event: "):
+					curEvent = strings.TrimPrefix(line, "event: ")
+				case strings.HasPrefix(line, "data: "):
+					curData = strings.TrimPrefix(line, "data: ")
+				case line == "":
+					if curEvent != "" {
+						events = append(events, sseEvent{curEvent, curData})
+					}
+					curEvent, curData = "", ""
+				}
+			}
+			return events
+		}
+
+		Context("when not authenticated", func() {
+			It("returns 401", func() {
+				req := httptest.NewRequest("POST", "/api/campaigns/someid/enrich-brief", nil)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+		})
+
+		Context("when authenticated", func() {
+			It("returns 503 when enrichBrief is nil", func() {
+				// The default app is wired with enrichBrief=nil.
+				c := createCampaign("Brief Campaign", "Uk")
+				req := httptest.NewRequest("POST", "/api/campaigns/"+c.ID+"/enrich-brief", nil)
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(503))
+			})
+
+			It("returns 404 for an unknown campaign id", func() {
+				noop := func(_ context.Context, _ enrich_brief.EnrichBriefRequest, _ enrich_brief.OnEventFunc) (*enrich_brief.EnrichBriefResponse, error) {
+					return &enrich_brief.EnrichBriefResponse{}, nil
+				}
+				a := buildBriefApp(noop)
+				ck := seedCookie(a, "brief404@example.com")
+				req := httptest.NewRequest("POST", "/api/campaigns/nonexistent/enrich-brief", nil)
+				req.AddCookie(ck)
+				resp, err := a.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(404))
+			})
+
+			It("streams step, per-field delta, and complete SSE events on success", func() {
+				stub := func(_ context.Context, req enrich_brief.EnrichBriefRequest, onEvent enrich_brief.OnEventFunc) (*enrich_brief.EnrichBriefResponse, error) {
+					onEvent(enrich_brief.SSEEventStep, enrich_brief.StepEventPayload{Step: "buildContext", Status: "done"})
+					onEvent(enrich_brief.SSEEventDescriptionDelta, enrich_brief.DeltaEventPayload{Delta: "A bold "})
+					onEvent(enrich_brief.SSEEventDescriptionDelta, enrich_brief.DeltaEventPayload{Delta: "launch."})
+					onEvent(enrich_brief.SSEEventPersonaDelta, enrich_brief.DeltaEventPayload{Delta: "Founders"})
+					onEvent(enrich_brief.SSEEventStep, enrich_brief.StepEventPayload{Step: "generate", Status: "done"})
+					// The handler emits the single canonical complete from the
+					// returned value, so the flow does not self-emit it.
+					return &enrich_brief.EnrichBriefResponse{
+						Description:    "A bold launch.",
+						TargetPersona:  "Founders",
+						KeyMessages:    "Ship faster\nStay lean",
+						ToneGuidelines: "Confident and concise",
+					}, nil
+				}
+				a := buildBriefApp(stub)
+				ck := seedCookie(a, "briefok@example.com")
+				camp := createCampaignOn(a, ck, "Enrich Me", "Uk")
+
+				body, _ := json.Marshal(fiber.Map{"instruction": "Lean, technical"})
+				req := httptest.NewRequest("POST", "/api/campaigns/"+camp.ID+"/enrich-brief", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(ck)
+				resp, err := a.Test(req, 10000)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+				Expect(resp.Header.Get("Content-Type")).To(ContainSubstring("text/event-stream"))
+
+				events := parseSSE(bufio.NewScanner(resp.Body))
+				Expect(events).To(HaveLen(6)) // 2 step + 2 desc delta + 1 persona delta + 1 complete
+				Expect(events[0].event).To(Equal("step"))
+				Expect(events[1].event).To(Equal("description_delta"))
+				Expect(events[2].event).To(Equal("description_delta"))
+				Expect(events[3].event).To(Equal("persona_delta"))
+				Expect(events[4].event).To(Equal("step"))
+				Expect(events[5].event).To(Equal("complete"))
+
+				var completePayload enrich_brief.EnrichBriefResponse
+				Expect(json.Unmarshal([]byte(events[5].data), &completePayload)).To(Succeed())
+				Expect(completePayload.Description).To(Equal("A bold launch."))
+				Expect(completePayload.TargetPersona).To(Equal("Founders"))
+				Expect(completePayload.KeyMessages).To(Equal("Ship faster\nStay lean"))
+				Expect(completePayload.ToneGuidelines).To(Equal("Confident and concise"))
+			})
+
+			It("streams an error SSE event with code 400 on a validation error", func() {
+				stub := func(_ context.Context, _ enrich_brief.EnrichBriefRequest, _ enrich_brief.OnEventFunc) (*enrich_brief.EnrichBriefResponse, error) {
+					return nil, &enrich_brief.ValidationError{Msg: "campaign type is required to enrich the brief"}
+				}
+				a := buildBriefApp(stub)
+				ck := seedCookie(a, "brieferr@example.com")
+				camp := createCampaignOn(a, ck, "No Type Brief", "Uk")
+
+				req := httptest.NewRequest("POST", "/api/campaigns/"+camp.ID+"/enrich-brief", nil)
+				req.AddCookie(ck)
+				resp, err := a.Test(req, 10000)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+
+				events := parseSSE(bufio.NewScanner(resp.Body))
+				Expect(events).To(HaveLen(1))
+				Expect(events[0].event).To(Equal("error"))
+				var errPayload enrich_brief.ErrorEventPayload
+				Expect(json.Unmarshal([]byte(events[0].data), &errPayload)).To(Succeed())
+				Expect(errPayload.Code).To(Equal(400))
+				Expect(errPayload.Message).To(Equal("campaign type is required to enrich the brief"))
 			})
 		})
 	})

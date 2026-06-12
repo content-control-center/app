@@ -162,7 +162,7 @@ var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
-		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil).Register(app)
+		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil).Register(app)
 		postVersionRepo := repository.NewPostVersionRepository(db)
 		postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 		handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, repository.NewPlatformRepository(db), postAttRepo, auth, nil, nil).Register(app)
