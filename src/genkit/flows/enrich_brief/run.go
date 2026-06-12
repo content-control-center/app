@@ -28,7 +28,9 @@ func runEnrichBrief(
 	onEvent OnEventFunc,
 ) (*EnrichBriefResponse, error) {
 	start := time.Now()
-	log.Printf("enrich_brief[%s]: starting instruction=%.80s", req.CampaignID, req.Instruction)
+	// Log the instruction length, not its content — it is user-provided
+	// free text and has no place in operational logs.
+	log.Printf("enrich_brief[%s]: starting (instruction_len=%d)", req.CampaignID, len(req.Instruction))
 
 	// ── Validate ─────────────────────────────────────────────────────────────
 	if req.CampaignID == "" {
