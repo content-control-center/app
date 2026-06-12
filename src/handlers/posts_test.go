@@ -1467,6 +1467,145 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		})
 	})
 
+	// ── Stored assessment read (CON-92) ───────────────────────────────────────
+
+	Describe("GET /api/posts/:id/assessment", func() {
+		Context("when not authenticated", func() {
+			It("returns 401", func() {
+				req := httptest.NewRequest("GET", "/api/posts/someid/assessment", nil)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+		})
+
+		Context("when authenticated", func() {
+			It("returns 503 when the evaluation repo is not wired", func() {
+				// The default app does not call SetEvaluationRepo.
+				p := createPost("Unwired Assessment", nil)
+				req := httptest.NewRequest("GET", "/api/posts/"+p.ID+"/assessment", nil)
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(503))
+			})
+		})
+
+		Context("with the evaluation repo wired", func() {
+			// buildAssessmentReadApp wires a PostsHandler whose evaluation repo
+			// is backed by the real DB, seeds a user + campaign + post, and
+			// returns (app, cookie, postID) plus the repo so the test can seed
+			// a stored evaluation directly.
+			buildAssessmentReadApp := func() (*fiber.App, *http.Cookie, string, repository.PostEvaluationRepository) {
+				readApp := fiber.New(fiber.Config{
+					ErrorHandler: func(c *fiber.Ctx, err error) error {
+						code := fiber.StatusInternalServerError
+						if e, ok := err.(*fiber.Error); ok {
+							code = e.Code
+						}
+						return c.Status(code).JSON(fiber.Map{"error": err.Error()})
+					},
+				})
+				userRepo := repository.NewUserRepository(db)
+				sessionRepo := repository.NewSessionRepository(db)
+				settingRepo := repository.NewSettingRepository(db)
+				tagRepo := repository.NewTagRepository(db)
+				campaignTypeRepo := repository.NewCampaignTypeRepository(db)
+				campaignRepo := repository.NewCampaignRepository(db, tagRepo, repository.NewPlatformRepository(db), campaignTypeRepo)
+				postRepo := repository.NewPostRepository(db)
+				postVersionRepo := repository.NewPostVersionRepository(db)
+				postMessageRepo := repository.NewPostAssistantMessageRepository(db)
+				evalRepo := repository.NewPostEvaluationRepository(db)
+				auth := handlers.RequireAuth(sessionRepo, testCookieName)
+				handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(readApp)
+				handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(readApp)
+				handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil).Register(readApp)
+				ph := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, repository.NewPlatformRepository(db), repository.NewPostAttachmentRepository(db), auth, nil, nil)
+				ph.SetEvaluationRepo(evalRepo)
+				ph.Register(readApp)
+
+				body, _ := json.Marshal(fiber.Map{"name": "Reader", "email": "assessment-read@example.com", "password": "read-password"})
+				regReq := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
+				regReq.Header.Set("Content-Type", "application/json")
+				_, err := readApp.Test(regReq)
+				Expect(err).NotTo(HaveOccurred())
+				loginBody, _ := json.Marshal(fiber.Map{"email": "assessment-read@example.com", "password": "read-password"})
+				loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
+				loginReq.Header.Set("Content-Type", "application/json")
+				loginResp, err := readApp.Test(loginReq)
+				Expect(err).NotTo(HaveOccurred())
+				var cookie *http.Cookie
+				for _, ck := range loginResp.Cookies() {
+					cookie = ck
+				}
+
+				campBody, _ := json.Marshal(fiber.Map{"name": "Read Campaign", "campaign_type_id": "Uk"})
+				campReq := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(campBody))
+				campReq.Header.Set("Content-Type", "application/json")
+				campReq.AddCookie(cookie)
+				campResp, err := readApp.Test(campReq)
+				Expect(err).NotTo(HaveOccurred())
+				var camp models.Campaign
+				Expect(json.NewDecoder(campResp.Body).Decode(&camp)).To(Succeed())
+
+				postBody, _ := json.Marshal(fiber.Map{
+					"campaign_id":        camp.ID,
+					"platform_id":        "AXqWG7U2qnpt",
+					"platform_post_type": "text-post",
+					"title":              "Read Post",
+					"content":            "some content",
+				})
+				postReq := httptest.NewRequest("POST", "/api/posts", bytes.NewReader(postBody))
+				postReq.Header.Set("Content-Type", "application/json")
+				postReq.AddCookie(cookie)
+				postResp, err := readApp.Test(postReq)
+				Expect(err).NotTo(HaveOccurred())
+				var p models.Post
+				Expect(json.NewDecoder(postResp.Body).Decode(&p)).To(Succeed())
+
+				return readApp, cookie, p.ID, evalRepo
+			}
+
+			It("returns 404 when the post has not been assessed", func() {
+				readApp, cookie, postID, _ := buildAssessmentReadApp()
+				req := httptest.NewRequest("GET", "/api/posts/"+postID+"/assessment", nil)
+				req.AddCookie(cookie)
+				resp, err := readApp.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(404))
+			})
+
+			It("returns the stored evaluation when one exists", func() {
+				readApp, cookie, postID, evalRepo := buildAssessmentReadApp()
+
+				id, err := models.NewID()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(evalRepo.Upsert(context.Background(), &models.PostEvaluation{
+					ID:               id,
+					PostID:           postID,
+					PlatformID:       "AXqWG7U2qnpt",
+					PlatformPostType: "text-post",
+					OverallPct:       64.0,
+					Result:           models.EvaluationResult{Correctness: models.EvaluationDimension{Score: 7}},
+					ModelID:          "claude-sonnet-test",
+					InputHash:        "deadbeef",
+				})).To(Succeed())
+
+				req := httptest.NewRequest("GET", "/api/posts/"+postID+"/assessment", nil)
+				req.AddCookie(cookie)
+				resp, err := readApp.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+
+				var got models.PostEvaluation
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect(got.PostID).To(Equal(postID))
+				Expect(got.OverallPct).To(BeNumerically("~", 64.0, 0.01))
+				Expect(got.ModelID).To(Equal("claude-sonnet-test"))
+			})
+		})
+	})
+
 	// ── Versions ─────────────────────────────────────────────────────────────
 
 	Describe("GET /api/posts/:id/versions", func() {

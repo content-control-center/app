@@ -214,11 +214,11 @@ Content-Type: application/json
 
 ### Assess post quality  [protected]
 # Scores the post across four dimensions (correctness, clarity, engagement,
-# delivery) on a Haiku-tier model and returns a deterministic overall %.
+# delivery) on Sonnet 4.5 (configurable) and returns a deterministic overall %.
 # Takes no body — the post id in the path is the only input.
 # Requires ANTHROPIC_API_KEY to be set in the server environment.
 # Returns 503 when the feature is disabled (no API key).
-# Returns 404 if the post does not exist, 403 if it belongs to another user.
+# Returns 404 if the post does not exist.
 # 400 (via an "error" event) when the post has no body / platform / type.
 # Response is a Server-Sent Events stream.
 # Events: "step" (per flow stage: validateInput, buildContext, evaluate,
@@ -227,6 +227,14 @@ Content-Type: application/json
 #   suggestions, plus the backend-computed overall %), "error" (code + message).
 POST {{baseUrl}}/api/posts/{{postId}}/assess
 Accept: text/event-stream
+
+### Get stored quality assessment  [protected]
+# Returns the most recent persisted evaluation for the post (CON-92) without
+# invoking the model. The frontend reads this to render an existing score and
+# only re-runs POST /assess when the post has changed since it was assessed.
+# Returns 404 if the post has never been assessed, 503 when disabled.
+GET {{baseUrl}}/api/posts/{{postId}}/assessment
+Accept: application/json
 
 ###
 # ── Versions ──────────────────────────────────────────────────────────────────

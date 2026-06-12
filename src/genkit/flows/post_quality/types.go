@@ -13,11 +13,14 @@ type PostQualityRequest struct {
 
 // PostQualityResponse is returned by the flow and the handler. Evaluation
 // is the persisted result, with the backend-computed overall percentage
-// and per-dimension contributions already attached.
+// and per-dimension contributions already attached. Cached is true when the
+// inputs were unchanged since the last run and the stored evaluation was
+// returned without calling the model (CON-92).
 type PostQualityResponse struct {
 	PostID      string                 `json:"postId"`
 	GeneratedAt time.Time              `json:"generatedAt"`
 	Evaluation  *models.PostEvaluation `json:"evaluation"`
+	Cached      bool                   `json:"cached"`
 }
 
 // ValidationError is returned when input preconditions are not met

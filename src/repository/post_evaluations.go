@@ -45,6 +45,7 @@ func (r *postEvaluationRepository) Upsert(ctx context.Context, eval *models.Post
 		Set("overall_pct = EXCLUDED.overall_pct").
 		Set("result = EXCLUDED.result").
 		Set("model_id = EXCLUDED.model_id").
+		Set("input_hash = EXCLUDED.input_hash").
 		Set("updated_at = EXCLUDED.updated_at").
 		Exec(ctx)
 	return err
