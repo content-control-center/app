@@ -149,10 +149,12 @@ func runPostQuality(
 
 	// ── Change detection (CON-92): the rendered prompt encodes everything
 	// the model sees (post body, platform, type, campaign brief, phase,
-	// asset previews). If it plus the model id is unchanged since the stored
-	// evaluation, skip the model run and return the cached result — so we
-	// re-assess only when something that actually affects the score changed.
-	hash := inputHash(prompts, cfg.ModelID)
+	// asset previews); the model id and the resolved weight profile cover
+	// the rest of what determines the score. If all of them are unchanged
+	// since the stored evaluation, skip the model run and return the cached
+	// result — so we re-assess only when something that actually affects the
+	// score changed.
+	hash := inputHash(prompts, cfg.ModelID, cfg.Weights.For(post.PlatformPostType))
 	if cached, cerr := repos.Evaluations.GetByPostID(ctx, post.ID); cerr == nil && cached != nil && cached.InputHash == hash {
 		log.Printf("post_quality[%s]: inputs unchanged — returning cached evaluation", req.PostID)
 		resp := &PostQualityResponse{
@@ -200,18 +202,24 @@ func runPostQuality(
 	return resp, nil
 }
 
-// inputHash fingerprints everything the model sees for an assessment — the
-// rendered system and user prompts plus the model id. The assess flow
-// compares it against the stored hash to decide whether the model needs to
-// run again (CON-92). A unit-separator between parts prevents one field's
-// content from bleeding into the next.
-func inputHash(prompts *renderedPrompts, modelID string) string {
+// inputHash fingerprints everything that determines an assessment's stored
+// result: the rendered system and user prompts plus the model id (what the
+// model sees), and the resolved weight profile (which ComposeScore folds
+// into OverallPct and each dimension's Weight/Contribution — values the
+// model never produces). The assess flow compares it against the stored
+// hash to decide whether to re-run (CON-92); including the profile means a
+// weights config change invalidates the cache rather than serving a stale
+// score. A unit-separator between parts prevents one field's content from
+// bleeding into the next.
+func inputHash(prompts *renderedPrompts, modelID string, profile Profile) string {
 	h := sha256.New()
 	h.Write([]byte(prompts.system))
 	h.Write([]byte{0x1f})
 	h.Write([]byte(prompts.user))
 	h.Write([]byte{0x1f})
 	h.Write([]byte(modelID))
+	h.Write([]byte{0x1f})
+	fmt.Fprintf(h, "%g,%g,%g,%g", profile.Correctness, profile.Clarity, profile.Engagement, profile.Delivery)
 	return hex.EncodeToString(h.Sum(nil))
 }
 
