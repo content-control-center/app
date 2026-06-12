@@ -53,6 +53,9 @@ type PostsHandler struct {
 	// assessQuality runs the Post quality assessment agent (CON-85). nil
 	// makes the /assess endpoint return 503. Wired via SetQualityAssessor.
 	assessQuality func(ctx context.Context, postID string, onEvent post_quality.OnEventFunc) (*post_quality.PostQualityResponse, error)
+	// evaluationRepo serves the cached assessment read (CON-92). nil makes
+	// GET /:id/assessment return 503. Wired via SetEvaluationRepo.
+	evaluationRepo repository.PostEvaluationRepository
 	// isAssistantReady reports whether the Anthropic key is currently
 	// configured. nil is treated as "always ready" so existing test
 	// fixtures keep working without rewiring.
@@ -110,6 +113,13 @@ func (h *PostsHandler) SetPostLogRepo(r repository.PostLogRepository) {
 // call sites and test fixtures stay unchanged.
 func (h *PostsHandler) SetQualityAssessor(fn func(ctx context.Context, postID string, onEvent post_quality.OnEventFunc) (*post_quality.PostQualityResponse, error)) {
 	h.assessQuality = fn
+}
+
+// SetEvaluationRepo wires the repository backing the cached assessment read
+// (CON-92, GET /:id/assessment). Setter (not a constructor arg) so existing
+// NewPostsHandler call sites and fixtures stay unchanged.
+func (h *PostsHandler) SetEvaluationRepo(r repository.PostEvaluationRepository) {
+	h.evaluationRepo = r
 }
 
 // SetSchedulingDeps wires everything the schedule path needs: the
@@ -473,6 +483,7 @@ func (h *PostsHandler) Register(app *fiber.App) {
 	g.Delete("/:id", h.auth, h.Delete)
 	g.Post("/:id/assistant", h.auth, h.Assistant)
 	g.Post("/:id/assess", h.auth, h.Assess)
+	g.Get("/:id/assessment", h.auth, h.GetAssessment)
 	g.Post("/:id/clone", h.auth, h.Clone)
 	g.Get("/:id/messages", h.auth, h.ListMessages)
 	g.Get("/:id/versions", h.auth, h.ListVersions)
@@ -1065,6 +1076,38 @@ func (h *PostsHandler) Assess(c *fiber.Ctx) error {
 	}))
 
 	return nil
+}
+
+// GetAssessment godoc
+// @Summary      Get stored post quality assessment
+// @Description  Returns the most recent persisted quality evaluation for a
+// @Description  post (CON-85/CON-92) without invoking the model. The frontend
+// @Description  reads this to render an existing assessment and only triggers
+// @Description  POST /assess when the post has changed since it was scored.
+// @Tags         posts
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id   path      string  true  "Post Sqid"
+// @Success      200  {object}  models.PostEvaluation
+// @Failure      401  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Failure      503  {object}  map[string]string
+// @Router       /api/posts/{id}/assessment [get]
+func (h *PostsHandler) GetAssessment(c *fiber.Ctx) error {
+	if h.evaluationRepo == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "post quality assessment is not available")
+	}
+	eval, err := h.evaluationRepo.GetByPostID(c.Context(), c.Params("id"))
+	if err != nil {
+		return err
+	}
+	// GetByPostID returns (nil, nil) when the post has never been assessed.
+	// Surface that as 404 so the frontend shows the "Assess" affordance
+	// rather than a stale or empty result.
+	if eval == nil {
+		return fiber.NewError(fiber.StatusNotFound, "post has not been assessed")
+	}
+	return c.JSON(eval)
 }
 
 // ── Messages ─────────────────────────────────────────────────────────────────

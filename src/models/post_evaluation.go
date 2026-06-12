@@ -118,6 +118,10 @@ type PostEvaluation struct {
 	OverallPct       float64          `bun:"overall_pct,notnull"                          json:"overall_pct"`
 	Result           EvaluationResult `bun:"result,notnull"                               json:"result"`
 	ModelID          string           `bun:"model_id,notnull"                             json:"model_id"`
-	CreatedAt        time.Time        `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
-	UpdatedAt        time.Time        `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
+	// InputHash fingerprints the assessment inputs (rendered prompt + model)
+	// so the assess flow skips re-running the model when nothing the model
+	// sees has changed (CON-92).
+	InputHash string    `bun:"input_hash,notnull"                           json:"input_hash"`
+	CreatedAt time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
+	UpdatedAt time.Time `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
 }

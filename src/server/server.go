@@ -303,6 +303,9 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	postsHandler.SetCloneService(cloneSvc)
 	// CON-85: Post quality assessment agent behind POST /api/posts/:id/assess.
 	postsHandler.SetQualityAssessor(gkRuntime.AssessPostQuality)
+	// CON-92: cached read behind GET /api/posts/:id/assessment, so the
+	// frontend can render an existing evaluation without re-running the model.
+	postsHandler.SetEvaluationRepo(postEvaluationRepo)
 	// Cascade post-attachment S3 cleanup on post delete (CON-73 §2.7).
 	// FK CASCADE handles the DB rows; this hook handles the bucket.
 	postsHandler.SetOnBeforeDelete(func(ctx context.Context, postID string) error {

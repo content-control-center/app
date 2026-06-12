@@ -2,7 +2,9 @@ package post_quality
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -145,6 +147,26 @@ func runPostQuality(
 	}
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "buildContext", Status: "done"})
 
+	// ── Change detection (CON-92): the rendered prompt encodes everything
+	// the model sees (post body, platform, type, campaign brief, phase,
+	// asset previews); the model id and the resolved weight profile cover
+	// the rest of what determines the score. If all of them are unchanged
+	// since the stored evaluation, skip the model run and return the cached
+	// result — so we re-assess only when something that actually affects the
+	// score changed.
+	hash := inputHash(prompts, cfg.ModelID, cfg.Weights.For(post.PlatformPostType))
+	if cached, cerr := repos.Evaluations.GetByPostID(ctx, post.ID); cerr == nil && cached != nil && cached.InputHash == hash {
+		log.Printf("post_quality[%s]: inputs unchanged — returning cached evaluation", req.PostID)
+		resp := &PostQualityResponse{
+			PostID:      post.ID,
+			GeneratedAt: time.Now().UTC(),
+			Evaluation:  cached,
+			Cached:      true,
+		}
+		emit(onEvent, SSEEventComplete, resp)
+		return resp, nil
+	}
+
 	// ── Step 3: evaluate (single model call, 1-retry/2s-backoff) ─────────
 	output, err := evaluate(ctx, g, cfg, prompts)
 	if err != nil {
@@ -162,7 +184,7 @@ func runPostQuality(
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "composeScore", Status: "done"})
 
 	// ── Step 6: persist (upsert evaluation + PostLog) ────────────────────
-	eval, err := persist(ctx, repos, post, result, overall, prompts.captionScoped, cfg.ModelID)
+	eval, err := persist(ctx, repos, post, result, overall, prompts.captionScoped, cfg.ModelID, hash)
 	if err != nil {
 		return nil, fmt.Errorf("persist evaluation: %w", err)
 	}
@@ -180,6 +202,27 @@ func runPostQuality(
 	return resp, nil
 }
 
+// inputHash fingerprints everything that determines an assessment's stored
+// result: the rendered system and user prompts plus the model id (what the
+// model sees), and the resolved weight profile (which ComposeScore folds
+// into OverallPct and each dimension's Weight/Contribution — values the
+// model never produces). The assess flow compares it against the stored
+// hash to decide whether to re-run (CON-92); including the profile means a
+// weights config change invalidates the cache rather than serving a stale
+// score. A unit-separator between parts prevents one field's content from
+// bleeding into the next.
+func inputHash(prompts *renderedPrompts, modelID string, profile Profile) string {
+	h := sha256.New()
+	h.Write([]byte(prompts.system))
+	h.Write([]byte{0x1f})
+	h.Write([]byte(prompts.user))
+	h.Write([]byte{0x1f})
+	h.Write([]byte(modelID))
+	h.Write([]byte{0x1f})
+	fmt.Fprintf(h, "%g,%g,%g,%g", profile.Correctness, profile.Clarity, profile.Engagement, profile.Delivery)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 // persist upserts the evaluation (overwriting any prior run for the post)
 // and records the operation in PostLog. The PostLog append is best-effort:
 // a logging failure does not fail the evaluation.
@@ -191,6 +234,7 @@ func persist(
 	overall float64,
 	captionScoped bool,
 	modelID string,
+	hash string,
 ) (*models.PostEvaluation, error) {
 	id, err := models.NewID()
 	if err != nil {
@@ -205,6 +249,7 @@ func persist(
 		OverallPct:       overall,
 		Result:           result,
 		ModelID:          modelID,
+		InputHash:        hash,
 	}
 	if err := repos.Evaluations.Upsert(ctx, eval); err != nil {
 		return nil, err

@@ -238,6 +238,37 @@ What's stopped your team from trying it? 👇`
 		})
 	})
 
+	Describe("change detection (CON-92)", func() {
+		It("serves the stored evaluation when inputs are unchanged, and re-runs after an edit", func() {
+			postID := seedPost(strongPost, "text-post", models.StringSlice{})
+
+			// First run: the model executes and the result is persisted.
+			first, err := callback(ctx, postID, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(first.Cached).To(BeFalse(), "the first assessment must run the model")
+			firstOverall := first.Evaluation.OverallPct
+
+			// Second run with the post unchanged: the rendered prompt + model
+			// id hash matches, so the stored result is returned without a
+			// model call.
+			second, err := callback(ctx, postID, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(second.Cached).To(BeTrue(), "unchanged inputs must be served from cache")
+			Expect(second.Evaluation.OverallPct).To(Equal(firstOverall), "cache returns the stored evaluation")
+
+			// Edit the post body. The prompt now differs, so the next assess
+			// must invalidate the cache and run the model again.
+			_, err = db.NewUpdate().Model((*models.Post)(nil)).
+				Set("content = ?", weakPost).
+				Where("id = ?", postID).Exec(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			third, err := callback(ctx, postID, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(third.Cached).To(BeFalse(), "an edit must invalidate the cache and re-run the model")
+		})
+	})
+
 	Describe("input validation", func() {
 		It("rejects an empty-body post with a ValidationError and no model call", func() {
 			postID := seedPost("   ", "text-post", models.StringSlice{})
