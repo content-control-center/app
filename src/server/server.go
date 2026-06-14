@@ -34,6 +34,7 @@ import (
 	"github.com/ogen-app/ogen/src/jobs/queues"
 	"github.com/ogen-app/ogen/src/postclone"
 	"github.com/ogen-app/ogen/src/postrestore"
+	"github.com/ogen-app/ogen/src/postschedule"
 	"github.com/ogen-app/ogen/src/publishers"
 	pubzernio "github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
@@ -160,6 +161,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 		PostLogRepo:        postLogRepo,
 		PostAttachmentRepo: postAttachmentRepo,
 		SocialAccountRepo:  socialAccountRepo,
+		SettingRepo:        settingRepo,
 		Client:             zernioRT.Integration.Client,
 		ProfileID: func(ctx context.Context) (string, error) {
 			id, _, err := zernioRT.Settings.Get(ctx, pubzernio.SettingProfileID)
@@ -254,6 +256,10 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	// CON-68: one restore service, shared by the REST endpoint and the
 	// assistant's restoreVersion tool. Non-destructive append-only roll-back.
 	restoreSvc := postrestore.New(db, postRepo, postVersionRepo, postLogRepo, hub)
+	// CON-78: one schedule service, shared by POST /:id/schedule, the
+	// assistant's schedulePost tool, and the PUT scheduling branch. Owns
+	// allowlist routing + transactional persist + Zernio submit enqueue.
+	scheduleSvc := postschedule.New(db, postRepo, platformRepo, postAttachmentRepo, autoPublishAllowlistRepo, postLogRepo, jobsRT.Client(), hub)
 
 	gkRuntime, err := newGenkitRuntime(ctx, genkitDeps{
 		cfg:      cfg,
@@ -267,13 +273,16 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 			Posts:     postRepo,
 		},
 		postAssistRepos: post_assistant.PostAssistantRepos{
-			Posts:     postRepo,
-			Assets:    pieceRepo,
-			Chunks:    chunksRepo,
-			Campaigns: campaignRepo,
-			Versions:  postVersionRepo,
-			Messages:  postMessageRepo,
-			Platforms: platformRepo,
+			Posts:       postRepo,
+			Assets:      pieceRepo,
+			Chunks:      chunksRepo,
+			Campaigns:   campaignRepo,
+			Versions:    postVersionRepo,
+			Messages:    postMessageRepo,
+			Platforms:   platformRepo,
+			Settings:    settingRepo,
+			Allowlist:   autoPublishAllowlistRepo,
+			Attachments: postAttachmentRepo,
 		},
 		postQualityRepos: post_quality.PostQualityRepos{
 			Posts:       postRepo,
@@ -288,8 +297,9 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 			Campaigns:     campaignRepo,
 			CampaignTypes: campaignTypeRepo,
 		},
-		cloneSvc:   cloneSvc,
-		restoreSvc: restoreSvc,
+		cloneSvc:    cloneSvc,
+		restoreSvc:  restoreSvc,
+		scheduleSvc: scheduleSvc,
 	}, secretStore)
 	if err != nil {
 		return nil, err
@@ -314,6 +324,9 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	// CON-68: same restore service the assistant uses, behind the REST
 	// endpoint POST /api/posts/:id/restore.
 	postsHandler.SetRestoreService(restoreSvc)
+	// CON-78: same schedule service the assistant uses, behind the REST
+	// endpoint POST /api/posts/:id/schedule and the PUT scheduling branch.
+	postsHandler.SetScheduleService(scheduleSvc)
 	// CON-85: Post quality assessment agent behind POST /api/posts/:id/assess.
 	postsHandler.SetQualityAssessor(gkRuntime.AssessPostQuality)
 	// CON-92: cached read behind GET /api/posts/:id/assessment, so the

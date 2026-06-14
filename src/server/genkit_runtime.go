@@ -19,6 +19,7 @@ import (
 	"github.com/ogen-app/ogen/src/genkit/flows/post_quality"
 	"github.com/ogen-app/ogen/src/postclone"
 	"github.com/ogen-app/ogen/src/postrestore"
+	"github.com/ogen-app/ogen/src/postschedule"
 	"github.com/ogen-app/ogen/src/secrets"
 )
 
@@ -58,6 +59,7 @@ type genkitRuntime struct {
 	enrichBriefRepos enrich_brief.EnrichBriefRepos
 	cloneSvc         *postclone.Service
 	restoreSvc       *postrestore.Service
+	scheduleSvc      *postschedule.Service
 }
 
 // genkitDeps groups the runtime's static inputs: things captured at
@@ -72,6 +74,7 @@ type genkitDeps struct {
 	enrichBriefRepos enrich_brief.EnrichBriefRepos
 	cloneSvc         *postclone.Service
 	restoreSvc       *postrestore.Service
+	scheduleSvc      *postschedule.Service
 }
 
 // newGenkitRuntime builds the runtime and runs the initial rebuild.
@@ -91,6 +94,7 @@ func newGenkitRuntime(ctx context.Context, deps genkitDeps, store secrets.Store)
 		enrichBriefRepos: deps.enrichBriefRepos,
 		cloneSvc:         deps.cloneSvc,
 		restoreSvc:       deps.restoreSvc,
+		scheduleSvc:      deps.scheduleSvc,
 	}
 
 	if err := r.rebuild(ctx, store); err != nil {
@@ -191,7 +195,7 @@ func (r *genkitRuntime) rebuild(ctx context.Context, store secrets.Store) error 
 	if err != nil {
 		return fmt.Errorf("init content plan: %w", err)
 	}
-	postAssistantFn, err := initPostAssistant(g, r.cfg, r.embedder, r.hub, r.postAssistRepos, r.cloneSvc, r.restoreSvc)
+	postAssistantFn, err := initPostAssistant(g, r.cfg, r.embedder, r.hub, r.postAssistRepos, r.cloneSvc, r.restoreSvc, r.scheduleSvc)
 	if err != nil {
 		return fmt.Errorf("init post assistant: %w", err)
 	}

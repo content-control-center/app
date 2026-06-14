@@ -12,6 +12,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/platforms"
+	"github.com/ogen-app/ogen/src/publishers/zernio"
+	"github.com/ogen-app/ogen/src/settings"
 )
 
 // maxSummaryChars caps the combined asset summaries at ~1000 tokens.
@@ -325,6 +328,107 @@ func buildAssetSummaries(ctx context.Context, assetIDs []string, repos PostAssis
 	}
 
 	return summaries, nil
+}
+
+// buildSchedulingContext renders the per-turn scheduling context block
+// (CON-78) injected into the user turn: the current time in both the
+// workspace timezone and UTC, the post's status, how its platform routes
+// (auto vs manual publish), and a readiness summary so the model can
+// confirm the right mode and pre-empt a promote-time validation failure
+// before it ever calls schedulePost. Computed fresh every turn (current
+// time changes), so it is deliberately kept out of the cached context.
+func buildSchedulingContext(ctx context.Context, post *models.Post, repos PostAssistantRepos) string {
+	loc, tzName := settings.WorkspaceTimezone(ctx, repos.Settings)
+	now := time.Now()
+
+	var b strings.Builder
+	b.WriteString("## Scheduling context\n")
+	b.WriteString(fmt.Sprintf("- Current time: %s (%s) — UTC %s\n",
+		now.In(loc).Format("Mon Jan 2, 2006 15:04"), tzName, now.UTC().Format(time.RFC3339)))
+	b.WriteString(fmt.Sprintf("- Workspace timezone: %s. Resolve relative times (\"tomorrow 9am\", \"next Monday morning\") against THIS zone and pass the result as ISO-8601 with its offset. Defaults: morning=09:00, afternoon=14:00, evening=18:00 unless the user says otherwise — state the assumed time when you confirm.\n", tzName))
+	b.WriteString(fmt.Sprintf("- Post status: %s\n", post.Status))
+
+	if post.PlatformID == "" {
+		b.WriteString("- Platform: none set — the post cannot be scheduled until a platform is chosen.\n")
+	} else {
+		platform := post.Platform
+		if (platform == nil || platform.ID != post.PlatformID) && repos.Platforms != nil {
+			if p, err := repos.Platforms.GetByID(ctx, post.PlatformID); err == nil {
+				platform = p
+			}
+		}
+		name := post.PlatformID
+		if platform != nil {
+			name = platform.Name
+		}
+		autoPublish := false
+		if supported := zernio.LookupSupportedBySqid(post.PlatformID); supported != nil && repos.Allowlist != nil {
+			if ok, err := repos.Allowlist.Contains(ctx, supported.ZernioID); err == nil {
+				autoPublish = ok
+			}
+		}
+		mode := "MANUAL publishing — it will be scheduled_for_manual_publishing and will NOT auto-send. Tell the user it won't auto-publish."
+		if autoPublish {
+			mode = "AUTO-publish — it will be sent automatically at the scheduled time."
+		}
+		b.WriteString(fmt.Sprintf("- Platform: %s → %s\n", name, mode))
+	}
+
+	b.WriteString("- Readiness: ")
+	switch post.Status {
+	case models.PostStatusReadyForPublish:
+		b.WriteString("ready — schedule directly (no allowPromote needed).\n")
+	case models.PostStatusDraft:
+		reasons := schedulingReadinessReasons(ctx, post, repos)
+		switch {
+		case post.PlatformID == "":
+			b.WriteString("draft with no platform — cannot schedule.\n")
+		case len(reasons) == 0:
+			b.WriteString("draft, but it passes pre-publish validation — call schedulePost with allowPromote:true to promote and schedule in one step.\n")
+		default:
+			b.WriteString("draft that is NOT yet publishable. Problems: " + strings.Join(reasons, "; ") + ". Decline and tell the user exactly what to fix; do NOT schedule.\n")
+		}
+	default:
+		b.WriteString(fmt.Sprintf("status %q is not schedulable (only ready_for_publish, or a draft you promote). If it's already scheduled, it must be cancelled first to reschedule.\n", post.Status))
+	}
+
+	b.WriteString("\nTo schedule: resolve the time, then CONFIRM the absolute time + the auto/manual mode and WAIT for the user's \"yes\" before calling schedulePost. Never call schedulePost on the first turn.\n")
+	return b.String()
+}
+
+// schedulingReadinessReasons runs the CON-74 pre-publish rules read-only
+// so the scheduling context can list what a draft is missing before the
+// model attempts a promote. Mirrors the checks the shared service
+// enforces; best-effort (a load failure yields no reasons).
+func schedulingReadinessReasons(ctx context.Context, post *models.Post, repos PostAssistantRepos) []string {
+	if repos.Platforms == nil || post.PlatformID == "" {
+		return nil
+	}
+	platform := post.Platform
+	if platform == nil || platform.ID != post.PlatformID {
+		p, err := repos.Platforms.GetByID(ctx, post.PlatformID)
+		if err != nil {
+			return nil
+		}
+		platform = p
+	}
+	var atts []models.PostAttachment
+	if repos.Attachments != nil {
+		if a, err := repos.Attachments.ListByPostID(ctx, post.ID); err == nil {
+			atts = a
+		}
+	}
+	errsByPlatform := platforms.ValidateForPublish(atts, []*models.Platform{platform})
+	if typeErrs := platforms.ValidatePostType(post, platform, atts); len(typeErrs) > 0 {
+		errsByPlatform[platform.ID] = append(errsByPlatform[platform.ID], typeErrs...)
+	}
+	var reasons []string
+	for _, errs := range errsByPlatform {
+		for _, e := range errs {
+			reasons = append(reasons, e.Message)
+		}
+	}
+	return reasons
 }
 
 func truncateRunes(s string, max int) string {

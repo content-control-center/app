@@ -13,6 +13,7 @@ import (
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/postlog"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
+	"github.com/ogen-app/ogen/src/settings"
 )
 
 // SubmitPostToZernioQueue is the Backlite queue name (CON-69 §3).
@@ -126,11 +127,15 @@ func (p *SubmitPostProcessor) Process(ctx context.Context, task SubmitPostTask) 
 	if post.ScheduledAt != nil {
 		when = post.ScheduledAt.UTC()
 	}
+	// The instant (ScheduledFor) is the source of truth and stays UTC;
+	// the workspace timezone (CON-78) is echoed so Zernio renders the
+	// schedule in the operator's zone. Defaults to UTC when unset.
+	_, tzName := settings.WorkspaceTimezone(ctx, p.Deps.SettingRepo)
 	req := zernio.SubmitRequest{
 		Content:      post.Content,
 		Platforms:    []zernio.PlatformVariant{{Platform: supported.ZernioID, AccountID: accountID}},
 		ScheduledFor: when,
-		Timezone:     "UTC",
+		Timezone:     tzName,
 	}
 
 	appendLog(ctx, p.Deps, post.ID, models.PostLogEventZernioSubmit, post.Status, post.Status,

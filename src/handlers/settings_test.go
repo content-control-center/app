@@ -225,6 +225,27 @@ var _ = Describe("SettingsHandler", Ordered, func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(400))
 			})
+
+			// CON-78: the workspace timezone must be a valid IANA zone.
+			It("accepts a valid IANA timezone", func() {
+				body, _ := json.Marshal(fiber.Map{"value": "Europe/Kyiv"})
+				req := httptest.NewRequest("PUT", "/api/settings/timezone", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+			})
+
+			It("rejects an invalid timezone with 400", func() {
+				body, _ := json.Marshal(fiber.Map{"value": "Mars/Olympus_Mons"})
+				req := httptest.NewRequest("PUT", "/api/settings/timezone", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(400))
+			})
 		})
 	})
 

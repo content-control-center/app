@@ -23,7 +23,7 @@ import (
 	"github.com/ogen-app/ogen/src/postclone"
 	"github.com/ogen-app/ogen/src/postlog"
 	"github.com/ogen-app/ogen/src/postrestore"
-	"github.com/ogen-app/ogen/src/publishers/zernio"
+	"github.com/ogen-app/ogen/src/postschedule"
 	"github.com/ogen-app/ogen/src/repository"
 )
 
@@ -89,6 +89,13 @@ type PostsHandler struct {
 	// restoreSvc rolls a post back to an earlier version (CON-68). nil
 	// disables the restore endpoint (503).
 	restoreSvc *postrestore.Service
+	// scheduleSvc schedules a post for publishing (CON-78): the single
+	// source of truth for allowlist routing + transactional persist +
+	// Zernio enqueue, shared by POST /:id/schedule, the assistant's
+	// schedulePost tool, and the PUT scheduling branch. nil disables the
+	// schedule endpoint (503) and makes the PUT branch fall back to a
+	// plain status update (test fixtures that don't wire scheduling).
+	scheduleSvc *postschedule.Service
 }
 
 // SetOnBeforeDelete registers a hook that runs before a post is
@@ -150,6 +157,13 @@ func (h *PostsHandler) SetRestoreService(s *postrestore.Service) {
 	h.restoreSvc = s
 }
 
+// SetScheduleService wires the post-schedule service (CON-78). Until set,
+// the schedule endpoint returns 503 and the PUT scheduling branch falls
+// back to a plain status update.
+func (h *PostsHandler) SetScheduleService(s *postschedule.Service) {
+	h.scheduleSvc = s
+}
+
 // logEvent appends a PostLog entry, swallowing repo errors so logging
 // failures never leak through to the user-facing response. Emitting
 // an audit entry is best-effort by design — losing one log line
@@ -188,110 +202,6 @@ func hasAnyErrors(m map[string][]platforms.ValidationError) bool {
 		}
 	}
 	return false
-}
-
-// routeAndPersistSchedule implements CON-69 §5: evaluate the
-// auto-publish allowlist for the post's platform, decide between
-// Scheduled (auto) and ScheduledForManualPublish (manual), and
-// persist all three writes — Post status update, PostLog allowlist
-// decision, and (when applicable) the submit_post_to_zernio Backlite
-// enqueue — in a single SQLite transaction so failure rolls them
-// back together.
-//
-// Returns the routed status as a string (for the response header) so
-// the caller can decide what to expose to the client.
-func (h *PostsHandler) routeAndPersistSchedule(c *fiber.Ctx, post *models.Post, req *postRequest, ctaType models.PostCTAType) (string, error) {
-	// Decide based on the post's current platform — the user may have
-	// switched platforms in the same Update call, so consult req.
-	platformSqid := req.PlatformID
-	if platformSqid == "" {
-		platformSqid = post.PlatformID
-	}
-	supported := zernio.LookupSupportedBySqid(platformSqid)
-	autoPublish := false
-	if supported != nil {
-		ok, err := h.allowlistRepo.Contains(c.Context(), supported.ZernioID)
-		if err != nil {
-			return "", err
-		}
-		autoPublish = ok
-	}
-
-	target := models.PostStatusScheduledForManualPublish
-	if autoPublish {
-		target = models.PostStatusScheduled
-	}
-
-	prevStatus := post.Status
-	req.apply(post, target, ctaType)
-
-	actor := models.ActorSystem
-	if sess, ok := c.Locals("session").(*models.Session); ok && sess != nil {
-		actor = sess.UserID
-	}
-	decisionPayload := postlog.MarshalCapped(map[string]any{
-		"platform":        platformSqid,
-		"zernio_platform": zernioName(supported),
-		"auto_publish":    autoPublish,
-		"chosen_status":   string(target),
-	})
-	transitionLogID, _ := models.NewID()
-	decisionLogID, _ := models.NewID()
-
-	err := h.db.RunInTx(c.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.NewUpdate().Model(post).WherePK().Exec(ctx); err != nil {
-			return err
-		}
-
-		// PostLog: allowlist decision + state transition.
-		if h.postLogRepo != nil {
-			if err := h.postLogRepo.AppendTx(ctx, tx, &models.PostLog{
-				ID:         decisionLogID,
-				PostID:     post.ID,
-				EventType:  models.PostLogEventAllowlistDecision,
-				Actor:      actor,
-				FromStatus: &prevStatus,
-				ToStatus:   &target,
-				Summary:    "auto-publish allowlist decision",
-				Payload:    postlog.SanitizeAndCap(decisionPayload),
-			}); err != nil {
-				return err
-			}
-			if err := h.postLogRepo.AppendTx(ctx, tx, &models.PostLog{
-				ID:         transitionLogID,
-				PostID:     post.ID,
-				EventType:  models.PostLogEventStateTransition,
-				Actor:      actor,
-				FromStatus: &prevStatus,
-				ToStatus:   &target,
-				Summary:    "status changed via PUT /api/posts/:id (schedule)",
-				Payload:    "{}",
-			}); err != nil {
-				return err
-			}
-		}
-
-		// Enqueue submit task — only when auto-publish was chosen.
-		// We pass the embedded *sql.Tx so backlite joins the same
-		// transaction; commit/rollback applies to all three writes.
-		if autoPublish && h.jobsClient != nil {
-			if _, err := h.jobsClient.Add(queues.SubmitPostTask{PostID: post.ID}).Tx(tx.Tx).Save(); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return "", err
-	}
-	return string(target), nil
-}
-
-func zernioName(s *zernio.SupportedPlatform) string {
-	if s == nil {
-		return ""
-	}
-	return s.ZernioID
 }
 
 // validateReadyForPublish runs the CON-69 §4 attachment gate when a
@@ -374,6 +284,90 @@ func (h *PostsHandler) logTransition(c *fiber.Ctx, post *models.Post, prev, next
 			}),
 		)
 	}
+}
+
+// scheduleRequest is the body for POST /api/posts/:id/schedule. The
+// instant is absolute (relative expressions like "tomorrow 9am" are
+// resolved by the assistant before it calls the shared service; the
+// REST endpoint takes the resolved value directly).
+type scheduleRequest struct {
+	ScheduledAt  *time.Time `json:"scheduled_at"`
+	AllowPromote bool       `json:"allow_promote"`
+}
+
+// Schedule godoc
+// @Summary      Schedule a post for publishing
+// @Description  Schedules a `ready_for_publish` post for the given absolute
+// @Description  time (CON-78). Allowlisted platforms route to `scheduled`
+// @Description  (auto-publish, Zernio submit enqueued); others route to
+// @Description  `scheduled_for_manual_publishing`. Pass `allow_promote` to
+// @Description  auto-promote a `draft` (runs CON-74 pre-publish validation,
+// @Description  then Draft → ReadyForPublish) before scheduling. The status
+// @Description  change, `scheduled_at`, audit entries, and Zernio enqueue
+// @Description  commit in one transaction.
+// @Tags         posts
+// @Accept       json
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id    path      string           true  "Post Sqid"
+// @Param        body  body      scheduleRequest  true  "Schedule payload"
+// @Success      200   {object}  map[string]interface{}
+// @Failure      400   {object}  map[string]string
+// @Failure      401   {object}  map[string]string
+// @Failure      404   {object}  map[string]string
+// @Failure      422   {object}  map[string]interface{}
+// @Failure      503   {object}  map[string]string
+// @Router       /api/posts/{id}/schedule [post]
+func (h *PostsHandler) Schedule(c *fiber.Ctx) error {
+	if h.scheduleSvc == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "scheduling is not available")
+	}
+	var req scheduleRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	if req.ScheduledAt == nil {
+		return fiber.NewError(fiber.StatusBadRequest, "scheduled_at is required")
+	}
+
+	session := c.Locals("session").(*models.Session)
+	res, err := h.scheduleSvc.Schedule(c.Context(), c.Params("id"), postschedule.Options{
+		ScheduledAt:  *req.ScheduledAt,
+		AllowPromote: req.AllowPromote,
+		Actor:        session.UserID,
+		Trigger:      postschedule.TriggerAPI,
+	})
+	if err != nil {
+		var verr *postschedule.ValidationError
+		switch {
+		case errors.Is(err, postschedule.ErrPostNotFound):
+			return fiber.NewError(fiber.StatusNotFound, "post not found")
+		case errors.As(err, &verr):
+			return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
+				"error":               "post is not ready for publish",
+				"platform_validation": verr.Errors,
+			})
+		case errors.Is(err, postschedule.ErrScheduledAtRequired),
+			errors.Is(err, postschedule.ErrScheduledAtInPast),
+			errors.Is(err, postschedule.ErrNoPlatform),
+			errors.Is(err, postschedule.ErrNotSchedulable):
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+		return err
+	}
+
+	// Re-fetch so the response carries a fully hydrated post (campaign /
+	// platform / assets), matching the Update/Restore handlers' contract.
+	updated, err := h.repo.GetByID(c.Context(), c.Params("id"))
+	if err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{
+		"post":         updated,
+		"status":       string(res.Status),
+		"auto_publish": res.AutoPublish,
+		"promoted":     res.Promoted,
+	})
 }
 
 // cancelRequest is the body shape for POST /api/posts/:id/cancel.
@@ -499,6 +493,7 @@ func (h *PostsHandler) Register(app *fiber.App) {
 	g.Get("/:id/versions", h.auth, h.ListVersions)
 	g.Post("/:id/versions", h.auth, h.CreateVersion)
 	g.Post("/:id/restore", h.auth, h.Restore)
+	g.Post("/:id/schedule", h.auth, h.Schedule)
 	g.Post("/:id/cancel", h.auth, h.Cancel)
 
 	app.Get("/api/campaigns/:campaign_id/posts", h.auth, h.ListByCampaign)
@@ -865,12 +860,19 @@ func (h *PostsHandler) Update(c *fiber.Ctx) error {
 
 	prevStatus := post.Status
 
-	// CON-69 §5: ReadyForPublish→Scheduled consults the auto-publish
-	// allowlist and persists status, PostLog, and the submit Backlite
-	// task transactionally. Falls through to the default save when
-	// scheduling deps aren't wired (test fixtures).
-	if prevStatus == models.PostStatusReadyForPublish && status == models.PostStatusScheduled && h.allowlistRepo != nil && h.jobsClient != nil && h.db != nil {
-		routed, err := h.routeAndPersistSchedule(c, post, &req, ctaType)
+	// CON-69 §5 / CON-78: ReadyForPublish→Scheduled consults the
+	// auto-publish allowlist and persists status, PostLog, and the submit
+	// Backlite task transactionally — now via the shared postschedule
+	// service so the REST/assistant/PUT paths can't drift. Falls through
+	// to the default save when the schedule service isn't wired (test
+	// fixtures).
+	if prevStatus == models.PostStatusReadyForPublish && status == models.PostStatusScheduled && h.scheduleSvc != nil {
+		req.apply(post, status, ctaType)
+		actor := models.ActorSystem
+		if sess, ok := c.Locals("session").(*models.Session); ok && sess != nil {
+			actor = sess.UserID
+		}
+		routed, err := h.scheduleSvc.RouteAndPersist(c.Context(), post, prevStatus, actor)
 		if err != nil {
 			return err
 		}

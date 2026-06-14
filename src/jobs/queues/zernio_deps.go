@@ -25,6 +25,9 @@ type ZernioDeps struct {
 	PostLogRepo        repository.PostLogRepository
 	PostAttachmentRepo repository.PostAttachmentRepository
 	SocialAccountRepo  repository.SocialAccountRepository
-	Client             *zernio.Client
-	ProfileID          ProfileIDResolver
+	// SettingRepo backs the workspace timezone lookup used to stamp the
+	// Zernio submit's Timezone field (CON-78). nil falls back to UTC.
+	SettingRepo repository.SettingRepository
+	Client      *zernio.Client
+	ProfileID   ProfileIDResolver
 }
