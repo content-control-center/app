@@ -1,11 +1,11 @@
-// Package postlog provides the helpers Post Log writers use to produce
+// Package logs provides the helpers Post Log writers use to produce
 // safe payloads — capping size and stripping secrets — before they
 // land in the post_logs table (CON-69 §11).
 //
 // The schema (post_logs.payload) is plain TEXT; the 64 KB ceiling and
 // the secret-redaction guarantees live in code, not in the database.
 // Every writer MUST funnel through these helpers.
-package postlog
+package logs
 
 import (
 	"encoding/json"
@@ -57,7 +57,7 @@ func MarshalCapped(v any) string {
 	b, err := json.Marshal(v)
 	if err != nil {
 		fallback, _ := json.Marshal(map[string]string{
-			"_error": "postlog: marshal failed: " + err.Error(),
+			"_error": "logs: marshal failed: " + err.Error(),
 		})
 		return string(fallback)
 	}

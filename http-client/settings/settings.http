@@ -41,6 +41,43 @@ Content-Type: application/json
 
 {}
 
+###
+# ── Workspace timezone — CON-78 ───────────────────────────────────────────────
+###
+# Single instance-level IANA zone used to resolve relative scheduling
+# expressions ("tomorrow 9am"), echo times back to the user, and stamp the
+# Zernio submit. Absent → UTC. The stored scheduled_at is always absolute UTC;
+# the timezone never changes storage, only presentation/resolution.
+
+### Get the workspace timezone  [protected]
+# 404 when never set — callers treat that as the UTC default.
+GET {{baseUrl}}/api/settings/timezone
+Accept: application/json
+
+### Set the workspace timezone  [protected]
+PUT {{baseUrl}}/api/settings/timezone
+Content-Type: application/json
+
+{
+  "value": "Europe/Kyiv"
+}
+
+### Reset the workspace timezone to UTC  [protected]
+PUT {{baseUrl}}/api/settings/timezone
+Content-Type: application/json
+
+{
+  "value": "UTC"
+}
+
+### Set timezone — invalid IANA zone (expects 400)  [protected]
+PUT {{baseUrl}}/api/settings/timezone
+Content-Type: application/json
+
+{
+  "value": "Mars/Olympus_Mons"
+}
+
 ### Delete a custom setting  [protected]
 DELETE {{baseUrl}}/api/settings/custom_key
 

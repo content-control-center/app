@@ -131,17 +131,30 @@ func runPostAssistant(
 		}
 	}
 	st := &requestState{
-		postID:     req.PostID,
-		assetIDs:   post.UsedAssetIDs,
-		repos:      repos,
-		embedder:   cfg.Embedder,
-		cloneSvc:   cfg.CloneService,
-		restoreSvc: cfg.RestoreService,
-		actor:      post.CreatedBy,
-		platforms:  platforms,
-		onEvent:    onEvent,
+		postID:      req.PostID,
+		assetIDs:    post.UsedAssetIDs,
+		repos:       repos,
+		embedder:    cfg.Embedder,
+		cloneSvc:    cfg.CloneService,
+		restoreSvc:  cfg.RestoreService,
+		scheduleSvc: cfg.ScheduleService,
+		actor:       post.CreatedBy,
+		platforms:   platforms,
+		onEvent:     onEvent,
 	}
 	ctx = withRequestState(ctx, st)
+
+	// CON-78: the scheduling context (current time + workspace timezone,
+	// the post's status, its auto/manual routing, and a readiness summary)
+	// changes every turn — current time most of all — so it is injected
+	// fresh into the user turn rather than the cached system/context block,
+	// preserving Anthropic prompt caching of the stable prefix.
+	prompt := req.Instruction
+	if cfg.ScheduleService != nil {
+		if sb := buildSchedulingContext(ctx, post, repos); sb != "" {
+			prompt = sb + "\n\n---\n\nUser instruction: " + req.Instruction
+		}
+	}
 
 	// ── Call model ───────────────────────────────────────────────────────────
 	// Assistant responses are short (description + explanation), so cap
@@ -234,8 +247,8 @@ func runPostAssistant(
 		ai.WithModelName(modelName),
 		ai.WithSystem(systemBlock),
 		ai.WithMessages(history...),
-		ai.WithPrompt(req.Instruction),
-		ai.WithTools(tools.listAssets, tools.getAssetChunks, tools.searchAssetChunks, tools.getCurrentContent, tools.clonePost, tools.restoreVersion),
+		ai.WithPrompt(prompt),
+		ai.WithTools(tools.listAssets, tools.getAssetChunks, tools.searchAssetChunks, tools.getCurrentContent, tools.clonePost, tools.restoreVersion, tools.schedulePost),
 		ai.WithMaxTurns(maxTurns),
 		ai.WithStreaming(streamCb),
 		ai.WithConfig(anthropic.MessageNewParams{
@@ -333,6 +346,31 @@ func runPostAssistant(
 			RestoredFromVersion: rr.RestoredFromVersion,
 			NewVersionNumber:    rr.NewVersionNumber,
 			NoOp:                rr.NoOp,
+		}
+	}
+
+	// ── Schedule handling (CON-78) ───────────────────────────────────────────
+	// If the schedulePost tool committed this turn, it is the authoritative
+	// outcome: the post's status + scheduled_at are persisted by the shared
+	// service, action is "scheduled", and content is untouched.
+	if st.scheduleResult != nil {
+		sr := st.scheduleResult
+		result.Action = "scheduled"
+		result.UpdatedContent = ""
+		result.SaveVersion = false
+		if result.Explanation == "" {
+			mode := "auto-publish"
+			if !sr.AutoPublish {
+				mode = "manual publishing"
+			}
+			result.Explanation = fmt.Sprintf("Scheduled this post for %s (%s).",
+				sr.ScheduledAt.Format("Jan 2, 2006 15:04 MST"), mode)
+		}
+		result.ScheduleResult = &ScheduleResultPayload{
+			ScheduledAt: sr.ScheduledAt.Format(time.RFC3339),
+			Status:      string(sr.Status),
+			AutoPublish: sr.AutoPublish,
+			Promoted:    sr.Promoted,
 		}
 	}
 
@@ -487,6 +525,17 @@ func runPostAssistant(
 			RestoredFromVersion: result.RestoreResult.RestoredFromVersion,
 			NewVersionNumber:    result.RestoreResult.NewVersionNumber,
 			NoOp:                result.RestoreResult.NoOp,
+		})
+	}
+
+	// Surface the schedule outcome before the canonical "complete" so the
+	// UI can refresh the post's status / scheduled time as soon as it lands.
+	if result.ScheduleResult != nil {
+		emit(onEvent, SSEEventScheduleComplete, ScheduleCompleteEventPayload{
+			ScheduledAt: result.ScheduleResult.ScheduledAt,
+			Status:      result.ScheduleResult.Status,
+			AutoPublish: result.ScheduleResult.AutoPublish,
+			Promoted:    result.ScheduleResult.Promoted,
 		})
 	}
 

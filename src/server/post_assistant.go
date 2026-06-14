@@ -10,8 +10,9 @@ import (
 	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
-	"github.com/ogen-app/ogen/src/postclone"
-	"github.com/ogen-app/ogen/src/postrestore"
+	"github.com/ogen-app/ogen/src/post_actions/clone"
+	"github.com/ogen-app/ogen/src/post_actions/restore"
+	"github.com/ogen-app/ogen/src/post_actions/schedule"
 )
 
 // initPostAssistant registers the post assistant flow on the shared Genkit
@@ -22,8 +23,9 @@ func initPostAssistant(
 	embedder ai.Embedder,
 	hub eventhub.Hub,
 	repos post_assistant.PostAssistantRepos,
-	cloneSvc *postclone.Service,
-	restoreSvc *postrestore.Service,
+	cloneSvc *clone.Service,
+	restoreSvc *restore.Service,
+	scheduleSvc *schedule.Service,
 ) (func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error), error) {
 	flowCfg := post_assistant.PostAssistantFlowConfig{
 		ModelID:         cfg.ModelID,
@@ -32,6 +34,7 @@ func initPostAssistant(
 		Hub:             hub,
 		CloneService:    cloneSvc,
 		RestoreService:  restoreSvc,
+		ScheduleService: scheduleSvc,
 	}
 	if err := post_assistant.InitPostAssistant(g, flowCfg, repos); err != nil {
 		return nil, fmt.Errorf("init post assistant flow: %w", err)

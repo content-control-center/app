@@ -11,7 +11,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/postlog"
+	"github.com/ogen-app/ogen/src/post_actions/logs"
 )
 
 // ReconcileScheduledPostsQueue is the recurring sweeper queue
@@ -106,7 +106,7 @@ func (p *ReconcileScheduledPostsProcessor) Process(ctx context.Context, _ Reconc
 			FromStatus: &from,
 			ToStatus:   &to,
 			Summary:    "reconciliation timeout: forcing Failed",
-			Payload: postlog.SanitizeAndCap(postlog.MarshalCapped(map[string]any{
+			Payload: logs.SanitizeAndCap(logs.MarshalCapped(map[string]any{
 				"reason":              FailureReasonReconciliationTimeout,
 				"scheduled_at":        post.ScheduledAt,
 				"elapsed":             fmtElapsedSince(post.ScheduledAt),

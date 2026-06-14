@@ -10,8 +10,8 @@ import (
 )
 
 // PostLogRepository persists Post Log entries (CON-69 §11). Writers
-// are expected to have already passed Payload through postlog.Capper
-// + postlog.Sanitize — the repository performs no transformation,
+// are expected to have already passed Payload through logs.Capper
+// + logs.Sanitize — the repository performs no transformation,
 // only persistence and querying.
 type PostLogRepository interface {
 	// Append inserts entry. If entry.ID is empty the caller is expected

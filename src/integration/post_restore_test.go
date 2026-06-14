@@ -16,7 +16,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/postrestore"
+	"github.com/ogen-app/ogen/src/post_actions/restore"
 	"github.com/ogen-app/ogen/src/repository"
 )
 
@@ -76,7 +76,7 @@ var _ = Describe("Post restore — CON-68", Ordered, func() {
 		postsHandler := handlers.NewPostsHandler(postRepo, versionRepo, postMessageRepo, platformRepo, postAttRepo, auth, nil, nil)
 		postsHandler.SetPostLogRepo(logRepo)
 		// CON-68: the same restore service the assistant uses, behind REST.
-		postsHandler.SetRestoreService(postrestore.New(db, postRepo, versionRepo, logRepo, nil))
+		postsHandler.SetRestoreService(restore.New(db, postRepo, versionRepo, logRepo, nil))
 		postsHandler.Register(app)
 
 		// Seed user + session + campaign.

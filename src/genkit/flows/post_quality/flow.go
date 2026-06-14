@@ -16,7 +16,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/postlog"
+	"github.com/ogen-app/ogen/src/post_actions/logs"
 	"github.com/ogen-app/ogen/src/repository"
 )
 
@@ -283,9 +283,9 @@ func appendQualityLog(ctx context.Context, repos PostQualityRepos, postID string
 		EventType: models.PostLogEventQualityAssessed,
 		Actor:     models.ActorSystem,
 		Summary:   fmt.Sprintf("quality assessed: %.0f%%", eval.OverallPct),
-		Payload:   postlog.SanitizeAndCap(string(payload)),
+		Payload:   logs.SanitizeAndCap(string(payload)),
 	}); err != nil {
-		log.Printf("post_quality[%s]: postlog append failed: %v", postID, err)
+		log.Printf("post_quality[%s]: logs append failed: %v", postID, err)
 	}
 }
 

@@ -4,8 +4,9 @@ import (
 	"github.com/firebase/genkit/go/ai"
 
 	"github.com/ogen-app/ogen/src/eventhub"
-	"github.com/ogen-app/ogen/src/postclone"
-	"github.com/ogen-app/ogen/src/postrestore"
+	"github.com/ogen-app/ogen/src/post_actions/clone"
+	"github.com/ogen-app/ogen/src/post_actions/restore"
+	"github.com/ogen-app/ogen/src/post_actions/schedule"
 	"github.com/ogen-app/ogen/src/repository"
 )
 
@@ -22,7 +23,7 @@ type PostAssistantRequest struct {
 type PostAssistantResponse struct {
 	Explanation    string `json:"explanation"                  jsonschema:"description=Human-readable explanation of what was changed or why the request was declined"`
 	UpdatedContent string `json:"updatedContent"               jsonschema:"description=The full updated post content as Markdown; empty when action is declined"`
-	Action         string `json:"action"                       jsonschema:"description=edited when content was changed; declined when the request is out of scope; cloned when a clone was created; restored when the post was rolled back to an earlier version,enum=edited,enum=declined,enum=cloned,enum=restored"`
+	Action         string `json:"action"                       jsonschema:"description=edited when content was changed; declined when the request is out of scope or you are asking the user to confirm; cloned when a clone was created; restored when the post was rolled back to an earlier version; scheduled when the post was scheduled for publishing,enum=edited,enum=declined,enum=cloned,enum=restored,enum=scheduled"`
 	SaveVersion    bool   `json:"saveVersion"                  jsonschema:"description=True when a new version snapshot should be created"`
 	VersionNote    string `json:"versionNote,omitempty"        jsonschema:"description=Short note describing the version; only present when saveVersion is true"`
 	// CloneResult is populated by the server (not the model) when the
@@ -33,6 +34,10 @@ type PostAssistantResponse struct {
 	// restoreVersion tool ran this turn. Action is then "restored" and
 	// UpdatedContent holds the restored content.
 	RestoreResult *RestoreResultPayload `json:"restoreResult,omitempty" jsonschema:"-"`
+	// ScheduleResult is populated by the server (not the model) when the
+	// schedulePost tool ran this turn. Action is then "scheduled" and
+	// UpdatedContent is empty — scheduling doesn't change content.
+	ScheduleResult *ScheduleResultPayload `json:"scheduleResult,omitempty" jsonschema:"-"`
 }
 
 // CloneResultPayload describes the post created by the clonePost tool.
@@ -50,6 +55,14 @@ type RestoreResultPayload struct {
 	NoOp                bool `json:"noOp"`
 }
 
+// ScheduleResultPayload describes the outcome of the schedulePost tool.
+type ScheduleResultPayload struct {
+	ScheduledAt string `json:"scheduledAt"`
+	Status      string `json:"status"`
+	AutoPublish bool   `json:"autoPublish"`
+	Promoted    bool   `json:"promoted"`
+}
+
 // PostAssistantRepos bundles all repository dependencies for the flow.
 type PostAssistantRepos struct {
 	Posts     repository.PostRepository
@@ -62,6 +75,17 @@ type PostAssistantRepos struct {
 	// "Threads") to its ID and surface the available platforms to the
 	// model. nil disables cross-platform clone resolution.
 	Platforms repository.PlatformRepository
+	// Settings backs the workspace-timezone lookup the schedulePost flow
+	// uses to resolve and echo times (CON-78). nil → UTC.
+	Settings repository.SettingRepository
+	// Allowlist lets the scheduling context tell the model whether the
+	// post's platform auto-publishes or is manual (CON-65/78). nil →
+	// everything reads as manual.
+	Allowlist repository.AutoPublishAllowlistRepository
+	// Attachments backs the CON-74 readiness summary surfaced to the model
+	// so it can pre-empt a promote-time validation failure. nil → the
+	// readiness summary omits attachment-based rules.
+	Attachments repository.PostAttachmentRepository
 }
 
 // PostAssistantFlowConfig holds settings for the post assistant flow.
@@ -87,10 +111,13 @@ type PostAssistantFlowConfig struct {
 	Hub eventhub.Hub
 	// CloneService backs the clonePost tool (CON-59). nil disables the
 	// tool — the assistant then has no clone capability.
-	CloneService *postclone.Service
+	CloneService *clone.Service
 	// RestoreService backs the restoreVersion tool (CON-68). nil disables
 	// the tool — the assistant then has no restore capability.
-	RestoreService *postrestore.Service
+	RestoreService *restore.Service
+	// ScheduleService backs the schedulePost tool (CON-78). nil disables
+	// the tool — the assistant then has no scheduling capability.
+	ScheduleService *schedule.Service
 }
 
 // ValidationError is returned when preconditions are not met (HTTP 400).
@@ -117,6 +144,8 @@ const (
 	SSEEventCloneComplete    SSEEventKind = "clone_complete"
 	SSEEventRestoreStarted   SSEEventKind = "restore_started"
 	SSEEventRestoreComplete  SSEEventKind = "restore_complete"
+	SSEEventScheduleStarted  SSEEventKind = "schedule_started"
+	SSEEventScheduleComplete SSEEventKind = "schedule_complete"
 	SSEEventComplete         SSEEventKind = "complete"
 	SSEEventError            SSEEventKind = "error"
 )
@@ -147,6 +176,21 @@ type RestoreCompleteEventPayload struct {
 	RestoredFromVersion int  `json:"restoredFromVersion"`
 	NewVersionNumber    int  `json:"newVersionNumber"`
 	NoOp                bool `json:"noOp"`
+}
+
+// ScheduleStartedEventPayload is emitted when the schedulePost tool
+// begins committing a schedule, so the UI can show progress.
+type ScheduleStartedEventPayload struct {
+	ScheduledAt string `json:"scheduledAt"`
+	AutoPublish bool   `json:"autoPublish"`
+}
+
+// ScheduleCompleteEventPayload is emitted once the schedule is persisted.
+type ScheduleCompleteEventPayload struct {
+	ScheduledAt string `json:"scheduledAt"`
+	Status      string `json:"status"`
+	AutoPublish bool   `json:"autoPublish"`
+	Promoted    bool   `json:"promoted"`
 }
 
 // DeltaEventPayload carries a fragment of a streamed string value.

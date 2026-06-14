@@ -1,0 +1,247 @@
+@baseUrl = http://localhost:9001
+
+# Schedule a Post for publishing — CON-78.
+# POST /api/posts/:id/schedule is the shared schedule service behind a thin
+# REST endpoint (the same service the Post Assistant's schedulePost tool and
+# the PUT scheduling branch use).
+#
+# All endpoints require authentication. Run "Login" from sessions/sessions.http
+# first — the HTTP client stores and replays the cookie automatically.
+#
+# Prerequisites:
+#   - {{campaignId}} set (run campaigns/campaigns.http → createCampaign)
+#   - Optional: a workspace timezone (settings/settings.http → "Set the
+#     workspace timezone"). Only affects relative-time resolution + the echoed
+#     time; the stored scheduled_at is always absolute UTC.
+#
+# Two-id note (important):
+#   - A post's `platform_id` is the platform's Sqid (LinkedIn = AXqWG7U2qnpt,
+#     Instagram = rzgpTkARLH0L). These are the real seeded ids post-CON-65.
+#   - The auto-publish allowlist (auto-publish-allowlist/…) keys off Zernio's
+#     wire id ("linkedin", "instagram", …).
+#   Routing: platform Sqid → Zernio id → allowlist lookup → auto (scheduled) or
+#   manual (scheduled_for_manual_publishing).
+#
+# State machine: only ready_for_publish (or a draft scheduled with
+# allow_promote) can be scheduled. Reschedule = cancel first, then schedule
+# again.
+
+@linkedinPlatformId = AXqWG7U2qnpt
+@instagramPlatformId = rzgpTkARLH0L
+
+# scheduled_at must be STRICTLY in the future at commit time. These are fixed
+# far-future / past instants so the examples don't expire; adjust as needed.
+@futureAt = 2030-06-15T09:00:00Z
+@pastAt = 2020-01-01T00:00:00Z
+
+###
+# ── Setup (routing) ───────────────────────────────────────────────────────────
+###
+
+### Setup A — allowlist LinkedIn so scheduling routes to AUTO-publish  [protected]
+PUT {{baseUrl}}/api/auto-publish-allowlist
+Content-Type: application/json
+
+{
+  "platforms": ["linkedin"]
+}
+
+### Setup B — clear the allowlist so scheduling routes to MANUAL publishing  [protected]
+PUT {{baseUrl}}/api/auto-publish-allowlist
+Content-Type: application/json
+
+{
+  "platforms": []
+}
+
+###
+# ── Helpers: create posts to schedule ─────────────────────────────────────────
+###
+
+### Helper — create a ready-to-publish LinkedIn post  [protected]
+# @name createReadyPost
+# Created directly in ready_for_publish (article requires content; passes the
+# CON-74 publish gate at create time). Re-run this before each schedule below
+# that needs a fresh, un-scheduled post.
+POST {{baseUrl}}/api/posts
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedinPlatformId}}",
+  "platform_post_type": "article",
+  "title": "Launch announcement",
+  "content": "We're shipping something new next week — here's what to expect.",
+  "status": "ready_for_publish",
+  "cta_type": "none"
+}
+
+> {% client.global.set("scheduleReadyId", response.body.id) %}
+
+### Helper — create a DRAFT LinkedIn post (valid, promotable)  [protected]
+# @name createDraft
+POST {{baseUrl}}/api/posts
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedinPlatformId}}",
+  "platform_post_type": "article",
+  "title": "Draft to promote then schedule",
+  "content": "Draft body that already satisfies the publish rules.",
+  "status": "draft",
+  "cta_type": "none"
+}
+
+> {% client.global.set("scheduleDraftId", response.body.id) %}
+
+### Helper — create a DRAFT image-post with NO image (fails validation)  [protected]
+# @name createBadDraft
+# Instagram image-post requires at least one image attachment; this draft has
+# none, so promoting it during a schedule fails CON-74 validation (422).
+POST {{baseUrl}}/api/posts
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{instagramPlatformId}}",
+  "platform_post_type": "image-post",
+  "title": "Image post with no image",
+  "status": "draft",
+  "cta_type": "none"
+}
+
+> {% client.global.set("scheduleBadDraftId", response.body.id) %}
+
+###
+# ── Schedule scenarios ────────────────────────────────────────────────────────
+###
+
+### 1. Schedule a ready post — MANUAL  [protected]
+# Run Setup B (clear allowlist) + createReadyPost first.
+# → 200 { status: "scheduled_for_manual_publishing", auto_publish: false }
+POST {{baseUrl}}/api/posts/{{scheduleReadyId}}/schedule
+Content-Type: application/json
+
+{
+  "scheduled_at": "{{futureAt}}"
+}
+
+### 2. Schedule a ready post — AUTO-publish  [protected]
+# Run Setup A (allowlist LinkedIn) + createReadyPost (fresh post) first.
+# → 200 { status: "scheduled", auto_publish: true }  (enqueues the Zernio submit)
+POST {{baseUrl}}/api/posts/{{scheduleReadyId}}/schedule
+Content-Type: application/json
+
+{
+  "scheduled_at": "{{futureAt}}"
+}
+
+### 3. Schedule a DRAFT with allow_promote  [protected]
+# Run createDraft first. Runs CON-74 validation, promotes Draft →
+# ReadyForPublish, then schedules. → 200 { promoted: true }
+POST {{baseUrl}}/api/posts/{{scheduleDraftId}}/schedule
+Content-Type: application/json
+
+{
+  "scheduled_at": "{{futureAt}}",
+  "allow_promote": true
+}
+
+### 4. Schedule a DRAFT that fails validation when promoting (expects 422)  [protected]
+# Run createBadDraft first. → 422 { platform_validation: { … min-attachments … } }
+# No state change — the post stays a draft.
+POST {{baseUrl}}/api/posts/{{scheduleBadDraftId}}/schedule
+Content-Type: application/json
+
+{
+  "scheduled_at": "{{futureAt}}",
+  "allow_promote": true
+}
+
+### 5. Schedule a DRAFT without allow_promote (expects 400)  [protected]
+# Run createDraft first. A draft isn't schedulable unless you opt into promotion.
+POST {{baseUrl}}/api/posts/{{scheduleDraftId}}/schedule
+Content-Type: application/json
+
+{
+  "scheduled_at": "{{futureAt}}"
+}
+
+### 6. Schedule with a past scheduled_at (expects 400)  [protected]
+# Run createReadyPost first.
+POST {{baseUrl}}/api/posts/{{scheduleReadyId}}/schedule
+Content-Type: application/json
+
+{
+  "scheduled_at": "{{pastAt}}"
+}
+
+### 7. Schedule with missing scheduled_at (expects 400)  [protected]
+POST {{baseUrl}}/api/posts/{{scheduleReadyId}}/schedule
+Content-Type: application/json
+
+{}
+
+### 8. Schedule a non-existent post (expects 404)  [protected]
+POST {{baseUrl}}/api/posts/nonexistent/schedule
+Content-Type: application/json
+
+{
+  "scheduled_at": "{{futureAt}}"
+}
+
+### 9. Reschedule an already-scheduled post (expects 400)  [protected]
+# After scenario 1/2/3 the post is no longer ready_for_publish, so scheduling it
+# again is rejected — cancel it first (posts cancel endpoint) to reschedule.
+POST {{baseUrl}}/api/posts/{{scheduleReadyId}}/schedule
+Content-Type: application/json
+
+{
+  "scheduled_at": "{{futureAt}}"
+}
+
+###
+# ── Schedule via the Post Assistant (SSE) — CON-78 ────────────────────────────
+###
+# Natural-language scheduling is a TWO-TURN, confirm-then-commit flow.
+# Requires ANTHROPIC_API_KEY set on the server; returns 503 when disabled.
+# The assistant resolves the relative time against the workspace timezone
+# (settings → timezone) and the current time, then asks you to confirm.
+# Response is a Server-Sent Events stream:
+#   schedule_started → schedule_complete { scheduledAt, status, autoPublish,
+#   promoted }; complete carries action "scheduled".
+
+### Turn 1 — ask to schedule (assistant CONFIRMS, does not commit)  [protected]
+# Run createReadyPost (or createDraft) first; uses {{scheduleReadyId}}.
+# Expect action "declined" with the resolved absolute time + auto/manual mode,
+# asking you to confirm — no schedule_complete event yet.
+POST {{baseUrl}}/api/posts/{{scheduleReadyId}}/assistant
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "instruction": "Schedule this for tomorrow at 9am."
+}
+
+### Turn 2 — confirm (assistant COMMITS via the schedulePost tool)  [protected]
+# Expect schedule_started → schedule_complete and a final "complete" with
+# action "scheduled".
+POST {{baseUrl}}/api/posts/{{scheduleReadyId}}/assistant
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "instruction": "Yes, go ahead."
+}
+
+### Schedule a draft via the assistant — promote in one conversation  [protected]
+# Run createDraft first; uses {{scheduleDraftId}}. The assistant validates
+# readiness, confirms, and on your "yes" promotes + schedules (allowPromote).
+POST {{baseUrl}}/api/posts/{{scheduleDraftId}}/assistant
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "instruction": "Publish this next Monday morning."
+}

@@ -11,8 +11,9 @@ import (
 
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/postlog"
+	"github.com/ogen-app/ogen/src/post_actions/logs"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
+	"github.com/ogen-app/ogen/src/settings"
 )
 
 // SubmitPostToZernioQueue is the Backlite queue name (CON-69 §3).
@@ -126,15 +127,19 @@ func (p *SubmitPostProcessor) Process(ctx context.Context, task SubmitPostTask) 
 	if post.ScheduledAt != nil {
 		when = post.ScheduledAt.UTC()
 	}
+	// The instant (ScheduledFor) is the source of truth and stays UTC;
+	// the workspace timezone (CON-78) is echoed so Zernio renders the
+	// schedule in the operator's zone. Defaults to UTC when unset.
+	_, tzName := settings.WorkspaceTimezone(ctx, p.Deps.SettingRepo)
 	req := zernio.SubmitRequest{
 		Content:      post.Content,
 		Platforms:    []zernio.PlatformVariant{{Platform: supported.ZernioID, AccountID: accountID}},
 		ScheduledFor: when,
-		Timezone:     "UTC",
+		Timezone:     tzName,
 	}
 
 	appendLog(ctx, p.Deps, post.ID, models.PostLogEventZernioSubmit, post.Status, post.Status,
-		"calling Zernio POST /posts", postlog.MarshalCapped(req))
+		"calling Zernio POST /posts", logs.MarshalCapped(req))
 
 	apiStart := time.Now()
 	job, submitErr := p.Deps.Client.Submit(ctx, req)
@@ -146,7 +151,7 @@ func (p *SubmitPostProcessor) Process(ctx context.Context, task SubmitPostTask) 
 			recovered, ferr := p.Deps.Client.FindByContent(ctx, post.Content, 24*time.Hour)
 			if ferr == nil && recovered != nil {
 				appendLog(ctx, p.Deps, post.ID, models.PostLogEventZernioSubmit, post.Status, post.Status,
-					"recovered Zernio job after 409 dedupe", postlog.MarshalCapped(recovered))
+					"recovered Zernio job after 409 dedupe", logs.MarshalCapped(recovered))
 				return p.persistSuccess(ctx, post, recovered)
 			}
 			return p.terminal(ctx, post, "zernio_dedupe_unrecoverable",
@@ -174,7 +179,7 @@ func (p *SubmitPostProcessor) persistSuccess(ctx context.Context, post *models.P
 		return fmt.Errorf("submit: persist zernio_post_id: %w", err)
 	}
 	appendLog(ctx, p.Deps, post.ID, models.PostLogEventZernioSubmit, post.Status, post.Status,
-		"Zernio submit succeeded; polling scheduled", postlog.MarshalCapped(map[string]any{
+		"Zernio submit succeeded; polling scheduled", logs.MarshalCapped(map[string]any{
 			"zernio_post_id": job.ID,
 			"zernio_status":  job.Status,
 		}))
@@ -216,7 +221,7 @@ func (p *SubmitPostProcessor) terminal(ctx context.Context, post *models.Post, r
 	}
 	to := post.Status
 	appendLog(ctx, p.Deps, post.ID, models.PostLogEventStateTransition, from, to,
-		"submit terminally failed", postlog.MarshalCapped(map[string]any{
+		"submit terminally failed", logs.MarshalCapped(map[string]any{
 			"reason":  reason,
 			"message": msg,
 		}))
@@ -253,7 +258,7 @@ func appendLog(
 		FromStatus: &fromCopy,
 		ToStatus:   &toCopy,
 		Summary:    summary,
-		Payload:    postlog.SanitizeAndCap(payload),
+		Payload:    logs.SanitizeAndCap(payload),
 	})
 }
 

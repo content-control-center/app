@@ -8,6 +8,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/settings"
 )
 
 type SettingsHandler struct {
@@ -102,8 +103,19 @@ func (h *SettingsHandler) Upsert(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
 	}
 
+	key := c.Params("key")
+	// CON-78: the workspace timezone must be a valid IANA zone name so
+	// scheduling can resolve relative times against it. Reject unknown
+	// zones up front rather than letting a bad value silently fall back
+	// to UTC at schedule time.
+	if key == settings.TimezoneKey {
+		if _, err := settings.ResolveTimezone(req.Value); err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "invalid timezone: "+req.Value)
+		}
+	}
+
 	setting := &models.Setting{
-		Key:   c.Params("key"),
+		Key:   key,
 		Value: req.Value,
 	}
 	if err := h.repo.Upsert(c.Context(), setting); err != nil {

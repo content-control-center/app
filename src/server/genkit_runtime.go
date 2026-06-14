@@ -17,8 +17,9 @@ import (
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_quality"
-	"github.com/ogen-app/ogen/src/postclone"
-	"github.com/ogen-app/ogen/src/postrestore"
+	"github.com/ogen-app/ogen/src/post_actions/clone"
+	"github.com/ogen-app/ogen/src/post_actions/restore"
+	"github.com/ogen-app/ogen/src/post_actions/schedule"
 	"github.com/ogen-app/ogen/src/secrets"
 )
 
@@ -56,8 +57,9 @@ type genkitRuntime struct {
 	postAssistRepos  post_assistant.PostAssistantRepos
 	postQualityRepos post_quality.PostQualityRepos
 	enrichBriefRepos enrich_brief.EnrichBriefRepos
-	cloneSvc         *postclone.Service
-	restoreSvc       *postrestore.Service
+	cloneSvc         *clone.Service
+	restoreSvc       *restore.Service
+	scheduleSvc      *schedule.Service
 }
 
 // genkitDeps groups the runtime's static inputs: things captured at
@@ -70,8 +72,9 @@ type genkitDeps struct {
 	postAssistRepos  post_assistant.PostAssistantRepos
 	postQualityRepos post_quality.PostQualityRepos
 	enrichBriefRepos enrich_brief.EnrichBriefRepos
-	cloneSvc         *postclone.Service
-	restoreSvc       *postrestore.Service
+	cloneSvc         *clone.Service
+	restoreSvc       *restore.Service
+	scheduleSvc      *schedule.Service
 }
 
 // newGenkitRuntime builds the runtime and runs the initial rebuild.
@@ -91,6 +94,7 @@ func newGenkitRuntime(ctx context.Context, deps genkitDeps, store secrets.Store)
 		enrichBriefRepos: deps.enrichBriefRepos,
 		cloneSvc:         deps.cloneSvc,
 		restoreSvc:       deps.restoreSvc,
+		scheduleSvc:      deps.scheduleSvc,
 	}
 
 	if err := r.rebuild(ctx, store); err != nil {
@@ -191,7 +195,7 @@ func (r *genkitRuntime) rebuild(ctx context.Context, store secrets.Store) error 
 	if err != nil {
 		return fmt.Errorf("init content plan: %w", err)
 	}
-	postAssistantFn, err := initPostAssistant(g, r.cfg, r.embedder, r.hub, r.postAssistRepos, r.cloneSvc, r.restoreSvc)
+	postAssistantFn, err := initPostAssistant(g, r.cfg, r.embedder, r.hub, r.postAssistRepos, r.cloneSvc, r.restoreSvc, r.scheduleSvc)
 	if err != nil {
 		return fmt.Errorf("init post assistant: %w", err)
 	}

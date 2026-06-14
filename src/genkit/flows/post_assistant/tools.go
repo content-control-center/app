@@ -2,18 +2,21 @@ package post_assistant
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
 	"github.com/ogen-app/ogen/src/genkit/flows"
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/postclone"
-	"github.com/ogen-app/ogen/src/postrestore"
+	"github.com/ogen-app/ogen/src/post_actions/clone"
+	"github.com/ogen-app/ogen/src/post_actions/restore"
+	"github.com/ogen-app/ogen/src/post_actions/schedule"
 )
 
 // Per-turn token budget for tool-retrieved chunks.
@@ -36,17 +39,23 @@ type requestState struct {
 	// emit a clone_started SSE event mid-generation; cloneResult is set
 	// by the tool and read by the runner after generation to finalise
 	// the response.
-	cloneSvc    *postclone.Service
+	cloneSvc    *clone.Service
 	actor       string
 	platforms   []models.Platform
 	onEvent     OnEventFunc
-	cloneResult *postclone.Result
+	cloneResult *clone.Result
 
 	// Restore support (CON-68). restoreSvc backs the restoreVersion tool;
 	// restoreResult is set by the tool and read by the runner after
 	// generation to finalise the response.
-	restoreSvc    *postrestore.Service
-	restoreResult *postrestore.Result
+	restoreSvc    *restore.Service
+	restoreResult *restore.Result
+
+	// Schedule support (CON-78). scheduleSvc backs the schedulePost tool;
+	// scheduleResult is set by the tool and read by the runner after
+	// generation to finalise the response.
+	scheduleSvc    *schedule.Service
+	scheduleResult *schedule.Result
 }
 
 func withRequestState(ctx context.Context, s *requestState) context.Context {
@@ -123,6 +132,24 @@ type RestoreVersionOutput struct {
 	NoOp                bool `json:"noOp"`
 }
 
+// SchedulePostInput is the input for the schedulePost tool. Resolve any
+// relative expression ("tomorrow 9am") to an absolute instant first,
+// using the current time + workspace timezone from the scheduling
+// context, and pass it here as ISO-8601 with an explicit offset (e.g.
+// "2026-06-15T09:00:00+03:00" or a UTC "...Z").
+type SchedulePostInput struct {
+	ScheduledAt  string `json:"scheduledAt"            jsonschema:"description=Absolute publish time as ISO-8601 with a timezone offset (e.g. 2026-06-15T09:00:00+03:00). Resolve relative phrases against the scheduling context before calling."`
+	AllowPromote bool   `json:"allowPromote,omitempty" jsonschema:"description=Set true to auto-promote a draft (run pre-publish validation then Draft → ReadyForPublish) before scheduling. Required when the post is still a draft."`
+}
+
+// SchedulePostOutput is returned to the model after a schedule commits.
+type SchedulePostOutput struct {
+	ScheduledAt string `json:"scheduledAt"`
+	Status      string `json:"status"`
+	AutoPublish bool   `json:"autoPublish"`
+	Promoted    bool   `json:"promoted"`
+}
+
 // ── Tool registration ────────────────────────────────────────────────────────
 
 type toolSet struct {
@@ -132,6 +159,7 @@ type toolSet struct {
 	getCurrentContent ai.ToolRef
 	clonePost         ai.ToolRef
 	restoreVersion    ai.ToolRef
+	schedulePost      ai.ToolRef
 }
 
 func defineTools(g *genkit.Genkit) *toolSet {
@@ -182,6 +210,17 @@ func defineTools(g *genkit.Genkit) *toolSet {
 		},
 	)
 
+	schedulePost := genkit.DefineTool(g, "schedulePost",
+		"Schedules the current post for publishing at an absolute time. Call ONLY after the "+
+			"user has confirmed the resolved time and the auto/manual mode. Pass scheduledAt as "+
+			"ISO-8601 with a timezone offset; set allowPromote:true when the post is a draft. "+
+			"Returns the routed status (scheduled vs scheduled_for_manual_publishing) and whether "+
+			"the draft was promoted.",
+		func(ctx *ai.ToolContext, in SchedulePostInput) (*SchedulePostOutput, error) {
+			return toolSchedulePost(ctx, in)
+		},
+	)
+
 	return &toolSet{
 		listAssets:        list,
 		getAssetChunks:    getChunks,
@@ -189,6 +228,7 @@ func defineTools(g *genkit.Genkit) *toolSet {
 		getCurrentContent: getCurrentContent,
 		clonePost:         clonePost,
 		restoreVersion:    restoreVersion,
+		schedulePost:      schedulePost,
 	}
 }
 
@@ -299,7 +339,7 @@ func toolClonePost(ctx context.Context, in ClonePostInput) (*ClonePostOutput, er
 		return nil, fmt.Errorf("cloning is not available")
 	}
 
-	opts := postclone.DefaultOptions(st.actor, postclone.TriggerAssistant)
+	opts := clone.DefaultOptions(st.actor, clone.TriggerAssistant)
 	if in.TargetPlatform != "" {
 		id, err := resolvePlatform(st.platforms, in.TargetPlatform)
 		if err != nil {
@@ -352,9 +392,9 @@ func toolRestoreVersion(ctx context.Context, in RestoreVersionInput) (*RestoreVe
 
 	emit(st.onEvent, SSEEventRestoreStarted, RestoreStartedEventPayload{TargetVersion: versionNumber})
 
-	res, err := st.restoreSvc.Restore(ctx, st.postID, postrestore.Options{
+	res, err := st.restoreSvc.Restore(ctx, st.postID, restore.Options{
 		Actor:         st.actor,
-		Trigger:       postrestore.TriggerAssistant,
+		Trigger:       restore.TriggerAssistant,
 		VersionNumber: versionNumber,
 	})
 	if err != nil {
@@ -367,6 +407,83 @@ func toolRestoreVersion(ctx context.Context, in RestoreVersionInput) (*RestoreVe
 		NewVersionNumber:    res.NewVersionNumber,
 		NoOp:                res.NoOp,
 	}, nil
+}
+
+func toolSchedulePost(ctx context.Context, in SchedulePostInput) (*SchedulePostOutput, error) {
+	st := getRequestState(ctx)
+	if st.scheduleSvc == nil {
+		return nil, fmt.Errorf("scheduling is not available")
+	}
+
+	when, err := parseScheduledAt(in.ScheduledAt)
+	if err != nil {
+		return nil, err
+	}
+
+	emit(st.onEvent, SSEEventScheduleStarted, ScheduleStartedEventPayload{ScheduledAt: when.UTC().Format(time.RFC3339)})
+
+	res, err := st.scheduleSvc.Schedule(ctx, st.postID, schedule.Options{
+		ScheduledAt:  when,
+		AllowPromote: in.AllowPromote,
+		Actor:        st.actor,
+		Trigger:      schedule.TriggerAssistant,
+	})
+	if err != nil {
+		return nil, scheduleToolError(err)
+	}
+	st.scheduleResult = res
+
+	return &SchedulePostOutput{
+		ScheduledAt: res.ScheduledAt.Format(time.RFC3339),
+		Status:      string(res.Status),
+		AutoPublish: res.AutoPublish,
+		Promoted:    res.Promoted,
+	}, nil
+}
+
+// parseScheduledAt accepts the ISO-8601 instant the model resolved. It
+// requires an explicit timezone (offset or Z) so the stored UTC instant
+// is unambiguous; a naive local datetime is rejected with guidance the
+// model relays to the user.
+func parseScheduledAt(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, fmt.Errorf("scheduledAt is required (ISO-8601 with a timezone offset, e.g. 2026-06-15T09:00:00+03:00)")
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+	return time.Time{}, fmt.Errorf("could not parse scheduledAt %q; use ISO-8601 with a timezone offset, e.g. 2026-06-15T09:00:00+03:00 or 2026-06-15T06:00:00Z", s)
+}
+
+// scheduleToolError rewrites the shared service's errors into messages
+// the model can relay to the user. The CON-74 validation failure is
+// expanded into the concrete reasons so the assistant can tell the user
+// exactly what's missing instead of a generic "not ready".
+func scheduleToolError(err error) error {
+	var verr *schedule.ValidationError
+	switch {
+	case errors.As(err, &verr):
+		var reasons []string
+		for _, errs := range verr.Errors {
+			for _, e := range errs {
+				reasons = append(reasons, e.Message)
+			}
+		}
+		if len(reasons) == 0 {
+			return fmt.Errorf("the post is not ready to publish yet")
+		}
+		return fmt.Errorf("the post can't be scheduled until these are fixed: %s", strings.Join(reasons, "; "))
+	case errors.Is(err, schedule.ErrScheduledAtInPast):
+		return fmt.Errorf("that time is in the past — propose the next valid time and confirm again")
+	case errors.Is(err, schedule.ErrNoPlatform):
+		return fmt.Errorf("this post has no platform set, so it can't be scheduled — ask the user to choose a platform first")
+	case errors.Is(err, schedule.ErrNotSchedulable):
+		return fmt.Errorf("%v — only a ready-for-publish post (or a draft you promote) can be scheduled; if it's already scheduled, it must be cancelled first", err)
+	case errors.Is(err, schedule.ErrPostNotFound):
+		return fmt.Errorf("post not found")
+	}
+	return err
 }
 
 // resolvePreviousVersion maps a relative reference ("previous", "undo",

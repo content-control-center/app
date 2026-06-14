@@ -1,4 +1,4 @@
-// Package postrestore implements the shared "restore a Post to an earlier
+// Package restore implements the shared "restore a Post to an earlier
 // version" operation (CON-68). It is the single source of truth used by
 // both the REST endpoint (POST /api/posts/:id/restore) and the Post
 // Assistant's restoreVersion tool, so the two entry points can never
@@ -10,7 +10,7 @@
 // itself reversible. When the live post has edits not captured by any
 // version (a "dirty HEAD", e.g. an assistant edit with saveVersion
 // false), those edits are snapshotted first so nothing is lost.
-package postrestore
+package restore
 
 import (
 	"context"
@@ -24,7 +24,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/postlog"
+	"github.com/ogen-app/ogen/src/post_actions/logs"
 	"github.com/ogen-app/ogen/src/repository"
 )
 
@@ -276,7 +276,7 @@ func (s *Service) buildLogEntry(postID string, opts Options, newVersion int, aut
 		EventType: models.PostLogEventPostRestored,
 		Actor:     opts.Actor,
 		Summary:   fmt.Sprintf("post restored to v%d", opts.VersionNumber),
-		Payload:   postlog.SanitizeAndCap(string(payload)),
+		Payload:   logs.SanitizeAndCap(string(payload)),
 	}, nil
 }
 

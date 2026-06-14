@@ -17,7 +17,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/postclone"
+	"github.com/ogen-app/ogen/src/post_actions/clone"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/storage"
 )
@@ -80,7 +80,7 @@ var _ = Describe("Post clone — CON-59 (real S3/MinIO)", Ordered, func() {
 
 		postsHandler := handlers.NewPostsHandler(postRepo, versionRepo, postMessageRepo, platformRepo, postAttRepo, auth, nil, nil)
 		postsHandler.SetPostLogRepo(logRepo)
-		postsHandler.SetCloneService(postclone.New(db, postRepo, versionRepo, postAttRepo, platformRepo, logRepo, store, nil))
+		postsHandler.SetCloneService(clone.New(db, postRepo, versionRepo, postAttRepo, platformRepo, logRepo, store, nil))
 		// Same S3-cleanup-on-delete hook the production server wires —
 		// the independence test relies on it.
 		postsHandler.SetOnBeforeDelete(func(ctx context.Context, postID string) error {
