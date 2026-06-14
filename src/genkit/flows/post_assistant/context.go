@@ -206,7 +206,7 @@ type versionSummary struct {
 }
 
 // buildVersionSummaries lists the post's saved versions (oldest first),
-// flagging the one whose content matches the live post as current.
+// flagging the latest (highest version_number) as the current HEAD.
 // Best-effort: a load failure is propagated, but no versions simply
 // omits the section. Rendered into the cached context block; a content
 // change (the common case) busts the cache, so the only staleness window
@@ -221,12 +221,17 @@ func buildVersionSummaries(ctx context.Context, post *models.Post, repos PostAss
 		return nil, err
 	}
 	out := make([]versionSummary, 0, len(versions))
-	for _, v := range versions {
+	for i, v := range versions {
 		out = append(out, versionSummary{
-			Number:    v.VersionNumber,
-			Note:      v.Note,
-			Creator:   v.Creator,
-			IsCurrent: v.Content == post.Content,
+			Number:  v.VersionNumber,
+			Note:    v.Note,
+			Creator: v.Creator,
+			// The latest snapshot is the current HEAD. ListByPostID is
+			// ordered ascending, so that's the last element. Content
+			// equality would wrongly flag every snapshot that shares the
+			// restored content (e.g. after restoring v1, both v1 and the
+			// appended restore version match the live content).
+			IsCurrent: i == len(versions)-1,
 		})
 	}
 	return out, nil
