@@ -147,75 +147,98 @@ func (s *Service) Restore(ctx context.Context, postID string, opts Options) (*Re
 		}, nil
 	}
 
-	latest, err := s.versions.GetLatestByPostID(ctx, postID)
-	if err != nil {
-		return nil, err
-	}
-	nextNum := 1
-	if latest != nil {
-		nextNum = latest.VersionNumber + 1
-	}
-
-	// Dirty HEAD: the live content isn't captured by the latest snapshot
-	// (e.g. an assistant edit with saveVersion=false). Snapshot it first
-	// so the pre-restore state is always recoverable.
-	var snapshot *models.PostVersion
-	if latest != nil && latest.Content != post.Content {
-		snapID, err := models.NewID()
-		if err != nil {
-			return nil, err
-		}
-		snapshot = &models.PostVersion{
-			ID:            snapID,
-			PostID:        postID,
-			VersionNumber: nextNum,
-			Content:       post.Content,
-			Note:          "Auto-saved before restore",
-			Creator:       "user",
-		}
-		nextNum++
-	}
-
 	// post_versions.creator is a role enum ('user' | 'assistant'), not a
 	// user id — an assistant-driven restore is "assistant", REST is "user".
 	creator := "user"
 	if opts.Trigger == TriggerAssistant {
 		creator = "assistant"
 	}
-	restoreID, err := models.NewID()
-	if err != nil {
-		return nil, err
-	}
-	restoreVersion := &models.PostVersion{
-		ID:            restoreID,
-		PostID:        postID,
-		VersionNumber: nextNum,
-		Content:       target.Content,
-		Note:          fmt.Sprintf("Restored from v%d", opts.VersionNumber),
-		Creator:       creator,
-	}
 
+	// Capture the pre-restore live content (for the dirty-HEAD snapshot)
+	// before overwriting it with the restored content.
+	preRestoreContent := post.Content
 	post.Content = target.Content
 	post.UpdatedAt = time.Now().UTC()
 
-	logEntry, err := s.buildLogEntry(post.ID, opts, nextNum, snapshot != nil)
-	if err != nil {
-		return nil, err
-	}
-
+	// Version numbering must be serialized with the inserts, so the latest
+	// version is read and nextNum computed INSIDE the transaction — using
+	// the tx handle, not a pooled repo call (with a single SQLite
+	// connection a pooled read here would deadlock against the open tx).
+	// SQLite runs one write transaction at a time, so a concurrent restore
+	// cannot begin until this one commits, after which it reads the version
+	// we just appended and computes the next number — no duplicate
+	// version_number, no UNIQUE-constraint collision.
+	var (
+		restoredVersionNum  int
+		autoSnapshotCreated bool
+	)
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if snapshot != nil {
-			if _, err := tx.NewInsert().Model(snapshot).Exec(ctx); err != nil {
-				return err
-			}
-		}
-		if _, err := tx.NewInsert().Model(restoreVersion).Exec(ctx); err != nil {
+		latest := new(models.PostVersion)
+		err := tx.NewSelect().
+			Model(latest).
+			Where("pv.post_id = ?", postID).
+			OrderExpr("pv.version_number DESC").
+			Limit(1).
+			Scan(ctx)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			latest = nil
+		case err != nil:
 			return err
 		}
+
+		nextNum := 1
+		if latest != nil {
+			nextNum = latest.VersionNumber + 1
+		}
+
+		// Dirty HEAD: the live content isn't captured by the latest
+		// snapshot (e.g. an assistant edit with saveVersion=false).
+		// Snapshot it first so the pre-restore state is recoverable.
+		if latest != nil && latest.Content != preRestoreContent {
+			snapID, err := models.NewID()
+			if err != nil {
+				return err
+			}
+			if _, err := tx.NewInsert().Model(&models.PostVersion{
+				ID:            snapID,
+				PostID:        postID,
+				VersionNumber: nextNum,
+				Content:       preRestoreContent,
+				Note:          "Auto-saved before restore",
+				Creator:       "user",
+			}).Exec(ctx); err != nil {
+				return err
+			}
+			autoSnapshotCreated = true
+			nextNum++
+		}
+
+		restoreID, err := models.NewID()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.NewInsert().Model(&models.PostVersion{
+			ID:            restoreID,
+			PostID:        postID,
+			VersionNumber: nextNum,
+			Content:       target.Content,
+			Note:          fmt.Sprintf("Restored from v%d", opts.VersionNumber),
+			Creator:       creator,
+		}).Exec(ctx); err != nil {
+			return err
+		}
+		restoredVersionNum = nextNum
+
 		if _, err := tx.NewUpdate().Model(post).WherePK().Exec(ctx); err != nil {
 			return err
 		}
-		if s.logs != nil && logEntry != nil {
+
+		if s.logs != nil {
+			logEntry, err := s.buildLogEntry(post.ID, opts, nextNum, autoSnapshotCreated)
+			if err != nil {
+				return err
+			}
 			if err := s.logs.AppendTx(ctx, tx, logEntry); err != nil {
 				return err
 			}
@@ -226,13 +249,13 @@ func (s *Service) Restore(ctx context.Context, postID string, opts Options) (*Re
 		return nil, err
 	}
 
-	s.publishRestored(post.ID, opts, nextNum)
+	s.publishRestored(post.ID, opts, restoredVersionNum)
 
 	return &Result{
 		Post:                post,
 		RestoredFromVersion: opts.VersionNumber,
-		NewVersionNumber:    nextNum,
-		AutoSnapshotCreated: snapshot != nil,
+		NewVersionNumber:    restoredVersionNum,
+		AutoSnapshotCreated: autoSnapshotCreated,
 	}, nil
 }
 
