@@ -13,8 +13,8 @@ type PostLogEventType string
 
 const (
 	// State machine
-	PostLogEventStateTransition         PostLogEventType = "state_transition"
-	PostLogEventStateTransitionBlocked  PostLogEventType = "state_transition_blocked"
+	PostLogEventStateTransition        PostLogEventType = "state_transition"
+	PostLogEventStateTransitionBlocked PostLogEventType = "state_transition_blocked"
 
 	// Validation
 	PostLogEventValidationPassed PostLogEventType = "validation_passed"
@@ -48,6 +48,12 @@ const (
 	// Clone (CON-59): recorded on the NEW post; payload carries the
 	// source id, target platform, adaptation flag and trigger.
 	PostLogEventPostCloned PostLogEventType = "post_cloned"
+
+	// Restore (CON-68): recorded when a post is rolled back to an earlier
+	// version. Payload carries the restored-from version, the new version
+	// number, whether a pre-restore safety snapshot was taken, and the
+	// trigger (assistant|api).
+	PostLogEventPostRestored PostLogEventType = "post_restored"
 
 	// Quality assessment (CON-85): recorded when the Post quality agent
 	// finalises an evaluation; payload carries the overall percentage, the

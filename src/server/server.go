@@ -33,6 +33,7 @@ import (
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/jobs/queues"
 	"github.com/ogen-app/ogen/src/postclone"
+	"github.com/ogen-app/ogen/src/postrestore"
 	"github.com/ogen-app/ogen/src/publishers"
 	pubzernio "github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
@@ -250,6 +251,9 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	// assistant's clonePost tool. Deep-copies attachments in object
 	// storage so clone and source have independent blob lifecycles.
 	cloneSvc := postclone.New(db, postRepo, postVersionRepo, postAttachmentRepo, platformRepo, postLogRepo, store, hub)
+	// CON-68: one restore service, shared by the REST endpoint and the
+	// assistant's restoreVersion tool. Non-destructive append-only roll-back.
+	restoreSvc := postrestore.New(db, postRepo, postVersionRepo, postLogRepo, hub)
 
 	gkRuntime, err := newGenkitRuntime(ctx, genkitDeps{
 		cfg:      cfg,
@@ -284,7 +288,8 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 			Campaigns:     campaignRepo,
 			CampaignTypes: campaignTypeRepo,
 		},
-		cloneSvc: cloneSvc,
+		cloneSvc:   cloneSvc,
+		restoreSvc: restoreSvc,
 	}, secretStore)
 	if err != nil {
 		return nil, err
@@ -306,6 +311,9 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	// CON-59: same clone service the assistant uses, behind the REST
 	// endpoint that backs the (future) Duplicate button.
 	postsHandler.SetCloneService(cloneSvc)
+	// CON-68: same restore service the assistant uses, behind the REST
+	// endpoint POST /api/posts/:id/restore.
+	postsHandler.SetRestoreService(restoreSvc)
 	// CON-85: Post quality assessment agent behind POST /api/posts/:id/assess.
 	postsHandler.SetQualityAssessor(gkRuntime.AssessPostQuality)
 	// CON-92: cached read behind GET /api/posts/:id/assessment, so the
