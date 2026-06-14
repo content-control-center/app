@@ -17,7 +17,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/postclone"
+	"github.com/ogen-app/ogen/src/post_actions/postclone"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/storage"
 )

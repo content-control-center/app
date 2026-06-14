@@ -4,9 +4,9 @@ import (
 	"github.com/firebase/genkit/go/ai"
 
 	"github.com/ogen-app/ogen/src/eventhub"
-	"github.com/ogen-app/ogen/src/postclone"
-	"github.com/ogen-app/ogen/src/postrestore"
-	"github.com/ogen-app/ogen/src/postschedule"
+	"github.com/ogen-app/ogen/src/post_actions/postclone"
+	"github.com/ogen-app/ogen/src/post_actions/postrestore"
+	"github.com/ogen-app/ogen/src/post_actions/postschedule"
 	"github.com/ogen-app/ogen/src/repository"
 )
 

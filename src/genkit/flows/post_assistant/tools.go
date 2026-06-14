@@ -14,9 +14,9 @@ import (
 
 	"github.com/ogen-app/ogen/src/genkit/flows"
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/postclone"
-	"github.com/ogen-app/ogen/src/postrestore"
-	"github.com/ogen-app/ogen/src/postschedule"
+	"github.com/ogen-app/ogen/src/post_actions/postclone"
+	"github.com/ogen-app/ogen/src/post_actions/postrestore"
+	"github.com/ogen-app/ogen/src/post_actions/postschedule"
 )
 
 // Per-turn token budget for tool-retrieved chunks.

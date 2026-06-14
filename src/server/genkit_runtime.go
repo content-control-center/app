@@ -17,9 +17,9 @@ import (
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_quality"
-	"github.com/ogen-app/ogen/src/postclone"
-	"github.com/ogen-app/ogen/src/postrestore"
-	"github.com/ogen-app/ogen/src/postschedule"
+	"github.com/ogen-app/ogen/src/post_actions/postclone"
+	"github.com/ogen-app/ogen/src/post_actions/postrestore"
+	"github.com/ogen-app/ogen/src/post_actions/postschedule"
 	"github.com/ogen-app/ogen/src/secrets"
 )
 

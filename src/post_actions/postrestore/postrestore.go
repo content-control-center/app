@@ -24,7 +24,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/postlog"
+	"github.com/ogen-app/ogen/src/post_actions/postlog"
 	"github.com/ogen-app/ogen/src/repository"
 )
 
