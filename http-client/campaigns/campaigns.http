@@ -152,3 +152,37 @@ DELETE {{baseUrl}}/api/campaigns/nonexistent
 # Events: "step" (progress), "complete" (ContentPlanResponse), "error" (code + message).
 POST {{baseUrl}}/api/campaigns/{{campaignId}}/generate-draft
 Accept: text/event-stream
+
+###
+# ── Enrich brief with AI — CON-56 ─────────────────────────────────────────────
+###
+
+### Enrich campaign brief  [protected]
+# Generates a campaign brief (description, target persona, key messages, tone
+# guidelines) from the campaign's title + type (and phases, language). The brief
+# is a *suggestion* — it is streamed back but not persisted to the campaign.
+# Requires ANTHROPIC_API_KEY to be set in the server environment.
+# Returns 503 when the feature is disabled (no API key).
+# Returns 404 if the campaign does not exist; 403 if it belongs to another user.
+# Body is optional — an empty POST is valid. Send {"instruction":"..."} to steer.
+# Response is a Server-Sent Events stream.
+# Events: "step" (per flow stage: buildContext, generate),
+#   "description_delta" / "persona_delta" / "messages_delta" / "tone_delta"
+#   (preview-only fragments, each {"delta":"..."}),
+#   "complete" (the full EnrichBriefResponse — the source of truth),
+#   "error" (code + message).
+POST {{baseUrl}}/api/campaigns/ZOsAt2HZJwFu/enrich-brief
+Accept: text/event-stream
+
+### Enrich campaign brief — with steering instruction  [protected]
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/enrich-brief
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "instruction": "B2B audience, technical and benchmark-driven tone. Emphasise memory safety and latency."
+}
+
+### Enrich campaign brief — non-existent ID (expects 404)  [protected]
+POST {{baseUrl}}/api/campaigns/nonexistent/enrich-brief
+Accept: text/event-stream

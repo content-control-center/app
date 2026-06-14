@@ -26,6 +26,7 @@ import (
 	"github.com/ogen-app/ogen/src/embedding"
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
+	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_quality"
 	"github.com/ogen-app/ogen/src/handlers"
@@ -279,6 +280,10 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 			Evaluations: postEvaluationRepo,
 			PostLogs:    postLogRepo,
 		},
+		enrichBriefRepos: enrich_brief.EnrichBriefRepos{
+			Campaigns:     campaignRepo,
+			CampaignTypes: campaignTypeRepo,
+		},
 		cloneSvc: cloneSvc,
 	}, secretStore)
 	if err != nil {
@@ -287,7 +292,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	log.Println("genkit: all flows registered")
 
 	handlers.NewCampaignTypesHandler(campaignTypeRepo, auth).Register(app)
-	handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, gkRuntime.GenerateDraft, gkRuntime.IsAnthropicAvailable).Register(app)
+	handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, gkRuntime.GenerateDraft, gkRuntime.IsAnthropicAvailable, gkRuntime.EnrichBrief).Register(app)
 	handlers.NewPlatformsHandler(platformRepo, pubs, autoPublishAllowlistRepo, auth).Register(app)
 	handlers.NewTagsHandler(tagRepo, auth).Register(app)
 	postsHandler := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, platformRepo, postAttachmentRepo, auth, gkRuntime.RunPostAssistant, gkRuntime.IsAnthropicAvailable)
