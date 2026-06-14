@@ -1,4 +1,4 @@
-package postschedule
+package schedule
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/post_actions/postlog"
+	"github.com/ogen-app/ogen/src/post_actions/logs"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 )
 
@@ -46,7 +46,7 @@ func (s *Service) promoteLogs(postID, actor string) []*models.PostLog {
 // the post was routed (auto vs manual) for its platform.
 func (s *Service) decisionLog(postID string, from, to models.PostStatus, platformID string, supported *zernio.SupportedPlatform, autoPublish bool, actor string) *models.PostLog {
 	id, _ := models.NewID()
-	payload := postlog.MarshalCapped(map[string]any{
+	payload := logs.MarshalCapped(map[string]any{
 		"platform":        platformID,
 		"zernio_platform": zernioName(supported),
 		"auto_publish":    autoPublish,
@@ -61,7 +61,7 @@ func (s *Service) decisionLog(postID string, from, to models.PostStatus, platfor
 		FromStatus: &fromCopy,
 		ToStatus:   &toCopy,
 		Summary:    "auto-publish allowlist decision",
-		Payload:    postlog.SanitizeAndCap(payload),
+		Payload:    logs.SanitizeAndCap(payload),
 	}
 }
 
@@ -99,7 +99,7 @@ func (s *Service) scheduleActionLog(postID string, scheduledAt time.Time, target
 		EventType: models.PostLogEventUserSchedule,
 		Actor:     opts.Actor,
 		Summary:   "post scheduled for publishing",
-		Payload:   postlog.SanitizeAndCap(string(payload)),
+		Payload:   logs.SanitizeAndCap(string(payload)),
 	}
 }
 

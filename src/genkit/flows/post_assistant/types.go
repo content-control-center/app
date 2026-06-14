@@ -4,9 +4,9 @@ import (
 	"github.com/firebase/genkit/go/ai"
 
 	"github.com/ogen-app/ogen/src/eventhub"
-	"github.com/ogen-app/ogen/src/post_actions/postclone"
-	"github.com/ogen-app/ogen/src/post_actions/postrestore"
-	"github.com/ogen-app/ogen/src/post_actions/postschedule"
+	"github.com/ogen-app/ogen/src/post_actions/clone"
+	"github.com/ogen-app/ogen/src/post_actions/restore"
+	"github.com/ogen-app/ogen/src/post_actions/schedule"
 	"github.com/ogen-app/ogen/src/repository"
 )
 
@@ -111,13 +111,13 @@ type PostAssistantFlowConfig struct {
 	Hub eventhub.Hub
 	// CloneService backs the clonePost tool (CON-59). nil disables the
 	// tool — the assistant then has no clone capability.
-	CloneService *postclone.Service
+	CloneService *clone.Service
 	// RestoreService backs the restoreVersion tool (CON-68). nil disables
 	// the tool — the assistant then has no restore capability.
-	RestoreService *postrestore.Service
+	RestoreService *restore.Service
 	// ScheduleService backs the schedulePost tool (CON-78). nil disables
 	// the tool — the assistant then has no scheduling capability.
-	ScheduleService *postschedule.Service
+	ScheduleService *schedule.Service
 }
 
 // ValidationError is returned when preconditions are not met (HTTP 400).

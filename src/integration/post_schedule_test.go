@@ -17,7 +17,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/post_actions/postschedule"
+	"github.com/ogen-app/ogen/src/post_actions/schedule"
 	"github.com/ogen-app/ogen/src/repository"
 )
 
@@ -85,7 +85,7 @@ var _ = Describe("Post schedule — CON-78", Ordered, func() {
 		// client wired — the auto-publish routing decision is still
 		// exercised; the Zernio submit enqueue is out of scope here
 		// (consistent with the rest of the suite, which doesn't run Backlite).
-		postsHandler.SetScheduleService(postschedule.New(db, postRepo, platformRepo, postAttRepo, allowlistRepo, logRepo, nil, nil))
+		postsHandler.SetScheduleService(schedule.New(db, postRepo, platformRepo, postAttRepo, allowlistRepo, logRepo, nil, nil))
 		postsHandler.Register(app)
 
 		// Seed user + session + campaign.

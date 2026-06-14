@@ -10,7 +10,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/post_actions/postlog"
+	"github.com/ogen-app/ogen/src/post_actions/logs"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 )
 
@@ -109,7 +109,7 @@ func (p *PollZernioStatusProcessor) Process(ctx context.Context, task PollZernio
 			return fmt.Errorf("poll: persist Published: %w", err)
 		}
 		appendLog(ctx, p.Deps, post.ID, models.PostLogEventStateTransition, from, post.Status,
-			"Zernio reported published", postlog.MarshalCapped(map[string]any{
+			"Zernio reported published", logs.MarshalCapped(map[string]any{
 				"published_at": now,
 				"platforms":    job.Platforms,
 			}))
@@ -126,7 +126,7 @@ func (p *PollZernioStatusProcessor) Process(ctx context.Context, task PollZernio
 			return fmt.Errorf("poll: persist Failed: %w", err)
 		}
 		appendLog(ctx, p.Deps, post.ID, models.PostLogEventStateTransition, from, post.Status,
-			fmt.Sprintf("Zernio reported %s", job.Status), postlog.MarshalCapped(map[string]any{
+			fmt.Sprintf("Zernio reported %s", job.Status), logs.MarshalCapped(map[string]any{
 				"zernio_status": job.Status,
 				"platforms":     job.Platforms,
 			}))

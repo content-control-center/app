@@ -1,4 +1,4 @@
-// Package postschedule implements the shared "schedule a Post for
+// Package schedule implements the shared "schedule a Post for
 // publishing" operation (CON-78). It is the single source of truth used
 // by the REST endpoint (POST /api/posts/:id/schedule), the Post
 // Assistant's schedulePost tool, AND the existing PUT /api/posts/:id
@@ -11,7 +11,7 @@
 // expressions are resolved and how the time is echoed — both of which
 // happen in the caller, before this service runs, keeping the service
 // deterministic (mirrors the CON-59 clone pattern).
-package postschedule
+package schedule
 
 import (
 	"context"

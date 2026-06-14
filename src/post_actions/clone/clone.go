@@ -1,4 +1,4 @@
-// Package postclone implements the shared "clone a Post" operation
+// Package clone implements the shared "clone a Post" operation
 // (CON-59). It is the single source of truth used by both the REST
 // endpoint (POST /api/posts/:id/clone) and the Post Assistant's
 // clonePost tool, so the two entry points can never drift.
@@ -8,7 +8,7 @@
 // (the assistant passes AI-adapted content when cloning across
 // platforms). Attachments are deep-copied in object storage so the
 // clone and its source have fully independent blob lifecycles.
-package postclone
+package clone
 
 import (
 	"context"
@@ -24,7 +24,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/post_actions/postlog"
+	"github.com/ogen-app/ogen/src/post_actions/logs"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/storage"
 )
@@ -438,7 +438,7 @@ func buildLogEntry(newID, srcID, targetPlatform, actor, trigger string, adapted 
 		EventType: models.PostLogEventPostCloned,
 		Actor:     actor,
 		Summary:   "post cloned from #" + srcID,
-		Payload:   postlog.SanitizeAndCap(string(payload)),
+		Payload:   logs.SanitizeAndCap(string(payload)),
 	}, nil
 }
 

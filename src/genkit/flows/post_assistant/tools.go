@@ -14,9 +14,9 @@ import (
 
 	"github.com/ogen-app/ogen/src/genkit/flows"
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/post_actions/postclone"
-	"github.com/ogen-app/ogen/src/post_actions/postrestore"
-	"github.com/ogen-app/ogen/src/post_actions/postschedule"
+	"github.com/ogen-app/ogen/src/post_actions/clone"
+	"github.com/ogen-app/ogen/src/post_actions/restore"
+	"github.com/ogen-app/ogen/src/post_actions/schedule"
 )
 
 // Per-turn token budget for tool-retrieved chunks.
@@ -39,23 +39,23 @@ type requestState struct {
 	// emit a clone_started SSE event mid-generation; cloneResult is set
 	// by the tool and read by the runner after generation to finalise
 	// the response.
-	cloneSvc    *postclone.Service
+	cloneSvc    *clone.Service
 	actor       string
 	platforms   []models.Platform
 	onEvent     OnEventFunc
-	cloneResult *postclone.Result
+	cloneResult *clone.Result
 
 	// Restore support (CON-68). restoreSvc backs the restoreVersion tool;
 	// restoreResult is set by the tool and read by the runner after
 	// generation to finalise the response.
-	restoreSvc    *postrestore.Service
-	restoreResult *postrestore.Result
+	restoreSvc    *restore.Service
+	restoreResult *restore.Result
 
 	// Schedule support (CON-78). scheduleSvc backs the schedulePost tool;
 	// scheduleResult is set by the tool and read by the runner after
 	// generation to finalise the response.
-	scheduleSvc    *postschedule.Service
-	scheduleResult *postschedule.Result
+	scheduleSvc    *schedule.Service
+	scheduleResult *schedule.Result
 }
 
 func withRequestState(ctx context.Context, s *requestState) context.Context {
@@ -339,7 +339,7 @@ func toolClonePost(ctx context.Context, in ClonePostInput) (*ClonePostOutput, er
 		return nil, fmt.Errorf("cloning is not available")
 	}
 
-	opts := postclone.DefaultOptions(st.actor, postclone.TriggerAssistant)
+	opts := clone.DefaultOptions(st.actor, clone.TriggerAssistant)
 	if in.TargetPlatform != "" {
 		id, err := resolvePlatform(st.platforms, in.TargetPlatform)
 		if err != nil {
@@ -392,9 +392,9 @@ func toolRestoreVersion(ctx context.Context, in RestoreVersionInput) (*RestoreVe
 
 	emit(st.onEvent, SSEEventRestoreStarted, RestoreStartedEventPayload{TargetVersion: versionNumber})
 
-	res, err := st.restoreSvc.Restore(ctx, st.postID, postrestore.Options{
+	res, err := st.restoreSvc.Restore(ctx, st.postID, restore.Options{
 		Actor:         st.actor,
-		Trigger:       postrestore.TriggerAssistant,
+		Trigger:       restore.TriggerAssistant,
 		VersionNumber: versionNumber,
 	})
 	if err != nil {
@@ -422,11 +422,11 @@ func toolSchedulePost(ctx context.Context, in SchedulePostInput) (*SchedulePostO
 
 	emit(st.onEvent, SSEEventScheduleStarted, ScheduleStartedEventPayload{ScheduledAt: when.UTC().Format(time.RFC3339)})
 
-	res, err := st.scheduleSvc.Schedule(ctx, st.postID, postschedule.Options{
+	res, err := st.scheduleSvc.Schedule(ctx, st.postID, schedule.Options{
 		ScheduledAt:  when,
 		AllowPromote: in.AllowPromote,
 		Actor:        st.actor,
-		Trigger:      postschedule.TriggerAssistant,
+		Trigger:      schedule.TriggerAssistant,
 	})
 	if err != nil {
 		return nil, scheduleToolError(err)
@@ -461,7 +461,7 @@ func parseScheduledAt(s string) (time.Time, error) {
 // expanded into the concrete reasons so the assistant can tell the user
 // exactly what's missing instead of a generic "not ready".
 func scheduleToolError(err error) error {
-	var verr *postschedule.ValidationError
+	var verr *schedule.ValidationError
 	switch {
 	case errors.As(err, &verr):
 		var reasons []string
@@ -474,13 +474,13 @@ func scheduleToolError(err error) error {
 			return fmt.Errorf("the post is not ready to publish yet")
 		}
 		return fmt.Errorf("the post can't be scheduled until these are fixed: %s", strings.Join(reasons, "; "))
-	case errors.Is(err, postschedule.ErrScheduledAtInPast):
+	case errors.Is(err, schedule.ErrScheduledAtInPast):
 		return fmt.Errorf("that time is in the past — propose the next valid time and confirm again")
-	case errors.Is(err, postschedule.ErrNoPlatform):
+	case errors.Is(err, schedule.ErrNoPlatform):
 		return fmt.Errorf("this post has no platform set, so it can't be scheduled — ask the user to choose a platform first")
-	case errors.Is(err, postschedule.ErrNotSchedulable):
+	case errors.Is(err, schedule.ErrNotSchedulable):
 		return fmt.Errorf("%v — only a ready-for-publish post (or a draft you promote) can be scheduled; if it's already scheduled, it must be cancelled first", err)
-	case errors.Is(err, postschedule.ErrPostNotFound):
+	case errors.Is(err, schedule.ErrPostNotFound):
 		return fmt.Errorf("post not found")
 	}
 	return err

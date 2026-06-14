@@ -10,7 +10,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/post_actions/postlog"
+	"github.com/ogen-app/ogen/src/post_actions/logs"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 )
 
@@ -128,7 +128,7 @@ func (p *CancelZernioJobProcessor) transition(ctx context.Context, post *models.
 		return fmt.Errorf("cancel: persist new status: %w", err)
 	}
 	appendLogActor(ctx, p.Deps, post.ID, task.Actor, models.PostLogEventStateTransition, from, to,
-		"post cancelled and transitioned", postlog.MarshalCapped(map[string]any{
+		"post cancelled and transitioned", logs.MarshalCapped(map[string]any{
 			"target": string(to),
 		}))
 	return nil
@@ -166,6 +166,6 @@ func appendLogActor(
 		FromStatus: &fromCopy,
 		ToStatus:   &toCopy,
 		Summary:    summary,
-		Payload:    postlog.SanitizeAndCap(payload),
+		Payload:    logs.SanitizeAndCap(payload),
 	})
 }

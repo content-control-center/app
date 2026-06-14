@@ -20,10 +20,10 @@ import (
 	"github.com/ogen-app/ogen/src/jobs/queues"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/platforms"
-	"github.com/ogen-app/ogen/src/post_actions/postclone"
-	"github.com/ogen-app/ogen/src/post_actions/postlog"
-	"github.com/ogen-app/ogen/src/post_actions/postrestore"
-	"github.com/ogen-app/ogen/src/post_actions/postschedule"
+	"github.com/ogen-app/ogen/src/post_actions/clone"
+	"github.com/ogen-app/ogen/src/post_actions/logs"
+	"github.com/ogen-app/ogen/src/post_actions/restore"
+	"github.com/ogen-app/ogen/src/post_actions/schedule"
 	"github.com/ogen-app/ogen/src/repository"
 )
 
@@ -85,17 +85,17 @@ type PostsHandler struct {
 	db *bun.DB
 	// cloneSvc duplicates a post (CON-59). nil disables the clone
 	// endpoint (503), keeping fixtures that don't wire it green.
-	cloneSvc *postclone.Service
+	cloneSvc *clone.Service
 	// restoreSvc rolls a post back to an earlier version (CON-68). nil
 	// disables the restore endpoint (503).
-	restoreSvc *postrestore.Service
+	restoreSvc *restore.Service
 	// scheduleSvc schedules a post for publishing (CON-78): the single
 	// source of truth for allowlist routing + transactional persist +
 	// Zernio enqueue, shared by POST /:id/schedule, the assistant's
 	// schedulePost tool, and the PUT scheduling branch. nil disables the
 	// schedule endpoint (503) and makes the PUT branch fall back to a
 	// plain status update (test fixtures that don't wire scheduling).
-	scheduleSvc *postschedule.Service
+	scheduleSvc *schedule.Service
 }
 
 // SetOnBeforeDelete registers a hook that runs before a post is
@@ -147,20 +147,20 @@ func (h *PostsHandler) SetSchedulingDeps(allowlist repository.AutoPublishAllowli
 
 // SetCloneService wires the post-clone service (CON-59). Until set, the
 // clone endpoint returns 503.
-func (h *PostsHandler) SetCloneService(s *postclone.Service) {
+func (h *PostsHandler) SetCloneService(s *clone.Service) {
 	h.cloneSvc = s
 }
 
 // SetRestoreService wires the post-restore service (CON-68). Until set,
 // the restore endpoint returns 503.
-func (h *PostsHandler) SetRestoreService(s *postrestore.Service) {
+func (h *PostsHandler) SetRestoreService(s *restore.Service) {
 	h.restoreSvc = s
 }
 
 // SetScheduleService wires the post-schedule service (CON-78). Until set,
 // the schedule endpoint returns 503 and the PUT scheduling branch falls
 // back to a plain status update.
-func (h *PostsHandler) SetScheduleService(s *postschedule.Service) {
+func (h *PostsHandler) SetScheduleService(s *schedule.Service) {
 	h.scheduleSvc = s
 }
 
@@ -188,7 +188,7 @@ func (h *PostsHandler) logEvent(c *fiber.Ctx, postID string, eventType models.Po
 		FromStatus: fromStatus,
 		ToStatus:   toStatus,
 		Summary:    summary,
-		Payload:    postlog.SanitizeAndCap(payload),
+		Payload:    logs.SanitizeAndCap(payload),
 	})
 }
 
@@ -247,7 +247,7 @@ func (h *PostsHandler) validateReadyForPublish(c *fiber.Ctx, post *models.Post, 
 	if hasAnyErrors(errsByPlatform) {
 		h.logEvent(c, post.ID, models.PostLogEventValidationFailed, &from, &status,
 			"draft → ready_for_publish blocked by platform validation",
-			postlog.MarshalCapped(map[string]any{"platform_validation": errsByPlatform}),
+			logs.MarshalCapped(map[string]any{"platform_validation": errsByPlatform}),
 		)
 		if err := c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
 			"error":               "post is not ready for publish",
@@ -259,7 +259,7 @@ func (h *PostsHandler) validateReadyForPublish(c *fiber.Ctx, post *models.Post, 
 	}
 	h.logEvent(c, post.ID, models.PostLogEventValidationPassed, &from, &status,
 		"draft → ready_for_publish passed platform validation",
-		postlog.MarshalCapped(map[string]any{"platform_validation": errsByPlatform}),
+		logs.MarshalCapped(map[string]any{"platform_validation": errsByPlatform}),
 	)
 	return false, nil
 }
@@ -278,7 +278,7 @@ func (h *PostsHandler) logTransition(c *fiber.Ctx, post *models.Post, prev, next
 	if prev == models.PostStatusFailed && next == models.PostStatusReadyForPublish {
 		h.logEvent(c, post.ID, models.PostLogEventUserRetry, &prev, &next,
 			"manual retry: user moved Failed → ReadyForPublish",
-			postlog.MarshalCapped(map[string]any{
+			logs.MarshalCapped(map[string]any{
 				"prior_failure_reason": post.FailureReason,
 				"prior_zernio_post_id": post.ZernioPostID,
 			}),
@@ -331,26 +331,26 @@ func (h *PostsHandler) Schedule(c *fiber.Ctx) error {
 	}
 
 	session := c.Locals("session").(*models.Session)
-	res, err := h.scheduleSvc.Schedule(c.Context(), c.Params("id"), postschedule.Options{
+	res, err := h.scheduleSvc.Schedule(c.Context(), c.Params("id"), schedule.Options{
 		ScheduledAt:  *req.ScheduledAt,
 		AllowPromote: req.AllowPromote,
 		Actor:        session.UserID,
-		Trigger:      postschedule.TriggerAPI,
+		Trigger:      schedule.TriggerAPI,
 	})
 	if err != nil {
-		var verr *postschedule.ValidationError
+		var verr *schedule.ValidationError
 		switch {
-		case errors.Is(err, postschedule.ErrPostNotFound):
+		case errors.Is(err, schedule.ErrPostNotFound):
 			return fiber.NewError(fiber.StatusNotFound, "post not found")
 		case errors.As(err, &verr):
 			return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
 				"error":               "post is not ready for publish",
 				"platform_validation": verr.Errors,
 			})
-		case errors.Is(err, postschedule.ErrScheduledAtRequired),
-			errors.Is(err, postschedule.ErrScheduledAtInPast),
-			errors.Is(err, postschedule.ErrNoPlatform),
-			errors.Is(err, postschedule.ErrNotSchedulable):
+		case errors.Is(err, schedule.ErrScheduledAtRequired),
+			errors.Is(err, schedule.ErrScheduledAtInPast),
+			errors.Is(err, schedule.ErrNoPlatform),
+			errors.Is(err, schedule.ErrNotSchedulable):
 			return fiber.NewError(fiber.StatusBadRequest, err.Error())
 		}
 		return err
@@ -446,7 +446,7 @@ func (h *PostsHandler) Cancel(c *fiber.Ctx) error {
 
 	h.logEvent(c, post.ID, models.PostLogEventUserCancel, &post.Status, &post.Status,
 		"user requested cancellation; cancel_zernio_job enqueued",
-		postlog.MarshalCapped(map[string]any{"target": string(target)}),
+		logs.MarshalCapped(map[string]any{"target": string(target)}),
 	)
 
 	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
@@ -757,7 +757,7 @@ func (h *PostsHandler) Clone(c *fiber.Ctx) error {
 	}
 
 	session := c.Locals("session").(*models.Session)
-	opts := postclone.DefaultOptions(session.UserID, postclone.TriggerAPI)
+	opts := clone.DefaultOptions(session.UserID, clone.TriggerAPI)
 	opts.TargetPlatformID = req.TargetPlatformID
 	opts.TargetPostType = req.TargetPostType
 	opts.TitleOverride = req.Title
@@ -765,9 +765,9 @@ func (h *PostsHandler) Clone(c *fiber.Ctx) error {
 	res, err := h.cloneSvc.Clone(c.Context(), c.Params("id"), opts)
 	if err != nil {
 		switch {
-		case errors.Is(err, postclone.ErrSourceNotFound):
+		case errors.Is(err, clone.ErrSourceNotFound):
 			return fiber.NewError(fiber.StatusNotFound, "post not found")
-		case errors.Is(err, postclone.ErrInvalidPlatform):
+		case errors.Is(err, clone.ErrInvalidPlatform):
 			return fiber.NewError(fiber.StatusBadRequest, err.Error())
 		}
 		return err
@@ -844,7 +844,7 @@ func (h *PostsHandler) Update(c *fiber.Ctx) error {
 		from := post.Status
 		h.logEvent(c, post.ID, models.PostLogEventStateTransitionBlocked, &from, &status,
 			"transition rejected by state machine",
-			postlog.MarshalCapped(map[string]any{"reason": "invalid_transition"}),
+			logs.MarshalCapped(map[string]any{"reason": "invalid_transition"}),
 		)
 		return fiber.NewError(fiber.StatusBadRequest, "invalid status transition from "+string(post.Status)+" to "+string(status))
 	}
@@ -862,7 +862,7 @@ func (h *PostsHandler) Update(c *fiber.Ctx) error {
 
 	// CON-69 §5 / CON-78: ReadyForPublish→Scheduled consults the
 	// auto-publish allowlist and persists status, PostLog, and the submit
-	// Backlite task transactionally — now via the shared postschedule
+	// Backlite task transactionally — now via the shared schedule
 	// service so the REST/assistant/PUT paths can't drift. Falls through
 	// to the default save when the schedule service isn't wired (test
 	// fixtures).
@@ -1260,18 +1260,18 @@ func (h *PostsHandler) Restore(c *fiber.Ctx) error {
 	}
 
 	session := c.Locals("session").(*models.Session)
-	res, err := h.restoreSvc.Restore(c.Context(), c.Params("id"), postrestore.Options{
+	res, err := h.restoreSvc.Restore(c.Context(), c.Params("id"), restore.Options{
 		Actor:         session.UserID,
-		Trigger:       postrestore.TriggerAPI,
+		Trigger:       restore.TriggerAPI,
 		VersionNumber: req.VersionNumber,
 	})
 	if err != nil {
 		switch {
-		case errors.Is(err, postrestore.ErrPostNotFound):
+		case errors.Is(err, restore.ErrPostNotFound):
 			return fiber.NewError(fiber.StatusNotFound, "post not found")
-		case errors.Is(err, postrestore.ErrVersionNotFound):
+		case errors.Is(err, restore.ErrVersionNotFound):
 			return fiber.NewError(fiber.StatusNotFound, "version not found")
-		case errors.Is(err, postrestore.ErrNotEditable):
+		case errors.Is(err, restore.ErrNotEditable):
 			return fiber.NewError(fiber.StatusBadRequest, err.Error())
 		}
 		return err

@@ -17,9 +17,9 @@ import (
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_quality"
-	"github.com/ogen-app/ogen/src/post_actions/postclone"
-	"github.com/ogen-app/ogen/src/post_actions/postrestore"
-	"github.com/ogen-app/ogen/src/post_actions/postschedule"
+	"github.com/ogen-app/ogen/src/post_actions/clone"
+	"github.com/ogen-app/ogen/src/post_actions/restore"
+	"github.com/ogen-app/ogen/src/post_actions/schedule"
 	"github.com/ogen-app/ogen/src/secrets"
 )
 
@@ -57,9 +57,9 @@ type genkitRuntime struct {
 	postAssistRepos  post_assistant.PostAssistantRepos
 	postQualityRepos post_quality.PostQualityRepos
 	enrichBriefRepos enrich_brief.EnrichBriefRepos
-	cloneSvc         *postclone.Service
-	restoreSvc       *postrestore.Service
-	scheduleSvc      *postschedule.Service
+	cloneSvc         *clone.Service
+	restoreSvc       *restore.Service
+	scheduleSvc      *schedule.Service
 }
 
 // genkitDeps groups the runtime's static inputs: things captured at
@@ -72,9 +72,9 @@ type genkitDeps struct {
 	postAssistRepos  post_assistant.PostAssistantRepos
 	postQualityRepos post_quality.PostQualityRepos
 	enrichBriefRepos enrich_brief.EnrichBriefRepos
-	cloneSvc         *postclone.Service
-	restoreSvc       *postrestore.Service
-	scheduleSvc      *postschedule.Service
+	cloneSvc         *clone.Service
+	restoreSvc       *restore.Service
+	scheduleSvc      *schedule.Service
 }
 
 // newGenkitRuntime builds the runtime and runs the initial rebuild.

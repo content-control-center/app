@@ -68,8 +68,8 @@ const ActorSystem = "system"
 // PostLog is one entry in a Post's audit history (CON-69 §11).
 //
 // Payload is a JSON-encoded blob. Writers MUST run it through
-// postlog.Capper to enforce the 64 KB ceiling and through
-// postlog.Sanitize to strip secrets — the column is plain TEXT so the
+// logs.Capper to enforce the 64 KB ceiling and through
+// logs.Sanitize to strip secrets — the column is plain TEXT so the
 // guarantees live in code, not in the schema.
 type PostLog struct {
 	bun.BaseModel `bun:"table:post_logs,alias:pl" swaggerignore:"true"`

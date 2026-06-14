@@ -32,9 +32,9 @@ import (
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/jobs/queues"
-	"github.com/ogen-app/ogen/src/post_actions/postclone"
-	"github.com/ogen-app/ogen/src/post_actions/postrestore"
-	"github.com/ogen-app/ogen/src/post_actions/postschedule"
+	"github.com/ogen-app/ogen/src/post_actions/clone"
+	"github.com/ogen-app/ogen/src/post_actions/restore"
+	"github.com/ogen-app/ogen/src/post_actions/schedule"
 	"github.com/ogen-app/ogen/src/publishers"
 	pubzernio "github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
@@ -252,14 +252,14 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	// CON-59: one clone service, shared by the REST endpoint and the
 	// assistant's clonePost tool. Deep-copies attachments in object
 	// storage so clone and source have independent blob lifecycles.
-	cloneSvc := postclone.New(db, postRepo, postVersionRepo, postAttachmentRepo, platformRepo, postLogRepo, store, hub)
+	cloneSvc := clone.New(db, postRepo, postVersionRepo, postAttachmentRepo, platformRepo, postLogRepo, store, hub)
 	// CON-68: one restore service, shared by the REST endpoint and the
 	// assistant's restoreVersion tool. Non-destructive append-only roll-back.
-	restoreSvc := postrestore.New(db, postRepo, postVersionRepo, postLogRepo, hub)
+	restoreSvc := restore.New(db, postRepo, postVersionRepo, postLogRepo, hub)
 	// CON-78: one schedule service, shared by POST /:id/schedule, the
 	// assistant's schedulePost tool, and the PUT scheduling branch. Owns
 	// allowlist routing + transactional persist + Zernio submit enqueue.
-	scheduleSvc := postschedule.New(db, postRepo, platformRepo, postAttachmentRepo, autoPublishAllowlistRepo, postLogRepo, jobsRT.Client(), hub)
+	scheduleSvc := schedule.New(db, postRepo, platformRepo, postAttachmentRepo, autoPublishAllowlistRepo, postLogRepo, jobsRT.Client(), hub)
 
 	gkRuntime, err := newGenkitRuntime(ctx, genkitDeps{
 		cfg:      cfg,
