@@ -131,14 +131,15 @@ func runPostAssistant(
 		}
 	}
 	st := &requestState{
-		postID:    req.PostID,
-		assetIDs:  post.UsedAssetIDs,
-		repos:     repos,
-		embedder:  cfg.Embedder,
-		cloneSvc:  cfg.CloneService,
-		actor:     post.CreatedBy,
-		platforms: platforms,
-		onEvent:   onEvent,
+		postID:     req.PostID,
+		assetIDs:   post.UsedAssetIDs,
+		repos:      repos,
+		embedder:   cfg.Embedder,
+		cloneSvc:   cfg.CloneService,
+		restoreSvc: cfg.RestoreService,
+		actor:      post.CreatedBy,
+		platforms:  platforms,
+		onEvent:    onEvent,
 	}
 	ctx = withRequestState(ctx, st)
 
@@ -234,7 +235,7 @@ func runPostAssistant(
 		ai.WithSystem(systemBlock),
 		ai.WithMessages(history...),
 		ai.WithPrompt(req.Instruction),
-		ai.WithTools(tools.listAssets, tools.getAssetChunks, tools.searchAssetChunks, tools.getCurrentContent, tools.clonePost),
+		ai.WithTools(tools.listAssets, tools.getAssetChunks, tools.searchAssetChunks, tools.getCurrentContent, tools.clonePost, tools.restoreVersion),
 		ai.WithMaxTurns(maxTurns),
 		ai.WithStreaming(streamCb),
 		ai.WithConfig(anthropic.MessageNewParams{
@@ -308,6 +309,30 @@ func runPostAssistant(
 			PlatformID: st.cloneResult.Post.PlatformID,
 			PostType:   st.cloneResult.ResolvedPostType,
 			Adapted:    st.cloneResult.Adapted,
+		}
+	}
+
+	// ── Restore handling (CON-68) ────────────────────────────────────────────
+	// If the restoreVersion tool ran this turn, it is the authoritative
+	// outcome: the service has already swapped the post content and
+	// appended the version(s), so action is "restored" and we surface the
+	// restored content (for the editor) without re-running the edit path.
+	if st.restoreResult != nil {
+		rr := st.restoreResult
+		result.Action = "restored"
+		result.UpdatedContent = rr.Post.Content
+		result.SaveVersion = false
+		if result.Explanation == "" {
+			if rr.NoOp {
+				result.Explanation = fmt.Sprintf("The post already matches version %d — nothing to restore.", rr.RestoredFromVersion)
+			} else {
+				result.Explanation = fmt.Sprintf("Restored the post to version %d (saved as version %d). Your previous content is kept in the history.", rr.RestoredFromVersion, rr.NewVersionNumber)
+			}
+		}
+		result.RestoreResult = &RestoreResultPayload{
+			RestoredFromVersion: rr.RestoredFromVersion,
+			NewVersionNumber:    rr.NewVersionNumber,
+			NoOp:                rr.NoOp,
 		}
 	}
 
@@ -452,6 +477,16 @@ func runPostAssistant(
 			PlatformID: result.CloneResult.PlatformID,
 			PostType:   result.CloneResult.PostType,
 			Adapted:    result.CloneResult.Adapted,
+		})
+	}
+
+	// Surface the restore outcome before the canonical "complete" so the
+	// UI can refresh the version list / editor as soon as it lands.
+	if result.RestoreResult != nil {
+		emit(onEvent, SSEEventRestoreComplete, RestoreCompleteEventPayload{
+			RestoredFromVersion: result.RestoreResult.RestoredFromVersion,
+			NewVersionNumber:    result.RestoreResult.NewVersionNumber,
+			NoOp:                result.RestoreResult.NoOp,
 		})
 	}
 

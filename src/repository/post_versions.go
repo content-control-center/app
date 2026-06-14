@@ -15,6 +15,7 @@ type PostVersionRepository interface {
 	Create(ctx context.Context, version *models.PostVersion) error
 	ListByPostID(ctx context.Context, postID string) ([]models.PostVersion, error)
 	GetLatestByPostID(ctx context.Context, postID string) (*models.PostVersion, error)
+	GetByPostIDAndVersionNumber(ctx context.Context, postID string, versionNumber int) (*models.PostVersion, error)
 	CountByPostID(ctx context.Context, postID string) (int, error)
 }
 
@@ -47,6 +48,23 @@ func (r *postVersionRepository) GetLatestByPostID(ctx context.Context, postID st
 		Model(version).
 		Where("pv.post_id = ?", postID).
 		OrderExpr("pv.version_number DESC").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return version, nil
+}
+
+func (r *postVersionRepository) GetByPostIDAndVersionNumber(ctx context.Context, postID string, versionNumber int) (*models.PostVersion, error) {
+	version := new(models.PostVersion)
+	err := r.db.NewSelect().
+		Model(version).
+		Where("pv.post_id = ?", postID).
+		Where("pv.version_number = ?", versionNumber).
 		Limit(1).
 		Scan(ctx)
 	if err != nil {

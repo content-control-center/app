@@ -133,6 +133,11 @@ func assembleContext(
 		return nil, err
 	}
 
+	versions, err := buildVersionSummaries(ctx, post, repos)
+	if err != nil {
+		return nil, err
+	}
+
 	// Available platforms power the clonePost tool's platform resolution.
 	// Best-effort: a load failure (or no platforms repo) just omits the
 	// section — the tool still validates server-side.
@@ -155,6 +160,7 @@ func assembleContext(
 		PostContent:         post.Content,
 		Assets:              summaries,
 		Platforms:           platforms,
+		Versions:            versions,
 	}
 
 	systemPrompt, err := renderTemplate(systemTmpl, data)
@@ -184,6 +190,51 @@ type contextTemplateData struct {
 	PostContent         string
 	Assets              []assetSummary
 	Platforms           []platformOption
+	Versions            []versionSummary
+}
+
+// versionSummary is a single entry in the post's version history,
+// surfaced to the model so it can map "v2" / "the previous version" to a
+// concrete version number for the restoreVersion tool. Content is
+// deliberately omitted to keep the prompt small — only the metadata the
+// model needs to choose a number is included.
+type versionSummary struct {
+	Number    int
+	Note      string
+	Creator   string
+	IsCurrent bool
+}
+
+// buildVersionSummaries lists the post's saved versions (oldest first),
+// flagging the latest (highest version_number) as the current HEAD.
+// Best-effort: a load failure is propagated, but no versions simply
+// omits the section. Rendered into the cached context block; a content
+// change (the common case) busts the cache, so the only staleness window
+// is a manual snapshot within the TTL — harmless, since the restore tool
+// and service always validate the chosen number against the live DB.
+func buildVersionSummaries(ctx context.Context, post *models.Post, repos PostAssistantRepos) ([]versionSummary, error) {
+	if repos.Versions == nil {
+		return nil, nil
+	}
+	versions, err := repos.Versions.ListByPostID(ctx, post.ID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]versionSummary, 0, len(versions))
+	for i, v := range versions {
+		out = append(out, versionSummary{
+			Number:  v.VersionNumber,
+			Note:    v.Note,
+			Creator: v.Creator,
+			// The latest snapshot is the current HEAD. ListByPostID is
+			// ordered ascending, so that's the last element. Content
+			// equality would wrongly flag every snapshot that shares the
+			// restored content (e.g. after restoring v1, both v1 and the
+			// appended restore version match the live content).
+			IsCurrent: i == len(versions)-1,
+		})
+	}
+	return out, nil
 }
 
 // platformOption is a platform the user can clone a post onto, with its

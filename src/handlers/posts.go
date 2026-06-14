@@ -22,6 +22,7 @@ import (
 	"github.com/ogen-app/ogen/src/platforms"
 	"github.com/ogen-app/ogen/src/postclone"
 	"github.com/ogen-app/ogen/src/postlog"
+	"github.com/ogen-app/ogen/src/postrestore"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
 )
@@ -85,6 +86,9 @@ type PostsHandler struct {
 	// cloneSvc duplicates a post (CON-59). nil disables the clone
 	// endpoint (503), keeping fixtures that don't wire it green.
 	cloneSvc *postclone.Service
+	// restoreSvc rolls a post back to an earlier version (CON-68). nil
+	// disables the restore endpoint (503).
+	restoreSvc *postrestore.Service
 }
 
 // SetOnBeforeDelete registers a hook that runs before a post is
@@ -138,6 +142,12 @@ func (h *PostsHandler) SetSchedulingDeps(allowlist repository.AutoPublishAllowli
 // clone endpoint returns 503.
 func (h *PostsHandler) SetCloneService(s *postclone.Service) {
 	h.cloneSvc = s
+}
+
+// SetRestoreService wires the post-restore service (CON-68). Until set,
+// the restore endpoint returns 503.
+func (h *PostsHandler) SetRestoreService(s *postrestore.Service) {
+	h.restoreSvc = s
 }
 
 // logEvent appends a PostLog entry, swallowing repo errors so logging
@@ -488,6 +498,7 @@ func (h *PostsHandler) Register(app *fiber.App) {
 	g.Get("/:id/messages", h.auth, h.ListMessages)
 	g.Get("/:id/versions", h.auth, h.ListVersions)
 	g.Post("/:id/versions", h.auth, h.CreateVersion)
+	g.Post("/:id/restore", h.auth, h.Restore)
 	g.Post("/:id/cancel", h.auth, h.Cancel)
 
 	app.Get("/api/campaigns/:campaign_id/posts", h.auth, h.ListByCampaign)
@@ -1207,4 +1218,74 @@ func (h *PostsHandler) CreateVersion(c *fiber.Ctx) error {
 		return err
 	}
 	return c.Status(fiber.StatusCreated).JSON(version)
+}
+
+type restoreRequest struct {
+	VersionNumber int `json:"version_number"`
+}
+
+// Restore godoc
+// @Summary      Restore post to a version
+// @Description  Rolls a post's content back to an earlier version (CON-68).
+// @Description  Restore is non-destructive: the target version's content is
+// @Description  copied into a brand-new version that becomes the new HEAD, so
+// @Description  the full history is preserved and the restore is itself
+// @Description  reversible. If the live post has unsnapshotted edits, they are
+// @Description  auto-saved as a version first so nothing is lost. Restoring to
+// @Description  the version that already matches the current content is a no-op.
+// @Tags         posts
+// @Accept       json
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id    path      string          true  "Post Sqid"
+// @Param        body  body      restoreRequest  true  "Target version"
+// @Success      200   {object}  map[string]interface{}
+// @Failure      400   {object}  map[string]string
+// @Failure      401   {object}  map[string]string
+// @Failure      404   {object}  map[string]string
+// @Failure      503   {object}  map[string]string
+// @Router       /api/posts/{id}/restore [post]
+func (h *PostsHandler) Restore(c *fiber.Ctx) error {
+	if h.restoreSvc == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "restore is not available")
+	}
+	var req restoreRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	if req.VersionNumber <= 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "version_number is required and must be positive")
+	}
+
+	session := c.Locals("session").(*models.Session)
+	res, err := h.restoreSvc.Restore(c.Context(), c.Params("id"), postrestore.Options{
+		Actor:         session.UserID,
+		Trigger:       postrestore.TriggerAPI,
+		VersionNumber: req.VersionNumber,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, postrestore.ErrPostNotFound):
+			return fiber.NewError(fiber.StatusNotFound, "post not found")
+		case errors.Is(err, postrestore.ErrVersionNotFound):
+			return fiber.NewError(fiber.StatusNotFound, "version not found")
+		case errors.Is(err, postrestore.ErrNotEditable):
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+		return err
+	}
+
+	// Re-fetch so the response carries a fully hydrated post (campaign /
+	// platform / assets), matching the Update handler's contract.
+	updated, err := h.repo.GetByID(c.Context(), c.Params("id"))
+	if err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{
+		"post":                  updated,
+		"restored_from_version": res.RestoredFromVersion,
+		"new_version_number":    res.NewVersionNumber,
+		"auto_snapshot_created": res.AutoSnapshotCreated,
+		"no_op":                 res.NoOp,
+	})
 }

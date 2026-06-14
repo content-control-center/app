@@ -13,6 +13,7 @@ import (
 	"github.com/ogen-app/ogen/src/genkit/flows"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/postclone"
+	"github.com/ogen-app/ogen/src/postrestore"
 )
 
 // Per-turn token budget for tool-retrieved chunks.
@@ -40,6 +41,12 @@ type requestState struct {
 	platforms   []models.Platform
 	onEvent     OnEventFunc
 	cloneResult *postclone.Result
+
+	// Restore support (CON-68). restoreSvc backs the restoreVersion tool;
+	// restoreResult is set by the tool and read by the runner after
+	// generation to finalise the response.
+	restoreSvc    *postrestore.Service
+	restoreResult *postrestore.Result
 }
 
 func withRequestState(ctx context.Context, s *requestState) context.Context {
@@ -102,6 +109,20 @@ type ClonePostOutput struct {
 	PostTypeFellBack bool   `json:"postTypeFellBack"`
 }
 
+// RestoreVersionInput is the input for the restoreVersion tool. Provide
+// either an absolute versionNumber or a relative reference.
+type RestoreVersionInput struct {
+	VersionNumber int    `json:"versionNumber,omitempty" jsonschema:"description=The version number to restore to (e.g. 2). Take it from the Version history in the context."`
+	Relative      string `json:"relative,omitempty"      jsonschema:"description=Relative reference instead of a number; use \"previous\" for the version before the current one (also covers \"undo\" / \"go back\")."`
+}
+
+// RestoreVersionOutput is returned to the model after a restore.
+type RestoreVersionOutput struct {
+	RestoredFromVersion int  `json:"restoredFromVersion"`
+	NewVersionNumber    int  `json:"newVersionNumber"`
+	NoOp                bool `json:"noOp"`
+}
+
 // ── Tool registration ────────────────────────────────────────────────────────
 
 type toolSet struct {
@@ -110,6 +131,7 @@ type toolSet struct {
 	searchAssetChunks ai.ToolRef
 	getCurrentContent ai.ToolRef
 	clonePost         ai.ToolRef
+	restoreVersion    ai.ToolRef
 }
 
 func defineTools(g *genkit.Genkit) *toolSet {
@@ -150,12 +172,23 @@ func defineTools(g *genkit.Genkit) *toolSet {
 		},
 	)
 
+	restoreVersion := genkit.DefineTool(g, "restoreVersion",
+		"Rolls the current post back to an earlier saved version. Pass versionNumber "+
+			"(e.g. 2) for an explicit version, or relative:\"previous\" to undo the last change. "+
+			"Non-destructive: it saves a new version, so nothing is lost. Returns the restored "+
+			"version number and the new HEAD version number.",
+		func(ctx *ai.ToolContext, in RestoreVersionInput) (*RestoreVersionOutput, error) {
+			return toolRestoreVersion(ctx, in)
+		},
+	)
+
 	return &toolSet{
 		listAssets:        list,
 		getAssetChunks:    getChunks,
 		searchAssetChunks: searchChunks,
 		getCurrentContent: getCurrentContent,
 		clonePost:         clonePost,
+		restoreVersion:    restoreVersion,
 	}
 }
 
@@ -297,6 +330,78 @@ func toolClonePost(ctx context.Context, in ClonePostInput) (*ClonePostOutput, er
 		Adapted:          res.Adapted,
 		PostTypeFellBack: res.PostTypeFellBack,
 	}, nil
+}
+
+func toolRestoreVersion(ctx context.Context, in RestoreVersionInput) (*RestoreVersionOutput, error) {
+	st := getRequestState(ctx)
+	if st.restoreSvc == nil {
+		return nil, fmt.Errorf("restore is not available")
+	}
+
+	versionNumber := in.VersionNumber
+	if versionNumber <= 0 && in.Relative != "" {
+		resolved, err := resolvePreviousVersion(ctx, st, in.Relative)
+		if err != nil {
+			return nil, err
+		}
+		versionNumber = resolved
+	}
+	if versionNumber <= 0 {
+		return nil, fmt.Errorf("specify which version to restore: a version number (e.g. 2) or relative:\"previous\"")
+	}
+
+	emit(st.onEvent, SSEEventRestoreStarted, RestoreStartedEventPayload{TargetVersion: versionNumber})
+
+	res, err := st.restoreSvc.Restore(ctx, st.postID, postrestore.Options{
+		Actor:         st.actor,
+		Trigger:       postrestore.TriggerAssistant,
+		VersionNumber: versionNumber,
+	})
+	if err != nil {
+		return nil, err
+	}
+	st.restoreResult = res
+
+	return &RestoreVersionOutput{
+		RestoredFromVersion: res.RestoredFromVersion,
+		NewVersionNumber:    res.NewVersionNumber,
+		NoOp:                res.NoOp,
+	}, nil
+}
+
+// resolvePreviousVersion maps a relative reference ("previous", "undo",
+// "back", "last") to a concrete version number: the version representing
+// the state immediately before the current HEAD. Returns an error (which
+// the model relays to the user) when there is nothing earlier to restore.
+func resolvePreviousVersion(ctx context.Context, st *requestState, relative string) (int, error) {
+	switch strings.ToLower(strings.TrimSpace(relative)) {
+	case "previous", "prev", "undo", "back", "last", "earlier":
+	default:
+		return 0, fmt.Errorf("unrecognized version reference %q; pass a version number instead", relative)
+	}
+	latest, err := st.repos.Versions.GetLatestByPostID(ctx, st.postID)
+	if err != nil {
+		return 0, fmt.Errorf("look up versions: %w", err)
+	}
+	if latest == nil {
+		return 0, fmt.Errorf("there are no saved versions to restore")
+	}
+	post, err := st.repos.Posts.GetByID(ctx, st.postID)
+	if err != nil {
+		return 0, fmt.Errorf("load post: %w", err)
+	}
+	// "previous" = the state before the current HEAD. When the latest
+	// snapshot already equals the live content, step back one; otherwise
+	// the live content is ahead of every snapshot, so the latest snapshot
+	// itself is the previous state.
+	target := latest.VersionNumber
+	if post.Content == latest.Content {
+		target = latest.VersionNumber - 1
+	}
+	if target < 1 {
+		return 0, fmt.Errorf("there is no earlier version to restore")
+	}
+	return target, nil
 }
 
 // resolvePlatform maps a platform identifier from the model (an exact ID

@@ -5,6 +5,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/postclone"
+	"github.com/ogen-app/ogen/src/postrestore"
 	"github.com/ogen-app/ogen/src/repository"
 )
 
@@ -21,13 +22,17 @@ type PostAssistantRequest struct {
 type PostAssistantResponse struct {
 	Explanation    string `json:"explanation"                  jsonschema:"description=Human-readable explanation of what was changed or why the request was declined"`
 	UpdatedContent string `json:"updatedContent"               jsonschema:"description=The full updated post content as Markdown; empty when action is declined"`
-	Action         string `json:"action"                       jsonschema:"description=edited when content was changed; declined when the request is out of scope; cloned when a clone was created,enum=edited,enum=declined,enum=cloned"`
+	Action         string `json:"action"                       jsonschema:"description=edited when content was changed; declined when the request is out of scope; cloned when a clone was created; restored when the post was rolled back to an earlier version,enum=edited,enum=declined,enum=cloned,enum=restored"`
 	SaveVersion    bool   `json:"saveVersion"                  jsonschema:"description=True when a new version snapshot should be created"`
 	VersionNote    string `json:"versionNote,omitempty"        jsonschema:"description=Short note describing the version; only present when saveVersion is true"`
 	// CloneResult is populated by the server (not the model) when the
 	// clonePost tool created a clone during this turn. Action is then
 	// "cloned" and UpdatedContent is empty — the source post is untouched.
 	CloneResult *CloneResultPayload `json:"cloneResult,omitempty" jsonschema:"-"`
+	// RestoreResult is populated by the server (not the model) when the
+	// restoreVersion tool ran this turn. Action is then "restored" and
+	// UpdatedContent holds the restored content.
+	RestoreResult *RestoreResultPayload `json:"restoreResult,omitempty" jsonschema:"-"`
 }
 
 // CloneResultPayload describes the post created by the clonePost tool.
@@ -36,6 +41,13 @@ type CloneResultPayload struct {
 	PlatformID string `json:"platformId,omitempty"`
 	PostType   string `json:"postType,omitempty"`
 	Adapted    bool   `json:"adapted"`
+}
+
+// RestoreResultPayload describes the outcome of the restoreVersion tool.
+type RestoreResultPayload struct {
+	RestoredFromVersion int  `json:"restoredFromVersion"`
+	NewVersionNumber    int  `json:"newVersionNumber"`
+	NoOp                bool `json:"noOp"`
 }
 
 // PostAssistantRepos bundles all repository dependencies for the flow.
@@ -76,6 +88,9 @@ type PostAssistantFlowConfig struct {
 	// CloneService backs the clonePost tool (CON-59). nil disables the
 	// tool — the assistant then has no clone capability.
 	CloneService *postclone.Service
+	// RestoreService backs the restoreVersion tool (CON-68). nil disables
+	// the tool — the assistant then has no restore capability.
+	RestoreService *postrestore.Service
 }
 
 // ValidationError is returned when preconditions are not met (HTTP 400).
@@ -100,6 +115,8 @@ const (
 	SSEEventToolResult       SSEEventKind = "tool_result"
 	SSEEventCloneStarted     SSEEventKind = "clone_started"
 	SSEEventCloneComplete    SSEEventKind = "clone_complete"
+	SSEEventRestoreStarted   SSEEventKind = "restore_started"
+	SSEEventRestoreComplete  SSEEventKind = "restore_complete"
 	SSEEventComplete         SSEEventKind = "complete"
 	SSEEventError            SSEEventKind = "error"
 )
@@ -117,6 +134,19 @@ type CloneCompleteEventPayload struct {
 	PlatformID string `json:"platformId,omitempty"`
 	PostType   string `json:"postType,omitempty"`
 	Adapted    bool   `json:"adapted"`
+}
+
+// RestoreStartedEventPayload is emitted when the restoreVersion tool
+// begins, so the UI can show progress.
+type RestoreStartedEventPayload struct {
+	TargetVersion int `json:"targetVersion"`
+}
+
+// RestoreCompleteEventPayload is emitted once the restore is persisted.
+type RestoreCompleteEventPayload struct {
+	RestoredFromVersion int  `json:"restoredFromVersion"`
+	NewVersionNumber    int  `json:"newVersionNumber"`
+	NoOp                bool `json:"noOp"`
 }
 
 // DeltaEventPayload carries a fragment of a streamed string value.
