@@ -85,11 +85,11 @@ func (p *ReconcileScheduledPostsProcessor) Process(ctx context.Context, _ Reconc
 
 	for i := range stuck {
 		post := &stuck[i]
-		reason := fmt.Sprintf("%s: scheduled_at=%s elapsed=%s last_zernio_status=%q",
+		reason := fmt.Sprintf("%s: scheduled_at=%s elapsed=%s last_publisher_status=%q",
 			FailureReasonReconciliationTimeout,
 			fmtTime(post.ScheduledAt),
 			fmtElapsedSince(post.ScheduledAt),
-			post.ZernioStatus,
+			post.PublisherStatus,
 		)
 		if err := p.Repo.UpdateStatusAndReason(ctx, post.ID, models.PostStatusFailed, reason); err != nil {
 			log.Printf("reconcile: failed to mark post %s Failed: %v", post.ID, err)
@@ -107,11 +107,11 @@ func (p *ReconcileScheduledPostsProcessor) Process(ctx context.Context, _ Reconc
 			ToStatus:   &to,
 			Summary:    "reconciliation timeout: forcing Failed",
 			Payload: logs.SanitizeAndCap(logs.MarshalCapped(map[string]any{
-				"reason":              FailureReasonReconciliationTimeout,
-				"scheduled_at":        post.ScheduledAt,
-				"elapsed":             fmtElapsedSince(post.ScheduledAt),
-				"last_zernio_status":  post.ZernioStatus,
-				"zernio_post_id":      post.ZernioPostID,
+				"reason":                 FailureReasonReconciliationTimeout,
+				"scheduled_at":           post.ScheduledAt,
+				"elapsed":                fmtElapsedSince(post.ScheduledAt),
+				"last_publisher_status":  post.PublisherStatus,
+				"publisher_post_id":      post.PublisherPostID,
 			})),
 		})
 	}

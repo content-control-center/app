@@ -62,6 +62,13 @@ type Config struct {
 	ZernioSyncInterval     time.Duration `envconfig:"ZERNIO_SYNC_INTERVAL"      default:"30s"`
 	ZernioSyncIntervalFast time.Duration `envconfig:"ZERNIO_SYNC_INTERVAL_FAST" default:"5s"`
 
+	// Analytics refresh (CON-93 §6 FR3). The refresh_zernio_analytics
+	// queue batch-fetches engagement analytics on this cadence and only
+	// considers posts published within the lookback window (Zernio caps
+	// the analytics range at 366 days).
+	ZernioAnalyticsRefreshInterval time.Duration `envconfig:"ZERNIO_ANALYTICS_REFRESH_INTERVAL" default:"30m"`
+	ZernioAnalyticsWindowDays      int           `envconfig:"ZERNIO_ANALYTICS_WINDOW_DAYS"      default:"90"`
+
 	// Optional post-OAuth redirect target. When set, every connect
 	// link Zernio issues will send the user here after authorization
 	// succeeds, with ?connected=<platform>&profileId=<id>&accountId=<id>&username=<name>

@@ -38,8 +38,8 @@ func (r *reconcileFakeRepo) UpdateStatusAndReason(_ context.Context, id string, 
 func TestReconcileForcesStuckPostsToFailedWithDistinctReason(t *testing.T) {
 	stale := time.Now().Add(-2 * time.Hour).UTC()
 	stuckPosts := []models.Post{
-		{ID: "p1", Status: models.PostStatusScheduled, ScheduledAt: &stale, ZernioStatus: "scheduled"},
-		{ID: "p2", Status: models.PostStatusScheduled, ScheduledAt: &stale, ZernioPostID: "z-2"},
+		{ID: "p1", Status: models.PostStatusScheduled, ScheduledAt: &stale, PublisherStatus: "scheduled"},
+		{ID: "p2", Status: models.PostStatusScheduled, ScheduledAt: &stale, PublisherPostID: "z-2"},
 	}
 	repo := &reconcileFakeRepo{stuck: stuckPosts}
 	logRepo := newFakeLogRepo()

@@ -77,14 +77,14 @@ func (p *CancelZernioJobProcessor) Process(ctx context.Context, task CancelZerni
 			"cancel aborted: post is no longer Scheduled", `{"reason":"status_changed"}`)
 		return nil
 	}
-	if post.ZernioPostID == "" {
+	if post.PublisherPostID == "" {
 		// Submit never landed; just transition locally per the user's
 		// choice. Don't call Zernio.
 		return p.transition(ctx, post, task)
 	}
 
 	apiStart := time.Now()
-	cancelErr := p.Deps.Client.Cancel(ctx, post.ZernioPostID)
+	cancelErr := p.Deps.Client.Cancel(ctx, post.PublisherPostID)
 	jobs.ObserveZernioCall(time.Since(apiStart))
 	if cancelErr == nil {
 		jobs.ZernioCancelSucceeded.Add(1)

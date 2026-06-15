@@ -57,6 +57,17 @@ func (r *fakePostRepo) Update(_ context.Context, p *models.Post) error {
 // the test setup so any forgotten method becomes a compile error.
 func (r *fakePostRepo) List(context.Context) ([]models.Post, error)             { return nil, nil }
 func (r *fakePostRepo) ListByCampaign(context.Context, string) ([]models.Post, error) { return nil, nil }
+func (r *fakePostRepo) ListWithPublisherPostID(context.Context) ([]models.Post, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []models.Post
+	for _, p := range r.posts {
+		if p.Publisher == models.PublisherZernio && p.PublisherPostID != "" {
+			out = append(out, models.Post{ID: p.ID, PublisherPostID: p.PublisherPostID})
+		}
+	}
+	return out, nil
+}
 func (r *fakePostRepo) Create(context.Context, *models.Post) error              { return nil }
 func (r *fakePostRepo) CreateBatch(context.Context, []*models.Post) error       { return nil }
 func (r *fakePostRepo) Delete(context.Context, string) (bool, error)            { return false, nil }
@@ -204,8 +215,8 @@ func TestSubmitHappyPathPersistsZernioID(t *testing.T) {
 		t.Fatalf("process: %v", err)
 	}
 	got, _ := postRepo.GetByID(context.Background(), post.ID)
-	if got.ZernioPostID != "z-1" {
-		t.Errorf("zernio_post_id: got %q want z-1", got.ZernioPostID)
+	if got.PublisherPostID != "z-1" {
+		t.Errorf("zernio_post_id: got %q want z-1", got.PublisherPostID)
 	}
 	events := logRepo.eventTypes()
 	hasSubmit := false
@@ -286,8 +297,8 @@ func TestSubmitDedupeRecoveryAdoptsExistingJob(t *testing.T) {
 		t.Fatalf("process: %v", err)
 	}
 	got, _ := postRepo.GetByID(context.Background(), post.ID)
-	if got.ZernioPostID != "z-existing" {
-		t.Errorf("zernio_post_id: got %q want z-existing", got.ZernioPostID)
+	if got.PublisherPostID != "z-existing" {
+		t.Errorf("zernio_post_id: got %q want z-existing", got.PublisherPostID)
 	}
 }
 

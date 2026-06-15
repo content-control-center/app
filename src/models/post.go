@@ -6,6 +6,13 @@ import (
 	"github.com/uptrace/bun"
 )
 
+// PublisherZernio is the posts.publisher marker stamped on posts
+// published through the Zernio adapter (CON-93 §14). It is the canonical
+// source for the marker value; publishers/zernio.PublisherID aliases it.
+// Lives in models so the repository layer can filter on it without an
+// import cycle (the zernio package imports repository, not vice-versa).
+const PublisherZernio = "zernio"
+
 // PostStatus represents the lifecycle state of a post.
 type PostStatus string
 
@@ -77,17 +84,23 @@ type Post struct {
 	ScheduledAt          *time.Time  `bun:"scheduled_at"                                 json:"scheduled_at"`
 	PublishedAt          *time.Time  `bun:"published_at"                                 json:"published_at"`
 	Status               PostStatus  `bun:"status,notnull"                               json:"status"`
-	// Zernio integration fields (CON-69 §6/§7).
-	// ZernioPostID is the id Zernio assigns when a Post is submitted;
-	// the UNIQUE index in the migration prevents accidental double-submit.
-	// ZernioStatus mirrors Zernio's enum verbatim so the polling task
-	// can short-circuit on already-handled terminal states.
-	// PublishedResults carries Zernio's per-platform outcomes (URLs,
+	// Publisher integration fields (CON-69 §6/§7, generalized to
+	// publisher-agnostic names in CON-93 §14).
+	// Publisher marks which publisher adapter owns the external identity
+	// (matches publishers.Publisher.ID(), e.g. "zernio"); empty until a
+	// post is published through a publisher.
+	// PublisherPostID is the id the publisher assigns when a Post is
+	// submitted; the UNIQUE index in the migration prevents accidental
+	// double-submit and is the join key into publisher analytics (CON-93).
+	// PublisherStatus mirrors the publisher's enum verbatim so the polling
+	// task can short-circuit on already-handled terminal states.
+	// PublishedResults carries the publisher's per-platform outcomes (URLs,
 	// platform IDs) once the post resolves.
-	// FailureReason distinguishes Zernio-reported failure from
+	// FailureReason distinguishes a publisher-reported failure from
 	// reconciliation timeout — see CON-69 §8.
-	ZernioPostID     string `bun:"zernio_post_id,nullzero"                     json:"zernio_post_id,omitempty"`
-	ZernioStatus     string `bun:"zernio_status,notnull,default:''"            json:"zernio_status,omitempty"`
+	Publisher        string `bun:"publisher,notnull,default:''"                json:"publisher,omitempty"`
+	PublisherPostID  string `bun:"publisher_post_id,nullzero"                  json:"publisher_post_id,omitempty"`
+	PublisherStatus  string `bun:"publisher_status,notnull,default:''"         json:"publisher_status,omitempty"`
 	PublishedResults string `bun:"published_results,notnull,default:''"        json:"published_results,omitempty"`
 	FailureReason    string `bun:"failure_reason,notnull,default:''"           json:"failure_reason,omitempty"`
 	CTAType              PostCTAType `bun:"cta_type,notnull"                             json:"cta_type"`

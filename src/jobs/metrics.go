@@ -33,6 +33,11 @@ var (
 	// Reconciliation.
 	ReconciliationTimeouts = expvar.NewInt("ogen_jobs_reconciliation_timeouts")
 
+	// Analytics refresh lifecycle (CON-93 §11).
+	ZernioAnalyticsRefreshSucceeded = expvar.NewInt("ogen_jobs_zernio_analytics_refresh_succeeded")
+	ZernioAnalyticsRefreshFailed    = expvar.NewInt("ogen_jobs_zernio_analytics_refresh_failed")
+	ZernioAnalyticsPostsUpserted    = expvar.NewInt("ogen_jobs_zernio_analytics_posts_upserted")
+
 	// Post Log lifecycle.
 	PostLogTruncations = expvar.NewInt("ogen_jobs_postlog_truncations")
 	PostLogCleaned     = expvar.NewInt("ogen_jobs_postlog_cleaned")

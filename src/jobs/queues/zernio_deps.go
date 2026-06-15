@@ -28,6 +28,10 @@ type ZernioDeps struct {
 	// SettingRepo backs the workspace timezone lookup used to stamp the
 	// Zernio submit's Timezone field (CON-78). nil falls back to UTC.
 	SettingRepo repository.SettingRepository
-	Client      *zernio.Client
-	ProfileID   ProfileIDResolver
+	// AnalyticsRepo persists the analytics snapshots the refresh queue
+	// upserts (CON-93 §6 FR2). Only the refresh queue uses it; nil on the
+	// submit/poll/cancel processors that share this bundle.
+	AnalyticsRepo repository.PostAnalyticsRepository
+	Client        *zernio.Client
+	ProfileID     ProfileIDResolver
 }

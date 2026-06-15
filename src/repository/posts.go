@@ -23,6 +23,10 @@ type PostRepository interface {
 	// CON-69 §8: reconciliation sweeper helpers.
 	ListStuckScheduled(ctx context.Context, cutoff time.Time, limit int) ([]models.Post, error)
 	UpdateStatusAndReason(ctx context.Context, postID string, status models.PostStatus, reason string) error
+	// CON-93 §6 FR2: build the publisher_post_id → post_id match map the
+	// analytics refresh keys off. Returns id + publisher_post_id only,
+	// for Zernio-published posts that actually carry a publisher post id.
+	ListWithPublisherPostID(ctx context.Context) ([]models.Post, error)
 }
 
 type postRepository struct {
@@ -137,6 +141,27 @@ func (r *postRepository) UpdateStatusAndReason(ctx context.Context, postID strin
 		Where("id = ?", postID).
 		Exec(ctx)
 	return err
+}
+
+// ListWithPublisherPostID returns the (id, publisher_post_id) projection
+// for posts published through the Zernio adapter that carry a non-empty
+// publisher_post_id. The analytics refresh queue turns this into a
+// publisher_post_id → post_id map so it can match the batch Zernio
+// returns back to local posts (CON-93 §6 FR2). No relation hydration —
+// only the two columns are needed.
+func (r *postRepository) ListWithPublisherPostID(ctx context.Context) ([]models.Post, error) {
+	var posts []models.Post
+	err := r.db.NewSelect().
+		Model(&posts).
+		Column("id", "publisher_post_id").
+		Where("po.publisher = ?", models.PublisherZernio).
+		Where("po.publisher_post_id IS NOT NULL").
+		Where("po.publisher_post_id <> ''").
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return posts, nil
 }
 
 func (r *postRepository) hydrateRelations(ctx context.Context, posts []models.Post) error {

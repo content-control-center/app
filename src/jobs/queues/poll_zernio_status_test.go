@@ -21,7 +21,7 @@ func TestPollTerminalPublishedTransitionsPost(t *testing.T) {
 	})
 	deps, postRepo, logRepo := makeDeps(stub, nil)
 	post := seedScheduledPost(postRepo)
-	post.ZernioPostID = "z-1"
+	post.PublisherPostID = "z-1"
 	postRepo.put(post)
 
 	proc := &queues.PollZernioStatusProcessor{Deps: deps}
@@ -51,7 +51,7 @@ func TestPollTerminalFailedTransitionsPost(t *testing.T) {
 	})
 	deps, postRepo, _ := makeDeps(stub, nil)
 	post := seedScheduledPost(postRepo)
-	post.ZernioPostID = "z-1"
+	post.PublisherPostID = "z-1"
 	postRepo.put(post)
 
 	proc := &queues.PollZernioStatusProcessor{Deps: deps}
@@ -80,7 +80,7 @@ func TestPollPartialMapsToFailed(t *testing.T) {
 	})
 	deps, postRepo, _ := makeDeps(stub, nil)
 	post := seedScheduledPost(postRepo)
-	post.ZernioPostID = "z-1"
+	post.PublisherPostID = "z-1"
 	postRepo.put(post)
 
 	proc := &queues.PollZernioStatusProcessor{Deps: deps}
