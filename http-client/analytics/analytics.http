@@ -1,0 +1,130 @@
+@baseUrl = http://localhost:9001
+
+# Analytics for posts published with Zernio — CON-93.
+# Two read-only endpoints, both served ENTIRELY from the database. A background
+# worker (refresh_zernio_analytics) batch-fetches engagement analytics from
+# Zernio on a schedule and upserts the post_analytics table; the request path
+# NEVER calls Zernio.
+#   - GET /api/posts/:id/analytics   per-post snapshot (FR4)
+#   - GET /api/analytics/posts       overview across Zernio-published posts (FR5)
+#
+# All endpoints require authentication. Run "Login" from sessions/sessions.http
+# first — the HTTP client stores and replays the cookie automatically.
+#
+# Prerequisites for REAL data:
+#   - A post published through Zernio so it carries a publisher_post_id (posts
+#     go submit → poll → published via the integration; see the auto-publish
+#     schedule flow in posts/schedule.http and publishers/zernio/zernio.http).
+#   - The refresh worker must have run at least once (default cadence
+#     ZERNIO_ANALYTICS_REFRESH_INTERVAL=30m, lookback ZERNIO_ANALYTICS_WINDOW_DAYS=90)
+#     to populate a snapshot. Until a post is covered, the per-post endpoint
+#     returns 200 { "status": "pending" } rather than 404 — so clients can poll.
+#
+# Set {{postId}} to a Zernio-published post id (capture it from the schedule /
+# publish flow). {{campaignId}} comes from campaigns/campaigns.http.
+
+@linkedinPlatformId = AXqWG7U2qnpt
+
+###
+# ── Per-post snapshot — GET /api/posts/:id/analytics (FR4) ────────────────────
+###
+
+### Per-post analytics — covered post → 200 snapshot  [protected]
+# → 200 {
+#     post_id, publisher: "zernio", publisher_post_id, sync_status,
+#     metrics_last_updated, last_refreshed_at,
+#     analytics: { impressions, reach, likes, comments, shares, saves, clicks,
+#                  views, engagement_rate },
+#     platform_analytics: [ { platform, status, platform_post_id, account_id,
+#                  account_username, platform_post_url, sync_status,
+#                  error_message, analytics{...} } ]
+#   }
+# Per-platform rows that lack analytics scope (Zernio 412 / reauthorizeUrl)
+# carry their own sync_status/error_message without failing the whole response;
+# platforms that do report still return metrics.
+GET {{baseUrl}}/api/posts/{{postId}}/analytics
+Accept: application/json
+
+### Per-post analytics — published but not yet refreshed → 200 pending  [protected]
+# Same endpoint; before the refresh worker has covered the post.
+# → 200 { "status": "pending", "post_id": "..." }
+GET {{baseUrl}}/api/posts/{{postId}}/analytics
+Accept: application/json
+
+### Helper — create a DRAFT (never published via a publisher)  [protected]
+# @name createDraftForAnalytics
+# Used to demonstrate the 409 path below — a draft has no publisher_post_id.
+POST {{baseUrl}}/api/posts
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedinPlatformId}}",
+  "platform_post_type": "article",
+  "title": "Never published — no analytics",
+  "content": "Draft body; this post was never published through Zernio.",
+  "status": "draft",
+  "cta_type": "none"
+}
+
+> {% client.global.set("draftAnalyticsId", response.body.id) %}
+
+### Per-post analytics — post not published via a publisher → 409  [protected]
+# Run createDraftForAnalytics first.
+# → 409 { "code": "not_published_via_publisher", "error": "..." }
+GET {{baseUrl}}/api/posts/{{draftAnalyticsId}}/analytics
+Accept: application/json
+
+### Per-post analytics — unknown post → 404  [protected]
+GET {{baseUrl}}/api/posts/nonexistent/analytics
+Accept: application/json
+
+###
+# ── Overview — GET /api/analytics/posts (FR5) ─────────────────────────────────
+###
+# Restricted to Zernio-published posts that have a snapshot. Returns items +
+# pagination + an overview block of summed totals and average engagement_rate.
+#   sort_by ∈ engagement | impressions | reach | likes | comments | shares |
+#            saves | clicks | views | published_at        (default engagement)
+#   order   ∈ asc | desc                                   (default desc)
+#   page    default 1 ; limit default 50, clamped to max 100
+#   platform (optional) filters by platform name, e.g. "LinkedIn"
+
+### Overview — defaults (engagement desc, page 1, limit 50)  [protected]
+# → 200 {
+#     items: [ { post_id, title, publisher, platform, published_at,
+#                sync_status, analytics{...} } ],
+#     pagination: { page, limit, total, pages },
+#     overview: { post_count, impressions, reach, likes, comments, shares,
+#                 saves, clicks, views, engagement_rate_avg }
+#   }
+GET {{baseUrl}}/api/analytics/posts
+Accept: application/json
+
+### Overview — sort by impressions, paged  [protected]
+GET {{baseUrl}}/api/analytics/posts?sort_by=impressions&order=desc&page=1&limit=20
+Accept: application/json
+
+### Overview — sort by reach ascending  [protected]
+GET {{baseUrl}}/api/analytics/posts?sort_by=reach&order=asc
+Accept: application/json
+
+### Overview — sort by published_at  [protected]
+GET {{baseUrl}}/api/analytics/posts?sort_by=published_at&order=desc
+Accept: application/json
+
+### Overview — filter by platform name (matches platforms.name)  [protected]
+GET {{baseUrl}}/api/analytics/posts?platform=LinkedIn
+Accept: application/json
+
+### Overview — limit above max is clamped to 100  [protected]
+GET {{baseUrl}}/api/analytics/posts?limit=500
+Accept: application/json
+
+### Overview — invalid sort_by → 400  [protected]
+GET {{baseUrl}}/api/analytics/posts?sort_by=bogus
+Accept: application/json
+
+### Overview — invalid order → 400  [protected]
+GET {{baseUrl}}/api/analytics/posts?order=sideways
+Accept: application/json
