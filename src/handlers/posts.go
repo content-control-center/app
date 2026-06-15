@@ -1136,7 +1136,7 @@ func (h *PostsHandler) GetAssessment(c *fiber.Ctx) error {
 
 // GetAnalytics godoc
 // @Summary      Get a post's analytics snapshot
-// @Description  Returns the latest engagement snapshot for a post published through a publisher. Served entirely from the database — never live-calls the publisher (CON-93 FR4).
+// @Description  Returns the latest engagement snapshot for a post published through a publisher. Served entirely from the database — never live-calls the publisher (CON-93 FR4). Two 200 shapes: a full snapshot, or — when the background refresh has not yet covered the post — the pending form `{"status":"pending","post_id":"..."}` so clients can poll. Both are covered by the schema below (the snapshot fields are absent on the pending response; `status` is absent on a snapshot).
 // @Tags         posts
 // @Produce      json
 // @Security     CookieAuth

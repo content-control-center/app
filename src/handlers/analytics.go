@@ -25,6 +25,14 @@ type postAnalyticsResponse struct {
 	LastRefreshedAt    time.Time                    `json:"last_refreshed_at"`
 	Analytics          models.PostAnalyticsMetrics  `json:"analytics"`
 	PlatformAnalytics  models.PlatformAnalyticsList `json:"platform_analytics"`
+
+	// Status is "pending" ONLY on the no-snapshot-yet variant, where the
+	// 200 body is just {status, post_id} (the background refresh hasn't
+	// covered this post). Omitted on a real snapshot — don't confuse it
+	// with SyncStatus, which is the publisher sync state of an existing
+	// snapshot. Declared here so the single Swagger 2.0 success schema
+	// documents both 200 shapes (Swagger 2.0 allows one schema per code).
+	Status string `json:"status,omitempty"`
 }
 
 func newPostAnalyticsResponse(post *models.Post, a *models.PostAnalytics) postAnalyticsResponse {
