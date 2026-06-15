@@ -186,7 +186,7 @@ func TestRefreshPagesThroughAllPages(t *testing.T) {
 	}
 }
 
-func TestRefreshRateLimitReturnsErrorForRetry(t *testing.T) {
+func TestRefreshRateLimitRecordedChainContinues(t *testing.T) {
 	stub := newStubZernio()
 	defer stub.Close()
 	stub.handle("GET", "/analytics", func(w http.ResponseWriter, r *http.Request) {
@@ -198,9 +198,13 @@ func TestRefreshRateLimitReturnsErrorForRetry(t *testing.T) {
 	settings := newFakeSettings()
 	proc := newRefreshProcessor(stub, postRepo, newFakeAnalyticsRepo(), settings)
 
+	// A 429 is recorded but does NOT propagate — Process always returns nil
+	// and self-reschedules so the recurring chain can't die or fan out (the
+	// reschedule itself is a no-op here: no Backlite client in ctx). The
+	// failure is still recorded for operators.
 	err := proc.Process(context.Background(), queues.RefreshZernioAnalyticsTask{})
-	if !zernio.IsStatus(err, http.StatusTooManyRequests) {
-		t.Fatalf("429 should be returned for backlite retry, got %v", err)
+	if err != nil {
+		t.Fatalf("Process should return nil so the chain self-reschedules, got %v", err)
 	}
 	if v, _, _ := settings.Get(context.Background(), zernio.SettingAnalyticsLastRefreshStatus); v == zernio.SyncStatusOK || v == "" {
 		t.Errorf("status should record the error, got %q", v)

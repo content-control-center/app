@@ -40,12 +40,15 @@ type RefreshZernioAnalyticsTask struct{}
 func (RefreshZernioAnalyticsTask) Config() backlite.QueueConfig {
 	return backlite.QueueConfig{
 		Name: RefreshZernioAnalyticsQueue,
-		// Transient failures (429, 5xx, network) return an error so
-		// Backlite retries the whole tick with backoff; idempotent upserts
-		// make the partial-progress re-run safe (§10). A successful tick
-		// self-reschedules the next one.
-		MaxAttempts: 3,
-		Backoff:     30 * time.Second,
+		// Process never returns an error: each tick records its outcome and
+		// self-reschedules the next one (Wait(Every)), so the recurring chain
+		// can neither die (a returned error with retries exhausted would leave
+		// nothing scheduled) nor fan out (a reschedule alongside a Backlite
+		// retry would spawn parallel chains — Backlite doesn't expose the
+		// attempt count, so "reschedule only on the last attempt" isn't
+		// possible). Backlite retries are therefore unused; MaxAttempts is 1.
+		// Idempotent upserts keep a re-run safe (§10).
+		MaxAttempts: 1,
 		Timeout:     60 * time.Second,
 		Retention: &backlite.Retention{
 			Duration: 24 * time.Hour,
@@ -74,21 +77,14 @@ func (p *RefreshZernioAnalyticsProcessor) Process(ctx context.Context, _ Refresh
 	upserts, err := p.refresh(ctx, tickStart.UTC())
 	p.recordStatus(ctx, err)
 
-	if shouldRetryAnalytics(err) {
-		// Transient — let Backlite retry the tick with backoff. No
-		// reschedule here; an eventual successful attempt schedules the
-		// next tick.
-		jobs.ZernioAnalyticsRefreshFailed.Add(1)
-		log.Printf("zernio.analytics failed (transient) error=%q tick_ms=%d",
-			err.Error(), time.Since(tickStart).Milliseconds())
-		return err
-	}
-
 	if err != nil {
-		// Handled-but-not-retryable (401, legacy 402, terminal 4xx). Log,
-		// record, and still reschedule so the recurring chain survives.
+		// Any failure (transient 429/5xx/network, 401, legacy 402, terminal
+		// 4xx) is recorded and logged; the tick still reschedules below and
+		// returns nil. Transient failures recover on the next cadence tick
+		// rather than via a Backlite retry — see Config for why returning an
+		// error here would risk killing or fanning out the recurring chain.
 		jobs.ZernioAnalyticsRefreshFailed.Add(1)
-		log.Printf("zernio.analytics ended error=%q upserts=%d tick_ms=%d",
+		log.Printf("zernio.analytics failed error=%q upserts=%d tick_ms=%d",
 			err.Error(), upserts, time.Since(tickStart).Milliseconds())
 	} else {
 		jobs.ZernioAnalyticsRefreshSucceeded.Add(1)
@@ -103,8 +99,8 @@ func (p *RefreshZernioAnalyticsProcessor) Process(ctx context.Context, _ Refresh
 
 // refresh performs the batch fetch + match + upsert and returns the
 // number of snapshots written. The returned error is the first
-// page-level failure encountered (terminal or transient — the caller
-// decides retry vs reschedule via shouldRetryAnalytics).
+// page-level failure encountered; Process records it and reschedules
+// regardless (it never propagates the error to Backlite).
 func (p *RefreshZernioAnalyticsProcessor) refresh(ctx context.Context, now time.Time) (int, error) {
 	if p.Deps.AnalyticsRepo == nil || p.Deps.PostRepo == nil {
 		return 0, errors.New("refresh: analytics dependencies not configured")
@@ -305,20 +301,6 @@ func (p *RefreshZernioAnalyticsProcessor) pageLimit() int {
 		return p.PageLimit
 	}
 	return defaultAnalyticsPageLimit
-}
-
-// shouldRetryAnalytics reports whether a refresh error is transient and
-// worth a Backlite retry. The legacy 402 (ErrAnalyticsUnavailable) and
-// 401 are terminal; 429/5xx/network are transient. Mirrors the
-// submit/poll terminal-vs-transient split.
-func shouldRetryAnalytics(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, zernio.ErrAnalyticsUnavailable) {
-		return false
-	}
-	return zernio.IsTransientAPIError(err)
 }
 
 func truncateAnalyticsErr(s string) string {
