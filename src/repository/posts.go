@@ -144,11 +144,16 @@ func (r *postRepository) UpdateStatusAndReason(ctx context.Context, postID strin
 }
 
 // ListWithPublisherPostID returns the (id, publisher_post_id) projection
-// for posts published through the Zernio adapter that carry a non-empty
-// publisher_post_id. The analytics refresh queue turns this into a
-// publisher_post_id → post_id map so it can match the batch Zernio
-// returns back to local posts (CON-93 §6 FR2). No relation hydration —
-// only the two columns are needed.
+// for every post that carries the Zernio publisher marker and a non-empty
+// publisher_post_id — i.e. that was submitted through Zernio, whatever its
+// current Ogen status. Status is deliberately NOT filtered: a partial
+// publish maps to Ogen `failed` (see poll_zernio_status) yet still has real
+// per-platform analytics that CON-93 §10 requires us to surface, and
+// Zernio's own source=late filter is what gates which posts actually have
+// analytics. The analytics refresh queue turns this into a
+// publisher_post_id → post_id map to match the batch Zernio returns back to
+// local posts (CON-93 §6 FR2). No relation hydration — only the two columns
+// are needed.
 func (r *postRepository) ListWithPublisherPostID(ctx context.Context) ([]models.Post, error) {
 	var posts []models.Post
 	err := r.db.NewSelect().

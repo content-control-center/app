@@ -195,12 +195,30 @@ func TestListWithPublisherPostID(t *testing.T) {
 	seedPost(t, db, "p2", models.PublisherZernio, "z-2", time.Now().UTC())
 	seedPost(t, db, "p3", "", "", time.Now().UTC()) // never published via a publisher
 
+	// A Zernio post that ended up `failed` (a partial publish maps to failed)
+	// must STILL be included — it has real per-platform analytics Zernio can
+	// return (CON-93 §10). Status is intentionally not a filter.
+	if _, err := db.NewInsert().Model(&models.Post{
+		ID:              "p4",
+		CampaignID:      "camp-1",
+		Content:         "content p4",
+		MediaURLs:       models.StringSlice{},
+		UsedAssetIDs:    models.StringSlice{},
+		Status:          models.PostStatusFailed,
+		Publisher:       models.PublisherZernio,
+		PublisherPostID: "z-4",
+		CTAType:         models.CTATypeNone,
+		CreatedBy:       "user-1",
+	}).Exec(ctx); err != nil {
+		t.Fatalf("seed failed post: %v", err)
+	}
+
 	posts, err := repo.ListWithPublisherPostID(ctx)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(posts) != 2 {
-		t.Fatalf("got %d want 2", len(posts))
+	if len(posts) != 3 {
+		t.Fatalf("got %d want 3", len(posts))
 	}
 	byID := map[string]string{}
 	for _, p := range posts {
@@ -208,6 +226,9 @@ func TestListWithPublisherPostID(t *testing.T) {
 	}
 	if byID["p1"] != "z-1" || byID["p2"] != "z-2" {
 		t.Fatalf("match map wrong: %+v", byID)
+	}
+	if byID["p4"] != "z-4" {
+		t.Fatalf("failed (non-published) Zernio post must be included: %+v", byID)
 	}
 	if _, ok := byID["p3"]; ok {
 		t.Fatalf("p3 should be excluded")
