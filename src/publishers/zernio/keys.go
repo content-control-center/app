@@ -10,6 +10,11 @@ const (
 	SettingProfileMeta      = "zernio.profile_meta"
 	SettingLastSyncAt       = "zernio.last_sync_at"
 	SettingLastSyncStatus   = "zernio.last_sync_status"
+	// Analytics refresh health (CON-93 §11). These live in the Zernio
+	// adapter namespace, so they stay `zernio.`-prefixed even though the
+	// post-side columns are publisher-agnostic.
+	SettingAnalyticsLastRefreshAt     = "zernio.analytics.last_refresh_at"
+	SettingAnalyticsLastRefreshStatus = "zernio.analytics.last_refresh_status"
 )
 
 // SettingPrefix is the namespace shared by every Zernio-managed key.

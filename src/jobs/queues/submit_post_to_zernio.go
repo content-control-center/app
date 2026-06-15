@@ -65,17 +65,17 @@ func (p *SubmitPostProcessor) Process(ctx context.Context, task SubmitPostTask) 
 		return nil
 	}
 	// Idempotency / manual retry path (CON-69 §10):
-	//   - On a fresh submit, ZernioPostID is empty and we POST /posts.
+	//   - On a fresh submit, PublisherPostID is empty and we POST /posts.
 	//   - On a manual retry of a previously-failed Post (the user
 	//     moved Failed→ReadyForPublish, then ReadyForPublish→Scheduled),
-	//     ZernioPostID is still set from the prior attempt. Calling
+	//     PublisherPostID is still set from the prior attempt. Calling
 	//     Zernio's /posts/:id/retry endpoint reuses the same job
 	//     identity so we don't create a duplicate Zernio post and
 	//     can keep polling against the same id.
-	if post.ZernioPostID != "" {
+	if post.PublisherPostID != "" {
 		appendLog(ctx, p.Deps, post.ID, models.PostLogEventZernioRetry, post.Status, post.Status,
-			"calling Zernio POST /posts/:id/retry", `{"zernio_post_id":"`+post.ZernioPostID+`"}`)
-		job, retryErr := p.Deps.Client.Retry(ctx, post.ZernioPostID)
+			"calling Zernio POST /posts/:id/retry", `{"publisher_post_id":"`+post.PublisherPostID+`"}`)
+		job, retryErr := p.Deps.Client.Retry(ctx, post.PublisherPostID)
 		if retryErr != nil {
 			if zernio.IsTerminalAPIError(retryErr) {
 				return p.terminal(ctx, post, "zernio_retry_rejected", retryErr.Error())
@@ -173,15 +173,17 @@ func (p *SubmitPostProcessor) Process(ctx context.Context, task SubmitPostTask) 
 }
 
 func (p *SubmitPostProcessor) persistSuccess(ctx context.Context, post *models.Post, job *zernio.Job) error {
-	post.ZernioPostID = job.ID
-	post.ZernioStatus = string(job.Status)
+	post.Publisher = zernio.PublisherID
+	post.PublisherPostID = job.ID
+	post.PublisherStatus = string(job.Status)
 	if err := p.Deps.PostRepo.Update(ctx, post); err != nil {
-		return fmt.Errorf("submit: persist zernio_post_id: %w", err)
+		return fmt.Errorf("submit: persist publisher_post_id: %w", err)
 	}
 	appendLog(ctx, p.Deps, post.ID, models.PostLogEventZernioSubmit, post.Status, post.Status,
 		"Zernio submit succeeded; polling scheduled", logs.MarshalCapped(map[string]any{
-			"zernio_post_id": job.ID,
-			"zernio_status":  job.Status,
+			"publisher":         zernio.PublisherID,
+			"publisher_post_id": job.ID,
+			"publisher_status":  job.Status,
 		}))
 	p.enqueuePoll(ctx, post)
 	return nil

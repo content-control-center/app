@@ -3,9 +3,17 @@ package zernio
 import (
 	"context"
 
+	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/publishers"
 	"github.com/ogen-app/ogen/src/repository"
 )
+
+// PublisherID is the stable marker stamped on posts.publisher and
+// returned by Publisher.ID(). It is the value CON-93's analytics
+// pipeline filters on (`publisher = 'zernio'`) and matches the slug
+// surfaced in API responses. Aliases models.PublisherZernio so the
+// adapter and the repository layer share one source of truth.
+const PublisherID = models.PublisherZernio
 
 // Publisher adapts the Zernio integration to publishers.Publisher so
 // the platforms handler can surface connection state alongside the
@@ -24,7 +32,7 @@ func NewPublisher(integ *Integration, accountRepo repository.SocialAccountReposi
 	return &Publisher{integ: integ, accountRepo: accountRepo, settings: settings}
 }
 
-func (p *Publisher) ID() string   { return "zernio" }
+func (p *Publisher) ID() string   { return PublisherID }
 func (p *Publisher) Name() string { return "Zernio" }
 
 // State maps the integration's controller state onto the public

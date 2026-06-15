@@ -59,14 +59,14 @@ func (p *PollZernioStatusProcessor) Process(ctx context.Context, task PollZernio
 			"poll exited: post is no longer Scheduled", `{"reason":"status_changed"}`)
 		return nil
 	}
-	if post.ZernioPostID == "" {
+	if post.PublisherPostID == "" {
 		appendLog(ctx, p.Deps, post.ID, models.PostLogEventTaskFailed, post.Status, post.Status,
-			"poll exited: zernio_post_id is empty", `{}`)
+			"poll exited: publisher_post_id is empty", `{}`)
 		return nil
 	}
 
 	apiStart := time.Now()
-	job, statusErr := p.Deps.Client.Status(ctx, post.ZernioPostID)
+	job, statusErr := p.Deps.Client.Status(ctx, post.PublisherPostID)
 	jobs.ObserveZernioCall(time.Since(apiStart))
 	if statusErr != nil {
 		// Transient → retry. Terminal API errors during polling are
@@ -87,7 +87,7 @@ func (p *PollZernioStatusProcessor) Process(ctx context.Context, task PollZernio
 
 	// Persist Zernio's view of status so subsequent polls / debugging
 	// can see what we last saw. Always write — cheap and useful.
-	post.ZernioStatus = string(job.Status)
+	post.PublisherStatus = string(job.Status)
 	if !job.Status.IsTerminal() {
 		_ = p.Deps.PostRepo.Update(ctx, post)
 		// Self-reschedule per cadence rule.

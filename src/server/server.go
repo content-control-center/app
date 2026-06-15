@@ -73,6 +73,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	postAttachmentRepo := repository.NewPostAttachmentRepository(db)
 	postLogRepo := repository.NewPostLogRepository(db)
 	postEvaluationRepo := repository.NewPostEvaluationRepository(db)
+	postAnalyticsRepo := repository.NewPostAnalyticsRepository(db)
 	socialAccountRepo := repository.NewSocialAccountRepository(db)
 	autoPublishAllowlistRepo := repository.NewAutoPublishAllowlistRepository(db)
 	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
@@ -162,6 +163,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 		PostAttachmentRepo: postAttachmentRepo,
 		SocialAccountRepo:  socialAccountRepo,
 		SettingRepo:        settingRepo,
+		AnalyticsRepo:      postAnalyticsRepo,
 		Client:             zernioRT.Integration.Client,
 		ProfileID: func(ctx context.Context) (string, error) {
 			id, _, err := zernioRT.Settings.Get(ctx, pubzernio.SettingProfileID)
@@ -171,6 +173,27 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	jobsRT.Register(backlite.NewQueue[queues.SubmitPostTask]((&queues.SubmitPostProcessor{Deps: zernioDeps}).Process))
 	jobsRT.Register(backlite.NewQueue[queues.PollZernioStatusTask]((&queues.PollZernioStatusProcessor{Deps: zernioDeps}).Process))
 	jobsRT.Register(backlite.NewQueue[queues.CancelZernioJobTask]((&queues.CancelZernioJobProcessor{Deps: zernioDeps}).Process))
+
+	// CON-93 §6 FR3: recurring analytics refresh. Batch-fetches Zernio
+	// analytics, matches by publisher_post_id, and upserts snapshots. The
+	// processor is registered unconditionally (mirrors the submit/poll
+	// queues), but the recurring chain is only seeded when the Zernio
+	// integration is actually configured (a nil Bootstrapper means no API
+	// key at boot) — otherwise every tick would just no-op against a
+	// disabled client.
+	analyticsRefreshEvery := cfg.ZernioAnalyticsRefreshInterval
+	jobsRT.Register(backlite.NewQueue[queues.RefreshZernioAnalyticsTask]((&queues.RefreshZernioAnalyticsProcessor{
+		Deps:       zernioDeps,
+		Settings:   zernioRT.Settings,
+		Hub:        hub,
+		Every:      analyticsRefreshEvery,
+		WindowDays: cfg.ZernioAnalyticsWindowDays,
+	}).Process))
+	if zernioRT.Bootstrapper != nil {
+		if _, err := jobsRT.Client().Add(queues.RefreshZernioAnalyticsTask{}).Wait(analyticsRefreshEvery).Save(); err != nil {
+			log.Printf("jobs: failed to seed refresh_zernio_analytics: %v", err)
+		}
+	}
 
 	// CON-69 §8: reconciliation sweeper. Runs every 5 min by default;
 	// posts in Scheduled whose scheduled_at + cfg.ReconcileGrace has
@@ -332,6 +355,9 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	// CON-92: cached read behind GET /api/posts/:id/assessment, so the
 	// frontend can render an existing evaluation without re-running the model.
 	postsHandler.SetEvaluationRepo(postEvaluationRepo)
+	// CON-93 FR4: per-post analytics snapshot behind GET /api/posts/:id/analytics,
+	// served from the DB (never live-calls the publisher).
+	postsHandler.SetAnalyticsRepo(postAnalyticsRepo)
 	// Cascade post-attachment S3 cleanup on post delete (CON-73 §2.7).
 	// FK CASCADE handles the DB rows; this hook handles the bucket.
 	postsHandler.SetOnBeforeDelete(func(ctx context.Context, postID string) error {
@@ -354,6 +380,9 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	})
 	postsHandler.Register(app)
 	handlers.NewPostLogsHandler(postLogRepo, postRepo, auth).Register(app)
+	// CON-93 FR5: cross-post analytics overview under its own /api/analytics
+	// group (avoids the /api/posts/:id route collision), served from the DB.
+	handlers.NewAnalyticsHandler(postAnalyticsRepo, auth).Register(app)
 
 	handlers.NewImagesHandler(store, auth).Register(app)
 	handlers.NewPostAttachmentsHandler(postAttachmentRepo, postRepo, store, auth).Register(app)

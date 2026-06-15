@@ -17,7 +17,7 @@ func TestCancelHappyPathTransitionsToReadyForPublish(t *testing.T) {
 	})
 	deps, postRepo, _ := makeDeps(stub, nil)
 	post := seedScheduledPost(postRepo)
-	post.ZernioPostID = "z-1"
+	post.PublisherPostID = "z-1"
 	postRepo.put(post)
 
 	proc := &queues.CancelZernioJobProcessor{Deps: deps}
@@ -41,7 +41,7 @@ func TestCancelHappyPathTransitionsToDraft(t *testing.T) {
 	})
 	deps, postRepo, _ := makeDeps(stub, nil)
 	post := seedScheduledPost(postRepo)
-	post.ZernioPostID = "z-1"
+	post.PublisherPostID = "z-1"
 	postRepo.put(post)
 
 	proc := &queues.CancelZernioJobProcessor{Deps: deps}
@@ -64,7 +64,7 @@ func TestCancelRaceWithPublishKeepsPostScheduled(t *testing.T) {
 	})
 	deps, postRepo, _ := makeDeps(stub, nil)
 	post := seedScheduledPost(postRepo)
-	post.ZernioPostID = "z-1"
+	post.PublisherPostID = "z-1"
 	postRepo.put(post)
 
 	proc := &queues.CancelZernioJobProcessor{Deps: deps}

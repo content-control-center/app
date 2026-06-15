@@ -57,6 +57,10 @@ type PostsHandler struct {
 	// evaluationRepo serves the cached assessment read (CON-92). nil makes
 	// GET /:id/assessment return 503. Wired via SetEvaluationRepo.
 	evaluationRepo repository.PostEvaluationRepository
+	// analyticsRepo serves the per-post analytics snapshot read (CON-93
+	// FR4, GET /:id/analytics). nil makes that endpoint return 503. Wired
+	// via SetAnalyticsRepo.
+	analyticsRepo repository.PostAnalyticsRepository
 	// isAssistantReady reports whether the Anthropic key is currently
 	// configured. nil is treated as "always ready" so existing test
 	// fixtures keep working without rewiring.
@@ -131,6 +135,12 @@ func (h *PostsHandler) SetQualityAssessor(fn func(ctx context.Context, postID st
 // NewPostsHandler call sites and fixtures stay unchanged.
 func (h *PostsHandler) SetEvaluationRepo(r repository.PostEvaluationRepository) {
 	h.evaluationRepo = r
+}
+
+// SetAnalyticsRepo wires the repository backing the per-post analytics
+// read (CON-93 FR4, GET /:id/analytics). nil leaves the endpoint at 503.
+func (h *PostsHandler) SetAnalyticsRepo(r repository.PostAnalyticsRepository) {
+	h.analyticsRepo = r
 }
 
 // SetSchedulingDeps wires everything the schedule path needs: the
@@ -279,8 +289,8 @@ func (h *PostsHandler) logTransition(c *fiber.Ctx, post *models.Post, prev, next
 		h.logEvent(c, post.ID, models.PostLogEventUserRetry, &prev, &next,
 			"manual retry: user moved Failed → ReadyForPublish",
 			logs.MarshalCapped(map[string]any{
-				"prior_failure_reason": post.FailureReason,
-				"prior_zernio_post_id": post.ZernioPostID,
+				"prior_failure_reason":    post.FailureReason,
+				"prior_publisher_post_id": post.PublisherPostID,
 			}),
 		)
 	}
@@ -488,6 +498,7 @@ func (h *PostsHandler) Register(app *fiber.App) {
 	g.Post("/:id/assistant", h.auth, h.Assistant)
 	g.Post("/:id/assess", h.auth, h.Assess)
 	g.Get("/:id/assessment", h.auth, h.GetAssessment)
+	g.Get("/:id/analytics", h.auth, h.GetAnalytics)
 	g.Post("/:id/clone", h.auth, h.Clone)
 	g.Get("/:id/messages", h.auth, h.ListMessages)
 	g.Get("/:id/versions", h.auth, h.ListVersions)
@@ -1121,6 +1132,51 @@ func (h *PostsHandler) GetAssessment(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "post has not been assessed")
 	}
 	return c.JSON(eval)
+}
+
+// GetAnalytics godoc
+// @Summary      Get a post's analytics snapshot
+// @Description  Returns the latest engagement snapshot for a post published through a publisher. Served entirely from the database — never live-calls the publisher (CON-93 FR4). Two 200 shapes: a full snapshot, or — when the background refresh has not yet covered the post — the pending form `{"status":"pending","post_id":"..."}` so clients can poll. Both are covered by the schema below (the snapshot fields are absent on the pending response; `status` is absent on a snapshot).
+// @Tags         posts
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id   path      string  true  "Post Sqid"
+// @Success      200  {object}  handlers.postAnalyticsResponse
+// @Failure      401  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Failure      409  {object}  map[string]string
+// @Failure      503  {object}  map[string]string
+// @Router       /api/posts/{id}/analytics [get]
+func (h *PostsHandler) GetAnalytics(c *fiber.Ctx) error {
+	if h.analyticsRepo == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "post analytics is not available")
+	}
+	post, err := h.repo.GetByID(c.Context(), c.Params("id"))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "post not found")
+		}
+		return err
+	}
+	// Analytics is defined only for posts published through a publisher;
+	// today that's Zernio (CON-93 §9). 409 with a machine-readable code so
+	// the client can distinguish "wrong kind of post" from "not found".
+	if post.PublisherPostID == "" {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"code":  "not_published_via_publisher",
+			"error": "post has not been published through a publisher",
+		})
+	}
+	snapshot, err := h.analyticsRepo.GetByPostID(c.Context(), post.ID)
+	if err != nil {
+		return err
+	}
+	// No snapshot yet → the background refresh hasn't covered this post.
+	// Return 200 pending (not 404) so clients can poll (CON-93 §10).
+	if snapshot == nil {
+		return c.JSON(fiber.Map{"status": "pending", "post_id": post.ID})
+	}
+	return c.JSON(newPostAnalyticsResponse(post, snapshot))
 }
 
 // ── Messages ─────────────────────────────────────────────────────────────────
