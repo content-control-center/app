@@ -1,4 +1,5 @@
 export { cn } from "./styles.ts";
+export { formatTitle } from "./formatTitle.ts";
 export {
   loginSchema,
   registerSchema,

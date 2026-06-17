@@ -1,4 +1,5 @@
 import type { SecretMetadata, SecretName } from "@/types/integrations";
+import { errorMessage } from "./errors";
 
 const BASE = "/api/secrets";
 
@@ -43,14 +44,4 @@ export async function deleteSecret(name: SecretName): Promise<void> {
   if (!res.ok && res.status !== 404) {
     throw new Error(await errorMessage(res, "Unable to delete secret"));
   }
-}
-
-async function errorMessage(res: Response, fallback: string): Promise<string> {
-  try {
-    const body = (await res.json()) as { error?: string };
-    if (typeof body.error === "string" && body.error.length > 0) return body.error;
-  } catch {
-    // fall through
-  }
-  return fallback;
 }

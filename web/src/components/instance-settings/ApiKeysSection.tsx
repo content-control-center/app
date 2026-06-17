@@ -3,8 +3,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
-import { Icon } from '@/components/ui/icon'
 import { ModalContainer } from '@/components/ui/modal'
+import { ArrowUpRightIcon, PencilSimpleIcon } from '@phosphor-icons/react'
 import { useDeleteSecret, useSecretsList, useUpsertSecret } from '@/hooks/useSecrets'
 import { useZernioHealth } from '@/hooks/useZernio'
 import type { SecretMetadata, SecretName, ZernioState } from '@/types/integrations'
@@ -103,7 +103,7 @@ function IntegrationRow({ def, metadata, loading }: IntegrationRowProps) {
           aria-label="Edit API key"
           title="Edit API key"
         >
-          <Icon name="edit" className="size-3.5" />
+          <PencilSimpleIcon className="size-3.5" />
         </Button>
       }
       description={
@@ -116,7 +116,7 @@ function IntegrationRow({ def, metadata, loading }: IntegrationRowProps) {
             className="text-primary-foreground inline-flex items-center gap-1 hover:underline"
           >
             Get an API key at {def.providerLabel}
-            <Icon name="arrow_right_top" className="size-2.5 mt-1 stroke-2" />
+            <ArrowUpRightIcon className="size-2.5 mt-1" />
           </a>
         </>
       }

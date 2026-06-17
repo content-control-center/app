@@ -8,7 +8,7 @@
  */
 
 import type { LoginPayload, Session } from "@/types/session";
-import { ServerUnavailableError, fetchOrThrowUnavailable } from "./errors";
+import { ServerUnavailableError, errorMessage, fetchOrThrowUnavailable } from "./errors";
 
 export async function login(payload: LoginPayload): Promise<Session> {
   const res = await fetch("/api/sessions", {
@@ -61,14 +61,4 @@ async function fetchSession(): Promise<boolean> {
   // not a "logged out" signal — let it surface as ServerUnavailableError.
   if (res.status >= 500) throw new ServerUnavailableError();
   return res.ok;
-}
-
-async function errorMessage(res: Response, fallback: string): Promise<string> {
-  try {
-    const body = (await res.json()) as { error?: string };
-    if (typeof body.error === "string" && body.error.length > 0) return body.error;
-  } catch {
-    // fall through
-  }
-  return fallback;
 }

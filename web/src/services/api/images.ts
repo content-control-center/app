@@ -1,3 +1,5 @@
+import { errorMessage } from "./errors";
+
 const ALLOWED_IMAGE_MIMES = new Set([
   "image/jpeg",
   "image/png",
@@ -33,14 +35,4 @@ export async function uploadImage(file: File): Promise<string> {
     throw new Error("Server did not return image URL");
   }
   return url;
-}
-
-async function errorMessage(res: Response, fallback: string): Promise<string> {
-  try {
-    const body = (await res.json()) as { error?: string };
-    if (typeof body.error === "string" && body.error.length > 0) return body.error;
-  } catch {
-    // fall through
-  }
-  return fallback;
 }

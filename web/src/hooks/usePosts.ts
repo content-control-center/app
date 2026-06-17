@@ -1,4 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from '@tanstack/react-router'
+import { useCallback } from 'react'
 import { createPost, deletePost, listCampaignPosts, updatePost } from '@/services/api/posts'
 import type { Post, PostPayload } from '@/types/posts'
 
@@ -20,6 +22,28 @@ export function useCreatePost(campaignId: string) {
       qc.invalidateQueries({ queryKey: campaignPostsKey(campaignId) })
     },
   })
+}
+
+/**
+ * Returns a handler that creates a blank post in the campaign and navigates to
+ * its editor. Shared by the campaign header action and the empty-state buttons.
+ */
+export function useAddPost(campaignId: string) {
+  const createPost = useCreatePost(campaignId)
+  const navigate = useNavigate()
+  return useCallback(() => {
+    createPost.mutate(
+      { campaign_id: campaignId },
+      {
+        onSuccess: (post) => {
+          navigate({
+            to: '/campaigns/$campaignId/posts/$postId',
+            params: { campaignId, postId: post.id },
+          })
+        },
+      },
+    )
+  }, [createPost, navigate, campaignId])
 }
 
 export function useUpdatePost(campaignId: string) {

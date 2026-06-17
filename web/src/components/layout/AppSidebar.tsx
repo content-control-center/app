@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { Link, useLocation } from '@tanstack/react-router'
-import { Icon } from '@/components/ui/icon'
+import { CaretDoubleLeftIcon, GearSixIcon, MegaphoneIcon, SignOutIcon, VaultIcon, XIcon } from '@phosphor-icons/react'
 import {
   Sidebar,
   SidebarContent,
@@ -21,7 +21,6 @@ import {
 import { useAuthStore } from '@/stores/authStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useNavigate } from '@tanstack/react-router'
-import {LogOut} from 'lucide-react'
 import { Logo } from '@/components/Logo'
 import { cn } from '@/lib'
 import {
@@ -55,7 +54,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 onClick={toggleSidebar}
                 aria-label="Close sidebar"
               >
-                <Icon name="x_mark" className="size-5 stroke-2" />
+                <XIcon weight="bold" className="size-5" />
               </Button>
             ) : (
               <Link
@@ -79,9 +78,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 )}
                 onClick={() => setOpen(false)}
               >
-                <Icon
-                  name="chevron_double_left"
-                  className="size-3 stroke-3 text-quaternary-foreground group-hover/button:text-primary-foreground transition-colors"
+                <CaretDoubleLeftIcon
+                  weight="bold"
+                  className="size-3 text-quaternary-foreground group-hover/button:text-primary-foreground transition-colors"
                 />
               </Button>
             )}
@@ -92,21 +91,21 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             className={cn('flex flex-col gap-2 px-3 py-0 lg:p-6', isCollapsed && 'items-center')}
           >
             <AppSidebarButtonMenu
-              iconName="nav_portfolios"
+              icon={MegaphoneIcon}
               text="Campaigns"
               isActive={location.pathname.startsWith('/campaigns')}
               to="/campaigns"
               onClick={closeSecondaryNavbar}
             />
             <AppSidebarButtonMenu
-              iconName="nav_ideas"
+              icon={VaultIcon}
               text="Content Bank"
               isActive={location.pathname.startsWith('/content-bank')}
               to="/content-bank"
               onClick={closeSecondaryNavbar}
             />
             <AppSidebarButtonMenu
-              iconName="nav_settings"
+              icon={GearSixIcon}
               text="Instance Settings"
               isActive={location.pathname.startsWith('/instance-settings')}
               to="/instance-settings"
@@ -155,7 +154,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
 
                   <DropdownMenuItem onClick={handleLogout} size="lg">
-                    <LogOut />
+                    <SignOutIcon />
                     <span>Log out</span>
                   </DropdownMenuItem>
               </DropdownMenuContent>

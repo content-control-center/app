@@ -26,6 +26,8 @@ prototyping/**/skills-lock.json
 
 # Env
 .env.*
+# ...but keep the committed template (real .env.storage stays ignored)
+!.env.storage.example
 
 # Envelope encryption KEK (never commit — decrypts all DB secrets)
 /ogen-keys/

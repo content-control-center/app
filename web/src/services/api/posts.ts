@@ -1,53 +1,43 @@
 import type { Post, PostPayload } from '@/types/posts'
+import { apiJson, apiVoid } from './http'
 
 const BASE = '/api/posts'
 
-export async function listCampaignPosts(campaignId: string): Promise<Post[]> {
-  const res = await fetch(`/api/campaigns/${campaignId}/posts`, {
-    method: 'GET',
-    credentials: 'include',
-  })
-  if (!res.ok) {
-    throw new Error(await errorMessage(res, 'Unable to fetch posts'))
-  }
-  return (await res.json()) as Post[]
+// The two statuses a Scheduled post can be pulled back to via the cancel
+// endpoint (mirrors CancelTarget in src/jobs/queues/cancel_zernio_job.go).
+export type CancelTarget = 'ready_for_publish' | 'draft'
+
+export function listCampaignPosts(campaignId: string): Promise<Post[]> {
+  return apiJson<Post[]>(`/api/campaigns/${campaignId}/posts`, 'Unable to fetch posts')
 }
 
-export async function getPost(id: string): Promise<Post> {
-  const res = await fetch(`${BASE}/${id}`, {
-    method: 'GET',
-    credentials: 'include',
-  })
-  if (!res.ok) {
-    throw new Error(await errorMessage(res, 'Unable to fetch post'))
-  }
-  return (await res.json()) as Post
+export function getPost(id: string): Promise<Post> {
+  return apiJson<Post>(`${BASE}/${id}`, 'Unable to fetch post')
 }
 
-export async function createPost(payload: PostPayload): Promise<Post> {
-  const res = await fetch(BASE, {
+export function createPost(payload: PostPayload): Promise<Post> {
+  return apiJson<Post>(BASE, 'Unable to create post', { method: 'POST', body: payload })
+}
+
+export function updatePost(id: string, payload: PostPayload): Promise<Post> {
+  return apiJson<Post>(`${BASE}/${id}`, 'Unable to update post', { method: 'PUT', body: payload })
+}
+
+export function deletePost(id: string): Promise<void> {
+  return apiVoid(`${BASE}/${id}`, 'Unable to delete post', { method: 'DELETE' })
+}
+
+/**
+ * Requests cancellation of a Scheduled post. The server enqueues a Zernio
+ * cancel job and returns 202 immediately; the post stays in `scheduled`
+ * until the worker confirms, then transitions to `target`. Callers should
+ * poll/refetch the post to observe the eventual status change.
+ */
+export function cancelPost(id: string, target: CancelTarget): Promise<void> {
+  return apiVoid(`${BASE}/${id}/cancel`, 'Unable to unschedule post', {
     method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: { target },
   })
-  if (!res.ok) {
-    throw new Error(await errorMessage(res, 'Unable to create post'))
-  }
-  return (await res.json()) as Post
-}
-
-export async function updatePost(id: string, payload: PostPayload): Promise<Post> {
-  const res = await fetch(`${BASE}/${id}`, {
-    method: 'PUT',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-  if (!res.ok) {
-    throw new Error(await errorMessage(res, 'Unable to update post'))
-  }
-  return (await res.json()) as Post
 }
 
 export function postToPayload(post: Post): PostPayload {
@@ -67,24 +57,4 @@ export function postToPayload(post: Post): PostPayload {
     used_asset_ids: post.used_asset_ids,
     campaign_type_phase_id: post.campaign_type_phase_id,
   }
-}
-
-export async function deletePost(id: string): Promise<void> {
-  const res = await fetch(`${BASE}/${id}`, {
-    method: 'DELETE',
-    credentials: 'include',
-  })
-  if (!res.ok) {
-    throw new Error(await errorMessage(res, 'Unable to delete post'))
-  }
-}
-
-async function errorMessage(res: Response, fallback: string): Promise<string> {
-  try {
-    const body = (await res.json()) as { error?: string }
-    if (typeof body.error === 'string' && body.error.length > 0) return body.error
-  } catch {
-    // fall through
-  }
-  return fallback
 }
