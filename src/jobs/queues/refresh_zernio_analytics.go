@@ -40,13 +40,13 @@ type RefreshZernioAnalyticsTask struct{}
 // Kind implements river.JobArgs.
 func (RefreshZernioAnalyticsTask) Kind() string { return RefreshZernioAnalyticsQueue }
 
-// InsertOpts sets per-kind defaults. Cadence is owned by a River
-// PeriodicJob (registered in server.go when the Zernio integration is
-// configured). Process never returns an error — each tick records its own
-// outcome — so a single attempt is correct; idempotent upserts keep a
-// re-run safe (§10).
+// InsertOpts sets per-kind defaults. Cadence is owned by a River PeriodicJob
+// (registered when the Zernio integration is configured). Process never
+// returns an error — each tick records its own outcome — so a single attempt
+// is correct; idempotent upserts keep a re-run safe (§10). UniqueOpts (active
+// states only) prevents overlapping ticks from stacking.
 func (RefreshZernioAnalyticsTask) InsertOpts() river.InsertOpts {
-	return river.InsertOpts{MaxAttempts: 1}
+	return river.InsertOpts{MaxAttempts: 1, UniqueOpts: periodicUniqueOpts()}
 }
 
 // RefreshZernioAnalyticsProcessor wires one refresh tick. Deps supplies
@@ -55,12 +55,34 @@ func (RefreshZernioAnalyticsTask) InsertOpts() river.InsertOpts {
 // is optional (CON-93 §8, frontend-deferred) — a nil Hub publishes
 // nothing.
 type RefreshZernioAnalyticsProcessor struct {
+	river.WorkerDefaults[RefreshZernioAnalyticsTask]
 	Deps     ZernioDeps
 	Settings zernio.SettingsStore
 	Hub      eventhub.Hub
 
 	WindowDays int // analytics lookback window (defaults to 90)
 	PageLimit  int // page size, 1–100 (defaults to 100)
+}
+
+// Work is the River entrypoint; it delegates to Process.
+func (p *RefreshZernioAnalyticsProcessor) Work(ctx context.Context, job *river.Job[RefreshZernioAnalyticsTask]) error {
+	return p.Process(ctx, job.Args)
+}
+
+// Timeout is the per-attempt context deadline.
+func (p *RefreshZernioAnalyticsProcessor) Timeout(*river.Job[RefreshZernioAnalyticsTask]) time.Duration {
+	return 60 * time.Second
+}
+
+func init() {
+	register(func(w *river.Workers, d Deps) {
+		river.AddWorker(w, &RefreshZernioAnalyticsProcessor{
+			Deps:       d.Zernio,
+			Settings:   d.AnalyticsSettings,
+			Hub:        d.AnalyticsHub,
+			WindowDays: d.AnalyticsWindowDays,
+		})
+	})
 }
 
 // Process runs one refresh tick.

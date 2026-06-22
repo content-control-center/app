@@ -27,11 +27,11 @@ type ReconcileScheduledPostsTask struct{}
 // Kind implements river.JobArgs.
 func (ReconcileScheduledPostsTask) Kind() string { return ReconcileScheduledPostsQueue }
 
-// InsertOpts sets per-kind defaults. Cadence is owned by a River
-// PeriodicJob (registered in server.go); a failed tick is simply picked up
-// on the next interval, so one attempt is enough.
+// InsertOpts sets per-kind defaults. Cadence is owned by a River PeriodicJob;
+// a failed tick is picked up on the next interval, so one attempt is enough.
+// UniqueOpts (active states only) prevents overlapping ticks from stacking.
 func (ReconcileScheduledPostsTask) InsertOpts() river.InsertOpts {
-	return river.InsertOpts{MaxAttempts: 1}
+	return river.InsertOpts{MaxAttempts: 1, UniqueOpts: periodicUniqueOpts()}
 }
 
 // FailureReasonReconciliationTimeout is the verbatim prefix every
@@ -47,10 +47,31 @@ const FailureReasonReconciliationTimeout = "reconciliation_timeout"
 // transition each in its own transaction, log per-post. Cadence is owned
 // by a River PeriodicJob.
 type ReconcileScheduledPostsProcessor struct {
+	river.WorkerDefaults[ReconcileScheduledPostsTask]
 	Repo    ReconcilePostRepo
 	LogRepo ReconcileLogRepo
 	Grace   time.Duration // how long after scheduled_at before timing out
 	Limit   int           // max posts to process per tick (defaults to 100)
+}
+
+// Work is the River entrypoint; it delegates to Process.
+func (p *ReconcileScheduledPostsProcessor) Work(ctx context.Context, job *river.Job[ReconcileScheduledPostsTask]) error {
+	return p.Process(ctx, job.Args)
+}
+
+// Timeout is the per-attempt context deadline.
+func (p *ReconcileScheduledPostsProcessor) Timeout(*river.Job[ReconcileScheduledPostsTask]) time.Duration {
+	return 30 * time.Second
+}
+
+func init() {
+	register(func(w *river.Workers, d Deps) {
+		river.AddWorker(w, &ReconcileScheduledPostsProcessor{
+			Repo:    d.Zernio.PostRepo,
+			LogRepo: d.Zernio.PostLogRepo,
+			Grace:   d.ReconcileGrace,
+		})
+	})
 }
 
 // ReconcilePostRepo is the narrow surface the sweeper needs out of

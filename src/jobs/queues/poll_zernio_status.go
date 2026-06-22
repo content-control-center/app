@@ -2,7 +2,6 @@ package queues
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -28,25 +27,44 @@ type PollZernioStatusTask struct {
 func (PollZernioStatusTask) Kind() string { return PollZernioStatusQueue }
 
 // InsertOpts sets per-kind defaults: 3 total attempts for transient errors.
-// The non-terminal cadence is driven by self-rescheduling in scheduleNext,
-// not by retries. Per-attempt timeout lives on the worker.
+// The non-terminal cadence is driven by river.JobSnooze in Process, not by
+// retries (snooze bumps max_attempts so it never consumes the retry budget).
+// Per-attempt timeout lives on the worker.
 func (PollZernioStatusTask) InsertOpts() river.InsertOpts {
 	return river.InsertOpts{MaxAttempts: 3}
 }
 
 // PollZernioStatusProcessor implements the recurring poll. The
 // cadence per CON-69 §7: every 30s for the first 5 minutes after
-// scheduled_at, then every 60s. Hard floor — never sooner than 5s.
+// scheduled_at, then every 60s.
 type PollZernioStatusProcessor struct {
+	river.WorkerDefaults[PollZernioStatusTask]
 	Deps         ZernioDeps
 	FastInterval time.Duration // default 30s
 	SlowInterval time.Duration // default 60s
 	FastWindow   time.Duration // default 5m after scheduled_at
 }
 
-// Process executes one poll cycle. Returns nil for both the
-// "succeeded" and "self-rescheduled" cases; returns a non-nil error
-// only on transient Zernio failures so River retries per its backoff policy.
+// Work is the River entrypoint; it delegates to Process.
+func (p *PollZernioStatusProcessor) Work(ctx context.Context, job *river.Job[PollZernioStatusTask]) error {
+	return p.Process(ctx, job.Args)
+}
+
+// Timeout is the per-attempt context deadline.
+func (p *PollZernioStatusProcessor) Timeout(*river.Job[PollZernioStatusTask]) time.Duration {
+	return 20 * time.Second
+}
+
+func init() {
+	register(func(w *river.Workers, d Deps) {
+		river.AddWorker(w, &PollZernioStatusProcessor{Deps: d.Zernio})
+	})
+}
+
+// Process executes one poll cycle. On a non-terminal status it returns
+// river.JobSnooze to reschedule this same job per the cadence rule; it returns
+// a non-nil error only on transient Zernio failures so River retries per its
+// backoff policy; otherwise nil (terminal handled, or quietly exited).
 func (p *PollZernioStatusProcessor) Process(ctx context.Context, task PollZernioStatusTask) error {
 	post, err := p.Deps.PostRepo.GetByID(ctx, task.PostID)
 	if err != nil {
@@ -88,9 +106,9 @@ func (p *PollZernioStatusProcessor) Process(ctx context.Context, task PollZernio
 	post.PublisherStatus = string(job.Status)
 	if !job.Status.IsTerminal() {
 		_ = p.Deps.PostRepo.Update(ctx, post)
-		// Self-reschedule per cadence rule.
-		p.scheduleNext(ctx, post)
-		return nil
+		// Not terminal yet — snooze this same job per the cadence rule.
+		// JobSnooze reschedules without consuming a retry attempt.
+		return river.JobSnooze(p.intervalFor(post))
 	}
 
 	// Terminal state: published / failed / partial. Map to Ogen status
@@ -134,19 +152,6 @@ func (p *PollZernioStatusProcessor) Process(ctx context.Context, task PollZernio
 			"unknown Zernio terminal status — ignoring", `{"zernio_status":"`+string(job.Status)+`"}`)
 	}
 	return nil
-}
-
-func (p *PollZernioStatusProcessor) scheduleNext(ctx context.Context, post *models.Post) {
-	client, err := river.ClientFromContextSafely[*sql.Tx](ctx)
-	if err != nil || client == nil {
-		return
-	}
-	delay := p.intervalFor(post)
-	when := time.Now().UTC().Add(delay)
-	if _, err := client.Insert(ctx, PollZernioStatusTask{PostID: post.ID}, &river.InsertOpts{ScheduledAt: when}); err != nil {
-		appendLog(ctx, p.Deps, post.ID, models.PostLogEventTaskFailed, post.Status, post.Status,
-			"failed to self-reschedule poll", `{"error":"`+err.Error()+`"}`)
-	}
 }
 
 func (p *PollZernioStatusProcessor) intervalFor(post *models.Post) time.Duration {

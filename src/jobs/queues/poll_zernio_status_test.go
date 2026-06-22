@@ -2,8 +2,11 @@ package queues_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
+
+	"github.com/riverqueue/river"
 
 	"github.com/ogen-app/ogen/src/jobs/queues"
 	"github.com/ogen-app/ogen/src/models"
@@ -103,5 +106,40 @@ func TestPollExitsCleanlyWhenPostNotScheduled(t *testing.T) {
 	proc := &queues.PollZernioStatusProcessor{Deps: deps}
 	if err := proc.Process(context.Background(), queues.PollZernioStatusTask{PostID: post.ID}); err != nil {
 		t.Fatalf("process should return nil for non-scheduled posts: %v", err)
+	}
+}
+
+func TestPollNonTerminalSnoozes(t *testing.T) {
+	stub := newStubZernio()
+	defer stub.Close()
+	stub.handle("GET", "/posts/z-1", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, zernio.PostEnvelope{Post: zernio.Job{
+			ID: "z-1", Status: zernio.JobStatusScheduled, // non-terminal
+		}})
+	})
+	deps, postRepo, _ := makeDeps(stub, nil)
+	post := seedScheduledPost(postRepo)
+	post.PublisherPostID = "z-1"
+	postRepo.put(post)
+
+	proc := &queues.PollZernioStatusProcessor{Deps: deps}
+	err := proc.Process(context.Background(), queues.PollZernioStatusTask{PostID: post.ID})
+
+	// Non-terminal → reschedule via river.JobSnooze (not a failure, not a
+	// completion). The job is rescheduled without consuming a retry attempt.
+	var snooze *river.JobSnoozeError
+	if !errors.As(err, &snooze) {
+		t.Fatalf("expected a river JobSnooze, got %v", err)
+	}
+	if snooze.Duration <= 0 {
+		t.Errorf("snooze duration should be positive, got %s", snooze.Duration)
+	}
+	// The Post stays Scheduled; Zernio's status is persisted for visibility.
+	got, _ := postRepo.GetByID(context.Background(), post.ID)
+	if got.Status != models.PostStatusScheduled {
+		t.Errorf("status: got %q want scheduled (unchanged)", got.Status)
+	}
+	if got.PublisherStatus != string(zernio.JobStatusScheduled) {
+		t.Errorf("publisher_status: got %q want scheduled", got.PublisherStatus)
 	}
 }

@@ -55,8 +55,10 @@ func (r *fakePostRepo) Update(_ context.Context, p *models.Post) error {
 // Stubs for the rest of the PostRepository surface — never called by
 // the queues but required to satisfy the interface. We type-assert in
 // the test setup so any forgotten method becomes a compile error.
-func (r *fakePostRepo) List(context.Context) ([]models.Post, error)             { return nil, nil }
-func (r *fakePostRepo) ListByCampaign(context.Context, string) ([]models.Post, error) { return nil, nil }
+func (r *fakePostRepo) List(context.Context) ([]models.Post, error) { return nil, nil }
+func (r *fakePostRepo) ListByCampaign(context.Context, string) ([]models.Post, error) {
+	return nil, nil
+}
 func (r *fakePostRepo) ListWithPublisherPostID(context.Context) ([]models.Post, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -68,9 +70,9 @@ func (r *fakePostRepo) ListWithPublisherPostID(context.Context) ([]models.Post, 
 	}
 	return out, nil
 }
-func (r *fakePostRepo) Create(context.Context, *models.Post) error              { return nil }
-func (r *fakePostRepo) CreateBatch(context.Context, []*models.Post) error       { return nil }
-func (r *fakePostRepo) Delete(context.Context, string) (bool, error)            { return false, nil }
+func (r *fakePostRepo) Create(context.Context, *models.Post) error        { return nil }
+func (r *fakePostRepo) CreateBatch(context.Context, []*models.Post) error { return nil }
+func (r *fakePostRepo) Delete(context.Context, string) (bool, error)      { return false, nil }
 func (r *fakePostRepo) ListStuckScheduled(context.Context, time.Time, int) ([]models.Post, error) {
 	return nil, nil
 }
@@ -183,11 +185,11 @@ func makeDeps(stub *stubZernio, accounts map[string][]models.SocialAccount) (que
 func seedScheduledPost(repo *fakePostRepo) *models.Post {
 	now := time.Now().Add(-time.Minute).UTC()
 	post := &models.Post{
-		ID:           "post-1",
-		PlatformID:   "AXqWG7U2qnpt", // LinkedIn Sqid
-		Content:      "hello world",
-		Status:       models.PostStatusScheduled,
-		ScheduledAt:  &now,
+		ID:          "post-1",
+		PlatformID:  "AXqWG7U2qnpt", // LinkedIn Sqid
+		Content:     "hello world",
+		Status:      models.PostStatusScheduled,
+		ScheduledAt: &now,
 		Platform: &models.Platform{
 			ID:   "AXqWG7U2qnpt",
 			Name: "LinkedIn",

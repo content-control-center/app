@@ -47,9 +47,26 @@ func (CancelZernioJobTask) InsertOpts() river.InsertOpts {
 	return river.InsertOpts{MaxAttempts: 3}
 }
 
-// CancelZernioJobProcessor implements the queue handler.
+// CancelZernioJobProcessor is the River worker for cancel_zernio_job.
 type CancelZernioJobProcessor struct {
+	river.WorkerDefaults[CancelZernioJobTask]
 	Deps ZernioDeps
+}
+
+// Work is the River entrypoint; it delegates to Process.
+func (p *CancelZernioJobProcessor) Work(ctx context.Context, job *river.Job[CancelZernioJobTask]) error {
+	return p.Process(ctx, job.Args)
+}
+
+// Timeout is the per-attempt context deadline.
+func (p *CancelZernioJobProcessor) Timeout(*river.Job[CancelZernioJobTask]) time.Duration {
+	return 20 * time.Second
+}
+
+func init() {
+	register(func(w *river.Workers, d Deps) {
+		river.AddWorker(w, &CancelZernioJobProcessor{Deps: d.Zernio})
+	})
 }
 
 // Process executes one cancellation attempt.

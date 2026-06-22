@@ -154,21 +154,21 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 		},
 	}
 
-	// The three one-shot workers (submit/poll/cancel) plus the three
-	// periodic sweeps (cleanup/reconcile/analytics). The analytics periodic
-	// job is only registered when the Zernio integration is configured —
+	// The six workers self-register from their init()s; RegisterAll wires them
+	// to the River registry with one dependency bundle. The analytics periodic
+	// job is only scheduled when the Zernio integration is configured —
 	// otherwise every tick would no-op against a disabled client.
 	cleanupEvery := time.Hour
 	reconcileEvery := 5 * time.Minute
 	workers := river.NewWorkers()
-	queues.WorkerSet{
-		Submit:    &queues.SubmitPostProcessor{Deps: zernioDeps},
-		Poll:      &queues.PollZernioStatusProcessor{Deps: zernioDeps},
-		Cancel:    &queues.CancelZernioJobProcessor{Deps: zernioDeps},
-		Cleanup:   &queues.CleanupPostLogsProcessor{Repo: postLogRepo, Retention: time.Duration(cfg.PostLogRetentionDays) * 24 * time.Hour},
-		Reconcile: &queues.ReconcileScheduledPostsProcessor{Repo: postRepo, LogRepo: postLogRepo, Grace: cfg.ReconcileGrace},
-		Analytics: &queues.RefreshZernioAnalyticsProcessor{Deps: zernioDeps, Settings: zernioRT.Settings, Hub: hub, WindowDays: cfg.ZernioAnalyticsWindowDays},
-	}.Register(workers)
+	queues.RegisterAll(workers, queues.Deps{
+		Zernio:              zernioDeps,
+		PostLogRetention:    time.Duration(cfg.PostLogRetentionDays) * 24 * time.Hour,
+		ReconcileGrace:      cfg.ReconcileGrace,
+		AnalyticsSettings:   zernioRT.Settings,
+		AnalyticsHub:        hub,
+		AnalyticsWindowDays: cfg.ZernioAnalyticsWindowDays,
+	})
 
 	if err := jobs.MigrateRiver(ctx, db.DB); err != nil {
 		return nil, err

@@ -7,108 +7,65 @@ import (
 	"time"
 
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
+
+	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/publishers/zernio"
 )
 
-// This file adapts the typed processors in this package to River
-// (riverqueue/river) workers and exposes the enqueue surface the rest of
-// the app uses. Each worker is a thin shell over a processor's Process
-// method, so the heavily-tested processor logic is unchanged. Per-attempt
-// timeouts live on the workers; MaxAttempts and scheduling defaults live on
-// the args types' InsertOpts methods.
+// This file holds the central River plumbing for the queue package: the
+// dependency bundle, the self-registration registry, the periodic-job set,
+// and the app-facing enqueue surface.
+//
+// Workers are NOT listed here. Each job is a processor (in its own file) that
+// implements river.Worker directly (Work/Timeout next to its logic) and
+// self-registers from an init() via register(). Adding a job therefore means
+// adding one file — no central list to edit.
 
-// --- Workers ---
-
-type submitPostWorker struct {
-	river.WorkerDefaults[SubmitPostTask]
-	p *SubmitPostProcessor
-}
-
-func (w *submitPostWorker) Work(ctx context.Context, job *river.Job[SubmitPostTask]) error {
-	return w.p.Process(ctx, job.Args)
-}
-func (w *submitPostWorker) Timeout(*river.Job[SubmitPostTask]) time.Duration { return 30 * time.Second }
-
-type pollZernioStatusWorker struct {
-	river.WorkerDefaults[PollZernioStatusTask]
-	p *PollZernioStatusProcessor
+// Deps bundles every dependency the workers need. server.go builds one and
+// passes it to RegisterAll; each worker's registrar picks what it needs. The
+// cleanup/reconcile repos are the same instances already held by the Zernio
+// bundle, so they aren't duplicated here.
+type Deps struct {
+	Zernio              ZernioDeps
+	PostLogRetention    time.Duration
+	ReconcileGrace      time.Duration
+	AnalyticsSettings   zernio.SettingsStore
+	AnalyticsHub        eventhub.Hub
+	AnalyticsWindowDays int
 }
 
-func (w *pollZernioStatusWorker) Work(ctx context.Context, job *river.Job[PollZernioStatusTask]) error {
-	return w.p.Process(ctx, job.Args)
-}
-func (w *pollZernioStatusWorker) Timeout(*river.Job[PollZernioStatusTask]) time.Duration {
-	return 20 * time.Second
+// registrars is appended to by each worker file's init(). A job is registered
+// simply by existing in this package.
+var registrars []func(*river.Workers, Deps)
+
+// register records a worker registrar. Called from each job file's init().
+func register(fn func(*river.Workers, Deps)) {
+	registrars = append(registrars, fn)
 }
 
-type cancelZernioJobWorker struct {
-	river.WorkerDefaults[CancelZernioJobTask]
-	p *CancelZernioJobProcessor
+// RegisterAll adds every self-registered worker to the River registry.
+func RegisterAll(workers *river.Workers, deps Deps) {
+	for _, fn := range registrars {
+		fn(workers, deps)
+	}
 }
 
-func (w *cancelZernioJobWorker) Work(ctx context.Context, job *river.Job[CancelZernioJobTask]) error {
-	return w.p.Process(ctx, job.Args)
-}
-func (w *cancelZernioJobWorker) Timeout(*river.Job[CancelZernioJobTask]) time.Duration {
-	return 20 * time.Second
-}
-
-type cleanupPostLogsWorker struct {
-	river.WorkerDefaults[CleanupPostLogsTask]
-	p *CleanupPostLogsProcessor
-}
-
-func (w *cleanupPostLogsWorker) Work(ctx context.Context, job *river.Job[CleanupPostLogsTask]) error {
-	return w.p.Process(ctx, job.Args)
-}
-func (w *cleanupPostLogsWorker) Timeout(*river.Job[CleanupPostLogsTask]) time.Duration {
-	return 30 * time.Second
-}
-
-type reconcileScheduledPostsWorker struct {
-	river.WorkerDefaults[ReconcileScheduledPostsTask]
-	p *ReconcileScheduledPostsProcessor
-}
-
-func (w *reconcileScheduledPostsWorker) Work(ctx context.Context, job *river.Job[ReconcileScheduledPostsTask]) error {
-	return w.p.Process(ctx, job.Args)
-}
-func (w *reconcileScheduledPostsWorker) Timeout(*river.Job[ReconcileScheduledPostsTask]) time.Duration {
-	return 30 * time.Second
-}
-
-type refreshZernioAnalyticsWorker struct {
-	river.WorkerDefaults[RefreshZernioAnalyticsTask]
-	p *RefreshZernioAnalyticsProcessor
-}
-
-func (w *refreshZernioAnalyticsWorker) Work(ctx context.Context, job *river.Job[RefreshZernioAnalyticsTask]) error {
-	return w.p.Process(ctx, job.Args)
-}
-func (w *refreshZernioAnalyticsWorker) Timeout(*river.Job[RefreshZernioAnalyticsTask]) time.Duration {
-	return 60 * time.Second
-}
-
-// WorkerSet bundles the six processors so server.go wires their
-// dependencies in one place, then registers all workers at once.
-type WorkerSet struct {
-	Submit    *SubmitPostProcessor
-	Poll      *PollZernioStatusProcessor
-	Cancel    *CancelZernioJobProcessor
-	Cleanup   *CleanupPostLogsProcessor
-	Reconcile *ReconcileScheduledPostsProcessor
-	Analytics *RefreshZernioAnalyticsProcessor
-}
-
-// Register adds every worker to the River workers registry. The analytics
-// worker is always registered; whether it ever runs is governed by the
-// presence of its PeriodicJob (see PeriodicJobs).
-func (s WorkerSet) Register(workers *river.Workers) {
-	river.AddWorker(workers, &submitPostWorker{p: s.Submit})
-	river.AddWorker(workers, &pollZernioStatusWorker{p: s.Poll})
-	river.AddWorker(workers, &cancelZernioJobWorker{p: s.Cancel})
-	river.AddWorker(workers, &cleanupPostLogsWorker{p: s.Cleanup})
-	river.AddWorker(workers, &reconcileScheduledPostsWorker{p: s.Reconcile})
-	river.AddWorker(workers, &refreshZernioAnalyticsWorker{p: s.Analytics})
+// periodicUniqueOpts is the uniqueness applied to the periodic markers
+// (cleanup/reconcile/analytics): a new tick is skipped only while a previous
+// one is still ACTIVE. Completed/cancelled/discarded are deliberately excluded
+// — including them (River's default ByState) would block the next tick until
+// the job cleaner removes the retained completed row, breaking the cadence.
+func periodicUniqueOpts() river.UniqueOpts {
+	return river.UniqueOpts{
+		ByState: []rivertype.JobState{
+			rivertype.JobStateAvailable,
+			rivertype.JobStatePending,
+			rivertype.JobStateRunning,
+			rivertype.JobStateScheduled,
+			rivertype.JobStateRetryable,
+		},
+	}
 }
 
 // PeriodicConfig carries the recurring-job cadences. The three recurring

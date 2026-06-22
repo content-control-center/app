@@ -37,13 +37,30 @@ func (SubmitPostTask) InsertOpts() river.InsertOpts {
 	return river.InsertOpts{MaxAttempts: 5}
 }
 
-// SubmitPostProcessor implements the queue handler. Held by the
-// runtime; one instance per process.
+// SubmitPostProcessor is the River worker for submit_post_to_zernio. It
+// implements river.Worker directly; Process is the test seam Work delegates to.
 type SubmitPostProcessor struct {
+	river.WorkerDefaults[SubmitPostTask]
 	Deps ZernioDeps
 	// PollLeadTime is how far in advance of scheduled_at we begin
 	// polling. Defaults to 30s when zero.
 	PollLeadTime time.Duration
+}
+
+// Work is the River entrypoint; it delegates to Process.
+func (p *SubmitPostProcessor) Work(ctx context.Context, job *river.Job[SubmitPostTask]) error {
+	return p.Process(ctx, job.Args)
+}
+
+// Timeout is the per-attempt context deadline.
+func (p *SubmitPostProcessor) Timeout(*river.Job[SubmitPostTask]) time.Duration {
+	return 30 * time.Second
+}
+
+func init() {
+	register(func(w *river.Workers, d Deps) {
+		river.AddWorker(w, &SubmitPostProcessor{Deps: d.Zernio})
+	})
 }
 
 // Process runs one submit attempt. Returns a non-nil error to ask

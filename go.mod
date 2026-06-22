@@ -22,6 +22,7 @@ require (
 	github.com/pgvector/pgvector-go v0.4.0
 	github.com/riverqueue/river v0.39.0
 	github.com/riverqueue/river/riverdriver/riverdatabasesql v0.39.0
+	github.com/riverqueue/river/rivertype v0.39.0
 	github.com/sqids/sqids-go v0.4.1
 	github.com/swaggo/swag v1.16.6
 	github.com/uptrace/bun v1.2.18
@@ -87,7 +88,6 @@ require (
 	github.com/puzpuzpuz/xsync/v3 v3.5.1 // indirect
 	github.com/riverqueue/river/riverdriver v0.39.0 // indirect
 	github.com/riverqueue/river/rivershared v0.39.0 // indirect
-	github.com/riverqueue/river/rivertype v0.39.0 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
