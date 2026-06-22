@@ -4,15 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
+	"github.com/pgvector/pgvector-go"
 
-	"github.com/ogen-app/ogen/src/genkit/flows"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/post_actions/clone"
 	"github.com/ogen-app/ogen/src/post_actions/restore"
@@ -21,6 +19,10 @@ import (
 
 // Per-turn token budget for tool-retrieved chunks.
 const chunkTokenBudget = 3000
+
+// minSearchSimilarity is the cosine-similarity floor a chunk must clear to be
+// returned by the semantic-search tool (searchAssetChunks).
+const minSearchSimilarity = 0.5
 
 // ── Context key for per-request state ────────────────────────────────────────
 
@@ -283,11 +285,6 @@ func toolSearchAssetChunks(ctx context.Context, in SearchChunksInput) (*ChunksOu
 		return nil, fmt.Errorf("semantic search is unavailable (no embedder configured); use getAssetChunks to retrieve chunks by ID instead")
 	}
 
-	allChunks, err := st.repos.Chunks.GetByAssetID(ctx, in.AssetID)
-	if err != nil {
-		return nil, fmt.Errorf("fetch chunks: %w", err)
-	}
-
 	qResp, err := st.embedder.Embed(ctx, &ai.EmbedRequest{
 		Input: []*ai.Document{ai.DocumentFromText(in.Query, nil)},
 	})
@@ -297,31 +294,16 @@ func toolSearchAssetChunks(ctx context.Context, in SearchChunksInput) (*ChunksOu
 	if len(qResp.Embeddings) == 0 {
 		return &ChunksOutput{}, nil
 	}
-	queryVec := qResp.Embeddings[0].Embedding
 
-	type scored struct {
-		chunk models.AssetChunk
-		score float32
-	}
-	var ranked []scored
-	for _, c := range allChunks {
-		if len(c.Embedding) == 0 {
-			continue
-		}
-		vec := flows.DecodeVector(c.Embedding)
-		s := cosineSimilarity(queryVec, vec)
-		if s >= 0.5 {
-			ranked = append(ranked, scored{chunk: c, score: s})
-		}
-	}
-	sort.Slice(ranked, func(i, j int) bool { return ranked[i].score > ranked[j].score })
-
-	result := make([]models.AssetChunk, 0, len(ranked))
-	for _, r := range ranked {
-		result = append(result, r.chunk)
+	// pgvector ANN search scoped to this asset, ordered closest-first and
+	// filtered at the similarity floor — in-database via the HNSW index
+	// (replaces the fetch-all-and-cosine-in-Go scan).
+	ranked, err := st.repos.Chunks.SearchSimilar(ctx, pgvector.NewVector(qResp.Embeddings[0].Embedding), []string{in.AssetID}, minSearchSimilarity, 0)
+	if err != nil {
+		return nil, fmt.Errorf("search chunks: %w", err)
 	}
 
-	return packChunks(result), nil
+	return packChunks(ranked), nil
 }
 
 func toolGetCurrentContent(ctx context.Context) (string, error) {
@@ -561,21 +543,4 @@ func packChunks(chunks []models.AssetChunk) *ChunksOutput {
 		tokens += c.TokenCount
 	}
 	return &out
-}
-
-func cosineSimilarity(a, b []float32) float32 {
-	if len(a) != len(b) || len(a) == 0 {
-		return 0
-	}
-	var dot, normA, normB float64
-	for i := range a {
-		dot += float64(a[i]) * float64(b[i])
-		normA += float64(a[i]) * float64(a[i])
-		normB += float64(b[i]) * float64(b[i])
-	}
-	denom := math.Sqrt(normA) * math.Sqrt(normB)
-	if denom == 0 {
-		return 0
-	}
-	return float32(dot / denom)
 }

@@ -162,17 +162,20 @@ func (s *Service) Restore(ctx context.Context, postID string, opts Options) (*Re
 
 	// Version numbering must be serialized with the inserts, so the latest
 	// version is read and nextNum computed INSIDE the transaction — using
-	// the tx handle, not a pooled repo call (with a single SQLite
-	// connection a pooled read here would deadlock against the open tx).
-	// SQLite runs one write transaction at a time, so a concurrent restore
-	// cannot begin until this one commits, after which it reads the version
-	// we just appended and computes the next number — no duplicate
-	// version_number, no UNIQUE-constraint collision.
+	// the tx handle, not a pooled repo call. Postgres runs writers
+	// concurrently (SQLite did not), so the transaction first locks the post
+	// row (SELECT ... FOR UPDATE): a concurrent restore of the same post then
+	// blocks until this one commits, after which it reads the version we just
+	// appended and computes the next number — no duplicate version_number, no
+	// UNIQUE-constraint collision.
 	var (
 		restoredVersionNum  int
 		autoSnapshotCreated bool
 	)
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw(`SELECT 1 FROM posts WHERE id = ? FOR UPDATE`, postID).Exec(ctx); err != nil {
+			return err
+		}
 		latest := new(models.PostVersion)
 		err := tx.NewSelect().
 			Model(latest).

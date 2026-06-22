@@ -5,6 +5,25 @@ services:
     ports:
       - "9003:8080"
 
+  # Postgres (pgvector image) backing the integration suite (CON-87 WS5).
+  # The suite connects to localhost:5432 and isolates per ginkgo worker.
+  postgres:
+    image: pgvector/pgvector:pg17
+    # Each integration Describe provisions its own database, so raise the
+    # connection ceiling above the default 100.
+    command: ["postgres", "-c", "max_connections=500"]
+    environment:
+      POSTGRES_USER: ogen
+      POSTGRES_PASSWORD: ogen
+      POSTGRES_DB: ogen
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ogen -d ogen"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
   # MinIO is the S3-compatible backend used by post-attachment integration
   # tests (CON-73). The bucket itself is created on demand by the test
   # helper — keeping that out of the compose file means each test run

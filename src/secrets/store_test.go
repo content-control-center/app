@@ -4,34 +4,22 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
-	"fmt"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/uptrace/bun"
 
 	"github.com/ogen-app/ogen/src/crypto/envelope"
-	"github.com/ogen-app/ogen/src/database"
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/pgtest"
 	"github.com/ogen-app/ogen/src/repository"
 )
 
-var dbCounter atomic.Uint64
-
-// mustOpenDB returns a per-test in-memory SQLite DB with the secret
-// table created. Each call gets a fresh, isolated database (named via
-// a counter) so tests cannot see each other's rows.
+// mustOpenDB returns a fresh, isolated, fully-migrated Postgres DB (the
+// `secret` table is part of the baseline schema). Each call gets its own
+// database so tests cannot see each other's rows.
 func mustOpenDB(t *testing.T) *bun.DB {
 	t.Helper()
-	dsn := fmt.Sprintf("file:secrets_unit_%d?mode=memory&cache=shared", dbCounter.Add(1))
-	db, err := database.New(dsn, false)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	if _, err := db.NewCreateTable().Model((*models.Secret)(nil)).IfNotExists().Exec(context.Background()); err != nil {
-		t.Fatalf("create table: %v", err)
-	}
+	db := pgtest.MustDB()
 	t.Cleanup(func() { _ = db.Close() })
 	return db
 }

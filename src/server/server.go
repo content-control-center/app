@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"expvar"
 	"io/fs"
@@ -15,8 +16,8 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/filesystem"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
-	"github.com/mikestefanello/backlite"
-	backliteui "github.com/mikestefanello/backlite/ui"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/uptrace/bun"
 
 	"github.com/firebase/genkit/go/ai"
@@ -131,32 +132,14 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 		return nil, err
 	}
 
-	// CON-69 §1+§3: Backlite background-job queue. Shares the SQLite
-	// file with the rest of the app (db.DB exposes the underlying
-	// *sql.DB). Schema install is idempotent. The worker pool starts
-	// further below and is drained on shutdown via the Fiber hook.
-	jobsRT, err := jobs.New(jobs.Config{
-		DB:              db.DB,
-		Workers:         cfg.BackliteWorkers,
-		ReleaseAfter:    cfg.BackliteReleaseAfter,
-		CleanupInterval: cfg.BackliteCleanupInterval,
-		ShutdownTimeout: cfg.BackliteShutdownTimeout,
-	})
-	if err != nil {
-		return nil, err
-	}
-	// Recurring Post Log retention sweeper.
-	cleanupEvery := time.Hour
-	jobsRT.Register(backlite.NewQueue[queues.CleanupPostLogsTask]((&queues.CleanupPostLogsProcessor{
-		Repo:      postLogRepo,
-		Retention: time.Duration(cfg.PostLogRetentionDays) * 24 * time.Hour,
-		Every:     cleanupEvery,
-	}).Process))
-
-	// CON-69 §6+§7: Zernio submit + poll queues. Both share the same
-	// dependency bundle. ProfileID resolves lazily so this wiring runs
-	// before the bootstrapper has finished, and so a profile id added
-	// later via the secrets API is picked up on the next dispatch.
+	// CON-87 WS3: River background-job queue. Runs on the same
+	// database/sql pool as bun (db.DB), so a submit enqueue can join the
+	// schedule transaction (CON-78 §9). The worker pool starts below and
+	// is drained on shutdown via the Fiber hook.
+	//
+	// ProfileID resolves lazily so this wiring runs before the
+	// bootstrapper has finished, and so a profile id added later via the
+	// secrets API is picked up on the next dispatch.
 	zernioDeps := queues.ZernioDeps{
 		PostRepo:           postRepo,
 		PostLogRepo:        postLogRepo,
@@ -170,75 +153,54 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 			return id, err
 		},
 	}
-	jobsRT.Register(backlite.NewQueue[queues.SubmitPostTask]((&queues.SubmitPostProcessor{Deps: zernioDeps}).Process))
-	jobsRT.Register(backlite.NewQueue[queues.PollZernioStatusTask]((&queues.PollZernioStatusProcessor{Deps: zernioDeps}).Process))
-	jobsRT.Register(backlite.NewQueue[queues.CancelZernioJobTask]((&queues.CancelZernioJobProcessor{Deps: zernioDeps}).Process))
 
-	// CON-93 §6 FR3: recurring analytics refresh. Batch-fetches Zernio
-	// analytics, matches by publisher_post_id, and upserts snapshots. The
-	// processor is registered unconditionally (mirrors the submit/poll
-	// queues), but the recurring chain is only seeded when the Zernio
-	// integration is actually configured (a nil Bootstrapper means no API
-	// key at boot) — otherwise every tick would just no-op against a
-	// disabled client.
-	analyticsRefreshEvery := cfg.ZernioAnalyticsRefreshInterval
-	jobsRT.Register(backlite.NewQueue[queues.RefreshZernioAnalyticsTask]((&queues.RefreshZernioAnalyticsProcessor{
-		Deps:       zernioDeps,
-		Settings:   zernioRT.Settings,
-		Hub:        hub,
-		Every:      analyticsRefreshEvery,
-		WindowDays: cfg.ZernioAnalyticsWindowDays,
-	}).Process))
-	if zernioRT.Bootstrapper != nil {
-		if _, err := jobsRT.Client().Add(queues.RefreshZernioAnalyticsTask{}).Wait(analyticsRefreshEvery).Save(); err != nil {
-			log.Printf("jobs: failed to seed refresh_zernio_analytics: %v", err)
-		}
-	}
-
-	// CON-69 §8: reconciliation sweeper. Runs every 5 min by default;
-	// posts in Scheduled whose scheduled_at + cfg.ReconcileGrace has
-	// passed without a terminal status get forced to Failed with a
-	// distinct reconciliation_timeout reason.
+	// The three one-shot workers (submit/poll/cancel) plus the three
+	// periodic sweeps (cleanup/reconcile/analytics). The analytics periodic
+	// job is only registered when the Zernio integration is configured —
+	// otherwise every tick would no-op against a disabled client.
+	cleanupEvery := time.Hour
 	reconcileEvery := 5 * time.Minute
-	jobsRT.Register(backlite.NewQueue[queues.ReconcileScheduledPostsTask]((&queues.ReconcileScheduledPostsProcessor{
-		DB:      db,
-		Repo:    postRepo,
-		LogRepo: postLogRepo,
-		Grace:   cfg.ReconcileGrace,
-		Every:   reconcileEvery,
-	}).Process))
-	if _, err := jobsRT.Client().Add(queues.ReconcileScheduledPostsTask{}).Wait(reconcileEvery).Save(); err != nil {
-		log.Printf("jobs: failed to seed reconcile_scheduled_posts: %v", err)
+	workers := river.NewWorkers()
+	queues.WorkerSet{
+		Submit:    &queues.SubmitPostProcessor{Deps: zernioDeps},
+		Poll:      &queues.PollZernioStatusProcessor{Deps: zernioDeps},
+		Cancel:    &queues.CancelZernioJobProcessor{Deps: zernioDeps},
+		Cleanup:   &queues.CleanupPostLogsProcessor{Repo: postLogRepo, Retention: time.Duration(cfg.PostLogRetentionDays) * 24 * time.Hour},
+		Reconcile: &queues.ReconcileScheduledPostsProcessor{Repo: postRepo, LogRepo: postLogRepo, Grace: cfg.ReconcileGrace},
+		Analytics: &queues.RefreshZernioAnalyticsProcessor{Deps: zernioDeps, Settings: zernioRT.Settings, Hub: hub, WindowDays: cfg.ZernioAnalyticsWindowDays},
+	}.Register(workers)
+
+	if err := jobs.MigrateRiver(ctx, db.DB); err != nil {
+		return nil, err
 	}
-	// Mount the Backlite monitoring UI under the standard auth gate.
-	// The handler is an http.ServeMux internally; we adapt it to Fiber
-	// and register a wildcard route at the configured base path.
-	{
-		uiHandler, err := backliteui.NewHandler(backliteui.Config{
-			DB:           db.DB,
-			BasePath:     "/admin/backlite",
-			ReleaseAfter: cfg.BackliteReleaseAfter,
-		})
-		if err != nil {
-			return nil, err
-		}
-		mux := http.NewServeMux()
-		uiHandler.Register(mux)
-		app.All("/admin/backlite/*", auth, adaptor.HTTPHandler(mux))
-		app.Get("/admin/backlite", auth, adaptor.HTTPHandler(mux))
+	riverClient, err := river.NewClient[*sql.Tx](riverdatabasesql.New(db.DB), &river.Config{
+		Queues:  map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: cfg.JobWorkers}},
+		Workers: workers,
+		PeriodicJobs: queues.PeriodicConfig{
+			CleanupEvery:     cleanupEvery,
+			ReconcileEvery:   reconcileEvery,
+			AnalyticsEvery:   cfg.ZernioAnalyticsRefreshInterval,
+			IncludeAnalytics: zernioRT.Bootstrapper != nil,
+		}.PeriodicJobs(),
+	})
+	if err != nil {
+		return nil, err
 	}
+	enqueuer := &queues.Enqueuer{Client: riverClient}
+
 	// Expose expvar counters for ops health dashboards (CON-69 §13).
 	// Gated by the same auth as the rest of the app so internal
-	// counters aren't anonymous.
+	// counters aren't anonymous. (A River monitoring UI is a follow-up;
+	// the old /admin/backlite mount is removed with backlite.)
 	app.Get("/debug/vars", auth, adaptor.HTTPHandler(expvar.Handler()))
-	// Seed the recurring cleanup chain. Subsequent ticks are scheduled
-	// from inside Process via backlite.FromContext(ctx).
-	if _, addErr := jobsRT.Client().Add(queues.CleanupPostLogsTask{}).Wait(cleanupEvery).Save(); addErr != nil {
-		log.Printf("jobs: failed to seed cleanup_post_logs: %v", addErr)
+
+	if err := riverClient.Start(ctx); err != nil {
+		return nil, err
 	}
-	jobsRT.Start(ctx)
 	app.Hooks().OnShutdown(func() error {
-		jobsRT.Shutdown(context.Background())
+		sctx, cancel := context.WithTimeout(context.Background(), cfg.JobShutdownTimeout)
+		defer cancel()
+		_ = riverClient.Stop(sctx)
 		return nil
 	})
 
@@ -282,7 +244,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	// CON-78: one schedule service, shared by POST /:id/schedule, the
 	// assistant's schedulePost tool, and the PUT scheduling branch. Owns
 	// allowlist routing + transactional persist + Zernio submit enqueue.
-	scheduleSvc := schedule.New(db, postRepo, platformRepo, postAttachmentRepo, autoPublishAllowlistRepo, postLogRepo, jobsRT.Client(), hub)
+	scheduleSvc := schedule.New(db, postRepo, platformRepo, postAttachmentRepo, autoPublishAllowlistRepo, postLogRepo, enqueuer, hub)
 
 	gkRuntime, err := newGenkitRuntime(ctx, genkitDeps{
 		cfg:      cfg,
@@ -340,7 +302,7 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	// CON-69 §5: ReadyForPublish→Scheduled consults the auto-publish
 	// allowlist and (for allowlisted platforms) enqueues a submit task
 	// transactionally with the status change + log write.
-	postsHandler.SetSchedulingDeps(autoPublishAllowlistRepo, jobsRT.Client(), db)
+	postsHandler.SetSchedulingDeps(autoPublishAllowlistRepo, enqueuer, db)
 	// CON-59: same clone service the assistant uses, behind the REST
 	// endpoint that backs the (future) Duplicate button.
 	postsHandler.SetCloneService(cloneSvc)

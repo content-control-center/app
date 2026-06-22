@@ -11,7 +11,7 @@ services:
         required: false
     environment:
       ADDR: ":9001"
-      DATABASE_DSN: "file:/data/app.db?cache=shared&_pragma=journal_mode(WAL)"
+      DATABASE_DSN: "postgres://ogen:ogen@postgres:5432/ogen?sslmode=disable"
       EMBED_SERVER_URL: "http://llama-embedserver:8080"
       ANTHROPIC_API_KEY: ""
 
@@ -21,12 +21,32 @@ services:
       # under this path.
       OGEN_KEK_PATH: "/var/lib/ogen/keys"
     volumes:
-      - ./ogen-data:/data
       - ./ogen-keys:/var/lib/ogen/keys
     ports:
       - "9001:9001"
     depends_on:
-      - llama-embedserver
+      postgres:
+        condition: service_healthy
+      llama-embedserver:
+        condition: service_started
+
+  postgres:
+    # pgvector image = stock Postgres 17 + the `vector` extension prebuilt
+    # (CON-87 WS4). Multi-arch, so it runs native on arm64/amd64 hosts.
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: ogen
+      POSTGRES_PASSWORD: ogen
+      POSTGRES_DB: ogen
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ogen -d ogen"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
 
 #  web:
 #    image: node:20-alpine
@@ -51,5 +71,5 @@ services:
       - "9003:8080"
 
 volumes:
-  db-data:
+  postgres-data:
   ogen-keys:

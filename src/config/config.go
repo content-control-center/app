@@ -7,9 +7,15 @@ import (
 )
 
 type Config struct {
-	Addr              string `envconfig:"ADDR"                default:":9001"`
-	DSN               string `envconfig:"DATABASE_DSN"        default:"file:data/app.db?cache=shared&_pragma=journal_mode(WAL)"`
-	Debug             bool   `envconfig:"DEBUG"               default:"false"`
+	Addr  string `envconfig:"ADDR"                default:":9001"`
+	DSN   string `envconfig:"DATABASE_DSN"        default:"postgres://ogen:ogen@localhost:5432/ogen?sslmode=disable"`
+	Debug bool   `envconfig:"DEBUG"               default:"false"`
+
+	// Connection-pool sizing. Postgres lifts SQLite's single-writer
+	// ceiling, so the API runs a real pool shared by bun and the River
+	// job queue. Size MaxOpen for combined HTTP + worker load.
+	DBMaxOpenConns    int    `envconfig:"DB_MAX_OPEN_CONNS" default:"25"`
+	DBMaxIdleConns    int    `envconfig:"DB_MAX_IDLE_CONNS" default:"5"`
 	SessionCookieName string `envconfig:"SESSION_COOKIE_NAME" default:"c3_session"`
 	EmbedServerURL    string `envconfig:"EMBED_SERVER_URL"    default:"http://localhost:8080"`
 
@@ -83,18 +89,15 @@ type Config struct {
 	// Docker image mounts /var/lib/ogen/keys.
 	KEKPath string `envconfig:"OGEN_KEK_PATH" default:"./kek"`
 
-	// Backlite background-job queue (CON-69 §1, §3). Workers process
-	// `submit_post_to_zernio`, `poll_zernio_status`, `cancel_zernio_job`,
-	// `reconcile_scheduled_posts`, and `cleanup_post_logs`. ReleaseAfter
-	// is the per-task lease window — long enough that the longest
-	// expected Zernio call completes before another worker thinks the
-	// task was abandoned. Cleanup interval keeps the backlite tables
-	// trimmed of completed-task rows past their retention window.
-	BackliteWorkers         int           `envconfig:"BACKLITE_WORKERS"          default:"4"`
-	BackliteReleaseAfter    time.Duration `envconfig:"BACKLITE_RELEASE_AFTER"    default:"5m"`
-	BackliteCleanupInterval time.Duration `envconfig:"BACKLITE_CLEANUP_INTERVAL" default:"1h"`
-	// Graceful-shutdown wait for in-flight tasks to finish.
-	BackliteShutdownTimeout time.Duration `envconfig:"BACKLITE_SHUTDOWN_TIMEOUT" default:"30s"`
+	// River background-job queue (CON-69 §1, §3; CON-87 WS3). Workers
+	// process `submit_post_to_zernio`, `poll_zernio_status`,
+	// `cancel_zernio_job`, plus the periodic `reconcile_scheduled_posts`,
+	// `cleanup_post_logs`, and `refresh_zernio_analytics`. JobWorkers sizes
+	// the worker pool on the default queue; River owns leasing, retry/
+	// backoff, and completed-job retention internally.
+	JobWorkers int `envconfig:"JOB_WORKERS" default:"4"`
+	// Graceful-shutdown wait for in-flight jobs to finish.
+	JobShutdownTimeout time.Duration `envconfig:"JOB_SHUTDOWN_TIMEOUT" default:"30s"`
 
 	// Reconciliation grace window (CON-69 §8). A Scheduled post whose
 	// scheduled_at + this window has passed without a terminal Zernio

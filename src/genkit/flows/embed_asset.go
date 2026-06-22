@@ -2,10 +2,8 @@ package flows
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"log"
-	"math"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +11,7 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/core"
 	"github.com/firebase/genkit/go/genkit"
+	"github.com/pgvector/pgvector-go"
 
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
@@ -34,7 +33,7 @@ var EmbedAssetFlow *core.Flow[EmbedAssetInput, struct{}, struct{}]
 // only the latest input is kept as "pending" — intermediate saves are
 // discarded. When the running embed finishes, the pending one runs with the
 // latest content. This prevents concurrent embeds of the same asset from
-// flooding the embedserver and contending for the same SQLite rows.
+// flooding the embedserver and contending for the same database rows.
 type embedScheduler struct {
 	mu        sync.Mutex
 	pending   map[string]EmbedAssetInput
@@ -174,7 +173,7 @@ func embedAsset(ctx context.Context, embedder ai.Embedder, repo repository.Asset
 			ChunkIndex: i,
 			Content:    text,
 			TokenCount: EstimateTokens(text),
-			Embedding:  encodeVector(resp.Embeddings[0].Embedding),
+			Embedding:  pgvector.NewVector(resp.Embeddings[0].Embedding),
 			Model:      embedder.Name(),
 		})
 	}
@@ -208,29 +207,4 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return string(runes[:n]) + "…"
-}
-
-// encodeVector encodes a []float32 slice into a little-endian byte slice.
-func encodeVector(v []float32) []byte {
-	if len(v) == 0 {
-		return nil
-	}
-	b := make([]byte, len(v)*4)
-	for i, f := range v {
-		binary.LittleEndian.PutUint32(b[i*4:], math.Float32bits(f))
-	}
-	return b
-}
-
-// DecodeVector decodes a little-endian byte slice back into a []float32 slice.
-// Exported so the content plan flow can use it when reading chunk embeddings.
-func DecodeVector(b []byte) []float32 {
-	if len(b) == 0 {
-		return nil
-	}
-	v := make([]float32, len(b)/4)
-	for i := range v {
-		v[i] = math.Float32frombits(binary.LittleEndian.Uint32(b[i*4:]))
-	}
-	return v
 }

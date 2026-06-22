@@ -110,7 +110,7 @@ var _ = Describe("Asset chunking", Ordered, func() {
 		It("stores a valid 768-dim embedding vector", func() {
 			chunks, err := repo.GetByAssetID(ctx, assetID)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(flows.DecodeVector(chunks[0].Embedding)).To(HaveLen(768))
+			Expect(chunks[0].Embedding.Slice()).To(HaveLen(768))
 		})
 
 		It("records a non-zero token count", func() {
@@ -156,7 +156,7 @@ var _ = Describe("Asset chunking", Ordered, func() {
 			chunks, err := repo.GetByAssetID(ctx, assetID)
 			Expect(err).NotTo(HaveOccurred())
 			for i, c := range chunks {
-				Expect(flows.DecodeVector(c.Embedding)).To(HaveLen(768),
+				Expect(c.Embedding.Slice()).To(HaveLen(768),
 					"chunk %d embedding dimension mismatch", i)
 			}
 		})
@@ -189,20 +189,20 @@ var _ = Describe("Asset chunking", Ordered, func() {
 				"overlap from chunk[0] not found in chunk[1]")
 		})
 
-		It("appears in GetAllEmbedded with the correct chunk count", func() {
+		It("returns all the asset's chunks via pgvector SearchSimilar", func() {
 			chunks, err := repo.GetByAssetID(ctx, assetID)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(chunks).NotTo(BeEmpty())
 
-			all, err := repo.GetAllEmbedded(ctx)
+			// Query with a chunk's own embedding: at minScore 0 every chunk
+			// of this asset must come back (the chunk itself ranks first at
+			// distance 0), scoped to assetID.
+			hits, err := repo.SearchSimilar(ctx, chunks[0].Embedding, []string{assetID}, 0.0, 0)
 			Expect(err).NotTo(HaveOccurred())
-
-			count := 0
-			for _, c := range all {
-				if c.AssetID == assetID {
-					count++
-				}
+			Expect(len(hits)).To(Equal(len(chunks)))
+			for _, h := range hits {
+				Expect(h.AssetID).To(Equal(assetID))
 			}
-			Expect(count).To(Equal(len(chunks)))
 		})
 	})
 

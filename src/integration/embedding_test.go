@@ -83,12 +83,12 @@ var _ = Describe("Asset embedding flow", Ordered, func() {
 			chunks, err := repo.GetByAssetID(ctx, assetID)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(chunks).NotTo(BeEmpty())
-			Expect(chunks[0].Embedding).NotTo(BeEmpty())
+			Expect(chunks[0].Embedding.Slice()).NotTo(BeEmpty())
 			Expect(chunks[0].Model).NotTo(BeEmpty())
 			Expect(chunks[0].ChunkIndex).To(Equal(0))
 
 			// Verify the embedding decodes to the expected dimension (768 for embeddinggemma-300m).
-			vec := flows.DecodeVector(chunks[0].Embedding)
+			vec := chunks[0].Embedding.Slice()
 			Expect(vec).To(HaveLen(768))
 		})
 	})
@@ -107,7 +107,7 @@ var _ = Describe("Asset embedding flow", Ordered, func() {
 			chunks, err := repo.GetByAssetID(ctx, assetID)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(chunks).NotTo(BeEmpty())
-			Expect(flows.DecodeVector(chunks[0].Embedding)).NotTo(BeEmpty())
+			Expect(chunks[0].Embedding.Slice()).NotTo(BeEmpty())
 			Expect(chunks[0].Model).NotTo(BeEmpty())
 		})
 

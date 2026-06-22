@@ -20,11 +20,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mikestefanello/backlite"
 	"github.com/uptrace/bun"
 
 	"github.com/ogen-app/ogen/src/eventhub"
-	"github.com/ogen-app/ogen/src/jobs/queues"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/platforms"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
@@ -97,6 +95,14 @@ type Result struct {
 	Promoted bool
 }
 
+// SubmitEnqueuer enqueues a Zernio submit task inside the caller's
+// transaction, so the enqueue commits atomically with the post status
+// change (CON-78 §9). Implemented by *queues.Enqueuer; kept as a narrow
+// interface here so this package doesn't depend on the queue runtime.
+type SubmitEnqueuer interface {
+	EnqueueSubmitTx(ctx context.Context, tx *sql.Tx, postID string) error
+}
+
 // Service performs schedules. Construct with New.
 type Service struct {
 	db          *bun.DB
@@ -105,7 +111,7 @@ type Service struct {
 	attachments repository.PostAttachmentRepository
 	allowlist   repository.AutoPublishAllowlistRepository
 	logs        repository.PostLogRepository
-	jobs        *backlite.Client
+	jobs        SubmitEnqueuer
 	hub         eventhub.Hub
 
 	// now is injectable so tests can pin "current time" for future-time
@@ -123,7 +129,7 @@ func New(
 	attachments repository.PostAttachmentRepository,
 	allowlist repository.AutoPublishAllowlistRepository,
 	logs repository.PostLogRepository,
-	jobs *backlite.Client,
+	jobs SubmitEnqueuer,
 	hub eventhub.Hub,
 ) *Service {
 	return &Service{
@@ -305,7 +311,7 @@ func (s *Service) persist(ctx context.Context, post *models.Post, autoPublish bo
 			}
 		}
 		if autoPublish && s.jobs != nil {
-			if _, err := s.jobs.Add(queues.SubmitPostTask{PostID: post.ID}).Tx(tx.Tx).Save(); err != nil {
+			if err := s.jobs.EnqueueSubmitTx(ctx, tx.Tx, post.ID); err != nil {
 				return err
 			}
 		}

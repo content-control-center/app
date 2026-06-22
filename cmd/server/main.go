@@ -34,6 +34,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("connect to database: %v", err)
 	}
+	db.DB.SetMaxOpenConns(cfg.DBMaxOpenConns)
+	db.DB.SetMaxIdleConns(cfg.DBMaxIdleConns)
 	defer db.Close()
 
 	if err := database.Migrate(context.Background(), db); err != nil {

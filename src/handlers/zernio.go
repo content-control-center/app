@@ -266,21 +266,21 @@ type accountsResponse struct {
 }
 
 type accountInfo struct {
-	ID            string    `json:"id"`
-	Platform      string    `json:"platform"`
-	Username      string    `json:"username"`
-	DisplayName   string    `json:"displayName"`
-	AvatarURL     string    `json:"avatarUrl"`
-	IsActive      bool      `json:"isActive"`
-	ConnectedAt   time.Time `json:"connectedAt"`
-	LastSyncedAt  time.Time `json:"lastSyncedAt"`
+	ID           string    `json:"id"`
+	Platform     string    `json:"platform"`
+	Username     string    `json:"username"`
+	DisplayName  string    `json:"displayName"`
+	AvatarURL    string    `json:"avatarUrl"`
+	IsActive     bool      `json:"isActive"`
+	ConnectedAt  time.Time `json:"connectedAt"`
+	LastSyncedAt time.Time `json:"lastSyncedAt"`
 }
 
 // ListAccounts godoc
 // @Summary      List Zernio social accounts (local mirror)
 // @Description  Returns the local view of accounts attached via the
 // @Description  Zernio profile, plus the last sync timestamp + status.
-// @Description  Reads from SQLite — does not call Zernio.
+// @Description  Reads from the database — does not call Zernio.
 // @Tags         zernio
 // @Produce      json
 // @Security     CookieAuth

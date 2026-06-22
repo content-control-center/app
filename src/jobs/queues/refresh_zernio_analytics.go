@@ -7,7 +7,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/mikestefanello/backlite"
+	"github.com/riverqueue/river"
 
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/jobs"
@@ -37,23 +37,16 @@ const (
 // ReconcileScheduledPostsTask, this queue carries no per-tick data.
 type RefreshZernioAnalyticsTask struct{}
 
-func (RefreshZernioAnalyticsTask) Config() backlite.QueueConfig {
-	return backlite.QueueConfig{
-		Name: RefreshZernioAnalyticsQueue,
-		// Process never returns an error: each tick records its outcome and
-		// self-reschedules the next one (Wait(Every)), so the recurring chain
-		// can neither die (a returned error with retries exhausted would leave
-		// nothing scheduled) nor fan out (a reschedule alongside a Backlite
-		// retry would spawn parallel chains — Backlite doesn't expose the
-		// attempt count, so "reschedule only on the last attempt" isn't
-		// possible). Backlite retries are therefore unused; MaxAttempts is 1.
-		// Idempotent upserts keep a re-run safe (§10).
-		MaxAttempts: 1,
-		Timeout:     60 * time.Second,
-		Retention: &backlite.Retention{
-			Duration: 24 * time.Hour,
-		},
-	}
+// Kind implements river.JobArgs.
+func (RefreshZernioAnalyticsTask) Kind() string { return RefreshZernioAnalyticsQueue }
+
+// InsertOpts sets per-kind defaults. Cadence is owned by a River
+// PeriodicJob (registered in server.go when the Zernio integration is
+// configured). Process never returns an error — each tick records its own
+// outcome — so a single attempt is correct; idempotent upserts keep a
+// re-run safe (§10).
+func (RefreshZernioAnalyticsTask) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{MaxAttempts: 1}
 }
 
 // RefreshZernioAnalyticsProcessor wires one refresh tick. Deps supplies
@@ -66,9 +59,8 @@ type RefreshZernioAnalyticsProcessor struct {
 	Settings zernio.SettingsStore
 	Hub      eventhub.Hub
 
-	Every      time.Duration // self-reschedule cadence
-	WindowDays int           // analytics lookback window (defaults to 90)
-	PageLimit  int           // page size, 1–100 (defaults to 100)
+	WindowDays int // analytics lookback window (defaults to 90)
+	PageLimit  int // page size, 1–100 (defaults to 100)
 }
 
 // Process runs one refresh tick.
@@ -81,7 +73,7 @@ func (p *RefreshZernioAnalyticsProcessor) Process(ctx context.Context, _ Refresh
 		// Any failure (transient 429/5xx/network, 401, legacy 402, terminal
 		// 4xx) is recorded and logged; the tick still reschedules below and
 		// returns nil. Transient failures recover on the next cadence tick
-		// rather than via a Backlite retry — see Config for why returning an
+		// rather than via a River retry — see InsertOpts for why returning an
 		// error here would risk killing or fanning out the recurring chain.
 		jobs.ZernioAnalyticsRefreshFailed.Add(1)
 		log.Printf("zernio.analytics failed error=%q upserts=%d tick_ms=%d",
@@ -92,15 +84,13 @@ func (p *RefreshZernioAnalyticsProcessor) Process(ctx context.Context, _ Refresh
 		log.Printf("zernio.analytics ok upserts=%d tick_ms=%d",
 			upserts, time.Since(tickStart).Milliseconds())
 	}
-
-	p.reschedule(ctx)
 	return nil
 }
 
 // refresh performs the batch fetch + match + upsert and returns the
 // number of snapshots written. The returned error is the first
 // page-level failure encountered; Process records it and reschedules
-// regardless (it never propagates the error to Backlite).
+// regardless (it never propagates the error to River).
 func (p *RefreshZernioAnalyticsProcessor) refresh(ctx context.Context, now time.Time) (int, error) {
 	if p.Deps.AnalyticsRepo == nil || p.Deps.PostRepo == nil {
 		return 0, errors.New("refresh: analytics dependencies not configured")
@@ -274,18 +264,6 @@ func (p *RefreshZernioAnalyticsProcessor) recordStatus(ctx context.Context, refr
 	}
 	if err := p.Settings.Set(ctx, zernio.SettingAnalyticsLastRefreshStatus, status); err != nil {
 		log.Printf("zernio.analytics write %s: %v", zernio.SettingAnalyticsLastRefreshStatus, err)
-	}
-}
-
-// reschedule queues the next tick at the configured cadence.
-func (p *RefreshZernioAnalyticsProcessor) reschedule(ctx context.Context) {
-	if p.Every <= 0 {
-		return
-	}
-	if client := backlite.FromContext(ctx); client != nil {
-		if _, err := client.Add(RefreshZernioAnalyticsTask{}).Wait(p.Every).Save(); err != nil {
-			log.Printf("zernio.analytics reschedule: %v", err)
-		}
 	}
 }
 

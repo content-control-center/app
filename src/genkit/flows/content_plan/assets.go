@@ -7,8 +7,8 @@ import (
 	"sort"
 
 	"github.com/firebase/genkit/go/ai"
+	"github.com/pgvector/pgvector-go"
 
-	"github.com/ogen-app/ogen/src/genkit/flows"
 	"github.com/ogen-app/ogen/src/models"
 )
 
@@ -149,34 +149,22 @@ func rankAndPackChunks(
 	}
 	queryVec := qResp.Embeddings[0].Embedding
 
-	// Fetch all embedded chunks and filter to candidates.
-	allChunks, err := repos.Chunks.GetAllEmbedded(ctx)
+	// pgvector ANN search: chunks scoped to the candidate assets, scored
+	// against the campaign query, filtered at minAssetSimilarity and ordered
+	// closest-first — all in-database via the HNSW index (replaces the
+	// fetch-all-and-cosine-in-Go scan).
+	candidateIDs := make([]string, 0, len(candidateSet))
+	for id := range candidateSet {
+		candidateIDs = append(candidateIDs, id)
+	}
+	ranked, err := repos.Chunks.SearchSimilar(ctx, pgvector.NewVector(queryVec), candidateIDs, minAssetSimilarity, 0)
 	if err != nil {
-		return nil, nil, fmt.Errorf("fetch embedded chunks: %w", err)
+		return nil, nil, fmt.Errorf("search similar chunks: %w", err)
 	}
+	log.Printf("content_plan: pgvector search returned %d chunk(s) at similarity >= %.2f", len(ranked), minAssetSimilarity)
 
-	type scoredChunk struct {
-		chunk models.AssetChunk
-		score float32
-	}
-
-	scored := make([]scoredChunk, 0, len(allChunks))
-	for _, c := range allChunks {
-		if !candidateSet[c.AssetID] {
-			continue
-		}
-		vec := flows.DecodeVector(c.Embedding)
-		s := cosineSimilarity(queryVec, vec)
-		log.Printf("content_plan: chunk %s (asset %s idx %d) similarity=%.4f (pass=%v)",
-			c.ID, c.AssetID, c.ChunkIndex, s, s >= minAssetSimilarity)
-		if s >= minAssetSimilarity {
-			scored = append(scored, scoredChunk{chunk: c, score: s})
-		}
-	}
-
-	sort.Slice(scored, func(i, j int) bool { return scored[i].score > scored[j].score })
-
-	// Greedy packing: accumulate chunks until the context budget is exhausted.
+	// Greedy packing: accumulate chunks (closest-first) until the context
+	// budget is exhausted.
 	type assetEntry struct {
 		title  string
 		chunks []models.AssetChunk
@@ -185,16 +173,16 @@ func rankAndPackChunks(
 	order := make([]string, 0)
 	totalChars := 0
 
-	for _, sc := range scored {
+	for _, c := range ranked {
 		if totalChars >= cfg.MaxContextChars {
 			break
 		}
-		if _, exists := selected[sc.chunk.AssetID]; !exists {
-			selected[sc.chunk.AssetID] = &assetEntry{}
-			order = append(order, sc.chunk.AssetID)
+		if _, exists := selected[c.AssetID]; !exists {
+			selected[c.AssetID] = &assetEntry{}
+			order = append(order, c.AssetID)
 		}
-		selected[sc.chunk.AssetID].chunks = append(selected[sc.chunk.AssetID].chunks, sc.chunk)
-		totalChars += len(sc.chunk.Content)
+		selected[c.AssetID].chunks = append(selected[c.AssetID].chunks, c)
+		totalChars += len(c.Content)
 	}
 
 	if len(selected) == 0 {

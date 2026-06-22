@@ -1,4 +1,4 @@
-// Package queues holds the typed Backlite queues that drive Ogen's
+// Package queues holds the typed River queues that drive Ogen's
 // auto-publish pipeline (CON-69 §3, §6, §7, §9).
 package queues
 

@@ -16,7 +16,7 @@ import (
 
 // MaxPayloadBytes is the per-entry payload ceiling. Picked at 64 KB
 // (CON-69 plan) to fit a sanitized Zernio response without bloating
-// the SQLite file. Larger payloads are truncated with a clear marker.
+// the database. Larger payloads are truncated with a clear marker.
 const MaxPayloadBytes = 64 << 10
 
 // truncationMarker is appended to the visible portion of an oversize

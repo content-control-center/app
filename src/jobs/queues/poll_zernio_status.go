@@ -2,11 +2,12 @@ package queues
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"time"
 
-	"github.com/mikestefanello/backlite"
+	"github.com/riverqueue/river"
 
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/models"
@@ -14,7 +15,7 @@ import (
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 )
 
-// PollZernioStatusQueue is the Backlite queue name (CON-69 §3, §7).
+// PollZernioStatusQueue is the River queue name (CON-69 §3, §7).
 const PollZernioStatusQueue = "poll_zernio_status"
 
 // PollZernioStatusTask carries the Ogen post id; the worker re-loads
@@ -23,32 +24,29 @@ type PollZernioStatusTask struct {
 	PostID string `json:"post_id"`
 }
 
-func (PollZernioStatusTask) Config() backlite.QueueConfig {
-	return backlite.QueueConfig{
-		Name:        PollZernioStatusQueue,
-		MaxAttempts: 3,                // transient errors get a few retries
-		Backoff:     30 * time.Second,
-		Timeout:     20 * time.Second,
-		Retention: &backlite.Retention{
-			Duration:   7 * 24 * time.Hour,
-			OnlyFailed: true,
-		},
-	}
+// Kind implements river.JobArgs.
+func (PollZernioStatusTask) Kind() string { return PollZernioStatusQueue }
+
+// InsertOpts sets per-kind defaults: 3 total attempts for transient errors.
+// The non-terminal cadence is driven by self-rescheduling in scheduleNext,
+// not by retries. Per-attempt timeout lives on the worker.
+func (PollZernioStatusTask) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{MaxAttempts: 3}
 }
 
 // PollZernioStatusProcessor implements the recurring poll. The
 // cadence per CON-69 §7: every 30s for the first 5 minutes after
 // scheduled_at, then every 60s. Hard floor — never sooner than 5s.
 type PollZernioStatusProcessor struct {
-	Deps              ZernioDeps
-	FastInterval      time.Duration // default 30s
-	SlowInterval      time.Duration // default 60s
-	FastWindow        time.Duration // default 5m after scheduled_at
+	Deps         ZernioDeps
+	FastInterval time.Duration // default 30s
+	SlowInterval time.Duration // default 60s
+	FastWindow   time.Duration // default 5m after scheduled_at
 }
 
 // Process executes one poll cycle. Returns nil for both the
 // "succeeded" and "self-rescheduled" cases; returns a non-nil error
-// only on transient Zernio failures so Backlite retries per Backoff.
+// only on transient Zernio failures so River retries per its backoff policy.
 func (p *PollZernioStatusProcessor) Process(ctx context.Context, task PollZernioStatusTask) error {
 	post, err := p.Deps.PostRepo.GetByID(ctx, task.PostID)
 	if err != nil {
@@ -80,7 +78,7 @@ func (p *PollZernioStatusProcessor) Process(ctx context.Context, task PollZernio
 		}
 		jobs.ZernioPollRetried.Add(1)
 		appendLog(ctx, p.Deps, post.ID, models.PostLogEventZernioPoll, post.Status, post.Status,
-			"poll transient error; backlite will retry", `{"error":"`+statusErr.Error()+`"}`)
+			"poll transient error; River will retry", `{"error":"`+statusErr.Error()+`"}`)
 		return statusErr
 	}
 	jobs.ZernioPollSucceeded.Add(1)
@@ -139,12 +137,13 @@ func (p *PollZernioStatusProcessor) Process(ctx context.Context, task PollZernio
 }
 
 func (p *PollZernioStatusProcessor) scheduleNext(ctx context.Context, post *models.Post) {
-	client := backlite.FromContext(ctx)
-	if client == nil {
+	client, err := river.ClientFromContextSafely[*sql.Tx](ctx)
+	if err != nil || client == nil {
 		return
 	}
 	delay := p.intervalFor(post)
-	if _, err := client.Add(PollZernioStatusTask{PostID: post.ID}).Wait(delay).Save(); err != nil {
+	when := time.Now().UTC().Add(delay)
+	if _, err := client.Insert(ctx, PollZernioStatusTask{PostID: post.ID}, &river.InsertOpts{ScheduledAt: when}); err != nil {
 		appendLog(ctx, p.Deps, post.ID, models.PostLogEventTaskFailed, post.Status, post.Status,
 			"failed to self-reschedule poll", `{"error":"`+err.Error()+`"}`)
 	}

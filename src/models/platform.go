@@ -11,7 +11,7 @@ import (
 
 // ImageConstraints is the structured rule set carried per platform row
 // for post-attachment validation (CON-73). It serialises as JSON in a
-// SQLite TEXT column.
+// jsonb column.
 //
 // Storing this on the platform row (rather than a Go-side map keyed by
 // some platform identifier) keeps the rules portable across
@@ -110,11 +110,11 @@ type Platform struct {
 
 	ID               string           `bun:"id,pk"                                        json:"id"`
 	Name             string           `bun:"name,notnull"                                 json:"name"`
-	PostTypes        PostTypeMap      `bun:"post_types,notnull"                           json:"post_types"`
+	PostTypes        PostTypeMap      `bun:"post_types,notnull,type:jsonb"                json:"post_types"`
 	Cadence          string           `bun:"cadence,notnull"                              json:"cadence"`
 	Constraints      string           `bun:"constraints,notnull"                          json:"constraints"`
-	ImageConstraints ImageConstraints `bun:"image_constraints,notnull"                    json:"image_constraints"`
-	PDFConstraints   PDFConstraints   `bun:"pdf_constraints,notnull"                      json:"pdf_constraints"`
+	ImageConstraints ImageConstraints `bun:"image_constraints,notnull,type:jsonb"         json:"image_constraints"`
+	PDFConstraints   PDFConstraints   `bun:"pdf_constraints,notnull,type:jsonb"           json:"pdf_constraints"`
 	CreatedAt        time.Time        `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
 	UpdatedAt        time.Time        `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
 }
