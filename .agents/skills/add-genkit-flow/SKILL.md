@@ -986,7 +986,7 @@ return c.JSON(resp)
 
 ## Step 11: Tests (`src/handlers/<resource>_test.go`)
 
-Handler-layer only. Real in-memory SQLite via `mustOpenTestDBWithMigrations()`. Stub the flow callback with a function that emits synthetic events.
+Handler-layer only. A fresh, fully-migrated **Postgres** database via `mustOpenTestDBWithMigrations()` (backed by `src/pgtest`; `make test` provisions the Postgres instance). Stub the flow callback with a function that emits synthetic events.
 
 ```go
 // inside the existing Describe block:
@@ -1575,7 +1575,7 @@ Both new fields are additive — old clients that don't read `payload.id` or tha
 
 1. **Cross-run idempotency is not free.** A re-trigger of the flow for the same campaign creates fresh rows — same as the pre-CON-66 bulk-insert behaviour. If you need re-trigger to be a true upsert, design a stable per-slot key (e.g. `campaign_id + slot_index`) and `INSERT ... ON CONFLICT DO UPDATE`. Out of scope for the variant; surface explicitly in the PR if it matters.
 2. **Validation moves earlier; warnings now arrive live.** Old `complete.warnings` arrived in one batch at the end; live `warning` events stream across the run. Both shapes coexist (`complete.warnings` aggregates everything emitted live); the React layer should handle either independently.
-3. **DB-write contention.** SQLite with `_pragma=journal_mode(WAL)` plus `MaxOpenConns(1)` serialises writes; per-post inserts queue but don't deadlock. For 120 posts that's ~120 serialised writes vs. 1 bulk insert — likely <1s under WAL but worth a benchmark if you bump volumes much higher.
+3. **DB-write contention.** Postgres (the datastore since CON-87) runs writers concurrently — no SQLite single-writer serialisation — so per-post inserts of distinct rows proceed in parallel, generally faster than the old WAL + `MaxOpenConns(1)` path. CON-87 caveat: if an insert derives a value via `MAX(...)+1` (next position / version number) guarded by a UNIQUE constraint, two concurrent inserts to the **same parent** can both read the same MAX and collide. Serialise those by locking the parent row first (`SELECT 1 FROM <parent> WHERE id = ? FOR UPDATE` inside the tx — see `CreateAtNextPosition` / `restore.go`). Independent per-post rows (distinct Sqid ids) have no such hazard.
 4. **First-write-wins on stream→fallback dedup.** The streamed copy of a post is preserved even if the blocking response would have produced a slightly different text for that slot. This is usually what you want (the user already saw the streamed version) but document it for posterity.
 5. **The flow's response is the persisted set.** No "valid posts" vs "raw posts" distinction any more. Tests that previously asserted on `validateOutput`'s output should now assert against the response's `Posts` field directly.
 6. **Don't forget `repos` in `generatePosts`.** The persist closure needs the post repository; thread `ContentPlanRepos` (or your equivalent) through `generatePosts` if it wasn't already a parameter.
