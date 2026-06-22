@@ -48,6 +48,24 @@ services:
       timeout: 2s
       retries: 30
 
+  # River job-queue dashboard (CON-87 WS3). Standalone UI image that reads
+  # River's tables — it runs no migrations of its own, so it needs them to
+  # already exist. The API creates them via jobs.MigrateRiver at boot;
+  # riverui therefore depends on the API and restarts until the schema is
+  # present. UI at http://localhost:9004.
+  riverui:
+    image: ghcr.io/riverqueue/riverui:latest
+    environment:
+      DATABASE_URL: "postgres://ogen:ogen@postgres:5432/ogen?sslmode=disable"
+    ports:
+      - "9004:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+    restart: unless-stopped
+
 #  web:
 #    image: node:20-alpine
 #    platform: linux/amd64
