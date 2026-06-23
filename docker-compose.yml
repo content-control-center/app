@@ -83,7 +83,10 @@ services:
       - /app/node_modules
     ports:
       - "9002:9002"   # Vite dev server (port set in ui/vite.config.ts)
-    command: sh -c "corepack enable && pnpm install --frozen-lockfile && pnpm dev -- --host 0.0.0.0"
+    # `pnpm exec vite` invokes the Vite binary directly so `--host 0.0.0.0`
+    # reaches it (a plain `pnpm dev -- --host` forwards the `--` literally and
+    # Vite stays bound to the container's localhost, unreachable from the host).
+    command: sh -c "corepack enable && pnpm install --frozen-lockfile && pnpm exec vite --host 0.0.0.0"
     depends_on:
       api:
         condition: service_started
