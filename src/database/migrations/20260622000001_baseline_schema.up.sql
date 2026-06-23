@@ -119,7 +119,7 @@ CREATE TABLE assets (
         CHECK (status IN ('pending', 'processing', 'ready', 'partial', 'failed')),
     type       TEXT        CHECK (type IS NULL OR type IN ('MD', 'PDF')),
     tag_ids    jsonb       NOT NULL,
-    created_by TEXT        NOT NULL,
+    created_by TEXT        NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
