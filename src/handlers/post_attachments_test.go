@@ -445,7 +445,7 @@ var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 					ctx := context.Background()
 					_, err := db.NewUpdate().
 						Table("platforms").
-						Set("pdf_constraints = json_set(pdf_constraints, '$.max_pages', 1)").
+						Set("pdf_constraints = jsonb_set(pdf_constraints, '{max_pages}', '1')").
 						Where("id = ?", linkedinPlatformID).
 						Exec(ctx)
 					Expect(err).NotTo(HaveOccurred())

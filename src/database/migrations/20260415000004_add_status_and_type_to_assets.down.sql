@@ -1,2 +1,0 @@
-ALTER TABLE assets DROP COLUMN type;
-ALTER TABLE assets DROP COLUMN status;

@@ -6,8 +6,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/mikestefanello/backlite"
-	"github.com/uptrace/bun"
+	"github.com/riverqueue/river"
 
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/models"
@@ -25,14 +24,14 @@ const ReconcileScheduledPostsQueue = "reconcile_scheduled_posts"
 // task, this queue carries no per-tick data.
 type ReconcileScheduledPostsTask struct{}
 
-func (ReconcileScheduledPostsTask) Config() backlite.QueueConfig {
-	return backlite.QueueConfig{
-		Name:    ReconcileScheduledPostsQueue,
-		Timeout: 30 * time.Second,
-		Retention: &backlite.Retention{
-			Duration: 24 * time.Hour,
-		},
-	}
+// Kind implements river.JobArgs.
+func (ReconcileScheduledPostsTask) Kind() string { return ReconcileScheduledPostsQueue }
+
+// InsertOpts sets per-kind defaults. Cadence is owned by a River PeriodicJob;
+// a failed tick is picked up on the next interval, so one attempt is enough.
+// UniqueOpts (active states only) prevents overlapping ticks from stacking.
+func (ReconcileScheduledPostsTask) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{MaxAttempts: 1, UniqueOpts: periodicUniqueOpts()}
 }
 
 // FailureReasonReconciliationTimeout is the verbatim prefix every
@@ -45,14 +44,34 @@ const FailureReasonReconciliationTimeout = "reconciliation_timeout"
 // ReconcileScheduledPostsProcessor wires the sweep handler.
 //
 // The sweep runs in a tight loop: load N stuck posts in one query,
-// transition each in its own transaction, log per-post.
+// transition each in its own transaction, log per-post. Cadence is owned
+// by a River PeriodicJob.
 type ReconcileScheduledPostsProcessor struct {
-	DB     *bun.DB
-	Repo   ReconcilePostRepo
+	river.WorkerDefaults[ReconcileScheduledPostsTask]
+	Repo    ReconcilePostRepo
 	LogRepo ReconcileLogRepo
-	Grace  time.Duration // how long after scheduled_at before timing out
-	Every  time.Duration // self-reschedule cadence
-	Limit  int           // max posts to process per tick (defaults to 100)
+	Grace   time.Duration // how long after scheduled_at before timing out
+	Limit   int           // max posts to process per tick (defaults to 100)
+}
+
+// Work is the River entrypoint; it delegates to Process.
+func (p *ReconcileScheduledPostsProcessor) Work(ctx context.Context, job *river.Job[ReconcileScheduledPostsTask]) error {
+	return p.Process(ctx, job.Args)
+}
+
+// Timeout is the per-attempt context deadline.
+func (p *ReconcileScheduledPostsProcessor) Timeout(*river.Job[ReconcileScheduledPostsTask]) time.Duration {
+	return 30 * time.Second
+}
+
+func init() {
+	register(func(w *river.Workers, d Deps) {
+		river.AddWorker(w, &ReconcileScheduledPostsProcessor{
+			Repo:    d.Zernio.PostRepo,
+			LogRepo: d.Zernio.PostLogRepo,
+			Grace:   d.ReconcileGrace,
+		})
+	})
 }
 
 // ReconcilePostRepo is the narrow surface the sweeper needs out of
@@ -107,26 +126,17 @@ func (p *ReconcileScheduledPostsProcessor) Process(ctx context.Context, _ Reconc
 			ToStatus:   &to,
 			Summary:    "reconciliation timeout: forcing Failed",
 			Payload: logs.SanitizeAndCap(logs.MarshalCapped(map[string]any{
-				"reason":                 FailureReasonReconciliationTimeout,
-				"scheduled_at":           post.ScheduledAt,
-				"elapsed":                fmtElapsedSince(post.ScheduledAt),
-				"last_publisher_status":  post.PublisherStatus,
-				"publisher_post_id":      post.PublisherPostID,
+				"reason":                FailureReasonReconciliationTimeout,
+				"scheduled_at":          post.ScheduledAt,
+				"elapsed":               fmtElapsedSince(post.ScheduledAt),
+				"last_publisher_status": post.PublisherStatus,
+				"publisher_post_id":     post.PublisherPostID,
 			})),
 		})
 	}
 	if len(stuck) > 0 {
 		jobs.ReconciliationTimeouts.Add(int64(len(stuck)))
 		log.Printf("reconcile: forced %d post(s) Failed due to reconciliation timeout", len(stuck))
-	}
-
-	// Self-reschedule for the next tick.
-	if p.Every > 0 {
-		if client := backlite.FromContext(ctx); client != nil {
-			if _, err := client.Add(ReconcileScheduledPostsTask{}).Wait(p.Every).Save(); err != nil {
-				return err
-			}
-		}
 	}
 	return nil
 }

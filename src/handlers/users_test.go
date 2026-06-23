@@ -8,16 +8,15 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 
 	"github.com/gofiber/fiber/v2"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
 
-	"github.com/ogen-app/ogen/src/database"
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/pgtest"
 	"github.com/ogen-app/ogen/src/repository"
 )
 
@@ -545,53 +544,11 @@ var _ = Describe("UsersHandler", Ordered, func() {
 	})
 })
 
-// testDBSeq guarantees every call to mustOpenTestDBWithMigrations gets a
-// distinct in-memory database — see the function comment for why.
-var testDBSeq atomic.Uint64
-
-// mustOpenTestDBWithMigrations returns a fresh, isolated in-memory
-// SQLite DB with all migrations applied (CON-70).
-//
-// The previous shape used a fixed DSN (`file::memory:?cache=shared`)
-// shared across every Describe in the package, which under ginkgo's
-// `-procs=N` + `-race` produced layered flakes:
-//
-//   1. Cross-Describe state leak. Within one ginkgo worker, every
-//      Describe's BeforeAll opened a connection to the same shared
-//      cache; each new Describe inherited rows the previous one
-//      forgot to delete. Per-call uniqueness fixes this — every
-//      BeforeAll gets its own DB name (worker prefix + counter).
-//   2. Connection-pool starvation. database.New caps MaxOpenConns at
-//      1 (correct for production SQLite with WAL — minimises lock
-//      thrashing). Under `-race` + `-procs=2`, the single connection
-//      becomes the bottleneck: a Fiber handler request waits on the
-//      pool while a concurrent BeforeEach query holds it, easily
-//      blowing fiber's 1000ms default `app.Test(req)` timeout. For an
-//      in-memory test DB the production trade-off doesn't apply, so
-//      we explicitly bump MaxOpenConns to leave headroom for parallel
-//      handler requests.
-//
-// cache=shared is preserved so multiple connections from the bumped
-// pool still see the same data. GinkgoParallelProcess() keeps
-// per-OS-process workers from colliding even though in-memory SQLite
-// is process-local — belt and braces, makes log lines easier to read
-// when a worker emits its first migration line.
+// mustOpenTestDBWithMigrations returns a fresh, isolated, fully-migrated
+// Postgres database (CON-87 WS5). Each call gets its own database, so
+// Describes never leak rows into each other. The Postgres instance is
+// provisioned by the Makefile (TEST_DATABASE_DSN); pgtest.MustDB creates
+// and migrates a unique database per call.
 func mustOpenTestDBWithMigrations() *bun.DB {
-	n := testDBSeq.Add(1)
-	dsn := fmt.Sprintf(
-		"file:test_p%d_%d?mode=memory&cache=shared&_pragma=foreign_keys(on)",
-		GinkgoParallelProcess(), n,
-	)
-	db, err := database.New(dsn, false)
-	if err != nil {
-		panic(err)
-	}
-	// Override database.New's production SQLite single-conn cap. See
-	// the function-level comment for the rationale.
-	db.DB.SetMaxOpenConns(10)
-	db.DB.SetMaxIdleConns(10)
-	if err := database.Migrate(context.Background(), db); err != nil {
-		panic(err)
-	}
-	return db
+	return pgtest.MustDB()
 }

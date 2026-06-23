@@ -10,6 +10,7 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/core"
 	"github.com/firebase/genkit/go/genkit"
+	"github.com/pgvector/pgvector-go"
 
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/pdf"
@@ -148,7 +149,7 @@ func processPDF(ctx context.Context, d *pdfDeps, in ProcessPDFInput) error {
 			PageEnd:    &pe,
 			Content:    pc.Text,
 			TokenCount: EstimateTokens(pc.Text),
-			Embedding:  encodeVector(resp.Embeddings[0].Embedding),
+			Embedding:  pgvector.NewVector(resp.Embeddings[0].Embedding),
 			Model:      d.embedder.Name(),
 		})
 	}

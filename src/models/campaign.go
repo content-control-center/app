@@ -30,8 +30,8 @@ type Campaign struct {
 	KeyMessages        string            `bun:"key_messages,notnull"                         json:"key_messages"`
 	ToneGuidelines     string            `bun:"tone_guidelines,notnull"                      json:"tone_guidelines"`
 	UseAssets          bool              `bun:"use_assets,notnull"                           json:"use_assets"`
-	AssetIDs           StringSlice       `bun:"asset_ids,notnull"                            json:"asset_ids"`
-	TargetPlatforms    CampaignPlatforms `bun:"target_platforms,notnull"                     json:"target_platforms"`
+	AssetIDs           StringSlice       `bun:"asset_ids,notnull,type:jsonb"                 json:"asset_ids"`
+	TargetPlatforms    CampaignPlatforms `bun:"target_platforms,notnull,type:jsonb"          json:"target_platforms"`
 	CampaignTypeID     string            `bun:"campaign_type_id,notnull"                     json:"campaign_type_id"`
 	StartDate          *time.Time        `bun:"start_date"                                   json:"start_date"`
 	EndDate            *time.Time        `bun:"end_date"                                     json:"end_date"`
@@ -42,7 +42,7 @@ type Campaign struct {
 	Status       CampaignStatus `bun:"status,notnull"                               json:"status"`
 	Budget       *float64       `bun:"budget"                                       json:"budget"`
 	Currency     string         `bun:"currency,notnull"                             json:"currency"`
-	TagIDs       StringSlice    `bun:"tag_ids,notnull"                              json:"tag_ids"`
+	TagIDs       StringSlice    `bun:"tag_ids,notnull,type:jsonb"                   json:"tag_ids"`
 	Tags         []Tag          `bun:"-"                                            json:"tags"`
 	Platforms    []Platform     `bun:"-"                                            json:"platforms"`
 	CampaignType *CampaignType  `bun:"-"                                            json:"campaign_type,omitempty"`

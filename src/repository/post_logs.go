@@ -22,7 +22,7 @@ type PostLogRepository interface {
 
 	// AppendTx is the same as Append but uses the provided bun.IDB so
 	// the write can join an outer transaction (CON-69 §11 — log entries
-	// are written in the same SQLite transaction as the operation they
+	// are written in the same transaction as the operation they
 	// describe wherever possible). Passing nil falls back to the
 	// repository's default DB.
 	AppendTx(ctx context.Context, tx bun.IDB, entry *models.PostLog) error

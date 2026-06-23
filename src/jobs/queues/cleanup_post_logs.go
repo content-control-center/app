@@ -5,50 +5,60 @@ import (
 	"log"
 	"time"
 
-	"github.com/mikestefanello/backlite"
+	"github.com/riverqueue/river"
 
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/repository"
 )
 
-// CleanupPostLogsQueue is the recurring task that drops Post Log
-// entries older than the configured retention window (CON-69 §11).
-// It re-enqueues itself from inside Process so the cadence is owned
-// by the task itself — losing one tick to a crash doesn't permanently
-// disable the sweeper, since the next boot's seed re-enqueue picks
-// it up again.
+// CleanupPostLogsQueue is the recurring sweep that drops Post Log entries
+// older than the configured retention window (CON-69 §11). Its cadence is a
+// River PeriodicJob (see PeriodicConfig); the marker is unique across active
+// states so overlapping ticks can't stack.
 const CleanupPostLogsQueue = "cleanup_post_logs"
 
 // CleanupPostLogsTask is the typed payload for the queue. There's
 // nothing to carry — the worker just looks at the cutoff window — but
-// Backlite still requires a per-task type so we satisfy the interface
-// with a marker struct.
+// River still requires a per-kind args type so we satisfy JobArgs with
+// a marker struct.
 type CleanupPostLogsTask struct{}
 
-func (CleanupPostLogsTask) Config() backlite.QueueConfig {
-	return backlite.QueueConfig{
-		Name:    CleanupPostLogsQueue,
-		Timeout: 30 * time.Second,
-		Retention: &backlite.Retention{
-			// Keep a day of completed sweeps in the Backlite UI for
-			// quick "did the sweeper run?" checks.
-			Duration: 24 * time.Hour,
-		},
-	}
+// Kind implements river.JobArgs.
+func (CleanupPostLogsTask) Kind() string { return CleanupPostLogsQueue }
+
+// InsertOpts sets per-kind defaults. Cadence is owned by a River PeriodicJob,
+// so a single attempt is enough — a failed sweep retries on the next tick.
+// UniqueOpts (active states only) prevents overlapping ticks from stacking.
+func (CleanupPostLogsTask) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{MaxAttempts: 1, UniqueOpts: periodicUniqueOpts()}
 }
 
-// CleanupPostLogsProcessor wires the queue handler to the repository
-// + retention window and the cadence. The handler deletes anything
-// older than `now - retention`, then re-schedules itself `every`
-// duration in the future.
+// CleanupPostLogsProcessor is the River worker for cleanup_post_logs. The
+// handler deletes Post Logs older than `now - retention`. Cadence is owned by
+// a River PeriodicJob.
 type CleanupPostLogsProcessor struct {
+	river.WorkerDefaults[CleanupPostLogsTask]
 	Repo      repository.PostLogRepository
 	Retention time.Duration
-	Every     time.Duration
 }
 
-// Process satisfies backlite.QueueProcessor. Self-rescheduling cadence
-// keeps the sweeper alive without an external scheduler.
+// Work is the River entrypoint; it delegates to Process.
+func (p *CleanupPostLogsProcessor) Work(ctx context.Context, job *river.Job[CleanupPostLogsTask]) error {
+	return p.Process(ctx, job.Args)
+}
+
+// Timeout is the per-attempt context deadline.
+func (p *CleanupPostLogsProcessor) Timeout(*river.Job[CleanupPostLogsTask]) time.Duration {
+	return 30 * time.Second
+}
+
+func init() {
+	register(func(w *river.Workers, d Deps) {
+		river.AddWorker(w, &CleanupPostLogsProcessor{Repo: d.Zernio.PostLogRepo, Retention: d.PostLogRetention})
+	})
+}
+
+// Process deletes Post Log entries older than the retention window.
 func (p *CleanupPostLogsProcessor) Process(ctx context.Context, _ CleanupPostLogsTask) error {
 	if p.Retention > 0 && p.Repo != nil {
 		cutoff := time.Now().UTC().Add(-p.Retention)
@@ -59,14 +69,6 @@ func (p *CleanupPostLogsProcessor) Process(ctx context.Context, _ CleanupPostLog
 		if n > 0 {
 			jobs.PostLogCleaned.Add(n)
 			log.Printf("post_logs: cleanup removed %d entries older than %s", n, cutoff.Format(time.RFC3339))
-		}
-	}
-	if p.Every > 0 {
-		client := backlite.FromContext(ctx)
-		if client != nil {
-			if _, err := client.Add(CleanupPostLogsTask{}).Wait(p.Every).Save(); err != nil {
-				return err
-			}
 		}
 	}
 	return nil

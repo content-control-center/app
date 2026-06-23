@@ -12,7 +12,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/valyala/fasthttp"
 
-	"github.com/mikestefanello/backlite"
 	"github.com/uptrace/bun"
 
 	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
@@ -78,14 +77,14 @@ type PostsHandler struct {
 	// allowlistRepo answers "is this Zernio platform allowed to
 	// auto-publish?" when the user moves a post to Scheduled
 	// (CON-69 §5). nil disables the allowlist branch entirely;
-	// posts go straight to Scheduled with no Backlite enqueue.
+	// posts go straight to Scheduled with no River enqueue.
 	allowlistRepo repository.AutoPublishAllowlistRepository
-	// jobsClient is the Backlite client used to enqueue submit tasks
-	// transactionally with the status change. nil disables enqueue.
-	jobsClient *backlite.Client
+	// jobsClient enqueues the Zernio cancellation task (CON-69 §9). nil
+	// disables the cancel endpoint (503).
+	jobsClient CancelEnqueuer
 	// db is the Bun DB handle. Held so the schedule path can run the
-	// status update + PostLog write + Backlite enqueue in a single
-	// SQLite transaction (CON-69 §5).
+	// status update + PostLog write + River enqueue in a single
+	// transaction (CON-69 §5).
 	db *bun.DB
 	// cloneSvc duplicates a post (CON-59). nil disables the clone
 	// endpoint (503), keeping fixtures that don't wire it green.
@@ -143,13 +142,19 @@ func (h *PostsHandler) SetAnalyticsRepo(r repository.PostAnalyticsRepository) {
 	h.analyticsRepo = r
 }
 
+// CancelEnqueuer enqueues a Zernio cancellation task. Implemented by
+// *queues.Enqueuer; kept as a narrow interface so the handler depends on a
+// tiny method set rather than the queue runtime directly.
+type CancelEnqueuer interface {
+	EnqueueCancel(ctx context.Context, postID string, target queues.CancelTarget, actor string) error
+}
+
 // SetSchedulingDeps wires everything the schedule path needs: the
 // allowlist repo (to choose Scheduled vs ScheduledForManualPublish),
-// the Backlite client (to enqueue submit tasks), and the bun DB
-// handle (to do the status change + PostLog write + enqueue in one
-// SQLite transaction). Any nil disables the schedule branch — useful
-// for fixtures that don't exercise auto-publish.
-func (h *PostsHandler) SetSchedulingDeps(allowlist repository.AutoPublishAllowlistRepository, client *backlite.Client, db *bun.DB) {
+// the job enqueuer (to enqueue cancellation tasks), and the bun DB
+// handle. Any nil disables the corresponding branch — useful for
+// fixtures that don't exercise auto-publish.
+func (h *PostsHandler) SetSchedulingDeps(allowlist repository.AutoPublishAllowlistRepository, client CancelEnqueuer, db *bun.DB) {
 	h.allowlistRepo = allowlist
 	h.jobsClient = client
 	h.db = db
@@ -391,7 +396,7 @@ type cancelRequest struct {
 
 // Cancel godoc
 // @Summary      Cancel a Scheduled post
-// @Description  Enqueues a Backlite cancel_zernio_job task. The Post
+// @Description  Enqueues a River cancel_zernio_job task. The Post
 // @Description  remains in `Scheduled` until Zernio confirms the
 // @Description  cancellation; on confirmation it transitions to the
 // @Description  requested target (`ready_for_publish` or `draft`).
@@ -446,11 +451,7 @@ func (h *PostsHandler) Cancel(c *fiber.Ctx) error {
 		actor = sess.UserID
 	}
 
-	if _, err := h.jobsClient.Add(queues.CancelZernioJobTask{
-		PostID: post.ID,
-		Target: target,
-		Actor:  actor,
-	}).Save(); err != nil {
+	if err := h.jobsClient.EnqueueCancel(c.Context(), post.ID, target, actor); err != nil {
 		return fmt.Errorf("cancel: enqueue: %w", err)
 	}
 
@@ -873,7 +874,7 @@ func (h *PostsHandler) Update(c *fiber.Ctx) error {
 
 	// CON-69 §5 / CON-78: ReadyForPublish→Scheduled consults the
 	// auto-publish allowlist and persists status, PostLog, and the submit
-	// Backlite task transactionally — now via the shared schedule
+	// River task transactionally — now via the shared schedule
 	// service so the REST/assistant/PUT paths can't drift. Falls through
 	// to the default save when the schedule service isn't wired (test
 	// fixtures).

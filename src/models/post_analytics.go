@@ -46,7 +46,7 @@ type PostPlatformAnalytics struct {
 }
 
 // PlatformAnalyticsList is a []PostPlatformAnalytics that serialises as a
-// JSON array in a SQLite TEXT column (mirrors StringSlice / CampaignPlatforms).
+// JSON array in a jsonb column (mirrors StringSlice / CampaignPlatforms).
 type PlatformAnalyticsList []PostPlatformAnalytics
 
 func (l PlatformAnalyticsList) Value() (driver.Value, error) {
@@ -103,7 +103,7 @@ type PostAnalytics struct {
 	Clicks             int                   `bun:"clicks,notnull"                               json:"clicks"`
 	Views              int                   `bun:"views,notnull"                                json:"views"`
 	EngagementRate     float64               `bun:"engagement_rate,notnull"                      json:"engagement_rate"`
-	PlatformAnalytics  PlatformAnalyticsList `bun:"platform_analytics,notnull"                   json:"platform_analytics"`
+	PlatformAnalytics  PlatformAnalyticsList `bun:"platform_analytics,notnull,type:jsonb"        json:"platform_analytics"`
 	SyncStatus         string                `bun:"sync_status,notnull"                          json:"sync_status"`
 	MetricsLastUpdated *time.Time            `bun:"metrics_last_updated"                         json:"metrics_last_updated"`
 	LastRefreshedAt    time.Time             `bun:"last_refreshed_at,notnull"                    json:"last_refreshed_at"`

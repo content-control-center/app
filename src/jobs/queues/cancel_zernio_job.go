@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mikestefanello/backlite"
+	"github.com/riverqueue/river"
 
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/models"
@@ -14,7 +14,7 @@ import (
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 )
 
-// CancelZernioJobQueue is the Backlite queue name (CON-69 §3, §9).
+// CancelZernioJobQueue is the River queue name (CON-69 §3, §9).
 const CancelZernioJobQueue = "cancel_zernio_job"
 
 // CancelTarget is what the user wants the Post moved to once
@@ -38,21 +38,35 @@ type CancelZernioJobTask struct {
 	Actor string `json:"actor"`
 }
 
-func (CancelZernioJobTask) Config() backlite.QueueConfig {
-	return backlite.QueueConfig{
-		Name:        CancelZernioJobQueue,
-		MaxAttempts: 3,
-		Backoff:     30 * time.Second,
-		Timeout:     20 * time.Second,
-		Retention: &backlite.Retention{
-			Duration: 7 * 24 * time.Hour,
-		},
-	}
+// Kind implements river.JobArgs.
+func (CancelZernioJobTask) Kind() string { return CancelZernioJobQueue }
+
+// InsertOpts sets per-kind defaults: 3 total attempts. Per-attempt timeout
+// lives on the worker (cancelZernioJobWorker.Timeout).
+func (CancelZernioJobTask) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{MaxAttempts: 3}
 }
 
-// CancelZernioJobProcessor implements the queue handler.
+// CancelZernioJobProcessor is the River worker for cancel_zernio_job.
 type CancelZernioJobProcessor struct {
+	river.WorkerDefaults[CancelZernioJobTask]
 	Deps ZernioDeps
+}
+
+// Work is the River entrypoint; it delegates to Process.
+func (p *CancelZernioJobProcessor) Work(ctx context.Context, job *river.Job[CancelZernioJobTask]) error {
+	return p.Process(ctx, job.Args)
+}
+
+// Timeout is the per-attempt context deadline.
+func (p *CancelZernioJobProcessor) Timeout(*river.Job[CancelZernioJobTask]) time.Duration {
+	return 20 * time.Second
+}
+
+func init() {
+	register(func(w *river.Workers, d Deps) {
+		river.AddWorker(w, &CancelZernioJobProcessor{Deps: d.Zernio})
+	})
 }
 
 // Process executes one cancellation attempt.
@@ -61,7 +75,7 @@ type CancelZernioJobProcessor struct {
 //   - Cancel succeeds → Post transitions to the chosen target.
 //   - Cancel returns ErrAlreadyPublished → no transition; the next
 //     poll cycle will land Published per the normal success path.
-//   - Cancel returns transient error → return error so Backlite
+//   - Cancel returns transient error → return error so River
 //     retries.
 //   - Cancel returns terminal error → log and leave Post in
 //     Scheduled; user sees a stuck post and can try again. Per
@@ -106,9 +120,9 @@ func (p *CancelZernioJobProcessor) Process(ctx context.Context, task CancelZerni
 			"Zernio cancel terminally failed", `{"error":"`+cancelErr.Error()+`"}`)
 		return nil
 	}
-	// Transient — retry per Backlite config.
+	// Transient — retry per InsertOpts.
 	appendLogActor(ctx, p.Deps, post.ID, task.Actor, models.PostLogEventTaskRetried, post.Status, post.Status,
-		"transient cancel error; backlite will retry", `{"error":"`+cancelErr.Error()+`"}`)
+		"transient cancel error; River will retry", `{"error":"`+cancelErr.Error()+`"}`)
 	return cancelErr
 }
 

@@ -87,30 +87,31 @@ func (r *postAttachmentRepository) ListS3KeysByPostID(ctx context.Context, postI
 }
 
 func (r *postAttachmentRepository) CreateAtNextPosition(ctx context.Context, att *models.PostAttachment) error {
-	// Single-statement INSERT computes the next position from the same
-	// SELECT, so two concurrent uploads to the same post can't both
-	// resolve the same value and collide on the unique constraint.
-	// SQLite serialises writers, so the SELECT subquery sees the
-	// committed state at the moment the INSERT starts.
-	const q = `INSERT INTO post_attachments
-		(id, post_id, position, mime_type, size_bytes, width, height,
-		 is_animated, page_count, checksum_sha256, s3_key, thumbnail_s3_key, created_by)
-		VALUES (?, ?, COALESCE((SELECT MAX(position)+1 FROM post_attachments WHERE post_id=?), 0),
-		        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		RETURNING position`
 	var thumb any
 	if att.ThumbnailS3Key != "" {
 		thumb = att.ThumbnailS3Key
 	}
-	row := r.db.QueryRowContext(ctx, q,
-		att.ID, att.PostID, att.PostID,
-		att.MimeType, att.SizeBytes, att.Width, att.Height,
-		att.IsAnimated, att.PageCount, att.ChecksumSHA256, att.S3Key, thumb, att.CreatedBy,
-	)
-	if err := row.Scan(&att.Position); err != nil {
-		return err
-	}
-	return nil
+	// Lock the parent post row for the duration of the insert so two
+	// concurrent uploads to the same post serialise — otherwise both could
+	// read the same MAX(position) and collide on the (post_id, position)
+	// unique constraint. Postgres runs writers concurrently (SQLite did not),
+	// so the serialisation must be explicit.
+	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw(`SELECT 1 FROM posts WHERE id = ? FOR UPDATE`, att.PostID).Exec(ctx); err != nil {
+			return err
+		}
+		const q = `INSERT INTO post_attachments
+			(id, post_id, position, mime_type, size_bytes, width, height,
+			 is_animated, page_count, checksum_sha256, s3_key, thumbnail_s3_key, created_by)
+			VALUES (?, ?, COALESCE((SELECT MAX(position)+1 FROM post_attachments WHERE post_id=?), 0),
+			        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			RETURNING position`
+		return tx.NewRaw(q,
+			att.ID, att.PostID, att.PostID,
+			att.MimeType, att.SizeBytes, att.Width, att.Height,
+			att.IsAnimated, att.PageCount, att.ChecksumSHA256, att.S3Key, thumb, att.CreatedBy,
+		).Scan(ctx, &att.Position)
+	})
 }
 
 func (r *postAttachmentRepository) UpdatePosition(ctx context.Context, id string, position int) error {
@@ -133,4 +134,3 @@ func (r *postAttachmentRepository) Delete(ctx context.Context, id string) (bool,
 	n, _ := res.RowsAffected()
 	return n > 0, nil
 }
-

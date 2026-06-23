@@ -116,7 +116,7 @@ type PostEvaluation struct {
 	PlatformPostType string           `bun:"platform_post_type,notnull"                   json:"platform_post_type"`
 	CaptionScoped    bool             `bun:"caption_scoped,notnull"                       json:"caption_scoped"`
 	OverallPct       float64          `bun:"overall_pct,notnull"                          json:"overall_pct"`
-	Result           EvaluationResult `bun:"result,notnull"                               json:"result"`
+	Result           EvaluationResult `bun:"result,notnull,type:jsonb"                    json:"result"`
 	ModelID          string           `bun:"model_id,notnull"                             json:"model_id"`
 	// InputHash fingerprints the assessment inputs (rendered prompt + model)
 	// so the assess flow skips re-running the model when nothing the model

@@ -9,7 +9,7 @@ import (
 // Metrics surfaces Ogen's job-queue health to operators (CON-69 §13).
 // Counters are exposed via expvar at /debug/vars; latency averages
 // live as a small in-process histogram so we don't pull a metrics
-// library for the MVP. Backlite's UI already covers per-queue depth
+// library for the MVP. River's tables cover per-queue depth
 // (upcoming/running/succeeded/failed) — this is what's left.
 //
 // Field naming is "ogen_jobs_*" so the expvar surface stays distinct
@@ -26,9 +26,9 @@ var (
 	ZernioPollRetried   = expvar.NewInt("ogen_jobs_zernio_poll_retried")
 
 	// Cancel lifecycle.
-	ZernioCancelSucceeded       = expvar.NewInt("ogen_jobs_zernio_cancel_succeeded")
+	ZernioCancelSucceeded        = expvar.NewInt("ogen_jobs_zernio_cancel_succeeded")
 	ZernioCancelAlreadyPublished = expvar.NewInt("ogen_jobs_zernio_cancel_already_published")
-	ZernioCancelFailed          = expvar.NewInt("ogen_jobs_zernio_cancel_failed")
+	ZernioCancelFailed           = expvar.NewInt("ogen_jobs_zernio_cancel_failed")
 
 	// Reconciliation.
 	ReconciliationTimeouts = expvar.NewInt("ogen_jobs_reconciliation_timeouts")

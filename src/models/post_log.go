@@ -23,7 +23,7 @@ const (
 	// Allowlist + scheduling decision
 	PostLogEventAllowlistDecision PostLogEventType = "allowlist_decision"
 
-	// Background task lifecycle (Backlite)
+	// Background task lifecycle (River)
 	PostLogEventTaskEnqueued  PostLogEventType = "task_enqueued"
 	PostLogEventTaskStarted   PostLogEventType = "task_started"
 	PostLogEventTaskSucceeded PostLogEventType = "task_succeeded"

@@ -1,0 +1,22 @@
+-- CON-87: drop the Postgres baseline schema (reverse dependency order).
+DROP TABLE IF EXISTS post_analytics;
+DROP TABLE IF EXISTS post_evaluations;
+DROP TABLE IF EXISTS post_logs;
+DROP TABLE IF EXISTS post_attachments;
+DROP TABLE IF EXISTS auto_publish_allowlist;
+DROP TABLE IF EXISTS secret;
+DROP TABLE IF EXISTS social_accounts;
+DROP TABLE IF EXISTS post_assistant_messages;
+DROP TABLE IF EXISTS post_versions;
+DROP TABLE IF EXISTS posts;
+DROP TABLE IF EXISTS asset_files;
+DROP TABLE IF EXISTS assets_chunks;
+DROP TABLE IF EXISTS assets;
+DROP TABLE IF EXISTS campaigns;
+DROP TABLE IF EXISTS tags;
+DROP TABLE IF EXISTS campaigns_types_phases;
+DROP TABLE IF EXISTS campaigns_types;
+DROP TABLE IF EXISTS platforms;
+DROP TABLE IF EXISTS settings;
+DROP TABLE IF EXISTS sessions;
+DROP TABLE IF EXISTS users;

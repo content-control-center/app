@@ -2,12 +2,13 @@ package queues
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
-	"github.com/mikestefanello/backlite"
+	"github.com/riverqueue/river"
 
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/models"
@@ -16,7 +17,7 @@ import (
 	"github.com/ogen-app/ogen/src/settings"
 )
 
-// SubmitPostToZernioQueue is the Backlite queue name (CON-69 §3).
+// SubmitPostToZernioQueue is the River queue name (CON-69 §3).
 const SubmitPostToZernioQueue = "submit_post_to_zernio"
 
 // SubmitPostTask carries the Ogen post id; the worker re-loads the
@@ -25,31 +26,45 @@ type SubmitPostTask struct {
 	PostID string `json:"post_id"`
 }
 
-func (SubmitPostTask) Config() backlite.QueueConfig {
-	return backlite.QueueConfig{
-		Name:        SubmitPostToZernioQueue,
-		MaxAttempts: 5,                // 4 retries (CON-69 §6 per-attempt logging)
-		Backoff:     30 * time.Second, // exponential is preferable; backlite is linear
-		Timeout:     30 * time.Second,
-		Retention: &backlite.Retention{
-			Duration:   30 * 24 * time.Hour,
-			OnlyFailed: true,
-			Data:       &backlite.RetainData{OnlyFailed: true},
-		},
-	}
+// Kind implements river.JobArgs.
+func (SubmitPostTask) Kind() string { return SubmitPostToZernioQueue }
+
+// InsertOpts sets per-kind defaults: 5 total attempts (4 retries) per
+// CON-69 §6. Retry backoff is River's default exponential-with-jitter (the
+// PRD notes exponential is preferable to backlite's fixed 30s). The
+// per-attempt timeout lives on the worker (submitPostWorker.Timeout).
+func (SubmitPostTask) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{MaxAttempts: 5}
 }
 
-// SubmitPostProcessor implements the queue handler. Held by the
-// runtime; one instance per process.
+// SubmitPostProcessor is the River worker for submit_post_to_zernio. It
+// implements river.Worker directly; Process is the test seam Work delegates to.
 type SubmitPostProcessor struct {
+	river.WorkerDefaults[SubmitPostTask]
 	Deps ZernioDeps
 	// PollLeadTime is how far in advance of scheduled_at we begin
 	// polling. Defaults to 30s when zero.
 	PollLeadTime time.Duration
 }
 
+// Work is the River entrypoint; it delegates to Process.
+func (p *SubmitPostProcessor) Work(ctx context.Context, job *river.Job[SubmitPostTask]) error {
+	return p.Process(ctx, job.Args)
+}
+
+// Timeout is the per-attempt context deadline.
+func (p *SubmitPostProcessor) Timeout(*river.Job[SubmitPostTask]) time.Duration {
+	return 30 * time.Second
+}
+
+func init() {
+	register(func(w *river.Workers, d Deps) {
+		river.AddWorker(w, &SubmitPostProcessor{Deps: d.Zernio})
+	})
+}
+
 // Process runs one submit attempt. Returns a non-nil error to ask
-// Backlite to retry; returns nil for both success and terminal
+// River to retry; returns nil for both success and terminal
 // failure (Post moved to Failed inside this method when the failure
 // is terminal).
 func (p *SubmitPostProcessor) Process(ctx context.Context, task SubmitPostTask) error {
@@ -81,7 +96,7 @@ func (p *SubmitPostProcessor) Process(ctx context.Context, task SubmitPostTask) 
 				return p.terminal(ctx, post, "zernio_retry_rejected", retryErr.Error())
 			}
 			appendLog(ctx, p.Deps, post.ID, models.PostLogEventTaskRetried, post.Status, post.Status,
-				"transient Zernio retry error; backlite will retry", `{"error":"`+retryErr.Error()+`"}`)
+				"transient Zernio retry error; River will retry", `{"error":"`+retryErr.Error()+`"}`)
 			return retryErr
 		}
 		return p.persistSuccess(ctx, post, job)
@@ -161,10 +176,10 @@ func (p *SubmitPostProcessor) Process(ctx context.Context, task SubmitPostTask) 
 			jobs.ZernioSubmitFailed.Add(1)
 			return p.terminal(ctx, post, "zernio_rejected", submitErr.Error())
 		}
-		// Transient — let Backlite retry per QueueConfig.
+		// Transient — let River retry per InsertOpts.
 		jobs.ZernioSubmitRetried.Add(1)
 		appendLog(ctx, p.Deps, post.ID, models.PostLogEventTaskRetried, post.Status, post.Status,
-			"transient Zernio error; backlite will retry", `{"error":"`+submitErr.Error()+`"}`)
+			"transient Zernio error; River will retry", `{"error":"`+submitErr.Error()+`"}`)
 		return submitErr
 	}
 
@@ -190,15 +205,15 @@ func (p *SubmitPostProcessor) persistSuccess(ctx context.Context, post *models.P
 }
 
 func (p *SubmitPostProcessor) enqueuePoll(ctx context.Context, post *models.Post) {
-	client := backlite.FromContext(ctx)
-	if client == nil {
+	client, err := river.ClientFromContextSafely[*sql.Tx](ctx)
+	if err != nil || client == nil {
 		return
 	}
 	when := time.Now().UTC().Add(p.pollLead())
 	if post.ScheduledAt != nil && post.ScheduledAt.After(time.Now()) {
 		when = post.ScheduledAt.Add(p.pollLead())
 	}
-	if _, err := client.Add(PollZernioStatusTask{PostID: post.ID}).At(when).Save(); err != nil {
+	if _, err := client.Insert(ctx, PollZernioStatusTask{PostID: post.ID}, &river.InsertOpts{ScheduledAt: when}); err != nil {
 		appendLog(ctx, p.Deps, post.ID, models.PostLogEventTaskFailed, post.Status, post.Status,
 			"failed to enqueue poll_zernio_status", `{"error":"`+err.Error()+`"}`)
 	}
@@ -212,7 +227,7 @@ func (p *SubmitPostProcessor) pollLead() time.Duration {
 }
 
 // terminal marks the Post Failed and writes a terminal PostLog. The
-// returned error is always nil — Backlite must NOT retry once we've
+// returned error is always nil — River must NOT retry once we've
 // already moved the Post out of Scheduled.
 func (p *SubmitPostProcessor) terminal(ctx context.Context, post *models.Post, reason, msg string) error {
 	from := post.Status

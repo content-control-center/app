@@ -2,39 +2,31 @@ package repository_test
 
 import (
 	"context"
-	"fmt"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/uptrace/bun"
 
-	"github.com/ogen-app/ogen/src/database"
 	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/pgtest"
 	"github.com/ogen-app/ogen/src/repository"
 )
 
-var postAnalyticsDBSeq atomic.Uint64
-
-// openMigratedDB opens a private in-memory database with the full schema.
-// foreign_keys is left OFF so a test can insert a post with a synthetic
-// campaign_id without seeding the whole campaign graph — the repo logic
-// under test doesn't depend on FK enforcement.
+// openMigratedDB returns a fresh, fully-migrated Postgres database with FK
+// enforcement bypassed for the session, so a test can insert a post with a
+// synthetic campaign_id / created_by without seeding the whole campaign
+// graph — the repo logic under test doesn't depend on FK enforcement.
+//
+// Postgres has no per-statement FK pragma, so the pool is capped at 1 and
+// the session uses session_replication_role=replica (which skips FK-trigger
+// checks; the test database user is a superuser, as required). With a single
+// pooled connection the setting sticks for the whole test.
 func openMigratedDB(t *testing.T) *bun.DB {
 	t.Helper()
-	n := postAnalyticsDBSeq.Add(1)
-	dsn := fmt.Sprintf("file:repo_pa_%d?mode=memory&cache=shared&_pragma=foreign_keys(off)", n)
-	db, err := database.New(dsn, false)
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	if err := database.Migrate(context.Background(), db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	// FKs off so we can insert posts with a synthetic campaign_id without
-	// seeding the whole campaign graph; the connection pool is capped at 1
-	// (see database.New) so this sticks for the test.
-	if _, err := db.Exec("PRAGMA foreign_keys = OFF"); err != nil {
+	db := pgtest.MustDB()
+	db.DB.SetMaxOpenConns(1)
+	db.DB.SetMaxIdleConns(1)
+	if _, err := db.Exec("SET session_replication_role = replica"); err != nil {
 		t.Fatalf("disable fks: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })

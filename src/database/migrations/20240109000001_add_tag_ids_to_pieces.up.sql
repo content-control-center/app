@@ -1,1 +1,0 @@
-ALTER TABLE pieces ADD COLUMN tag_ids TEXT NOT NULL DEFAULT '[]';

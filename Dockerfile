@@ -57,8 +57,8 @@ FROM alpine:3.20
 RUN --mount=type=cache,id=apk-cache,sharing=locked,target=/var/cache/apk \
     apk add --no-cache ca-certificates tzdata poppler-utils && \
     addgroup -S appgroup && adduser -S -G appgroup appuser && \
-    mkdir -p /data /var/lib/ogen/keys && \
-    chown appuser:appgroup /data /var/lib/ogen/keys && \
+    mkdir -p /var/lib/ogen/keys && \
+    chown appuser:appgroup /var/lib/ogen/keys && \
     chmod 700 /var/lib/ogen/keys
 
 # Statically-linked Go binary (CGO_ENABLED=0 in the build stage).

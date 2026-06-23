@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-// StringSlice is a []string that serialises as a JSON array in a SQLite TEXT column.
+// StringSlice is a []string that serialises as a JSON array in a jsonb column.
 type StringSlice []string
 
 func (s StringSlice) Value() (driver.Value, error) {
@@ -36,7 +36,7 @@ type CampaignPlatform struct {
 }
 
 // CampaignPlatforms is a []CampaignPlatform that serialises as a JSON array
-// in a SQLite TEXT column.
+// in a jsonb column.
 type CampaignPlatforms []CampaignPlatform
 
 func (s CampaignPlatforms) Value() (driver.Value, error) {
@@ -59,7 +59,7 @@ func (s *CampaignPlatforms) Scan(src any) error {
 }
 
 // PostTypeMap is a map[string]string that serialises as a JSON object in a
-// SQLite TEXT column. Keys are post-type slugs, values are display names.
+// jsonb column. Keys are post-type slugs, values are display names.
 type PostTypeMap map[string]string
 
 func (m PostTypeMap) Value() (driver.Value, error) {

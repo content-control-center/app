@@ -15,8 +15,8 @@ import (
 // the narrow ReconcilePostRepo surface — useful when we want to
 // inject specific stuck rows without seeding the larger fake.
 type reconcileFakeRepo struct {
-	stuck []models.Post
-	calls map[string]models.PostStatus
+	stuck   []models.Post
+	calls   map[string]models.PostStatus
 	reasons map[string]string
 }
 

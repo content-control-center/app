@@ -84,7 +84,7 @@ var _ = Describe("Post schedule — CON-78", Ordered, func() {
 		// CON-78: real schedule service over a real allowlist. No jobs
 		// client wired — the auto-publish routing decision is still
 		// exercised; the Zernio submit enqueue is out of scope here
-		// (consistent with the rest of the suite, which doesn't run Backlite).
+		// (consistent with the rest of the suite, which doesn't run the River worker pool).
 		postsHandler.SetScheduleService(schedule.New(db, postRepo, platformRepo, postAttRepo, allowlistRepo, logRepo, nil, nil))
 		postsHandler.Register(app)
 

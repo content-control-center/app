@@ -12,7 +12,7 @@ import (
 //
 // Rows are keyed by Name (the human-readable allowlist entry, e.g.
 // "anthropic_api_key"). The numeric ID is incidental and only exists
-// so SQLite can use a rowid-backed primary key for cheap updates.
+// to give each row a stable numeric identity.
 type Secret struct {
 	bun.BaseModel `bun:"table:secret,alias:s" swaggerignore:"true"`
 

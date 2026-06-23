@@ -10,8 +10,8 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
 
-	"github.com/ogen-app/ogen/src/database"
 	"github.com/ogen-app/ogen/src/handlers"
+	"github.com/ogen-app/ogen/src/pgtest"
 )
 
 var _ = Describe("HealthHandler", func() {
@@ -43,9 +43,5 @@ var _ = Describe("HealthHandler", func() {
 })
 
 func mustOpenTestDB() *bun.DB {
-	db, err := database.New("file::memory:?cache=shared", false)
-	if err != nil {
-		panic(err)
-	}
-	return db
+	return pgtest.MustDB()
 }

@@ -1,6 +1,12 @@
-.PHONY: build run test test-integration coverage _ginkgo _air web web-dev tidy docker docker-genkit clean openapi seed genkit
+.PHONY: build run test test-integration coverage _ginkgo _air _pg-test-up web web-dev tidy docker docker-genkit clean openapi seed genkit
 
 GINKGO_FLAGS = --github-output -r -randomize-all -randomize-suites -race -trace -procs=2 -poll-progress-after=10s -poll-progress-interval=10s
+
+# Postgres for the unit suite (CON-87 WS5). A throwaway pgvector container on
+# host port 5433 — avoids clashing with a dev `docker compose` on 5432 — with
+# max_connections bumped because each test provisions its own database.
+PG_TEST_CONTAINER = ogen-test-pg
+PG_TEST_DSN = postgres://ogen:ogen@localhost:5433/postgres?sslmode=disable
 
 # ── Go ────────────────────────────────────────────────────────────────────────
 build: web/dist
@@ -18,9 +24,25 @@ _air:
 _ginkgo:
 	go install github.com/onsi/ginkgo/v2/ginkgo
 
-test: _ginkgo
-	ginkgo $(GINKGO_FLAGS) --skip-package=integration --cover --coverpkg=./... --coverprofile=coverage.out --covermode=atomic --output-dir=. ./...
-	go tool cover -func=coverage.out
+_pg-test-up:
+	@docker rm -f $(PG_TEST_CONTAINER) >/dev/null 2>&1 || true
+	@docker run -d --name $(PG_TEST_CONTAINER) \
+		-e POSTGRES_USER=ogen -e POSTGRES_PASSWORD=ogen -e POSTGRES_DB=postgres \
+		-p 5433:5432 pgvector/pgvector:pg17 -c max_connections=500 >/dev/null
+	@printf "Waiting for postgres"; \
+	tries=30; \
+	until docker exec $(PG_TEST_CONTAINER) pg_isready -U ogen >/dev/null 2>&1; do \
+		tries=$$((tries - 1)); \
+		[ $$tries -le 0 ] && { echo " timed out"; docker rm -f $(PG_TEST_CONTAINER) >/dev/null 2>&1; exit 1; }; \
+		printf '.'; sleep 1; \
+	done; echo " ready"
+
+test: _ginkgo _pg-test-up
+	@TEST_DATABASE_DSN="$(PG_TEST_DSN)" ginkgo $(GINKGO_FLAGS) --skip-package=integration --cover --coverpkg=./... --coverprofile=coverage.out --covermode=atomic --output-dir=. ./...; \
+	EXIT=$$?; \
+	docker rm -f $(PG_TEST_CONTAINER) >/dev/null 2>&1; \
+	[ $$EXIT -eq 0 ] && go tool cover -func=coverage.out; \
+	exit $$EXIT
 
 test-integration:
 	docker compose -f docker-compose.integration.yml up -d
@@ -38,7 +60,15 @@ test-integration:
 		[ $$timeout -le 0 ] && { echo " timed out"; docker compose -f docker-compose.integration.yml down; exit 1; }; \
 		printf '.'; sleep 2; \
 	done; echo " ready"
-	go test -tags integration -v -count=1 -timeout 180s ./src/integration/...; \
+	@printf "Waiting for postgres"; \
+	timeout=60; \
+	until docker compose -f docker-compose.integration.yml exec -T postgres pg_isready -U ogen -d ogen >/dev/null 2>&1; do \
+		timeout=$$((timeout - 2)); \
+		[ $$timeout -le 0 ] && { echo " timed out"; docker compose -f docker-compose.integration.yml down; exit 1; }; \
+		printf '.'; sleep 2; \
+	done; echo " ready"
+	TEST_DATABASE_DSN="postgres://ogen:ogen@localhost:5432/postgres?sslmode=disable" \
+		go test -tags integration -v -count=1 -timeout 180s ./src/integration/...; \
 	EXIT=$$?; \
 	docker compose -f docker-compose.integration.yml down; \
 	exit $$EXIT
