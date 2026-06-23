@@ -323,6 +323,24 @@ above, or start the published image plus its dependencies:
 docker compose pull && docker compose up   # API + Postgres + llama-embedserver
 ```
 
+### Full stack via Docker Compose (API + UI hot-reload)
+
+The `ui` service in `docker-compose.yml` mounts a sibling `ogen-app/ui` checkout
+and runs the Vite dev server with hot-reload, proxying `/api` to the API. It's
+gated behind the `ui` profile so the default `docker compose up` stays
+backend-only:
+
+```bash
+docker compose --profile ui up         # API + deps + UI dev server
+```
+
+Then open **http://localhost:9002**. Edits under the local `ui` repo hot-reload
+in the browser. If your UI checkout isn't at `../ui`, point `UI_PATH` at it:
+
+```bash
+UI_PATH=/path/to/ui docker compose --profile ui up
+```
+
 When the UI and API are served from different origins, set `CORS_ALLOWED_ORIGINS`
 on the API to the UI origin(s); for local dev the Vite `/api` proxy keeps things
 same-origin, so it can stay empty.
