@@ -1,0 +1,4 @@
+# Gitignored files copied into every Claude Code worktree.
+# Uses .gitignore syntax; only files that are gitignored AND match a
+# pattern here are copied (tracked files are never duplicated).
+.env
