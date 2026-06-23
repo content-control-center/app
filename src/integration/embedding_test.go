@@ -28,7 +28,7 @@ var _ = Describe("Asset embedding flow", Ordered, func() {
 	)
 
 	BeforeAll(func() {
-		ctx = context.Background()
+		ctx = tenantCtx()
 		db = mustOpenIntegrationDB()
 		repo = repository.NewAssetChunksRepository(db)
 
@@ -44,6 +44,7 @@ var _ = Describe("Asset embedding flow", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		user := &models.User{
 			ID:           userID,
+			TenantID:     models.DefaultTenantID,
 			Name:         "Integration Tester",
 			Email:        "integration@test.local",
 			PasswordHash: "placeholder",

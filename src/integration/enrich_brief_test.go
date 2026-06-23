@@ -32,7 +32,7 @@ var _ = Describe("Enrich brief flow", Ordered, func() {
 			Skip("ANTHROPIC_API_KEY not set — skipping enrich brief integration tests")
 		}
 
-		ctx = context.Background()
+		ctx = tenantCtx()
 		db = mustOpenIntegrationDB()
 
 		tagRepo := repository.NewTagRepository(db)
@@ -45,6 +45,7 @@ var _ = Describe("Enrich brief flow", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		_, err = db.NewInsert().Model(&models.User{
 			ID:           userID,
+			TenantID:     models.DefaultTenantID,
 			Name:         "Enrich Brief Tester",
 			Email:        "eb-integration@test.local",
 			PasswordHash: "placeholder",

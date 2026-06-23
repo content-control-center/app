@@ -4,7 +4,6 @@ package integration_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -104,7 +103,7 @@ var _ = Describe("Post restore — CON-68", Ordered, func() {
 	})
 
 	AfterEach(func() {
-		ctx := context.Background()
+		ctx := tenantCtx()
 		for _, t := range []string{"post_versions", "post_logs", "post_assistant_messages", "posts", "campaigns", "sessions", "users"} {
 			_, _ = db.NewDelete().TableExpr(t).Where("1 = 1").Exec(ctx)
 		}
@@ -193,7 +192,7 @@ var _ = Describe("Post restore — CON-68", Ordered, func() {
 		Expect(out.NewVersionNumber).To(Equal(4))
 		Expect(out.Post.Content).To(Equal("A"))
 
-		ctx := context.Background()
+		ctx := tenantCtx()
 		versions, err := versionRepo.ListByPostID(ctx, id)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(versions).To(HaveLen(4))
@@ -234,7 +233,7 @@ var _ = Describe("Post restore — CON-68", Ordered, func() {
 		Expect(out.NewVersionNumber).To(Equal(5)) // v4 = auto-snapshot, v5 = restore
 		Expect(out.Post.Content).To(Equal("B"))
 
-		ctx := context.Background()
+		ctx := tenantCtx()
 		versions, err := versionRepo.ListByPostID(ctx, id)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(versions).To(HaveLen(5))
@@ -252,7 +251,7 @@ var _ = Describe("Post restore — CON-68", Ordered, func() {
 		Expect(out.NoOp).To(BeTrue())
 		Expect(out.NewVersionNumber).To(Equal(0))
 
-		ctx := context.Background()
+		ctx := tenantCtx()
 		versions, err := versionRepo.ListByPostID(ctx, id)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(versions).To(HaveLen(3)) // nothing appended
@@ -284,7 +283,7 @@ var _ = Describe("Post restore — CON-68", Ordered, func() {
 		id := seedThreeVersions()
 		// Force a non-editable status directly (the publish pipeline is out
 		// of scope here) — restore must not silently rewrite live content.
-		ctx := context.Background()
+		ctx := tenantCtx()
 		_, err := db.NewUpdate().
 			Model((*models.Post)(nil)).
 			Set("status = ?", string(models.PostStatusPublished)).

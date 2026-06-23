@@ -142,7 +142,7 @@ var _ = Describe("Secrets API lifecycle", func() {
 			"updated_at should advance: was %s, now %s", firstUpdate, renewed.UpdatedAt)
 
 		// Ensure the stored value is the rotated one.
-		current, err := rig.store.Get(context.Background(), secrets.NameAnthropicAPIKey)
+		current, err := rig.store.Get(tenantCtx(), secrets.NameAnthropicAPIKey)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(current).To(Equal(plaintext + "-RENEWED"))
 
@@ -193,7 +193,7 @@ var _ = Describe("Secrets API lifecycle", func() {
 
 var _ = Describe("Secrets env-var migration on boot", func() {
 	It("migrates env values into the DB on first boot and DB wins thereafter", func() {
-		ctx := context.Background()
+		ctx := tenantCtx()
 		db := mustOpenIntegrationDB()
 
 		kek := make([]byte, envelope.KeySize)
@@ -235,7 +235,7 @@ var _ = Describe("Secrets env-var migration on boot", func() {
 	})
 
 	It("leaves the app in a degraded state when neither DB nor env has a key", func() {
-		ctx := context.Background()
+		ctx := tenantCtx()
 		db := mustOpenIntegrationDB()
 		kek := make([]byte, envelope.KeySize)
 		_, _ = rand.Read(kek)
@@ -278,7 +278,7 @@ var _ = Describe("Secrets hot-reload subscriber", func() {
 	// store sees the rotated value on its very next call, no restart.
 	It("resolves the new value through a per-call resolver after PUT", func() {
 		rig := newSecretsRig()
-		ctx := context.Background()
+		ctx := tenantCtx()
 		resolver := func(ctx context.Context) (string, error) {
 			return rig.store.Get(ctx, secrets.NameZernioAPIKey)
 		}

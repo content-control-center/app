@@ -156,7 +156,7 @@ var _ = Describe("Post analytics — CON-93", Ordered, func() {
 		if zernioStub != nil {
 			zernioStub.Close()
 		}
-		ctx := context.Background()
+		ctx := tenantCtx()
 		for _, t := range []string{"post_analytics", "post_versions", "post_logs", "post_assistant_messages", "posts", "campaigns", "sessions", "users"} {
 			_, _ = db.NewDelete().TableExpr(t).Where("1 = 1").Exec(ctx)
 		}
@@ -164,7 +164,7 @@ var _ = Describe("Post analytics — CON-93", Ordered, func() {
 
 	seedPublishedPost := func(id, publisherPostID string) {
 		published := time.Now().UTC()
-		Expect(postRepo.Create(context.Background(), &models.Post{
+		Expect(postRepo.Create(tenantCtx(), &models.Post{
 			ID:              id,
 			CampaignID:      campaignID,
 			PlatformID:      linkedinSqid,
@@ -194,7 +194,7 @@ var _ = Describe("Post analytics — CON-93", Ordered, func() {
 			Settings:   newMemSettings(),
 			WindowDays: 90,
 		}
-		Expect(proc.Process(context.Background(), queues.RefreshZernioAnalyticsTask{})).To(Succeed())
+		Expect(proc.Process(tenantCtx(), queues.RefreshZernioAnalyticsTask{})).To(Succeed())
 	}
 
 	get := func(path string) *http.Response {

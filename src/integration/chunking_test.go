@@ -26,7 +26,7 @@ var _ = Describe("Asset chunking", Ordered, func() {
 	)
 
 	BeforeAll(func() {
-		ctx = context.Background()
+		ctx = tenantCtx()
 		db = mustOpenIntegrationDB()
 		repo = repository.NewAssetChunksRepository(db)
 
@@ -42,6 +42,7 @@ var _ = Describe("Asset chunking", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		_, err = db.NewInsert().Model(&models.User{
 			ID:           userID,
+			TenantID:     models.DefaultTenantID,
 			Name:         "Chunking Tester",
 			Email:        "chunking@test.local",
 			PasswordHash: "placeholder",

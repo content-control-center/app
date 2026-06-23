@@ -12,7 +12,16 @@ import (
 
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/pgtest"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
+
+// tenantCtx is the default-tenant context for integration fixtures that seed or
+// query tenant-scoped models directly (CON-97 scoping fails closed without a
+// tenant). Requests through the authenticated API already carry the session's
+// tenant, so this is only for direct DB/repo access in test setup.
+func tenantCtx() context.Context {
+	return tenantctx.With(context.Background(), models.DefaultTenantID)
+}
 
 func TestIntegration(t *testing.T) {
 	RegisterFailHandler(Fail)
