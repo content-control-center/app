@@ -2,7 +2,6 @@ package handlers_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -193,7 +192,7 @@ var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 	})
 
 	AfterEach(func() {
-		ctx := context.Background()
+		ctx := tenantCtx()
 		_, _ = db.NewDelete().TableExpr("post_attachments").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("post_assistant_messages").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("post_versions").Where("1 = 1").Exec(ctx)
@@ -365,7 +364,7 @@ var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 
 			It("returns 409 when the post is published", func() {
 				postID := createPostWithPlatform(linkedinPlatformID)
-				ctx := context.Background()
+				ctx := tenantCtx()
 				_, err := db.NewUpdate().Model((*models.Post)(nil)).
 					Set("status = ?", models.PostStatusPublished).
 					Where("id = ?", postID).Exec(ctx)
@@ -437,7 +436,7 @@ var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 					postID := createPostWithPlatform(linkedinPlatformID)
 
 					// Tighten LinkedIn's cap so the test PDF stays small.
-					ctx := context.Background()
+					ctx := tenantCtx()
 					_, err := db.NewUpdate().
 						Table("platforms").
 						Set("pdf_constraints = jsonb_set(pdf_constraints, '{max_pages}', '1')").
@@ -657,7 +656,7 @@ var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 			Expect(json.NewDecoder(resp.Body).Decode(&att)).To(Succeed())
 			id := att["id"].(string)
 
-			ctx := context.Background()
+			ctx := tenantCtx()
 			_, err = db.NewUpdate().Model((*models.Post)(nil)).
 				Set("status = ?", models.PostStatusPublished).
 				Where("id = ?", postID).Exec(ctx)
@@ -682,7 +681,7 @@ var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 			Expect(dResp.StatusCode).To(Equal(204))
 
 			// Direct DB query — handler list would also 404 since the post is gone.
-			ctx := context.Background()
+			ctx := tenantCtx()
 			n, err := db.NewSelect().
 				Model((*models.PostAttachment)(nil)).
 				Where("post_id = ?", postID).

@@ -20,6 +20,7 @@ const (
 
 type Campaign struct {
 	bun.BaseModel `bun:"table:campaigns,alias:c" swaggerignore:"true"`
+	TenantScoped  // CON-97: tenant_id column + central scoping hooks
 
 	ID   string `bun:"id,pk"                                        json:"id"`
 	Name string `bun:"name,notnull"                                 json:"name"`

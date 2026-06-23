@@ -15,6 +15,7 @@ import (
 	"github.com/ogen-app/ogen/src/post_actions/logs"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/settings"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // SubmitPostToZernioQueue is the River queue name (CON-69 §3).
@@ -49,6 +50,8 @@ type SubmitPostProcessor struct {
 
 // Work is the River entrypoint; it delegates to Process.
 func (p *SubmitPostProcessor) Work(ctx context.Context, job *river.Job[SubmitPostTask]) error {
+	// CON-97: background jobs span tenants (interim until per-tenant, PR4).
+	ctx = tenantctx.WithSystem(ctx)
 	return p.Process(ctx, job.Args)
 }
 

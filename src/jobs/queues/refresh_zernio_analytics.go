@@ -13,6 +13,7 @@ import (
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // RefreshZernioAnalyticsQueue is the recurring analytics-refresh queue
@@ -66,6 +67,8 @@ type RefreshZernioAnalyticsProcessor struct {
 
 // Work is the River entrypoint; it delegates to Process.
 func (p *RefreshZernioAnalyticsProcessor) Work(ctx context.Context, job *river.Job[RefreshZernioAnalyticsTask]) error {
+	// CON-97: background jobs span tenants (interim until per-tenant, PR4).
+	ctx = tenantctx.WithSystem(ctx)
 	return p.Process(ctx, job.Args)
 }
 

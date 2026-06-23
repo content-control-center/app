@@ -93,21 +93,21 @@ var _ = Describe("PostsHandler", Ordered, func() {
 	})
 
 	AfterEach(func() {
-		_, err := db.NewDelete().TableExpr("post_logs").Where("1 = 1").Exec(context.Background())
+		_, err := db.NewDelete().TableExpr("post_logs").Where("1 = 1").Exec(tenantCtx())
 		Expect(err).NotTo(HaveOccurred())
-		_, err = db.NewDelete().TableExpr("post_assistant_messages").Where("1 = 1").Exec(context.Background())
+		_, err = db.NewDelete().TableExpr("post_assistant_messages").Where("1 = 1").Exec(tenantCtx())
 		Expect(err).NotTo(HaveOccurred())
-		_, err = db.NewDelete().TableExpr("post_versions").Where("1 = 1").Exec(context.Background())
+		_, err = db.NewDelete().TableExpr("post_versions").Where("1 = 1").Exec(tenantCtx())
 		Expect(err).NotTo(HaveOccurred())
-		_, err = db.NewDelete().TableExpr("posts").Where("1 = 1").Exec(context.Background())
+		_, err = db.NewDelete().TableExpr("posts").Where("1 = 1").Exec(tenantCtx())
 		Expect(err).NotTo(HaveOccurred())
-		_, err = db.NewDelete().TableExpr("assets").Where("1 = 1").Exec(context.Background())
+		_, err = db.NewDelete().TableExpr("assets").Where("1 = 1").Exec(tenantCtx())
 		Expect(err).NotTo(HaveOccurred())
-		_, err = db.NewDelete().TableExpr("campaigns").Where("1 = 1").Exec(context.Background())
+		_, err = db.NewDelete().TableExpr("campaigns").Where("1 = 1").Exec(tenantCtx())
 		Expect(err).NotTo(HaveOccurred())
-		_, err = db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(context.Background())
+		_, err = db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(tenantCtx())
 		Expect(err).NotTo(HaveOccurred())
-		_, err = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(context.Background())
+		_, err = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(tenantCtx())
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -713,7 +713,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 
 				// Insert a deliberately-violating attachment row directly
 				// (image/gif is not in Instagram's allowed_formats).
-				ctx := context.Background()
+				ctx := tenantCtx()
 				attID, err := models.NewID()
 				Expect(err).NotTo(HaveOccurred())
 				_, err = db.NewInsert().Model(&models.PostAttachment{
@@ -784,7 +784,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				S3Key:          "post-attachments/" + p.ID + "/" + id,
 				CreatedBy:      p.CreatedBy,
 			}
-			Expect(repository.NewPostAttachmentRepository(db).CreateAtNextPosition(context.Background(), att)).To(Succeed())
+			Expect(repository.NewPostAttachmentRepository(db).CreateAtNextPosition(tenantCtx(), att)).To(Succeed())
 			return id
 		}
 
@@ -1559,7 +1559,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 
 				id, err := models.NewID()
 				Expect(err).NotTo(HaveOccurred())
-				Expect(evalRepo.Upsert(context.Background(), &models.PostEvaluation{
+				Expect(evalRepo.Upsert(tenantCtx(), &models.PostEvaluation{
 					ID:               id,
 					PostID:           postID,
 					PlatformID:       "AXqWG7U2qnpt",
@@ -1784,7 +1784,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 			p := createPost("Cancel Me", nil)
 			// Move the post to scheduled directly via DB so the handler
 			// reaches the dep check.
-			ctx := context.Background()
+			ctx := tenantCtx()
 			_, err := db.NewUpdate().Model((*models.Post)(nil)).
 				Set("status = ?", models.PostStatusScheduled).
 				Where("id = ?", p.ID).Exec(ctx)

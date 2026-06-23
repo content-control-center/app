@@ -173,7 +173,7 @@ func (s *Service) Restore(ctx context.Context, postID string, opts Options) (*Re
 		autoSnapshotCreated bool
 	)
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.NewRaw(`SELECT 1 FROM posts WHERE id = ? FOR UPDATE`, postID).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`SELECT 1 FROM posts WHERE id = ? AND tenant_id = ? FOR UPDATE`, postID, post.TenantID).Exec(ctx); err != nil {
 			return err
 		}
 		latest := new(models.PostVersion)

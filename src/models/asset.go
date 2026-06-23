@@ -23,6 +23,7 @@ const (
 
 type Asset struct {
 	bun.BaseModel `bun:"table:assets,alias:a" swaggerignore:"true"`
+	TenantScoped  // CON-97: tenant_id column + central scoping hooks
 
 	ID        string      `bun:"id,pk"                                        json:"id"`
 	Title     string      `bun:"title,notnull"                                json:"title"`

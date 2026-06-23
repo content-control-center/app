@@ -12,6 +12,7 @@ import (
 // Longer assets are split into multiple overlapping chunks.
 type AssetChunk struct {
 	bun.BaseModel `bun:"table:assets_chunks,alias:ac" swaggerignore:"true"`
+	TenantScoped  // CON-97: tenant_id column + central scoping hooks
 
 	ID         string `bun:"id,pk"                                        json:"id"`
 	AssetID    string `bun:"asset_id,notnull"                             json:"asset_id"`

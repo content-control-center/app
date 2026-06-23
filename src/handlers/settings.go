@@ -9,6 +9,7 @@ import (
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/settings"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 type SettingsHandler struct {
@@ -32,6 +33,9 @@ func (h *SettingsHandler) Register(app *fiber.App) {
 // incomplete. Once setup_complete is set to "true" the normal auth
 // middleware is enforced.
 func (h *SettingsHandler) setupGuard(c *fiber.Ctx) error {
+	// CON-97: settings are tenant-scoped. The pre-login bootstrap read operates
+	// on the default tenant; once authenticated, RequireAuth sets the real one.
+	c.Locals(tenantctx.Key, models.DefaultTenantID)
 	s, err := h.repo.GetByKey(c.Context(), "setup_complete")
 	if err != nil || s.Value != "true" {
 		return c.Next()

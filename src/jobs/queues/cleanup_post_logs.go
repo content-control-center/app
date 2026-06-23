@@ -9,6 +9,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // CleanupPostLogsQueue is the recurring sweep that drops Post Log entries
@@ -44,6 +45,8 @@ type CleanupPostLogsProcessor struct {
 
 // Work is the River entrypoint; it delegates to Process.
 func (p *CleanupPostLogsProcessor) Work(ctx context.Context, job *river.Job[CleanupPostLogsTask]) error {
+	// CON-97: background jobs span tenants (interim until per-tenant, PR4).
+	ctx = tenantctx.WithSystem(ctx)
 	return p.Process(ctx, job.Args)
 }
 

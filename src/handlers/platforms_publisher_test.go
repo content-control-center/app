@@ -2,7 +2,6 @@ package handlers_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -87,12 +86,12 @@ var _ = Describe("PlatformsHandler publishers enrichment", Ordered, func() {
 				"video":      "Video",
 				"article":    "Article",
 			},
-		}).On("CONFLICT (id) DO NOTHING").Exec(context.Background())
+		}).On("CONFLICT (id) DO NOTHING").Exec(tenantCtx())
 		Expect(err).NotTo(HaveOccurred())
 	})
 
 	AfterEach(func() {
-		ctx := context.Background()
+		ctx := tenantCtx()
 		_, _ = db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("social_accounts").Where("1 = 1").Exec(ctx)
@@ -144,7 +143,7 @@ var _ = Describe("PlatformsHandler publishers enrichment", Ordered, func() {
 			integ := pubzernio.NewIntegration(pubzernio.NewClient(pubzernio.StaticKey("test-key"), "http://stub", pubzernio.ClientOpts{Timeout: time.Second}))
 			integ.SetState(pubzernio.StateOK)
 			store := &settingStoreFromRepo{repo: settingRepo}
-			Expect(store.Set(context.Background(), pubzernio.SettingProfileID, "p_test")).To(Succeed())
+			Expect(store.Set(tenantCtx(), pubzernio.SettingProfileID, "p_test")).To(Succeed())
 			return pubzernio.NewPublisher(integ, accountRepo, store)
 		}
 
@@ -181,7 +180,7 @@ var _ = Describe("PlatformsHandler publishers enrichment", Ordered, func() {
 			// rather than the seeded "instagram". The publisher
 			// allowlist still uses "instagram" — the name fallback
 			// should match it to the local row.
-			ctx := context.Background()
+			ctx := tenantCtx()
 			_, err := db.NewInsert().Model(&models.Platform{
 				ID:   "rzgpTkARLH0L",
 				Name: "Instagram",
@@ -226,7 +225,7 @@ var _ = Describe("PlatformsHandler publishers enrichment", Ordered, func() {
 			setupApp([]publishers.Publisher{buildZernioPublisher()})
 
 			now := time.Now().UTC()
-			Expect(accountRepo.ApplyPlan(context.Background(), []models.SocialAccount{{
+			Expect(accountRepo.ApplyPlan(tenantCtx(), []models.SocialAccount{{
 				ID:           "acc1",
 				Platform:     "linkedin", // Zernio's platform identifier
 				ProfileID:    "p_test",
@@ -278,7 +277,7 @@ var _ = Describe("PlatformsHandler publishers enrichment", Ordered, func() {
 			integ := pubzernio.NewIntegration(pubzernio.NewClient(pubzernio.StaticKey("test-key"), "http://stub", pubzernio.ClientOpts{Timeout: time.Second}))
 			integ.SetState(pubzernio.StateOK)
 			store := &settingStoreFromRepo{repo: settingRepo}
-			Expect(store.Set(context.Background(), pubzernio.SettingProfileID, "p_test")).To(Succeed())
+			Expect(store.Set(tenantCtx(), pubzernio.SettingProfileID, "p_test")).To(Succeed())
 			return pubzernio.NewPublisher(integ, accountRepo, store)
 		}
 
@@ -305,7 +304,7 @@ var _ = Describe("PlatformsHandler publishers enrichment", Ordered, func() {
 		It("is true only for the allowlisted platform's publisher entry", func() {
 			setupApp([]publishers.Publisher{buildZernioPublisher()})
 
-			Expect(allowlistRepo.Set(context.Background(), []string{"linkedin"})).To(Succeed())
+			Expect(allowlistRepo.Set(tenantCtx(), []string{"linkedin"})).To(Succeed())
 
 			req := httptest.NewRequest("GET", "/api/platforms", nil)
 			req.AddCookie(authCookie)
@@ -342,7 +341,7 @@ var _ = Describe("PlatformsHandler publishers enrichment", Ordered, func() {
 			// drift between publisher and Ogen.
 			setupApp([]publishers.Publisher{buildZernioPublisher()})
 
-			Expect(allowlistRepo.Set(context.Background(), []string{"twitter"})).To(Succeed())
+			Expect(allowlistRepo.Set(tenantCtx(), []string{"twitter"})).To(Succeed())
 
 			req := httptest.NewRequest("GET", "/api/platforms", nil)
 			req.AddCookie(authCookie)
@@ -373,7 +372,7 @@ var _ = Describe("PlatformsHandler publishers enrichment", Ordered, func() {
 		It("reflects allowlist changes between requests", func() {
 			setupApp([]publishers.Publisher{buildZernioPublisher()})
 
-			Expect(allowlistRepo.Set(context.Background(), []string{"threads"})).To(Succeed())
+			Expect(allowlistRepo.Set(tenantCtx(), []string{"threads"})).To(Succeed())
 
 			extract := func() map[string]bool {
 				req := httptest.NewRequest("GET", "/api/platforms", nil)
@@ -399,7 +398,7 @@ var _ = Describe("PlatformsHandler publishers enrichment", Ordered, func() {
 			Expect(before["Threads"]).To(BeTrue())
 			Expect(before["LinkedIn"]).To(BeFalse())
 
-			Expect(allowlistRepo.Set(context.Background(), []string{"linkedin"})).To(Succeed())
+			Expect(allowlistRepo.Set(tenantCtx(), []string{"linkedin"})).To(Succeed())
 
 			after := extract()
 			Expect(after["Threads"]).To(BeFalse())

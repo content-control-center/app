@@ -11,6 +11,7 @@ import (
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/post_actions/logs"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // ReconcileScheduledPostsQueue is the recurring sweeper queue
@@ -56,6 +57,8 @@ type ReconcileScheduledPostsProcessor struct {
 
 // Work is the River entrypoint; it delegates to Process.
 func (p *ReconcileScheduledPostsProcessor) Work(ctx context.Context, job *river.Job[ReconcileScheduledPostsTask]) error {
+	// CON-97: background jobs span tenants (interim until per-tenant, PR4).
+	ctx = tenantctx.WithSystem(ctx)
 	return p.Process(ctx, job.Args)
 }
 

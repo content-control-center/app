@@ -10,6 +10,7 @@ import (
 // One-to-one with Asset via UNIQUE(asset_id).
 type AssetFile struct {
 	bun.BaseModel `bun:"table:asset_files,alias:af" swaggerignore:"true"`
+	TenantScoped  // CON-97: tenant_id column + central scoping hooks
 
 	ID             string    `bun:"id,pk"                                        json:"id"`
 	AssetID        string    `bun:"asset_id,notnull"                             json:"asset_id"`

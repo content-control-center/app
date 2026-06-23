@@ -9,10 +9,20 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // testCookieName is the session cookie name used across all handler tests.
 const testCookieName = "test_session"
+
+// tenantCtx is the default-tenant context for test fixtures that seed or query
+// tenant-scoped models directly (outside the request path, where CON-97's
+// scoping hooks would otherwise fail closed). Data created through the
+// authenticated API already carries the session's tenant, so this is only for
+// direct DB/repo access in tests.
+func tenantCtx() context.Context {
+	return tenantctx.With(context.Background(), models.DefaultTenantID)
+}
 
 func TestHandlers(t *testing.T) {
 	RegisterFailHandler(Fail)

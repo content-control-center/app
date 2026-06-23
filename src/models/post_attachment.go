@@ -8,6 +8,7 @@ import (
 
 type PostAttachment struct {
 	bun.BaseModel `bun:"table:post_attachments,alias:pa" swaggerignore:"true"`
+	TenantScoped  // CON-97: tenant_id column + central scoping hooks
 
 	ID             string    `bun:"id,pk"                                        json:"id"`
 	PostID         string    `bun:"post_id,notnull"                              json:"post_id"`

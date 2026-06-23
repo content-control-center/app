@@ -49,7 +49,7 @@ func (r *settingRepository) GetByKey(ctx context.Context, key string) (*models.S
 
 func (r *settingRepository) Upsert(ctx context.Context, setting *models.Setting) error {
 	_, err := r.db.NewInsert().Model(setting).
-		On("CONFLICT (key) DO UPDATE").
+		On("CONFLICT (tenant_id, key) DO UPDATE").
 		Set("value = EXCLUDED.value").
 		Exec(ctx)
 	return err

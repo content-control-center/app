@@ -14,6 +14,7 @@ import (
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/secrets"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // initZernio constructs the Zernio integration, the Bootstrapper, and a
@@ -24,14 +25,15 @@ import (
 // State transitions, all owned by the spawned goroutine:
 //
 //   - No API key            → log WARN once, integration stays in
-//                             StateDisabled; nil Bootstrapper returned.
+//     StateDisabled; nil Bootstrapper returned.
 //   - Ping returns 401      → log ERROR, StateDisabled; admin must
-//                             repair via /profile/repair.
+//     repair via /profile/repair.
 //   - Ping transport / 5xx  → log WARN, StateDegraded; bootstrap is
-//                             skipped this boot, retried by the worker
-//                             (Phase 5) or admin repair.
+//     skipped this boot, retried by the worker
+//     (Phase 5) or admin repair.
 //   - Ping returns 200      → run Bootstrapper.Run; on success
-//                             StateOK, otherwise StateDegraded.
+//     StateOK, otherwise StateDegraded.
+//
 // zernioRuntime bundles the long-lived Zernio runtime collaborators
 // constructed at boot. A nil Bootstrapper indicates the integration is
 // permanently disabled this boot (no API key set), in which case
@@ -87,6 +89,11 @@ func initZernio(
 	worker := zernio.NewWorker(integ, accountRepo, store, hub, bootstrapper, cfg.ZernioSyncInterval, cfg.ZernioSyncIntervalFast)
 
 	workerCtx, workerCancel := context.WithCancel(ctx)
+	// CON-97: the Zernio bootstrap + sync worker run outside any request and
+	// legitimately span tenants (reading the profile setting, syncing social
+	// accounts), so they run on a system context. Per-tenant Zernio sync is a
+	// follow-up (CON-97 §10.4).
+	workerCtx = tenantctx.WithSystem(workerCtx)
 	go warmupZernio(workerCtx, integ, bootstrapper)
 	go worker.Run(workerCtx)
 

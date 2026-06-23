@@ -10,18 +10,44 @@
 // context with With() from the tenant_id carried in the job args.
 package tenantctx
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // ctxKey is an unexported type so the context value cannot collide with keys
 // set by other packages. It is shared with Fiber's c.Locals on the request
 // path (see package doc).
 type ctxKey struct{}
 
+// systemKey marks a context as a system (intentionally cross-tenant) context.
+type systemKey struct{}
+
 // Key is the context/locals key under which the tenant id is stored. It is
 // exported (as a value of an unexported type) so the Fiber auth middleware can
 // call c.Locals(tenantctx.Key, id) and have From() read it back, while callers
 // still cannot forge the key type.
 var Key = ctxKey{}
+
+// ErrNoTenant is returned by the tenant-scoping query hooks (CON-97 §6/§12.1)
+// when a tenant-owned query runs without a tenant in context and the context
+// is not a system context. The query fails closed rather than touching another
+// tenant's rows.
+var ErrNoTenant = errors.New("tenantctx: no tenant in context (refusing to run an unscoped tenant query)")
+
+// WithSystem marks ctx as a system context: tenant-scoping hooks skip filtering
+// and trust the caller-set tenant_id on writes. Use ONLY for genuinely
+// cross-tenant work — backfills, migrations, seeds, and (interim, until they
+// become per-tenant) background jobs. Auditable by grepping for WithSystem.
+func WithSystem(ctx context.Context) context.Context {
+	return context.WithValue(ctx, systemKey{}, true)
+}
+
+// IsSystem reports whether ctx was marked by WithSystem.
+func IsSystem(ctx context.Context) bool {
+	v, _ := ctx.Value(systemKey{}).(bool)
+	return v
+}
 
 // With returns a copy of ctx carrying the given tenant id.
 func With(ctx context.Context, tenantID string) context.Context {

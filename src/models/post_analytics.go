@@ -91,6 +91,7 @@ func (l *PlatformAnalyticsList) Scan(src any) error {
 // expose staleness. RawJSON keeps the verbatim publisher item.
 type PostAnalytics struct {
 	bun.BaseModel `bun:"table:post_analytics,alias:pa" swaggerignore:"true"`
+	TenantScoped  // CON-97: tenant_id column + central scoping hooks
 
 	PostID             string                `bun:"post_id,pk"                                   json:"post_id"`
 	PublisherPostID    string                `bun:"publisher_post_id,notnull"                    json:"publisher_post_id"`

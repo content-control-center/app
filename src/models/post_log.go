@@ -73,6 +73,7 @@ const ActorSystem = "system"
 // guarantees live in code, not in the schema.
 type PostLog struct {
 	bun.BaseModel `bun:"table:post_logs,alias:pl" swaggerignore:"true"`
+	TenantScoped  // CON-97: tenant_id column + central scoping hooks
 
 	ID             string           `bun:"id,pk"                                        json:"id"`
 	PostID         string           `bun:"post_id,notnull"                              json:"post_id"`
