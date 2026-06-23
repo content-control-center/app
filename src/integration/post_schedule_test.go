@@ -89,11 +89,7 @@ var _ = Describe("Post schedule — CON-78", Ordered, func() {
 		postsHandler.Register(app)
 
 		// Seed user + session + campaign.
-		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "schedule@example.com", "password": "schedule-password"})
-		req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		_, err := app.Test(req)
-		Expect(err).NotTo(HaveOccurred())
+		seedTenantUser(db, "Admin", "schedule@example.com", "schedule-password")
 
 		loginBody, _ := json.Marshal(fiber.Map{"email": "schedule@example.com", "password": "schedule-password"})
 		loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))

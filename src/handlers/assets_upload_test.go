@@ -52,12 +52,7 @@ var _ = Describe("AssetsHandler upload", Ordered, func() {
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewAssetsHandler(assetRepo, repository.NewAssetFileRepository(db), nil, auth, nil, nil).Register(app)
 
-		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "up@example.com", "password": "pw-password"})
-		req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := app.Test(req)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+		seedTenantUser(db, "Admin", "up@example.com", "pw-password")
 
 		loginBody, _ := json.Marshal(fiber.Map{"email": "up@example.com", "password": "pw-password"})
 		loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))

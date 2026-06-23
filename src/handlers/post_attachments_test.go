@@ -168,12 +168,7 @@ var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 		handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, repository.NewPlatformRepository(db), postAttRepo, auth, nil, nil).Register(app)
 		handlers.NewPostAttachmentsHandler(postAttRepo, postRepo, stub, auth).Register(app)
 
-		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "att@example.com", "password": "att-password"})
-		req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := app.Test(req)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+		seedTenantUser(db, "Admin", "att@example.com", "att-password")
 
 		loginBody, _ := json.Marshal(fiber.Map{"email": "att@example.com", "password": "att-password"})
 		loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))

@@ -80,11 +80,7 @@ var _ = Describe("Post restore — CON-68", Ordered, func() {
 		postsHandler.Register(app)
 
 		// Seed user + session + campaign.
-		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "restore@example.com", "password": "restore-password"})
-		req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		_, err := app.Test(req)
-		Expect(err).NotTo(HaveOccurred())
+		seedTenantUser(db, "Admin", "restore@example.com", "restore-password")
 
 		loginBody, _ := json.Marshal(fiber.Map{"email": "restore@example.com", "password": "restore-password"})
 		loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))

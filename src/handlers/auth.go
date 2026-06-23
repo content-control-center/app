@@ -8,6 +8,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // RequireAuth returns a middleware that rejects requests without a valid,
@@ -33,6 +34,12 @@ func RequireAuth(sessionRepo repository.SessionRepository, cookieName string) fi
 		}
 
 		c.Locals("session", session)
+		// Carry the tenant so the tenant-scoped query layer (CON-97 §6) can
+		// read it via tenantctx.From(c.Context()) without threading the
+		// context through every handler. fasthttp exposes c.Locals values
+		// through (*RequestCtx).Value, so the same key reads back as a
+		// context value.
+		c.Locals(tenantctx.Key, session.TenantID)
 		return c.Next()
 	}
 }

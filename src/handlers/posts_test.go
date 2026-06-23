@@ -67,12 +67,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		handlers.NewPostLogsHandler(postLogRepo, postRepo, auth).Register(app)
 
 		// Seed auth user and log in.
-		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "admin@example.com", "password": "admin-password"})
-		req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := app.Test(req)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+		seedTenantUser(db, "Admin", "admin@example.com", "admin-password")
 
 		loginBody, _ := json.Marshal(fiber.Map{"email": "admin@example.com", "password": "admin-password"})
 		loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
@@ -1127,11 +1122,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil).Register(stubApp)
 				handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, repository.NewPlatformRepository(db), repository.NewPostAttachmentRepository(db), auth, stub, nil).Register(stubApp)
 
-				body, _ := json.Marshal(fiber.Map{"name": "SSE", "email": "sse-assist@example.com", "password": "sse-password"})
-				regReq := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-				regReq.Header.Set("Content-Type", "application/json")
-				_, err := stubApp.Test(regReq)
-				Expect(err).NotTo(HaveOccurred())
+				seedTenantUser(db, "SSE", "sse-assist@example.com", "sse-password")
 				loginBody, _ := json.Marshal(fiber.Map{"email": "sse-assist@example.com", "password": "sse-password"})
 				loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
 				loginReq.Header.Set("Content-Type", "application/json")
@@ -1310,11 +1301,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				ph.SetQualityAssessor(stub)
 				ph.Register(stubApp)
 
-				body, _ := json.Marshal(fiber.Map{"name": "Assess", "email": "sse-assess@example.com", "password": "sse-password"})
-				regReq := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-				regReq.Header.Set("Content-Type", "application/json")
-				_, err := stubApp.Test(regReq)
-				Expect(err).NotTo(HaveOccurred())
+				seedTenantUser(db, "Assess", "sse-assess@example.com", "sse-password")
 				loginBody, _ := json.Marshal(fiber.Map{"email": "sse-assess@example.com", "password": "sse-password"})
 				loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
 				loginReq.Header.Set("Content-Type", "application/json")
@@ -1435,11 +1422,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 
 				// A second user assesses the first user's post — allowed: posts
 				// are shared across the workspace, no per-user ownership gate.
-				other, _ := json.Marshal(fiber.Map{"name": "Other", "email": "sse-assess-other@example.com", "password": "sse-password"})
-				regReq := httptest.NewRequest("POST", "/api/users", bytes.NewReader(other))
-				regReq.Header.Set("Content-Type", "application/json")
-				_, err := stubApp.Test(regReq)
-				Expect(err).NotTo(HaveOccurred())
+				seedTenantUser(db, "Other", "sse-assess-other@example.com", "sse-password")
 				loginBody, _ := json.Marshal(fiber.Map{"email": "sse-assess-other@example.com", "password": "sse-password"})
 				loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
 				loginReq.Header.Set("Content-Type", "application/json")
@@ -1524,11 +1507,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				ph.SetEvaluationRepo(evalRepo)
 				ph.Register(readApp)
 
-				body, _ := json.Marshal(fiber.Map{"name": "Reader", "email": "assessment-read@example.com", "password": "read-password"})
-				regReq := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-				regReq.Header.Set("Content-Type", "application/json")
-				_, err := readApp.Test(regReq)
-				Expect(err).NotTo(HaveOccurred())
+				seedTenantUser(db, "Reader", "assessment-read@example.com", "read-password")
 				loginBody, _ := json.Marshal(fiber.Map{"email": "assessment-read@example.com", "password": "read-password"})
 				loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
 				loginReq.Header.Set("Content-Type", "application/json")

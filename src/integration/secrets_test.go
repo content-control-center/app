@@ -64,19 +64,12 @@ func newSecretsRig() *secretsTestRig {
 	handlers.NewHealthHandler(db, store).Register(app)
 
 	// Register an admin user and capture the session cookie.
-	body, _ := json.Marshal(fiber.Map{
-		"name": "Secrets Tester", "email": "secrets@test.local", "password": "test-password",
-	})
-	req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
+	seedTenantUser(db, "Secrets Tester", "secrets@test.local", "test-password")
+
+	body, _ := json.Marshal(fiber.Map{"email": "secrets@test.local", "password": "test-password"})
+	req := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := app.Test(req)
-	Expect(err).NotTo(HaveOccurred())
-	Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
-
-	body, _ = json.Marshal(fiber.Map{"email": "secrets@test.local", "password": "test-password"})
-	req = httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err = app.Test(req)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
 	var cookie *http.Cookie
@@ -315,8 +308,8 @@ var _ = Describe("Health endpoint reports secret resolvability", func() {
 		Expect(resp.StatusCode).To(Equal(200))
 		body, _ := io.ReadAll(resp.Body)
 		var health struct {
-			Status  string                          `json:"status"`
-			Secrets map[string]map[string]bool      `json:"secrets"`
+			Status  string                     `json:"status"`
+			Secrets map[string]map[string]bool `json:"secrets"`
 		}
 		Expect(json.Unmarshal(body, &health)).To(Succeed())
 		Expect(health.Status).To(Equal("ok"))

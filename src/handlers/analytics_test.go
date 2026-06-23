@@ -67,14 +67,7 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 		handlers.NewAnalyticsHandler(analyticsRepo, auth).Register(app)
 
 		// Auth user + login.
-		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "admin@example.com", "password": "admin-password"})
-		req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := app.Test(req)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
-		var createdUser models.User
-		Expect(json.NewDecoder(resp.Body).Decode(&createdUser)).To(Succeed())
+		createdUser := seedTenantUser(db, "Admin", "admin@example.com", "admin-password")
 		userID = createdUser.ID
 
 		loginBody, _ := json.Marshal(fiber.Map{"email": "admin@example.com", "password": "admin-password"})

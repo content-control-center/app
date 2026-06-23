@@ -150,11 +150,7 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 		postsHandler.Register(app)
 		handlers.NewPostAttachmentsHandler(postAttRepo, postRepo, store, auth).Register(app)
 
-		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "it@example.com", "password": "it-password"})
-		req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		_, err := app.Test(req)
-		Expect(err).NotTo(HaveOccurred())
+		seedTenantUser(db, "Admin", "it@example.com", "it-password")
 
 		loginBody, _ := json.Marshal(fiber.Map{"email": "it@example.com", "password": "it-password"})
 		loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))

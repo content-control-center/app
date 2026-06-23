@@ -58,12 +58,7 @@ var _ = Describe("SessionsHandler", Ordered, func() {
 	// ── helpers ──────────────────────────────────────────────────────────────
 
 	seedUser := func(name, email, password string) {
-		body, _ := json.Marshal(fiber.Map{"name": name, "email": email, "password": password})
-		req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := app.Test(req)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+		seedTenantUser(db, name, email, password)
 	}
 
 	doLogin := func(email, password string) (*http.Response, models.Session) {
@@ -119,13 +114,8 @@ var _ = Describe("SessionsHandler", Ordered, func() {
 				handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(secureApp)
 				handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, true).Register(secureApp)
 
-				// Seed a user via the production-wired app so we get setup_complete=false handling.
-				body, _ := json.Marshal(fiber.Map{"name": "Sec", "email": "sec@example.com", "password": "password-sec"})
-				createReq := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-				createReq.Header.Set("Content-Type", "application/json")
-				createResp, err := secureApp.Test(createReq)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(createResp.StatusCode).To(Equal(fiber.StatusCreated))
+				// Seed a user directly in the default tenant; login below exercises the secure-cookie path.
+				seedTenantUser(db, "Sec", "sec@example.com", "password-sec")
 
 				loginBody, _ := json.Marshal(fiber.Map{"email": "sec@example.com", "password": "password-sec"})
 				loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))

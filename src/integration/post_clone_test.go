@@ -102,11 +102,7 @@ var _ = Describe("Post clone — CON-59 (real S3/MinIO)", Ordered, func() {
 		handlers.NewPostAttachmentsHandler(postAttRepo, postRepo, store, auth).Register(app)
 
 		// Seed user + session + campaign.
-		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "clone@example.com", "password": "clone-password"})
-		req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		_, err := app.Test(req)
-		Expect(err).NotTo(HaveOccurred())
+		seedTenantUser(db, "Admin", "clone@example.com", "clone-password")
 
 		loginBody, _ := json.Marshal(fiber.Map{"email": "clone@example.com", "password": "clone-password"})
 		loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))

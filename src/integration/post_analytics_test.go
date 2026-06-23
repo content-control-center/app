@@ -129,14 +129,8 @@ var _ = Describe("Post analytics — CON-93", Ordered, func() {
 		postsHandler.Register(app)
 		handlers.NewAnalyticsHandler(analyticsRepo, auth).Register(app)
 
-		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "analytics@example.com", "password": "analytics-password"})
-		req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := app.Test(req)
-		Expect(err).NotTo(HaveOccurred())
-		var createdUser models.User
-		Expect(json.NewDecoder(resp.Body).Decode(&createdUser)).To(Succeed())
-		userID = createdUser.ID
+		u := seedTenantUser(db, "Admin", "analytics@example.com", "analytics-password")
+		userID = u.ID
 
 		loginBody, _ := json.Marshal(fiber.Map{"email": "analytics@example.com", "password": "analytics-password"})
 		loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
