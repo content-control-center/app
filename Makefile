@@ -1,4 +1,4 @@
-.PHONY: build run test test-integration coverage _ginkgo _air _pg-test-up web web-dev tidy docker docker-genkit clean openapi seed genkit
+.PHONY: build run test test-integration coverage _ginkgo _air _pg-test-up tidy docker docker-genkit clean openapi seed genkit
 
 GINKGO_FLAGS = --github-output -r -randomize-all -randomize-suites -race -trace -procs=2 -poll-progress-after=10s -poll-progress-interval=10s
 
@@ -9,13 +9,13 @@ PG_TEST_CONTAINER = ogen-test-pg
 PG_TEST_DSN = postgres://ogen:ogen@localhost:5433/postgres?sslmode=disable
 
 # ── Go ────────────────────────────────────────────────────────────────────────
-build: web/dist
+build:
 	go build -o server ./cmd/server
 
 seed:
 	go run ./cmd/seed/...
 
-run: web/dist _air
+run: _air
 	air
 
 _air:
@@ -82,22 +82,8 @@ openapi:
 	swag init -g main.go -d cmd/server,src/handlers,src/models,src/platforms,src/secrets,src/repository,src/genkit/flows/post_quality -o docs --outputTypes go,json
 
 # ── Genkit ───────────────────────────────────────────────────────────────────
-genkit: web/dist
+genkit:
 	npx genkit start -- go run ./cmd/server
-
-# ── React ────────────────────────────────────────────────────────────────────
-# Use pnpm (pinned via web/package.json "packageManager") to stay consistent
-# with the Docker build. Running `npm install` here regenerates a stray
-# package-lock.json and drifts from pnpm-lock.yaml, which breaks the
-# `pnpm install --frozen-lockfile` step in the Dockerfile.
-web/node_modules:
-	cd web && corepack pnpm install --frozen-lockfile
-
-web/dist: web/node_modules
-	cd web && corepack pnpm run build
-
-web-dev: web/node_modules
-	cd web && corepack pnpm run dev
 
 # ── Docker ───────────────────────────────────────────────────────────────────
 docker:
@@ -111,5 +97,4 @@ clean:
 	rm -f server
 	rm -f seed
 	# rm -rf data/*
-	rm -rf web/dist web/node_modules
 	rm -f coverage.out

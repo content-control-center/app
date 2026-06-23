@@ -9,14 +9,7 @@ coverage.out
 *.db-shm
 *.db-wal
 
-# Node / React
-web/node_modules/
-web/.pnpm-store/
-web/dist/
-!web/dist/index.html
-web/.agents/
-web/.claude/
-
+# Node / React (the SPA now lives in ogen-app/ui — CON-98)
 prototyping/**/.agents
 prototyping/**/.claude
 prototyping/**/.vite

@@ -19,6 +19,13 @@ type Config struct {
 	SessionCookieName string `envconfig:"SESSION_COOKIE_NAME" default:"c3_session"`
 	EmbedServerURL    string `envconfig:"EMBED_SERVER_URL"    default:"http://localhost:8080"`
 
+	// CORS allowlist for the decoupled UI (CON-98). Comma-separated explicit
+	// origins, e.g. "https://app.getogen.com". Empty disables the CORS
+	// middleware entirely (same-origin dev, or a UI that reverse-proxies
+	// /api). Must never be "*" while credentials are sent — the cookie-bearing
+	// UI requires AllowCredentials, which browsers reject alongside a wildcard.
+	CORSAllowedOrigins string `envconfig:"CORS_ALLOWED_ORIGINS" default:""`
+
 	// Anthropic config.
 	// todo: remove from config entirely
 	AnthropicAPIKey  string `envconfig:"ANTHROPIC_API_KEY"     default:""`

@@ -21,7 +21,6 @@ import (
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/secrets"
 	"github.com/ogen-app/ogen/src/server"
-	webstatic "github.com/ogen-app/ogen/web"
 )
 
 func main() {
@@ -61,12 +60,7 @@ func main() {
 	}
 	secrets.LogBootSummary(kekSrc, filepath.Join(cfg.KEKPath, secrets.KEKFilename), bootResult)
 
-	staticFS, err := webstatic.DistFS()
-	if err != nil {
-		log.Fatalf("load static assets: %v", err)
-	}
-
-	app, err := server.New(context.Background(), db, staticFS, cfg, store)
+	app, err := server.New(context.Background(), db, cfg, store)
 	if err != nil {
 		log.Fatalf("init server: %v", err)
 	}
