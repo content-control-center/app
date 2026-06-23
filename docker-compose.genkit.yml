@@ -1,30 +1,71 @@
+# Mirror of docker-compose.yml, but the api is built locally from
+# Dockerfile.genkit (Genkit Dev UI baked in) instead of the prebuilt
+# image, and exposes the extra Dev UI port. Run with `make docker-genkit`.
+# Keep the postgres/riverui/llama-embedserver services in sync with
+# docker-compose.yml.
 services:
   api:
     build:
       context: .
       dockerfile: Dockerfile.genkit
     platform: linux/amd64
-    environment:
-      ADDR: ":9001"
-      DATABASE_DSN: "file:/data/app.db?cache=shared&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
-      EMBED_SERVER_URL: "http://llama-embedserver:8080"
-      STORAGE_ENDPOINT: ""
-      STORAGE_REGION: ""
-      STORAGE_ACCESS_KEY: ""
-      STORAGE_SECRET_KEY: ""
-      STORAGE_BUCKET: ""
-      STORAGE_PUBLIC_URL: ""
-      ANTHROPIC_API_KEY: ""
+    # All configuration (incl. secrets) lives in .env, which is gitignored.
+    # Copy .env.example -> .env and fill it in before `docker compose up`.
+    env_file:
+      - .env
     volumes:
-      - ./data:/data
+      - ./ogen-keys:/var/lib/ogen/keys
     ports:
       - "9001:9001"
       - "4000:4000"   # Genkit Dev UI
     depends_on:
-      - llama-embedserver
+      postgres:
+        condition: service_healthy
+      llama-embedserver:
+        condition: service_started
+
+  postgres:
+    # pgvector image = stock Postgres 17 + the `vector` extension prebuilt
+    # (CON-87 WS4). Multi-arch, so it runs native on arm64/amd64 hosts.
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:-ogen}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-ogen}"
+      POSTGRES_DB: "${POSTGRES_DB:-ogen}"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ogen} -d ${POSTGRES_DB:-ogen}"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  # River job-queue dashboard (CON-87 WS3). Standalone UI image that reads
+  # River's tables — it runs no migrations of its own, so it needs them to
+  # already exist. The API creates them via jobs.MigrateRiver at boot;
+  # riverui therefore depends on the API and restarts until the schema is
+  # present. UI at http://localhost:9004.
+  riverui:
+    image: ghcr.io/riverqueue/riverui:latest
+    environment:
+      DATABASE_URL: "${DATABASE_DSN:-postgres://ogen:ogen@postgres:5432/ogen?sslmode=disable}"
+    ports:
+      - "9004:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+    restart: unless-stopped
 
   llama-embedserver:
     image: alephbetai/llama-embedserver:latest
     platform: linux/amd64
     ports:
       - "9003:8080"
+
+volumes:
+  postgres-data:
+  ogen-keys:
