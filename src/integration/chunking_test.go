@@ -194,10 +194,13 @@ var _ = Describe("Asset chunking", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(chunks).NotTo(BeEmpty())
 
-			// Query with a chunk's own embedding: at minScore 0 every chunk
-			// of this asset must come back (the chunk itself ranks first at
-			// distance 0), scoped to assetID.
-			hits, err := repo.SearchSimilar(ctx, chunks[0].Embedding, []string{assetID}, 0.0, 0)
+			// Query with a chunk's own embedding. minScore -1.0 disables the
+			// similarity floor (cosine similarity is always >= -1), so every
+			// chunk of this asset comes back regardless of its angle to the
+			// query — this exercises scoping + ordering, not a threshold. (A
+			// floor of 0.0 would drop any chunk with negative cosine
+			// similarity to chunks[0], which long multi-chunk docs can have.)
+			hits, err := repo.SearchSimilar(ctx, chunks[0].Embedding, []string{assetID}, -1.0, 0)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(len(hits)).To(Equal(len(chunks)))
 			for _, h := range hits {
