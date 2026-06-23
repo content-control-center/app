@@ -1,27 +1,7 @@
 # syntax=docker/dockerfile:1
-# ─── Stage 1: build React ────────────────────────────────────────────────────
-# Node 24: pnpm 11.x requires the `node:sqlite` builtin (Node 22.5+, stable 24).
-FROM node:24-alpine AS web-builder
-
-# Use the pnpm version pinned in package.json ("packageManager") and let
-# corepack download it without an interactive integrity prompt.
-ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-RUN corepack enable
-
-WORKDIR /app/web
-# pnpm-workspace.yaml carries the `allowBuilds` allow-list (esbuild postinstall);
-# without it pnpm 10+ aborts with ERR_PNPM_IGNORED_BUILDS.
-COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
-
-RUN corepack install
-
-RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile
-
-COPY web/ ./
-RUN pnpm build
-
-# ─── Stage 2: build Go binary ────────────────────────────────────────────────
+# The React SPA lives in its own repo (ogen-app/ui) and deploys separately
+# (CON-98). This image builds the API only, with the Genkit Dev UI.
+# ─── Stage 1: build Go binary ────────────────────────────────────────────────
 FROM golang:1.26-alpine AS go-builder
 
 WORKDIR /app
@@ -31,13 +11,12 @@ RUN --mount=type=cache,id=go-mod,target=/go/pkg/mod \
     go mod download
 
 COPY . .
-COPY --from=web-builder /app/web/dist ./web/dist
 
 RUN --mount=type=cache,id=go-mod,target=/go/pkg/mod \
     --mount=type=cache,id=go-build,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux go build -p 4 -trimpath -ldflags="-s -w" -o /server ./cmd/server
 
-# ─── Stage 3: Debian slim runtime with Genkit Dev UI ────────────────────────
+# ─── Stage 2: Debian slim runtime with Genkit Dev UI ────────────────────────
 # Genkit CLI is a Bun-compiled glibc binary — Alpine (musl) cannot run it.
 FROM debian:bookworm-slim
 

@@ -52,27 +52,44 @@ services:
         condition: service_started
     restart: unless-stopped
 
-#  web:
-#    image: node:20-alpine
-#    platform: linux/amd64
-#    working_dir: /app
-#    volumes:
-#      - ./web:/app
-#      - /app/node_modules
-#    environment:
-#      API_URL: "http://api:9001"
-#      CHOKIDAR_USEPOLLING: "true"
-#    ports:
-#      - "9002:9002"
-#    command: sh -c "corepack enable && corepack prepare pnpm@latest --activate && pnpm install --frozen-lockfile && pnpm exec vite --host 0.0.0.0"
-#    depends_on:
-#      - api
-
   llama-embedserver:
     image: alephbetai/llama-embedserver:latest
     platform: linux/amd64
     ports:
       - "9003:8080"
+
+  # Frontend dev server (CON-98). The SPA lives in its own repo (ogen-app/ui);
+  # this mounts a sibling checkout and runs Vite with hot-reload, proxying
+  # /api to the api service (see that repo's vite.config.ts — the browser stays
+  # same-origin, so no CORS is needed in dev). Opt-in via a profile so the
+  # default `docker compose up` stays backend-only:
+  #   docker compose --profile ui up
+  # Override UI_PATH if your ui checkout isn't at ../ui.
+  ui:
+    image: node:24-alpine
+    profiles: ["ui"]
+    working_dir: /app
+    environment:
+      # Let corepack fetch the pnpm version pinned in package.json non-interactively.
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+      # Vite proxies /api here (the api service on the compose network).
+      API_URL: "http://api:9001"
+      # Native FS events don't cross the bind mount on macOS/Windows — poll instead.
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      # Local UI source -> live hot-reload. node_modules stays in an anonymous
+      # volume so the host's (wrong-arch) modules don't shadow the container's.
+      - "${UI_PATH:-../ui}:/app"
+      - /app/node_modules
+    ports:
+      - "9002:9002"   # Vite dev server (port set in ui/vite.config.ts)
+    # `pnpm exec vite` invokes the Vite binary directly so `--host 0.0.0.0`
+    # reaches it (a plain `pnpm dev -- --host` forwards the `--` literally and
+    # Vite stays bound to the container's localhost, unreachable from the host).
+    command: sh -c "corepack enable && pnpm install --frozen-lockfile && pnpm exec vite --host 0.0.0.0"
+    depends_on:
+      api:
+        condition: service_started
 
 volumes:
   postgres-data:

@@ -5,15 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"expvar"
-	"io/fs"
 	"log"
-	"net/http"
 	"os"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/adaptor"
-	"github.com/gofiber/fiber/v2/middleware/filesystem"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/riverqueue/river"
@@ -44,7 +42,7 @@ import (
 )
 
 // TODO: refactor this function
-func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, secretStore secrets.Store) (*fiber.App, error) {
+func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secrets.Store) (*fiber.App, error) {
 	app := fiber.New(fiber.Config{
 		ErrorHandler: defaultErrorHandler,
 		// WriteTimeout 0 disables the per-response write deadline so that SSE
@@ -56,6 +54,20 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 
 	app.Use(recover.New())
 	app.Use(logger.New())
+
+	// CORS for the decoupled UI (CON-98). When the SPA is served from a
+	// different origin, the configured UI origin(s) must be allowed to call
+	// the API with credentials so the c3_session cookie is accepted. Empty
+	// CORSAllowedOrigins (same-origin dev, or a UI that reverse-proxies /api)
+	// leaves CORS off entirely.
+	if cfg.CORSAllowedOrigins != "" {
+		app.Use(cors.New(cors.Config{
+			AllowOrigins:     cfg.CORSAllowedOrigins,
+			AllowCredentials: true,
+			AllowMethods:     "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+			AllowHeaders:     "Content-Type",
+		}))
+	}
 
 	// API routes
 	userRepo := repository.NewUserRepository(db)
@@ -349,14 +361,8 @@ func New(ctx context.Context, db *bun.DB, staticFS fs.FS, cfg *config.Config, se
 	handlers.NewImagesHandler(store, auth).Register(app)
 	handlers.NewPostAttachmentsHandler(postAttachmentRepo, postRepo, store, auth).Register(app)
 
-	// Serve the embedded React SPA for all non-API routes.
-	app.Use("/", filesystem.New(filesystem.Config{
-		Root:         http.FS(staticFS),
-		Index:        "index.html",
-		NotFoundFile: "index.html", // enables client-side routing
-		Browse:       false,
-	}))
-
+	// The React SPA is deployed separately (CON-98) — the API serves only
+	// /api/* (plus SSE). Non-API routes fall through to a 404.
 	return app, nil
 }
 

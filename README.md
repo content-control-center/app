@@ -17,9 +17,10 @@ content end-to-end:
 - **Draft** with a Markdown-first editor backed by an LLM assistant that can search assets, rewrite posts, and produce platform-specific variants.
 - **Publish** automatically to LinkedIn, X, Facebook, Instagram, Threads, and YouTube via the [Zernio](https://zernio.com) broker — durable background jobs handle submission, polling, cancellation, and reconciliation, with a per-post audit log capturing every state change.
 
-The backend is a Go 1.26 monolith (Fiber + Bun + SQLite WAL); the
-frontend is a React + Vite SPA in `web/`. Both run together in
-Docker Compose for local development.
+The backend is a Go 1.26 monolith (Fiber + Bun + Postgres). The
+React + Vite SPA lives in its own repository,
+[`ogen-app/ui`](https://github.com/ogen-app/ui), and deploys separately
+(CON-98) — this repository is the API only.
 
 ---
 
@@ -42,8 +43,8 @@ Docker Compose for local development.
 
 ```
 ┌────────────────────────────┐         ┌────────────────────────────────────┐
-│  React SPA (web/)          │◀───────▶│  Fiber HTTP API                    │
-│  • Vite + HMR              │  REST   │  • Handlers (src/...)              │
+│  React SPA (ogen-app/ui)   │◀───────▶│  Fiber HTTP API                    │
+│  • separate deploy         │  REST   │  • Handlers (src/...)              │
 │  • Markdown editor         │  + SSE  │  • Bun + SQLite (WAL)              │
 └────────────────────────────┘         │  • Backlite worker pool            │
                                         │  ┌──────────────────────────────┐ │
@@ -144,10 +145,10 @@ There are two supported workflows depending on what you're working on:
 
 | You're working on | Use this workflow | What you need installed |
 |--------------------|-------------------|-------------------------|
-| Frontend (`web/`) only | **[Frontend development](#frontend-development)** — `docker compose up` runs the published API image alongside the Vite dev server. | Docker + Node 20. |
-| Backend (`src/`, `cmd/`) — including end-to-end testing of the SPA against an in-progress API | **[Backend development](#backend-development)** — build the API from source, point the SPA at `http://localhost:9001`. | Go 1.26 + poppler-utils + Docker (for the Llama sidecar). |
+| Frontend only | In the **[`ogen-app/ui`](https://github.com/ogen-app/ui)** repo — run its Vite dev server, which proxies `/api` to a locally-running API. | See that repo (Node + pnpm). |
+| Backend (`src/`, `cmd/`) — including end-to-end testing of the SPA against an in-progress API | **[Backend development](#backend-development)** — build the API from source; point the UI at `http://localhost:9001`. | Go 1.26 + poppler-utils + Docker (for the Llama sidecar). |
 
-The SPA's default `VITE_API_BASE_URL` is `http://localhost:9001`, so a backend running locally from source is picked up automatically.
+The UI points at `http://localhost:9001` by default (via its Vite `/api` proxy), so a backend running locally from source is picked up automatically.
 
 ---
 
@@ -203,19 +204,12 @@ docker run --rm -p 8080:8080 alephbetai/llama-embedserver:latest
 
 Set `EMBED_SERVER_URL` accordingly if it isn't on `http://localhost:8080`.
 
-#### 5. Build the frontend bundle
+#### 5. Frontend (separate repo)
 
-The API binary embeds `web/dist/`, so the React build must exist before `make build` succeeds. For backend-only iteration without touching the SPA:
-
-```bash
-mkdir -p web/dist && touch web/dist/index.html
-```
-
-Or build it for real:
-
-```bash
-cd web && npm install && npm run build && cd ..
-```
+The API no longer embeds the SPA — `make build` produces just the API binary.
+The frontend lives in [`ogen-app/ui`](https://github.com/ogen-app/ui) and
+runs/deploys independently. To exercise the UI against this API, run the UI's
+Vite dev server; it proxies `/api` to `http://localhost:9001`.
 
 #### 6. Run with hot reload
 
@@ -261,7 +255,7 @@ This populates a small set of campaigns, platforms, and assets useful for trying
 ### Common Make targets
 
 ```bash
-make build           # build the server binary into ./server (requires web/dist)
+make build           # build the server binary into ./server
 make run             # air-powered hot reload for the API
 make genkit          # boot the API with Genkit dev UI on :4000
 make test            # ginkgo handler/unit suites with coverage
@@ -269,8 +263,6 @@ make test-integration # spins up MinIO + llama-embedserver, runs `//go:build int
 make openapi         # regenerates docs/swagger.json from swag annotations
 make seed            # runs cmd/seed for local fixture data
 make tidy            # go mod tidy
-make web             # production frontend build
-make web-dev         # vite dev server
 make docker          # build the API Docker image
 ```
 
@@ -320,86 +312,43 @@ the standard session-cookie auth (`RequireAuth`):
 
 ## Frontend development
 
+The web UI lives in its own repository — **[`ogen-app/ui`](https://github.com/ogen-app/ui)** (CON-98).
+Clone it and follow its README to run the Vite dev server, which proxies `/api`
+to a locally-running API (`http://localhost:9001` by default) or any deployed API.
+
+To run the API the UI talks to, see **[Backend development](#backend-development)**
+above, or start the published image plus its dependencies:
+
+```bash
+docker compose pull && docker compose up   # API + Postgres + llama-embedserver
+```
+
+### Full stack via Docker Compose (API + UI hot-reload)
+
+The `ui` service in `docker-compose.yml` mounts a sibling `ogen-app/ui` checkout
+and runs the Vite dev server with hot-reload, proxying `/api` to the API. It's
+gated behind the `ui` profile so the default `docker compose up` stays
+backend-only:
+
+```bash
+docker compose --profile ui up         # API + deps + UI dev server
+```
+
+Then open **http://localhost:9002**. Edits under the local `ui` repo hot-reload
+in the browser. If your UI checkout isn't at `../ui`, point `UI_PATH` at it:
+
+```bash
+UI_PATH=/path/to/ui docker compose --profile ui up
+```
+
+When the UI and API are served from different origins, set `CORS_ALLOWED_ORIGINS`
+on the API to the UI origin(s); for local dev the Vite `/api` proxy keeps things
+same-origin, so it can stay empty.
+
 ### API documentation
 
-The full REST API reference is available at **[https://api.contentcontrol.center](https://api.contentcontrol.center)**.
-
-### Prerequisites
-
-| Tool | Minimum version | Notes |
-|------|-----------------|-------|
-| [Docker Desktop](https://www.docker.com/products/docker-desktop/) | 4.x | Includes Compose v2 |
-| [Node.js](https://nodejs.org/) | 20 LTS | Only needed for editor tooling / linting outside Docker |
-
-You do **not** need Go, a local database, or any other backend tooling — the API runs inside Docker.
-
-### Development setup
-
-#### 1. Clone the repository
-
-```bash
-git clone https://github.com/ogen-app/ogen.git
-cd app
-```
-
-#### 2. Pull the latest backend image
-
-```bash
-docker compose pull
-```
-
-This downloads the pre-built Go API image from Docker Hub. You only need to repeat this when a new backend release is available.
-
-#### 3. Start the development environment
-
-```bash
-docker compose up
-```
-
-Open **http://localhost:5173** in your browser. The app will hot-reload automatically every time you save a file under `web/src/`.
-
-> **First start** takes a moment while `npm install` runs inside the container. Subsequent starts are fast because `node_modules` is cached in the Docker volume.
-
-#### 4. Stop the environment
-
-```bash
-# Stop containers (database is preserved)
-docker compose down
-
-# Stop containers AND wipe the database volume
-docker compose down -v
-```
-
-### Daily workflow
-
-```bash
-# Pull latest API image before starting work
-docker compose pull && docker compose up
-```
-
-Edit any file under `web/src/` — the browser updates instantly via Hot Module Replacement (HMR). No container restarts are required.
-
-### Environment variables
-
-Vite environment variables must be prefixed with `VITE_` to be accessible in the browser.
-
-Create a `web/.env.local` file (gitignored) to override defaults:
-
-```dotenv
-# Example: point to a staging API instead of the local container
-VITE_API_BASE_URL=https://staging.api.contentcontrol.center
-```
-
-### Updating the backend
-
-When a new version of the API is released, pull the updated image and restart:
-
-```bash
-docker compose pull
-docker compose up
-```
-
-Your database data is stored in a named Docker volume (`db-data`) and is not affected by image updates.
+The full REST API reference (OpenAPI) is generated from swag annotations via
+`make openapi` and published from `docs/swagger.json` on every merge to `main`.
 
 ---
 
