@@ -260,8 +260,9 @@ func (p *RefreshZernioAnalyticsProcessor) publishUpdated(ctx context.Context, a 
 		return
 	}
 	if err := p.Hub.Publish(ctx, eventhub.Event{
-		Topic: fmt.Sprintf("entity:post:%s", a.PostID),
-		Type:  "post.analytics.updated",
+		Topic:    fmt.Sprintf("entity:post:%s", a.PostID),
+		TenantID: a.TenantID,
+		Type:     "post.analytics.updated",
 		Payload: map[string]any{
 			"post_id":     a.PostID,
 			"sync_status": a.SyncStatus,

@@ -57,9 +57,16 @@ type Event struct {
 	// CreatedAt is set by Publish if zero.
 	CreatedAt time.Time `json:"created_at"`
 
-	// UserID drives the authorization filter. Empty = public; non-empty =
-	// only subscribers with the matching UserID receive this event.
+	// UserID drives the per-user authorization filter. Empty = not
+	// user-scoped; non-empty = only subscribers with the matching UserID
+	// receive this event.
 	UserID string `json:"-"`
+
+	// TenantID is the hard tenant-isolation boundary (CON-97 §10.2). When set,
+	// only subscribers in the same tenant can receive the event. Publish
+	// derives it from the context's tenant when left empty, so most publishers
+	// need not set it explicitly.
+	TenantID string `json:"-"`
 }
 
 // SubscribeOpts controls what a subscriber sees and how much they can
@@ -69,6 +76,11 @@ type SubscribeOpts struct {
 	// this field — callers (HTTP handlers) must populate it from a
 	// verified source like a session, never from query params or headers.
 	UserID string
+
+	// TenantID scopes the subscriber to its tenant (CON-97 §10.2). The HTTP
+	// handler sets it from the session; a subscriber only ever receives events
+	// carrying the same TenantID.
+	TenantID string
 
 	// Topics is the list of glob patterns the subscriber wants to receive.
 	// Must be non-empty. Use "all" to subscribe to every event.

@@ -56,13 +56,13 @@ const (
 // the local social_accounts table. Started by the host once at boot
 // and stopped via Stop(). The loop:
 //
-//   1. Wait until the integration is in StateOK and a profile_id is
-//      known (bootstrap may still be in flight).
-//   2. Tick: list remote → list local → reconcile → ApplyPlan →
-//      publish per-change events → write last_sync_at / last_sync_status.
-//   3. Compute next interval honouring (a) ZernioSyncInterval, (b)
-//      the fast-cadence window from BumpFastUntil, (c) rate-limit
-//      backoff, (d) the SyncIntervalFloor hard cap.
+//  1. Wait until the integration is in StateOK and a profile_id is
+//     known (bootstrap may still be in flight).
+//  2. Tick: list remote → list local → reconcile → ApplyPlan →
+//     publish per-change events → write last_sync_at / last_sync_status.
+//  3. Compute next interval honouring (a) ZernioSyncInterval, (b)
+//     the fast-cadence window from BumpFastUntil, (c) rate-limit
+//     backoff, (d) the SyncIntervalFloor hard cap.
 //
 // Errors are non-fatal except 401 from Zernio, which transitions the
 // integration to StateDisabled and exits the loop until restart or an
@@ -363,9 +363,10 @@ func (w *Worker) publishAccountEvent(ctx context.Context, eventType string, acco
 		payload["error"] = errMsg
 	}
 	if err := w.hub.Publish(ctx, eventhub.Event{
-		Topic:   topic,
-		Type:    eventType,
-		Payload: payload,
+		Topic:    topic,
+		TenantID: account.TenantID,
+		Type:     eventType,
+		Payload:  payload,
 	}); err != nil {
 		log.Printf("zernio: publish event %s: %v", eventType, err)
 	}

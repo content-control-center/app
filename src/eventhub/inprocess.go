@@ -6,6 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // New returns the in-process Hub implementation. Safe for concurrent use
@@ -18,15 +20,23 @@ func New(cfg Config) Hub {
 }
 
 type subscriber struct {
-	id     uint64
-	userID string
-	topics []string
-	ch     chan Event
+	id       uint64
+	userID   string
+	tenantID string
+	topics   []string
+	ch       chan Event
 }
 
-// matches returns true when the subscriber should receive ev. Combines
-// authz (UserID) with topic glob match.
+// matches returns true when the subscriber should receive ev. Combines the
+// hard tenant boundary (CON-97 §10.2) with per-user authz and topic glob match.
 func (s *subscriber) matches(ev Event) bool {
+	// A tenant-tagged event never crosses into another tenant. Events carry a
+	// tenant whenever they are published from a tenant context (Publish derives
+	// it) or a publisher sets it; user-scoped events that predate a tenant are
+	// still isolated by the UserID check below.
+	if ev.TenantID != "" && ev.TenantID != s.tenantID {
+		return false
+	}
 	if ev.UserID != "" && ev.UserID != s.userID {
 		return false
 	}
@@ -47,7 +57,14 @@ type inProcHub struct {
 // Publish iterates the subscriber map under RLock, attempting a
 // non-blocking send to each match. Subscribers whose buffers are full
 // are collected and disconnected after RUnlock.
-func (h *inProcHub) Publish(_ context.Context, ev Event) error {
+func (h *inProcHub) Publish(ctx context.Context, ev Event) error {
+	// Stamp the tenant from the publishing context so most publishers don't
+	// have to set it explicitly (CON-97 §10.2). An explicit ev.TenantID wins.
+	if ev.TenantID == "" {
+		if tid, ok := tenantctx.From(ctx); ok {
+			ev.TenantID = tid
+		}
+	}
 	if ev.CreatedAt.IsZero() {
 		ev.CreatedAt = time.Now().UTC()
 	}
@@ -120,10 +137,11 @@ func (h *inProcHub) Subscribe(_ context.Context, opts SubscribeOpts) (<-chan Eve
 	h.nextID++
 	id := h.nextID
 	sub := &subscriber{
-		id:     id,
-		userID: opts.UserID,
-		topics: append([]string(nil), opts.Topics...), // defensive copy
-		ch:     make(chan Event, bufferSize),
+		id:       id,
+		userID:   opts.UserID,
+		tenantID: opts.TenantID,
+		topics:   append([]string(nil), opts.Topics...), // defensive copy
+		ch:       make(chan Event, bufferSize),
 	}
 	h.subs[id] = sub
 	h.active.Add(1)
