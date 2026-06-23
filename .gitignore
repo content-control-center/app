@@ -24,10 +24,10 @@ prototyping/**/dist
 prototyping/**/node_modules
 prototyping/**/skills-lock.json
 
-# Env
+# Env — real .env (with secrets) stays local; only the template is committed
+.env
 .env.*
-# ...but keep the committed template (real .env.storage stays ignored)
-!.env.storage.example
+!.env.example
 
 # Envelope encryption KEK (never commit — decrypts all DB secrets)
 /ogen-keys/

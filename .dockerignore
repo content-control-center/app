@@ -9,3 +9,6 @@ prototyping/
 .agent/
 .claude/
 coverage.out
+.env
+.env.*
+!.env.example
