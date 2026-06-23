@@ -107,20 +107,23 @@ func (p *ReconcileScheduledPostsProcessor) Process(ctx context.Context, _ Reconc
 
 	for i := range stuck {
 		post := &stuck[i]
+		// Reconcile each stuck post within its own tenant (CON-97 PR4); the
+		// list above ran cross-tenant under the job's system context.
+		pctx := tenantctx.With(ctx, post.TenantID)
 		reason := fmt.Sprintf("%s: scheduled_at=%s elapsed=%s last_publisher_status=%q",
 			FailureReasonReconciliationTimeout,
 			fmtTime(post.ScheduledAt),
 			fmtElapsedSince(post.ScheduledAt),
 			post.PublisherStatus,
 		)
-		if err := p.Repo.UpdateStatusAndReason(ctx, post.ID, models.PostStatusFailed, reason); err != nil {
+		if err := p.Repo.UpdateStatusAndReason(pctx, post.ID, models.PostStatusFailed, reason); err != nil {
 			log.Printf("reconcile: failed to mark post %s Failed: %v", post.ID, err)
 			continue
 		}
 		from := models.PostStatusScheduled
 		to := models.PostStatusFailed
 		id, _ := models.NewID()
-		_ = p.LogRepo.Append(ctx, &models.PostLog{
+		_ = p.LogRepo.Append(pctx, &models.PostLog{
 			ID:         id,
 			PostID:     post.ID,
 			EventType:  models.PostLogEventReconciliationTimeout,

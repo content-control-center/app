@@ -75,6 +75,8 @@ func (p *SubmitPostProcessor) Process(ctx context.Context, task SubmitPostTask) 
 	if err != nil {
 		return fmt.Errorf("submit: load post %s: %w", task.PostID, err)
 	}
+	// Scope the rest of the job to the owning tenant (CON-97 PR4).
+	ctx = tenantctx.With(ctx, post.TenantID)
 	if post.Status != models.PostStatusScheduled {
 		// User cancelled or reconciliation moved this post; abort
 		// quietly. The poll task does the same check.

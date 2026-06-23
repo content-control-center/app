@@ -46,22 +46,23 @@ func (m *TenantScoped) BeforeAppendModel(ctx context.Context, query schema.Query
 	if _, ok := query.(*bun.InsertQuery); !ok {
 		return nil
 	}
+	// An explicit tenant always wins — even inside a system context — so a job
+	// that has resolved its entity's tenant (tenantctx.With over its system
+	// ctx) writes into the right tenant.
+	if tid, ok := tenantctx.From(ctx); ok {
+		m.TenantID = tid
+		return nil
+	}
 	if tenantctx.IsSystem(ctx) {
-		// System writers (backfills, jobs, the Zernio worker) set tenant_id
-		// explicitly when they know it; until they all do (per-tenant jobs are
-		// CON-97 PR4), an unset tenant_id on a system write lands in the default
-		// tenant rather than violating NOT NULL.
+		// A system writer with no tenant in context (e.g. the Zernio worker
+		// writing instance settings) lands in the default tenant rather than
+		// violating NOT NULL.
 		if m.TenantID == "" {
 			m.TenantID = DefaultTenantID
 		}
 		return nil
 	}
-	tid, ok := tenantctx.From(ctx)
-	if !ok {
-		return tenantctx.ErrNoTenant
-	}
-	m.TenantID = tid
-	return nil
+	return tenantctx.ErrNoTenant
 }
 
 func (m *TenantScoped) BeforeSelect(ctx context.Context, q *bun.SelectQuery) error {
@@ -79,13 +80,14 @@ func (m *TenantScoped) BeforeDelete(ctx context.Context, q *bun.DeleteQuery) err
 // scopeQuery applies the tenant predicate, or fails closed when no tenant is in
 // context. System contexts skip filtering entirely.
 func scopeQuery(ctx context.Context, apply func(tenantID string)) error {
+	// Tenant wins over system: once a tenant is known, scope to it even inside
+	// a system context.
+	if tid, ok := tenantctx.From(ctx); ok {
+		apply(tid)
+		return nil
+	}
 	if tenantctx.IsSystem(ctx) {
 		return nil
 	}
-	tid, ok := tenantctx.From(ctx)
-	if !ok {
-		return tenantctx.ErrNoTenant
-	}
-	apply(tid)
-	return nil
+	return tenantctx.ErrNoTenant
 }

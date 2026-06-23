@@ -334,7 +334,7 @@ func (h *PostAttachmentsHandler) Upload(c *fiber.Ctx) error {
 		keyExt = probe.Extension
 	}
 
-	att.S3Key = "post-attachments/" + post.ID + "/" + id + keyExt
+	att.S3Key = storage.TenantKey(c.Context(), "post-attachments/"+post.ID+"/"+id+keyExt)
 
 	if _, err := h.storage.Upload(c.Context(), att.S3Key, bytes.NewReader(data), att.SizeBytes, att.MimeType); err != nil {
 		return fmt.Errorf("post_attachments: storage upload: %w", err)
@@ -348,7 +348,7 @@ func (h *PostAttachmentsHandler) Upload(c *fiber.Ctx) error {
 		thumb, terr := pdf.RenderThumbnail(thumbCtx, data, pdfThumbnailDPI)
 		cancel()
 		if terr == nil && len(thumb) > 0 {
-			thumbKey := "post-attachments/" + post.ID + "/" + id + ".thumb.png"
+			thumbKey := storage.TenantKey(c.Context(), "post-attachments/"+post.ID+"/"+id+".thumb.png")
 			if _, uerr := h.storage.Upload(c.Context(), thumbKey, bytes.NewReader(thumb), int64(len(thumb)), "image/png"); uerr == nil {
 				att.ThumbnailS3Key = thumbKey
 			}

@@ -73,6 +73,8 @@ func (p *PollZernioStatusProcessor) Process(ctx context.Context, task PollZernio
 	if err != nil {
 		return fmt.Errorf("poll: load post %s: %w", task.PostID, err)
 	}
+	// Scope the rest of the job to the owning tenant (CON-97 PR4).
+	ctx = tenantctx.With(ctx, post.TenantID)
 	if post.Status != models.PostStatusScheduled {
 		appendLog(ctx, p.Deps, post.ID, models.PostLogEventTaskSucceeded, post.Status, post.Status,
 			"poll exited: post is no longer Scheduled", `{"reason":"status_changed"}`)

@@ -131,8 +131,10 @@ func (p *RefreshZernioAnalyticsProcessor) refresh(ctx context.Context, now time.
 	// publisher_post_id → post_id match map. Zernio returns analytics for
 	// every late post on the account; we upsert only the ones Ogen owns.
 	byPublisherID := make(map[string]string, len(posts))
+	tenantByPostID := make(map[string]string, len(posts))
 	for _, post := range posts {
 		byPublisherID[post.PublisherPostID] = post.ID
+		tenantByPostID[post.ID] = post.TenantID
 	}
 
 	from := now.AddDate(0, 0, -p.windowDays()).Format("2006-01-02")
@@ -157,13 +159,16 @@ func (p *RefreshZernioAnalyticsProcessor) refresh(ctx context.Context, now time.
 			if postID == "" {
 				continue
 			}
+			// Upsert + event within the post's tenant (CON-97 PR4); the post
+			// list above ran cross-tenant under the job's system context.
+			pctx := tenantctx.With(ctx, tenantByPostID[postID])
 			snapshot := buildSnapshot(postID, publisherPostID, &items[i], now)
-			if uerr := p.Deps.AnalyticsRepo.Upsert(ctx, snapshot); uerr != nil {
+			if uerr := p.Deps.AnalyticsRepo.Upsert(pctx, snapshot); uerr != nil {
 				log.Printf("zernio.analytics upsert post_id=%s error=%q", postID, uerr.Error())
 				continue
 			}
 			upserts++
-			p.publishUpdated(ctx, snapshot)
+			p.publishUpdated(pctx, snapshot)
 		}
 
 		if pagination.Pages == 0 || page >= pagination.Pages {

@@ -88,6 +88,8 @@ func (p *CancelZernioJobProcessor) Process(ctx context.Context, task CancelZerni
 	if err != nil {
 		return fmt.Errorf("cancel: load post %s: %w", task.PostID, err)
 	}
+	// Scope the rest of the job to the owning tenant (CON-97 PR4).
+	ctx = tenantctx.With(ctx, post.TenantID)
 	if post.Status != models.PostStatusScheduled {
 		// User raced themselves, or the poller landed Published first.
 		appendLogActor(ctx, p.Deps, post.ID, task.Actor, models.PostLogEventTaskSucceeded, post.Status, post.Status,

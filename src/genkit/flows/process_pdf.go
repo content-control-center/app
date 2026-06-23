@@ -102,7 +102,7 @@ func processPDF(ctx context.Context, d *pdfDeps, in ProcessPDFInput) error {
 	setStatus(models.AssetStatusProcessing)
 
 	// 1. Upload PDF to S3. If storage is disabled, skip but keep processing.
-	s3Key := fmt.Sprintf("assets/%s/original.pdf", in.AssetID)
+	s3Key := storage.TenantKey(ctx, fmt.Sprintf("assets/%s/original.pdf", in.AssetID))
 	if d.storage != nil {
 		if _, err := d.storage.Upload(ctx, s3Key, bytes.NewReader(in.Data), int64(len(in.Data)), "application/pdf"); err != nil {
 			setStatus(models.AssetStatusFailed)
@@ -165,7 +165,7 @@ func processPDF(ctx context.Context, d *pdfDeps, in ProcessPDFInput) error {
 	var thumbKey *string
 	if d.storage != nil {
 		if img, tErr := pdf.RenderThumbnail(ctx, in.Data, 96); tErr == nil {
-			k := fmt.Sprintf("assets/%s/thumbnail.png", in.AssetID)
+			k := storage.TenantKey(ctx, fmt.Sprintf("assets/%s/thumbnail.png", in.AssetID))
 			if _, upErr := d.storage.Upload(ctx, k, bytes.NewReader(img), int64(len(img)), "image/png"); upErr == nil {
 				thumbKey = &k
 			} else {
