@@ -30,7 +30,12 @@ _pg-test-up:
 		-e POSTGRES_USER=ogen -e POSTGRES_PASSWORD=ogen -e POSTGRES_DB=postgres \
 		-p 5433:5432 pgvector/pgvector:pg17 -c max_connections=500 >/dev/null
 	@printf "Waiting for postgres"; \
-	until docker exec $(PG_TEST_CONTAINER) pg_isready -U ogen >/dev/null 2>&1; do printf '.'; sleep 1; done; echo " ready"
+	tries=30; \
+	until docker exec $(PG_TEST_CONTAINER) pg_isready -U ogen >/dev/null 2>&1; do \
+		tries=$$((tries - 1)); \
+		[ $$tries -le 0 ] && { echo " timed out"; docker rm -f $(PG_TEST_CONTAINER) >/dev/null 2>&1; exit 1; }; \
+		printf '.'; sleep 1; \
+	done; echo " ready"
 
 test: _ginkgo _pg-test-up
 	@TEST_DATABASE_DSN="$(PG_TEST_DSN)" ginkgo $(GINKGO_FLAGS) --skip-package=integration --cover --coverpkg=./... --coverprofile=coverage.out --covermode=atomic --output-dir=. ./...; \
