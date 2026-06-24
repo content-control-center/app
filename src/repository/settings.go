@@ -14,6 +14,11 @@ import (
 type SettingRepository interface {
 	List(ctx context.Context) ([]models.Setting, error)
 	GetByKey(ctx context.Context, key string) (*models.Setting, error)
+	// ListTenantIDsByKey returns the distinct tenant_ids that have a non-empty
+	// value for key. MUST be called with a system context (tenantctx.WithSystem)
+	// so the scoping hook does not restrict it to a single tenant — it is a
+	// cross-tenant enumeration (CON-100: which tenants have a Zernio profile).
+	ListTenantIDsByKey(ctx context.Context, key string) ([]string, error)
 	Upsert(ctx context.Context, setting *models.Setting) error
 	Delete(ctx context.Context, key string) (bool, error)
 }
@@ -45,6 +50,20 @@ func (r *settingRepository) GetByKey(ctx context.Context, key string) (*models.S
 		return nil, err
 	}
 	return setting, nil
+}
+
+func (r *settingRepository) ListTenantIDsByKey(ctx context.Context, key string) ([]string, error) {
+	var ids []string
+	err := r.db.NewSelect().
+		Model((*models.Setting)(nil)).
+		ColumnExpr("DISTINCT tenant_id").
+		Where("key = ?", key).
+		Where("value <> ''").
+		Scan(ctx, &ids)
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 func (r *settingRepository) Upsert(ctx context.Context, setting *models.Setting) error {

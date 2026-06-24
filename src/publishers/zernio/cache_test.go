@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // memStore is a tiny in-memory SettingsStore for tests. The cache and
@@ -120,5 +122,82 @@ func TestCachedSettingsStoreInvalidatesOnDelete(t *testing.T) {
 	_, ok, _ := c.Get(context.Background(), SettingProfileID)
 	if ok {
 		t.Errorf("after Delete: should report missing")
+	}
+}
+
+// tenantMemStore returns per-tenant values, keyed by (tenant, key), so a cache
+// bleed shows up as one tenant getting another's value.
+type tenantMemStore struct {
+	mu   sync.Mutex
+	data map[string]string
+	gets int
+}
+
+func (s *tenantMemStore) tkey(ctx context.Context, key string) string {
+	tid, _ := tenantctx.From(ctx)
+	return tid + "\x00" + key
+}
+
+func (s *tenantMemStore) Get(ctx context.Context, key string) (string, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gets++
+	v, ok := s.data[s.tkey(ctx, key)]
+	return v, ok, nil
+}
+
+func (s *tenantMemStore) Set(ctx context.Context, key, value string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data[s.tkey(ctx, key)] = value
+	return nil
+}
+
+func (s *tenantMemStore) Delete(ctx context.Context, key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.data, s.tkey(ctx, key))
+	return nil
+}
+
+func TestCachedSettingsStoreTenantIsolation(t *testing.T) {
+	inner := &tenantMemStore{data: map[string]string{
+		"tenant-a\x00" + SettingProfileID: "prof-a",
+		"tenant-b\x00" + SettingProfileID: "prof-b",
+	}}
+	c := NewCachedSettingsStore(inner)
+	ctxA := tenantctx.With(context.Background(), "tenant-a")
+	ctxB := tenantctx.With(context.Background(), "tenant-b")
+
+	if v, _, _ := c.Get(ctxA, SettingProfileID); v != "prof-a" {
+		t.Fatalf("tenant A: got %q want prof-a", v)
+	}
+	// B must NOT be served A's cached value.
+	if v, _, _ := c.Get(ctxB, SettingProfileID); v != "prof-b" {
+		t.Fatalf("tenant B leaked A's cached profile: got %q want prof-b", v)
+	}
+	// A's second read is served from cache (no additional inner Get).
+	before := inner.gets
+	if v, _, _ := c.Get(ctxA, SettingProfileID); v != "prof-a" {
+		t.Fatalf("tenant A reread: got %q", v)
+	}
+	if inner.gets != before {
+		t.Fatalf("A's second read should hit the cache; inner gets %d -> %d", before, inner.gets)
+	}
+
+	// Prime B's cache, then A's Set must invalidate only A's entry.
+	_, _, _ = c.Get(ctxB, SettingProfileID)
+	if err := c.Set(ctxA, SettingProfileID, "prof-a2"); err != nil {
+		t.Fatal(err)
+	}
+	bBefore := inner.gets
+	if v, _, _ := c.Get(ctxB, SettingProfileID); v != "prof-b" {
+		t.Fatalf("tenant B after A's set: got %q want prof-b", v)
+	}
+	if inner.gets != bBefore {
+		t.Fatalf("A's Set must not invalidate B's cache (inner gets %d -> %d)", bBefore, inner.gets)
+	}
+	if v, _, _ := c.Get(ctxA, SettingProfileID); v != "prof-a2" {
+		t.Fatalf("tenant A after own set: got %q want prof-a2", v)
 	}
 }
