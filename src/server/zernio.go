@@ -86,7 +86,9 @@ func initZernio(
 	})
 	integ := zernio.NewIntegration(client)
 	bootstrapper := zernio.NewBootstrapper(integ, store)
-	worker := zernio.NewWorker(integ, accountRepo, store, hub, bootstrapper, cfg.ZernioSyncInterval, cfg.ZernioSyncIntervalFast)
+	worker := zernio.NewWorker(integ, accountRepo, store, hub, bootstrapper, cfg.ZernioSyncInterval, cfg.ZernioSyncIntervalFast, func(ctx context.Context) ([]string, error) {
+		return settingRepo.ListTenantIDsByKey(ctx, zernio.SettingProfileID)
+	})
 
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	// CON-97: the Zernio bootstrap + sync worker run outside any request and

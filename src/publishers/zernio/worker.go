@@ -11,6 +11,7 @@ import (
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // SyncIntervalFloor is the hard lower bound the worker enforces in
@@ -74,6 +75,11 @@ type Worker struct {
 	hub          eventhub.Hub
 	bootstrapper *Bootstrapper
 
+	// tenantsWithProfile lists the tenant ids that have a Zernio profile
+	// configured (CON-100); the sweep runs one tick per returned tenant. It is
+	// invoked under a system context so it can read across tenants.
+	tenantsWithProfile func(context.Context) ([]string, error)
+
 	interval     time.Duration
 	fastInterval time.Duration
 
@@ -92,6 +98,7 @@ func NewWorker(
 	hub eventhub.Hub,
 	bootstrapper *Bootstrapper,
 	interval, fastInterval time.Duration,
+	tenantsWithProfile func(context.Context) ([]string, error),
 ) *Worker {
 	if interval < SyncIntervalFloor {
 		interval = SyncIntervalFloor
@@ -100,15 +107,16 @@ func NewWorker(
 		fastInterval = fastSyncIntervalFloor
 	}
 	return &Worker{
-		integ:        integ,
-		accounts:     accounts,
-		settings:     settings,
-		hub:          hub,
-		bootstrapper: bootstrapper,
-		interval:     interval,
-		fastInterval: fastInterval,
-		trigger:      make(chan struct{}, 1),
-		done:         make(chan struct{}),
+		integ:              integ,
+		accounts:           accounts,
+		settings:           settings,
+		hub:                hub,
+		bootstrapper:       bootstrapper,
+		tenantsWithProfile: tenantsWithProfile,
+		interval:           interval,
+		fastInterval:       fastInterval,
+		trigger:            make(chan struct{}, 1),
+		done:               make(chan struct{}),
 	}
 }
 
@@ -134,13 +142,13 @@ func (w *Worker) Run(ctx context.Context) {
 			continue
 		}
 
-		if err := w.tick(ctx); err != nil {
+		if err := w.syncAllTenants(ctx); err != nil {
 			if IsStatus(err, http.StatusUnauthorized) {
 				log.Printf("zernio: 401 from Zernio — disabling integration")
 				w.integ.SetState(StateDisabled)
 				return
 			}
-			log.Printf("zernio: tick failed: %v", err)
+			log.Printf("zernio: sync sweep failed: %v", err)
 		}
 
 		if !w.sleep(ctx, w.nextInterval()) {
@@ -172,11 +180,45 @@ func (w *Worker) shouldTick() bool {
 	if time.Now().Before(w.rateLimitUntil) {
 		return false
 	}
-	id, _, err := w.settings.Get(context.Background(), SettingProfileID)
-	if err != nil || id == "" {
-		return false
-	}
+	// Per-tenant profile presence is decided per sweep by tenantsWithProfile
+	// (CON-100); the sweep simply no-ops when no tenant has a profile.
 	return true
+}
+
+// syncAllTenants enumerates the tenants that have a Zernio profile and runs one
+// reconciliation tick per tenant, scoped to it (CON-100). The enumeration is
+// cross-tenant (system context); each tick runs under tenantctx.With so account
+// upserts, last_sync_* settings, and SSE events land in the right tenant. A 401
+// propagates (the shared key is bad → disable instance-wide); a 429 sets the
+// shared rate-limit backoff inside tick and stops the sweep early.
+func (w *Worker) syncAllTenants(ctx context.Context) error {
+	tenants, err := w.tenantsWithProfile(tenantctx.WithSystem(ctx))
+	if err != nil {
+		return fmt.Errorf("list tenants with zernio profile: %w", err)
+	}
+	for _, tid := range tenants {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+		if time.Now().Before(w.rateLimitUntil) {
+			break // shared rate limit hit earlier this sweep — retry next interval
+		}
+		if err := w.tick(tenantctx.With(ctx, tid)); err != nil {
+			if IsStatus(err, http.StatusUnauthorized) {
+				return err // bad shared key — disable instance-wide
+			}
+			log.Printf("zernio: sync tenant=%s failed: %v", tid, err)
+		}
+	}
+	return nil
+}
+
+// SyncOnce runs a single per-tenant sync sweep synchronously and returns. Used
+// by tests and available for a synchronous trigger path.
+func (w *Worker) SyncOnce(ctx context.Context) error {
+	return w.syncAllTenants(ctx)
 }
 
 // nextInterval returns the delay before the next tick, honouring fast
@@ -231,6 +273,9 @@ func (w *Worker) tick(ctx context.Context) error {
 	if err != nil {
 		w.recordSyncStatus(ctx, err)
 		return err
+	}
+	if profileID == "" {
+		return nil // this tenant has no profile (raced with deletion) — nothing to sync
 	}
 
 	remote, err := w.integ.Client.ListAccounts(ctx, profileID)

@@ -201,7 +201,9 @@ var _ = Describe("ZernioHandler", Ordered, func() {
 		integ = zernio.NewIntegration(client)
 		integ.SetState(zernio.StateDegraded)
 		bootstrapper = zernio.NewBootstrapper(integ, store)
-		worker = zernio.NewWorker(integ, accountRepo, store, hub, bootstrapper, time.Hour, time.Minute)
+		worker = zernio.NewWorker(integ, accountRepo, store, hub, bootstrapper, time.Hour, time.Minute, func(ctx context.Context) ([]string, error) {
+			return settingRepo.ListTenantIDsByKey(ctx, zernio.SettingProfileID)
+		})
 
 		handlers.NewZernioHandler(
 			integ, bootstrapper, store, platformRepo, accountRepo, worker,
