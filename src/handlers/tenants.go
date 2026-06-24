@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/uptrace/bun"
 
 	"github.com/ogen-app/ogen/src/models"
@@ -133,6 +134,13 @@ func (h *TenantsHandler) Signup(c *fiber.Ctx) error {
 		}
 		return nil
 	}); err != nil {
+		// A concurrent signup with the same email passes the pre-check above
+		// but loses the race to the users.email unique constraint; surface that
+		// as 409 rather than a raw 500 (TOCTOU backstop — the constraint is the
+		// real source of truth).
+		if isUniqueViolation(err) {
+			return fiber.NewError(fiber.StatusConflict, "email already in use")
+		}
 		return err
 	}
 
@@ -277,4 +285,11 @@ func (h *TenantsHandler) uniqueSlug(ctx context.Context, name string) (string, e
 		slug = fmt.Sprintf("%s-%d", base, i)
 	}
 	return "", fiber.NewError(fiber.StatusConflict, "could not allocate a unique slug")
+}
+
+// isUniqueViolation reports whether err is a Postgres unique-constraint
+// violation (SQLSTATE 23505).
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

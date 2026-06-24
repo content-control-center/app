@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 
 	"github.com/gofiber/fiber/v2"
 	. "github.com/onsi/ginkgo/v2"
@@ -110,6 +112,52 @@ var _ = Describe("TenantsHandler", Ordered, func() {
 			resp, err := app.Test(req)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.StatusCode).To(Equal(fiber.StatusConflict))
+		})
+
+		It("returns 409 (never a raw 500) when concurrent signups race on the same email", func() {
+			const n = 5 // matches the test pool's max connections, so they truly race
+			start := make(chan struct{})
+			codes := make([]int, n)
+			errs := make([]error, n)
+			var wg sync.WaitGroup
+			for i := 0; i < n; i++ {
+				wg.Add(1)
+				// No Ginkgo assertions inside the goroutine — record results and
+				// assert on the spec goroutine after Wait().
+				go func(idx int) {
+					defer wg.Done()
+					body, _ := json.Marshal(fiber.Map{
+						"tenant": fiber.Map{"name": fmt.Sprintf("Org %d", idx)},
+						"user":   fiber.Map{"name": "Racer", "email": "race@example.com", "password": "password-race"},
+					})
+					req := httptest.NewRequest("POST", "/api/tenants", bytes.NewReader(body))
+					req.Header.Set("Content-Type", "application/json")
+					<-start // release all goroutines together to force the TOCTOU window
+					resp, err := app.Test(req, 5000)
+					if err != nil {
+						errs[idx] = err
+						return
+					}
+					codes[idx] = resp.StatusCode
+				}(i)
+			}
+			close(start)
+			wg.Wait()
+
+			created, conflict := 0, 0
+			for i, code := range codes {
+				Expect(errs[i]).NotTo(HaveOccurred())
+				switch code {
+				case fiber.StatusCreated:
+					created++
+				case fiber.StatusConflict:
+					conflict++
+				default:
+					Fail(fmt.Sprintf("unexpected status %d — a raw DB error leaked instead of 409", code))
+				}
+			}
+			Expect(created).To(Equal(1), "exactly one signup wins")
+			Expect(conflict).To(Equal(n-1), "the rest get 409, not 500")
 		})
 
 		It("derives a distinct slug when tenant names collide", func() {
