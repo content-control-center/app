@@ -283,6 +283,24 @@ var _ = Describe("ZernioHandler", Ordered, func() {
 			Expect(resp.StatusCode).To(Equal(400))
 		})
 
+		It("POST /connect-links recovers a degraded integration by bootstrapping on first connect", func() {
+			// Simulate a transient boot-time degradation with no profile yet
+			// (e.g. the warmup ping blipped). The state guard must not short
+			// circuit before the lazy bootstrap gets to heal it (CON-100).
+			ctx := tenantCtx()
+			Expect(store.Delete(ctx, zernio.SettingProfileID)).To(Succeed())
+			integ.SetState(zernio.StateDegraded)
+
+			body, _ := json.Marshal(fiber.Map{"platform": "linkedin"})
+			req := httptest.NewRequest("POST", "/api/integrations/zernio/connect-links", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(200))
+			Expect(integ.State()).To(Equal(zernio.StateOK))
+		})
+
 		It("POST /connect-links returns the URL plus a 30-min ExpiresAt for an allowlisted platform", func() {
 			body, _ := json.Marshal(fiber.Map{"platform": "linkedin"})
 			req := httptest.NewRequest("POST", "/api/integrations/zernio/connect-links", bytes.NewReader(body))
