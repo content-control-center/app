@@ -96,7 +96,7 @@ func initZernio(
 	// accounts), so they run on a system context. Per-tenant Zernio sync is a
 	// follow-up (CON-97 §10.4).
 	workerCtx = tenantctx.WithSystem(workerCtx)
-	go warmupZernio(workerCtx, integ, bootstrapper)
+	go warmupZernio(workerCtx, integ)
 	go worker.Run(workerCtx)
 
 	return zernioRuntime{
@@ -123,10 +123,11 @@ func (r zernioRuntime) shutdown() {
 	}
 }
 
-// warmupZernio validates the API key with a single Ping then runs the
-// profile bootstrap. Errors are logged; the goroutine exits cleanly on
-// ctx cancellation (process shutdown).
-func warmupZernio(ctx context.Context, integ *zernio.Integration, bootstrapper *zernio.Bootstrapper) {
+// warmupZernio validates the shared API key with a single Ping and marks the
+// instance ready (CON-100). Per-tenant profiles are bootstrapped lazily on
+// connect, not at boot. Errors are logged; the goroutine exits cleanly on ctx
+// cancellation (process shutdown).
+func warmupZernio(ctx context.Context, integ *zernio.Integration) {
 	if err := integ.Client.Ping(ctx); err != nil {
 		if zernio.IsStatus(err, http.StatusUnauthorized) {
 			log.Printf("zernio: API key rejected (401) — integration disabled until repaired")
@@ -143,12 +144,10 @@ func warmupZernio(ctx context.Context, integ *zernio.Integration, bootstrapper *
 		return
 	}
 
+	// The shared key is reachable, so the instance is ready to serve connects;
+	// each tenant's profile is created lazily on its first connect (CON-100).
 	log.Printf("zernio: API key validated — base=%s", integ.Client.BaseURL())
-	integ.SetState(zernio.StateDegraded) // promoted to StateOK by Bootstrapper.Run on success
-
-	if err := bootstrapper.Run(ctx); err != nil {
-		log.Printf("zernio: initial bootstrap: %v", err)
-	}
+	integ.SetState(zernio.StateOK)
 }
 
 // settingsStoreAdapter bridges repository.SettingRepository to the

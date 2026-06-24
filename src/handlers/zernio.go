@@ -229,9 +229,18 @@ func (h *ZernioHandler) CreateConnectLink(c *fiber.Ctx) error {
 		return err
 	}
 	if !ok || profileID == "" {
-		// Bootstrap should have populated this in StateOK; treat its
-		// absence as a degraded transient and surface as 503.
-		return fiber.NewError(fiber.StatusServiceUnavailable, "integration_degraded")
+		// CON-100: lazily bootstrap THIS tenant's Zernio profile on its first
+		// connect (the request context carries the tenant), then re-read it.
+		if err := h.bootstrapper.Run(c.Context()); err != nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "integration_degraded")
+		}
+		profileID, ok, err = h.settings.Get(c.Context(), zernio.SettingProfileID)
+		if err != nil {
+			return err
+		}
+		if !ok || profileID == "" {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "integration_degraded")
+		}
 	}
 
 	connectURL, err := h.integ.Client.CreateConnectLink(c.Context(), profileID, req.Platform)

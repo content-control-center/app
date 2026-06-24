@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // SettingsStore is the narrow contract Bootstrapper (and the Phase 4
@@ -65,6 +67,17 @@ type Bootstrapper struct {
 // SettingsStore implementation provided by the host.
 func NewBootstrapper(integ *Integration, store SettingsStore) *Bootstrapper {
 	return &Bootstrapper{integ: integ, store: store, backoff: defaultBackoff}
+}
+
+// profileName is the Zernio profile name for the context's tenant (CON-100):
+// "<ManagedProfileName> <tenant_id>", so each tenant gets a distinct profile
+// under the shared Zernio account. A system context (no tenant) falls back to
+// the shared name.
+func (b *Bootstrapper) profileName(ctx context.Context) string {
+	if tid, ok := tenantctx.From(ctx); ok {
+		return ManagedProfileName + " " + tid
+	}
+	return ManagedProfileName
 }
 
 // Run performs the create-or-fetch sequence.
@@ -157,15 +170,17 @@ func (b *Bootstrapper) tick(ctx context.Context) (*Profile, error) {
 		log.Printf("zernio: stored profile_id=%s no longer exists; will recreate", storedID)
 	}
 
+	name := b.profileName(ctx)
+
 	profiles, err := b.integ.Client.ListProfiles(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if existing := pickOldestByName(profiles, ManagedProfileName); existing != nil {
+	if existing := pickOldestByName(profiles, name); existing != nil {
 		return existing, nil
 	}
 
-	created, err := b.integ.Client.CreateProfile(ctx, ManagedProfileName, ManagedProfileDescription)
+	created, err := b.integ.Client.CreateProfile(ctx, name, ManagedProfileDescription)
 	if err != nil {
 		return nil, err
 	}
@@ -174,12 +189,12 @@ func (b *Bootstrapper) tick(ctx context.Context) (*Profile, error) {
 	// profile. If another boot raced us, both processes converge on the
 	// same ID. List failures fall back to the just-created profile.
 	if profiles, listErr := b.integ.Client.ListProfiles(ctx); listErr == nil {
-		matches := matchesByName(profiles, ManagedProfileName)
+		matches := matchesByName(profiles, name)
 		if len(matches) > 1 {
 			log.Printf("zernio: WARN %d profiles named %q exist on Zernio; adopting oldest. Manually clean up duplicates.",
-				len(matches), ManagedProfileName)
+				len(matches), name)
 		}
-		if oldest := pickOldestByName(profiles, ManagedProfileName); oldest != nil {
+		if oldest := pickOldestByName(profiles, name); oldest != nil {
 			return oldest, nil
 		}
 	}
