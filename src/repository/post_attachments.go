@@ -105,7 +105,11 @@ func (r *postAttachmentRepository) CreateAtNextPosition(ctx context.Context, att
 	// position) unique constraint. Postgres runs writers concurrently (SQLite
 	// did not), so the serialisation must be explicit.
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.NewRaw(`SELECT 1 FROM posts WHERE id = ? AND tenant_id = ? FOR UPDATE`, att.PostID, tid).Exec(ctx); err != nil {
+		// Scan (not Exec) so a zero-row lock is detected: no parent post in this
+		// tenant (deleted mid-upload, or a cross-tenant id) fails closed with
+		// sql.ErrNoRows instead of inserting an orphaned/cross-tenant attachment.
+		var locked int
+		if err := tx.NewRaw(`SELECT 1 FROM posts WHERE id = ? AND tenant_id = ? FOR UPDATE`, att.PostID, tid).Scan(ctx, &locked); err != nil {
 			return err
 		}
 		const q = `INSERT INTO post_attachments
