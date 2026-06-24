@@ -1,8 +1,13 @@
 -- CON-97 (PR3): reverse domain tenant_id.
 
--- Restore single-column primary keys.
+-- Restore single-column primary keys. Downgrading collapses multi-tenant data
+-- back to the default tenant (the pre-migration, single-tenant state), so other
+-- tenants' rows are dropped FIRST — otherwise duplicate (key) / (platform_id)
+-- values across tenants would violate the restored single-column primary key.
+DELETE FROM auto_publish_allowlist WHERE tenant_id <> 'default';
 ALTER TABLE auto_publish_allowlist DROP CONSTRAINT auto_publish_allowlist_pkey;
 ALTER TABLE auto_publish_allowlist ADD PRIMARY KEY (platform_id);
+DELETE FROM settings WHERE tenant_id <> 'default';
 ALTER TABLE settings DROP CONSTRAINT settings_pkey;
 ALTER TABLE settings ADD PRIMARY KEY (key);
 
