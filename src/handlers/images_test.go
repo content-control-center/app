@@ -169,7 +169,7 @@ var _ = Describe("ImagesHandler", Ordered, func() {
 				Expect(data["url"]).To(Equal("https://pub.example.com/abc123.png"))
 			})
 
-			It("uses a server-generated key (uuid + extension), not the client filename", func() {
+			It("uses a tenant-namespaced server-generated key (uuid + extension), not the client filename", func() {
 				body, ct := multipartBody("malicious/../../../etc/passwd.png", minimalPNG())
 				req := httptest.NewRequest("POST", "/api/images", body)
 				req.Header.Set("Content-Type", ct)
@@ -177,7 +177,8 @@ var _ = Describe("ImagesHandler", Ordered, func() {
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(200))
-				Expect(stub.lastKey).To(MatchRegexp(`^[0-9a-f-]{36}\.png$`))
+				// Tenant prefix retained (CON-97); key is server-generated, not the client filename.
+				Expect(stub.lastKey).To(MatchRegexp(`^t/default/[0-9a-f-]{36}\.png$`))
 			})
 
 			It("returns 400 when no file is provided", func() {
