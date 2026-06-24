@@ -407,11 +407,15 @@ func (w *Worker) publishAccountEvent(ctx context.Context, eventType string, acco
 	if errMsg != "" {
 		payload["error"] = errMsg
 	}
+	// Scope the event to the tenant being synced via the context, not the
+	// account: newly attached/updated accounts are projected from the Zernio
+	// API and carry no tenant_id yet (it's stamped on DB write). The hub
+	// derives TenantID from the scoped ctx — same as publishSyncEvent — so
+	// event scoping stays independent of repository stamping.
 	if err := w.hub.Publish(ctx, eventhub.Event{
-		Topic:    topic,
-		TenantID: account.TenantID,
-		Type:     eventType,
-		Payload:  payload,
+		Topic:   topic,
+		Type:    eventType,
+		Payload: payload,
 	}); err != nil {
 		log.Printf("zernio: publish event %s: %v", eventType, err)
 	}
