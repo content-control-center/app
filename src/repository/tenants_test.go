@@ -37,7 +37,11 @@ func TestTenantRepositoryCRUD(t *testing.T) {
 	if err := repo.Update(ctx, got); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	if reloaded, _ := repo.GetByID(ctx, "tn-1"); reloaded.Name != "Acme Inc" {
+	reloaded, err := repo.GetByID(ctx, "tn-1")
+	if err != nil {
+		t.Fatalf("reload after update: %v", err)
+	}
+	if reloaded.Name != "Acme Inc" {
 		t.Fatalf("update not persisted: %+v", reloaded)
 	}
 
