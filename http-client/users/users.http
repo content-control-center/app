@@ -1,21 +1,29 @@
 @baseUrl = http://localhost:9001
 
-# Protected endpoints require a valid session cookie.
-# Run "Login" from sessions/sessions.http first — the HTTP client stores and
-# sends the cookie automatically on subsequent requests to the same host.
+# CON-97: every endpoint here (create included) requires a valid session cookie
+# and is scoped to the caller's tenant. List/Get only ever see users in your
+# own tenant.
+#
+# The FIRST user is NOT created here — there is no public user-creation route
+# anymore. Bootstrap a tenant + first user via "Signup" in tenants/tenants.http
+# (or "Login" in sessions/sessions.http if the account already exists). Once
+# authenticated, POST /api/users below adds MORE users to the same tenant; any
+# tenant_id in the body is ignored.
 
-### List all users  [protected]
+### List all users (caller's tenant only)  [protected]
 GET {{baseUrl}}/api/users
 Accept: application/json
 
-### Create user  [public]
+### Create user — joins the caller's tenant  [protected]
 # @name createUser
+# Use a different email than the signup user — email is globally unique, so a
+# duplicate returns 409.
 POST {{baseUrl}}/api/users
 Content-Type: application/json
 
 {
-  "name": "Serhii Herasymov",
-  "email": "serhii@daat.ua",
+  "name": "Teammate Two",
+  "email": "teammate@daat.ua",
   "password": "s3cur3P@ssw0rd"
 }
 

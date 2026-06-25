@@ -1,0 +1,106 @@
+@baseUrl = http://localhost:9001
+
+# CON-97 multi-tenancy. A tenant is the top-level isolation boundary; every
+# authenticated request is scoped to the caller's tenant, which the server
+# resolves from the session cookie (RequireAuth -> session.TenantID -> the
+# tenant-scoped query layer). There is NO tenant header to send — sign up or
+# log in and the session cookie carries the tenant automatically.
+#
+# First-time setup goes through Signup below: it atomically creates a tenant,
+# its first user, and a session (and sets the cookie). After that:
+#   - sessions/sessions.http  → log in by global email (email -> user -> tenant)
+#   - users/users.http        → POST /api/users adds more users to THIS tenant
+
+### Signup — create tenant + first user + session (expects 201, sets cookie)  [public]
+# @name signup
+POST {{baseUrl}}/api/tenants
+Content-Type: application/json
+
+{
+  "tenant": { "name": "Acme Inc" },
+  "user": {
+    "name": "Serhii Herasymov",
+    "email": "serhii@daat.ua",
+    "password": "s3cur3P@ssw0rd"
+  }
+}
+
+> {%
+    client.global.set("tenantId", response.body.tenant.id);
+    client.global.set("userId", response.body.user.id);
+%}
+
+### Signup — duplicate email (expects 409 email already in use)  [public]
+# Email is globally unique (login is by email -> user -> tenant), so the same
+# address can't sign up twice even under a different tenant name.
+POST {{baseUrl}}/api/tenants
+Content-Type: application/json
+
+{
+  "tenant": { "name": "Acme Inc (again)" },
+  "user": {
+    "name": "Serhii Herasymov",
+    "email": "serhii@daat.ua",
+    "password": "s3cur3P@ssw0rd"
+  }
+}
+
+### Signup — missing tenant name (expects 400)  [public]
+POST {{baseUrl}}/api/tenants
+Content-Type: application/json
+
+{
+  "tenant": { "name": "" },
+  "user": {
+    "name": "Neo",
+    "email": "neo@example.com",
+    "password": "s3cur3P@ssw0rd"
+  }
+}
+
+### Signup — password too short (expects 400, min 8)  [public]
+POST {{baseUrl}}/api/tenants
+Content-Type: application/json
+
+{
+  "tenant": { "name": "Short Pass Co" },
+  "user": {
+    "name": "Neo",
+    "email": "neo@example.com",
+    "password": "short"
+  }
+}
+
+### Current tenant  [protected]
+# Run "Signup" above (or "Login" from sessions/sessions.http) first.
+GET {{baseUrl}}/api/tenants/current
+Accept: application/json
+
+> {% client.global.set("tenantId", response.body.id) %}
+
+### Get tenant by id  [protected]
+# Only the caller's own tenant is visible; any other id returns 404.
+GET {{baseUrl}}/api/tenants/{{tenantId}}
+Accept: application/json
+
+### Update tenant — name only (expects 200)  [protected]
+PUT {{baseUrl}}/api/tenants/{{tenantId}}
+Content-Type: application/json
+
+{
+  "name": "Acme Incorporated"
+}
+
+### Update tenant — missing name (expects 400)  [protected]
+PUT {{baseUrl}}/api/tenants/{{tenantId}}
+Content-Type: application/json
+
+{
+  "name": ""
+}
+
+### Get tenant — a different tenant's id (expects 404 tenant not found)  [protected]
+# Cross-tenant access fails closed: the route compares :id against the caller's
+# tenant before any lookup (CON-97).
+GET {{baseUrl}}/api/tenants/some-other-tenant-id
+Accept: application/json
