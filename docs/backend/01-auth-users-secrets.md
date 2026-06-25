@@ -68,15 +68,14 @@ browser clears it.
 | Method + Path | Middleware | Auth |
 |---|---|---|
 | `GET /api/current_user` | `auth` | always |
-| `POST /api/users` | `conditionalAuth` | **open while `setup_complete != "true"`, protected after** |
+| `POST /api/users` | `auth` | always |
 | `GET /api/users` | `auth` | always |
 | `GET /api/users/:id` | `auth` | always |
 | `PUT /api/users/:id` | `auth` + `requireSelf` | self-only |
 | `DELETE /api/users/:id` | `auth` + `requireSelf` | self-only |
 
-- **`conditionalAuth`**: if setup complete → `auth`, else open (lets the *first* user be created without a session).
+- **`POST /api/users`** (CON-97): always authenticated; the new user joins the caller's tenant (any `tenant_id` in the body is ignored). The *first* user is created via signup (`POST /api/tenants`), not here.
 - **`requireSelf`**: reads `c.Locals("session")`; missing → `401`; `session.UserID != :id` → `403` `"forbidden"`.
-- **`setupComplete`**: reads `setup_complete` setting; `true` only when value == `"true"`; missing row → `false`.
 
 - `GET /api/current_user` → loads `session.UserID`; not found → `401` `"user not found"`. → `200` `User`.
 - `GET /api/users` → `200` `[]User`.
@@ -92,11 +91,11 @@ browser clears it.
 | Method + Path | Middleware | Auth |
 |---|---|---|
 | `GET /api/settings` | `auth` | always |
-| `GET /api/settings/:key` | `setupGuard` | **open while `setup_complete != "true"`, protected after** |
+| `GET /api/settings/:key` | `auth` | always |
 | `PUT /api/settings/:key` | `auth` | always |
 | `DELETE /api/settings/:key` | `auth` | always |
 
-- **`setupGuard`**: if the `setup_complete` read errors OR value != `"true"` → open (`c.Next()`); else `auth`. (A DB error here results in *open* access, not `500`.)
+- All settings routes require auth. CON-97 removed the `setupGuard` that left `GET /:key` open while `setup_complete != "true"`; settings are tenant-scoped, so every route is confined to the caller's tenant.
 - `GET /api/settings` → `200` `[]Setting`.
 - `GET /api/settings/:key` → `200` `Setting`; not found → `404` `"setting not found"`.
 - `PUT /api/settings/:key` (`upsertSettingRequest`: `value` `required`) → upsert → `200` `Setting`.
@@ -104,16 +103,20 @@ browser clears it.
 
 ---
 
-## First-run setup flow
+## Onboarding (CON-97)
 
-Gated entirely by the `settings` row keyed `setup_complete` (seeded `"false"`):
+There is no instance-wide first-run gate anymore — the `setup_complete` setting,
+`conditionalAuth`, and `setupGuard` were all removed. Onboarding is self-service
+signup:
 
-1. **Probe (open):** `GET /api/settings/setup_complete` — `setupGuard` leaves this open while not `"true"`.
-2. **Create first user (open):** `POST /api/users` via `conditionalAuth` — no session required while not complete.
-3. **Mark complete:** `PUT /api/settings/setup_complete = "true"` (this PUT is `auth`-protected → requires logging in as the just-created user).
-4. **Locked down:** once `"true"`, both `conditionalAuth` and `setupGuard` enforce `RequireAuth`.
+1. **Sign up (public):** `POST /api/tenants` — atomically creates a tenant, its
+   first user, and a session, and sets the session cookie. This is the only
+   unauthenticated path that creates a user.
+2. **Add more users (auth):** once signed in, `POST /api/users` adds users to the
+   caller's tenant.
 
-There is no backend "is there already a user?" check — the gate is purely the setting value being the string `"true"`.
+Every other `/api/users` and `/api/settings` route requires a session; there is
+no open-while-incomplete window.
 
 ---
 

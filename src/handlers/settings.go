@@ -9,7 +9,6 @@ import (
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/settings"
-	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 type SettingsHandler struct {
@@ -24,23 +23,13 @@ func NewSettingsHandler(repo repository.SettingRepository, auth fiber.Handler) *
 func (h *SettingsHandler) Register(app *fiber.App) {
 	g := app.Group("/api/settings")
 	g.Get("/", h.auth, h.List)
-	g.Get("/:key", h.setupGuard, h.Get)
+	// CON-97: GET /:key is always authenticated. The old setup_complete bootstrap
+	// gate (unauthenticated reads while first-run setup was incomplete) was
+	// removed once self-service signup via POST /api/tenants became the sole
+	// onboarding path — the UI no longer probes settings before a session exists.
+	g.Get("/:key", h.auth, h.Get)
 	g.Put("/:key", h.auth, h.Upsert)
 	g.Delete("/:key", h.auth, h.Delete)
-}
-
-// setupGuard allows unauthenticated access to GET /:key while setup is
-// incomplete. Once setup_complete is set to "true" the normal auth
-// middleware is enforced.
-func (h *SettingsHandler) setupGuard(c *fiber.Ctx) error {
-	// CON-97: settings are tenant-scoped. The pre-login bootstrap read operates
-	// on the default tenant; once authenticated, RequireAuth sets the real one.
-	c.Locals(tenantctx.Key, models.DefaultTenantID)
-	s, err := h.repo.GetByKey(c.Context(), "setup_complete")
-	if err != nil || s.Value != "true" {
-		return c.Next()
-	}
-	return h.auth(c)
 }
 
 type upsertSettingRequest struct {
@@ -66,9 +55,10 @@ func (h *SettingsHandler) List(c *fiber.Ctx) error {
 
 // Get godoc
 // @Summary      Get setting
-// @Description  Returns a single setting by key. Authentication is not required when setup_complete is false, allowing the frontend to check setup status before any user exists.
+// @Description  Returns a single setting by key (scoped to the caller's tenant).
 // @Tags         settings
 // @Produce      json
+// @Security     CookieAuth
 // @Param        key  path      string  true  "Setting key"
 // @Success      200  {object}  models.Setting
 // @Failure      401  {object}  map[string]string
