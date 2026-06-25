@@ -1,5 +1,10 @@
 @baseUrl = http://localhost:9001
 
+# CON-97: login is by GLOBAL email — the server resolves email -> user ->
+# tenant, opens a session, and the cookie carries the tenant on every later
+# request (no tenant header needed). If you have no account yet, run "Signup"
+# in tenants/tenants.http first (it creates the tenant + first user + session).
+
 ### Login — valid credentials (expects 201, sets session cookie)
 # @name login
 POST {{baseUrl}}/api/sessions
