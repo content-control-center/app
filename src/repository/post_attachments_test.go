@@ -1,6 +1,7 @@
 package repository_test
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"testing"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // TestCreateAtNextPositionRequiresParentPost guards CON-97: the FOR UPDATE lock
@@ -36,5 +38,20 @@ func TestCreateAtNextPositionRequiresParentPost(t *testing.T) {
 	}
 	if err := repo.CreateAtNextPosition(ctx, orphan); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("attaching to a missing/cross-tenant post must fail closed with ErrNoRows, got %v", err)
+	}
+
+	// post-x genuinely exists (it was just attached to above), but only in the
+	// default tenant. A second tenant must not be able to attach to it: the
+	// FOR UPDATE lock is scoped by tenant_id, so the lookup finds no row and
+	// fails closed (CON-97) rather than inserting a cross-tenant attachment.
+	// This is the case the orphan probe above can't reach — it proves the
+	// tenant_id half of the lock predicate, not just post_id existence.
+	otherCtx := tenantctx.With(context.Background(), "tenant-2")
+	crossTenant := &models.PostAttachment{
+		ID: "att-3", PostID: "post-x", MimeType: "image/png",
+		SizeBytes: 1, ChecksumSHA256: "c", S3Key: "k3", CreatedBy: "user-1",
+	}
+	if err := repo.CreateAtNextPosition(otherCtx, crossTenant); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("attaching from another tenant to an existing post must fail closed with ErrNoRows, got %v", err)
 	}
 }
