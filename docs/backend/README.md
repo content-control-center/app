@@ -79,7 +79,7 @@ All API routes are under `/api` (plus `/admin/backlite/*` and `/debug/vars` ops 
 
 **Auth model:** most routes require a valid session cookie via `RequireAuth` middleware. A handful are public or conditionally open during first-run setup (marked below). Error responses are JSON `{"error": "..."}`; `*fiber.Error` status codes are preserved by `defaultErrorHandler`.
 
-### Public / setup-gated
+### Public
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
@@ -87,16 +87,15 @@ All API routes are under `/api` (plus `/admin/backlite/*` and `/debug/vars` ops 
 | POST | `/api/sessions` | **public** | Login → sets session cookie, `201` |
 | DELETE | `/api/sessions` | cookie | Logout (reads cookie itself), `204` |
 | GET | `/api/integrations/zernio/health` | **public** | Integration state snapshot (DB-only) |
-| POST | `/api/users` | **setup-open** | Open while `setup_complete != "true"`, then `RequireAuth` |
-| GET | `/api/settings/:key` | **setup-open** | Open while `setup_complete != "true"`, then `RequireAuth` |
+| POST | `/api/tenants` | **public** | Self-service signup → creates tenant + first user + session cookie, `201` (CON-97) |
 
 ### Authenticated (require session)
 
 | Resource | Routes |
 |---|---|
 | **Current user** | `GET /api/current_user` |
-| **Users** | `GET /api/users`, `GET/PUT/DELETE /api/users/:id` (PUT/DELETE are self-only) |
-| **Settings** | `GET /api/settings`, `PUT/DELETE /api/settings/:key` |
+| **Users** | `POST /api/users` (joins caller's tenant), `GET /api/users`, `GET/PUT/DELETE /api/users/:id` (PUT/DELETE are self-only) |
+| **Settings** | `GET /api/settings`, `GET/PUT/DELETE /api/settings/:key` |
 | **Secrets** | `GET /api/secrets`, `GET/PUT/DELETE /api/secrets/:name` (names: `anthropic_api_key`, `zernio_api_key`; values write-only) |
 | **Content-bank assets** | `GET/POST /api/content-bank/assets`, `POST /api/content-bank/assets/upload`, `GET/PUT/DELETE /api/content-bank/assets/:id` |
 | **Images** | `POST /api/images` (multipart, inline editor images) |
