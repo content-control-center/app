@@ -33,8 +33,19 @@ func NewUserRepository(db *bun.DB) UserRepository {
 }
 
 func (r *userRepository) List(ctx context.Context) ([]models.User, error) {
+	// Users are not TenantScoped (the auth path looks them up before a tenant is
+	// known), so the tenant filter is applied by hand here — otherwise List would
+	// return every tenant's users (CON-97).
+	tid, scoped, err := scopeTenantRead(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var users []models.User
-	if err := r.db.NewSelect().Model(&users).OrderExpr("created_at ASC").Scan(ctx); err != nil {
+	q := r.db.NewSelect().Model(&users).OrderExpr("created_at ASC")
+	if scoped {
+		q = q.Where("u.tenant_id = ?", tid)
+	}
+	if err := q.Scan(ctx); err != nil {
 		return nil, err
 	}
 	return users, nil
@@ -46,9 +57,18 @@ func (r *userRepository) Create(ctx context.Context, user *models.User) error {
 }
 
 func (r *userRepository) GetByID(ctx context.Context, id string) (*models.User, error) {
-	user := new(models.User)
-	err := r.db.NewSelect().Model(user).Where("u.id = ?", id).Scan(ctx)
+	// Tenant-scoped by hand (User is not TenantScoped) so one tenant can't read
+	// another tenant's user by id — e.g. GET /api/users/:id (CON-97).
+	tid, scoped, err := scopeTenantRead(ctx)
 	if err != nil {
+		return nil, err
+	}
+	user := new(models.User)
+	q := r.db.NewSelect().Model(user).Where("u.id = ?", id)
+	if scoped {
+		q = q.Where("u.tenant_id = ?", tid)
+	}
+	if err := q.Scan(ctx); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, sql.ErrNoRows
 		}
@@ -58,9 +78,16 @@ func (r *userRepository) GetByID(ctx context.Context, id string) (*models.User, 
 }
 
 func (r *userRepository) GetByIDWithTenant(ctx context.Context, id string) (*models.User, error) {
-	user := new(models.User)
-	err := r.db.NewSelect().Model(user).Relation("Tenant").Where("u.id = ?", id).Scan(ctx)
+	tid, scoped, err := scopeTenantRead(ctx)
 	if err != nil {
+		return nil, err
+	}
+	user := new(models.User)
+	q := r.db.NewSelect().Model(user).Relation("Tenant").Where("u.id = ?", id)
+	if scoped {
+		q = q.Where("u.tenant_id = ?", tid)
+	}
+	if err := q.Scan(ctx); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, sql.ErrNoRows
 		}

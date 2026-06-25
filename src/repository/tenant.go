@@ -21,3 +21,20 @@ func writeTenantID(ctx context.Context, current string) (string, error) {
 	}
 	return tid, nil
 }
+
+// scopeTenantRead reports the tenant a read must be filtered by. It mirrors the
+// models.TenantScoped read hooks (BeforeSelect) for the repositories whose models
+// are deliberately NOT TenantScoped — users and sessions, which the auth path
+// looks up before a tenant is known (CON-97). A tenant in context wins and must
+// be applied (scoped=true); a system context reads across tenants (scoped=false);
+// a missing tenant on a non-system context fails closed rather than leaking every
+// tenant's rows.
+func scopeTenantRead(ctx context.Context) (tenantID string, scoped bool, err error) {
+	if tid, ok := tenantctx.From(ctx); ok {
+		return tid, true, nil
+	}
+	if tenantctx.IsSystem(ctx) {
+		return "", false, nil
+	}
+	return "", false, tenantctx.ErrNoTenant
+}
