@@ -16,6 +16,7 @@ import (
 // keep their FK integrity.
 type SocialAccount struct {
 	bun.BaseModel `bun:"table:social_accounts,alias:sa" swaggerignore:"true"`
+	TenantScoped  // CON-97: tenant_id column + central scoping hooks
 
 	ID           string     `bun:"id,pk"                 json:"id"`
 	Platform     string     `bun:"platform,notnull"      json:"platform"`

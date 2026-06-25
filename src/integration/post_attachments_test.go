@@ -150,11 +150,7 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 		postsHandler.Register(app)
 		handlers.NewPostAttachmentsHandler(postAttRepo, postRepo, store, auth).Register(app)
 
-		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "it@example.com", "password": "it-password"})
-		req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		_, err := app.Test(req)
-		Expect(err).NotTo(HaveOccurred())
+		seedTenantUser(db, "Admin", "it@example.com", "it-password")
 
 		loginBody, _ := json.Marshal(fiber.Map{"email": "it@example.com", "password": "it-password"})
 		loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
@@ -177,7 +173,7 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 	})
 
 	AfterEach(func() {
-		ctx := context.Background()
+		ctx := tenantCtx()
 		_, _ = db.NewDelete().TableExpr("post_attachments").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("post_versions").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("post_assistant_messages").Where("1 = 1").Exec(ctx)
@@ -250,7 +246,7 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 		postID := createPost()
 		att := uploadPNG(postID, makePNG(4))
 		key := att["s3_key"].(string)
-		Expect(objectExists(context.Background(), raw, bucket, key)).To(BeTrue())
+		Expect(objectExists(tenantCtx(), raw, bucket, key)).To(BeTrue())
 
 		req := httptest.NewRequest("DELETE", "/api/posts/"+postID+"/attachments/"+att["id"].(string), nil)
 		req.AddCookie(authCookie)
@@ -258,7 +254,7 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resp.StatusCode).To(Equal(204))
 
-		Expect(objectExists(context.Background(), raw, bucket, key)).To(BeFalse())
+		Expect(objectExists(tenantCtx(), raw, bucket, key)).To(BeFalse())
 	})
 
 	// ── Test #3: DELETE post cascades attachment objects to S3 ─────────────
@@ -270,7 +266,7 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 		a3 := uploadPNG(postID, makePNG(6))
 		keys := []string{a1["s3_key"].(string), a2["s3_key"].(string), a3["s3_key"].(string)}
 		for _, k := range keys {
-			Expect(objectExists(context.Background(), raw, bucket, k)).To(BeTrue())
+			Expect(objectExists(tenantCtx(), raw, bucket, k)).To(BeTrue())
 		}
 
 		req := httptest.NewRequest("DELETE", "/api/posts/"+postID, nil)
@@ -280,7 +276,7 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 		Expect(resp.StatusCode).To(Equal(204))
 
 		for _, k := range keys {
-			Expect(objectExists(context.Background(), raw, bucket, k)).To(BeFalse(), "object %s should be gone", k)
+			Expect(objectExists(tenantCtx(), raw, bucket, k)).To(BeFalse(), "object %s should be gone", k)
 		}
 	})
 
@@ -343,7 +339,7 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 
 	It("#5 invalid uploads return a 4xx and never call PutObject", func() {
 		postID := createPost()
-		before := countObjects(context.Background(), raw, bucket)
+		before := countObjects(tenantCtx(), raw, bucket)
 
 		// Plain text named .png — image probe rejects it (415).
 		body, ct := multipartBody("file", "evil.png", "image/png", []byte("hello world this is plain text padding to defeat sniffer"))
@@ -363,7 +359,7 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resp.StatusCode).To(Equal(400))
 
-		after := countObjects(context.Background(), raw, bucket)
+		after := countObjects(tenantCtx(), raw, bucket)
 		Expect(after).To(Equal(before), "no new S3 objects should be created when validation rejects upload")
 	})
 
@@ -411,7 +407,7 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 
 		// HeadObject confirms S3 actually has the bytes — not just a
 		// metadata row claiming so.
-		head, err := raw.HeadObject(context.Background(), &s3.HeadObjectInput{
+		head, err := raw.HeadObject(tenantCtx(), &s3.HeadObjectInput{
 			Bucket: aws.String(bucket),
 			Key:    aws.String(att["s3_key"].(string)),
 		})
@@ -426,7 +422,7 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 		// scan it back through the model and assert every field
 		// survives. Catches Bun/SQLite JSON1 corner cases for empty
 		// strings, NULL handling, and nested arrays.
-		ctx := context.Background()
+		ctx := tenantCtx()
 		p := &models.Platform{
 			ID:          "it-platform",
 			Name:        "Integration Platform",
@@ -501,9 +497,9 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 
 		key := att["s3_key"].(string)
 		thumbKey, _ := att["thumbnail_s3_key"].(string)
-		Expect(objectExists(context.Background(), raw, bucket, key)).To(BeTrue())
+		Expect(objectExists(tenantCtx(), raw, bucket, key)).To(BeTrue())
 		if thumbKey != "" {
-			Expect(objectExists(context.Background(), raw, bucket, thumbKey)).To(BeTrue())
+			Expect(objectExists(tenantCtx(), raw, bucket, thumbKey)).To(BeTrue())
 		}
 
 		req := httptest.NewRequest("DELETE", "/api/posts/"+postID, nil)
@@ -512,14 +508,14 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resp.StatusCode).To(Equal(204))
 
-		Expect(objectExists(context.Background(), raw, bucket, key)).To(BeFalse())
+		Expect(objectExists(tenantCtx(), raw, bucket, key)).To(BeFalse())
 		if thumbKey != "" {
-			Expect(objectExists(context.Background(), raw, bucket, thumbKey)).To(BeFalse())
+			Expect(objectExists(tenantCtx(), raw, bucket, thumbKey)).To(BeFalse())
 		}
 	})
 
 	It("#11 platforms.pdf_constraints JSON round-trips through bun", func() {
-		ctx := context.Background()
+		ctx := tenantCtx()
 		p := &models.Platform{
 			ID:          "it-pdf-platform",
 			Name:        "Integration PDF Platform",

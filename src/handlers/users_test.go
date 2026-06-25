@@ -61,16 +61,11 @@ var _ = Describe("UsersHandler", Ordered, func() {
 
 	// ── helpers ──────────────────────────────────────────────────────────────
 
+	// createUser seeds a user directly in the default tenant. POST /api/users
+	// now requires auth (CON-97), so bootstrap users are inserted via the DB;
+	// loginAs below still authenticates them over HTTP.
 	createUser := func(name, email, password string) *models.User {
-		body, _ := json.Marshal(fiber.Map{"name": name, "email": email, "password": password})
-		req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := app.Test(req)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
-		var u models.User
-		Expect(json.NewDecoder(resp.Body).Decode(&u)).To(Succeed())
-		return &u
+		return seedTenantUser(db, name, email, password)
 	}
 
 	loginAs := func(email, password string) *http.Cookie {
@@ -113,6 +108,24 @@ var _ = Describe("UsersHandler", Ordered, func() {
 				Expect(got.ID).To(Equal(u.ID))
 				Expect(got.Name).To(Equal("Alice"))
 				Expect(got.Email).To(Equal("alice@example.com"))
+			})
+
+			It("embeds the caller's tenant (CON-97)", func() {
+				createUser("Alice", "alice@example.com", "password-alice")
+				cookie := loginAs("alice@example.com", "password-alice")
+
+				req := httptest.NewRequest("GET", "/api/current_user", nil)
+				req.AddCookie(cookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+
+				var raw map[string]any
+				Expect(json.NewDecoder(resp.Body).Decode(&raw)).To(Succeed())
+				tenant, ok := raw["tenant"].(map[string]any)
+				Expect(ok).To(BeTrue(), "current_user must embed a tenant object")
+				Expect(tenant["id"]).To(Equal(models.DefaultTenantID))
+				Expect(tenant["slug"]).To(Equal("default"))
 			})
 
 			It("does not expose password_hash in the response", func() {
@@ -183,18 +196,74 @@ var _ = Describe("UsersHandler", Ordered, func() {
 	// ── Create ───────────────────────────────────────────────────────────────
 
 	Describe("POST /api/users", func() {
-		Context("with valid payload", func() {
-			It("creates a user and returns 201 with a Sqid — no auth required", func() {
-				u := createUser("Carol", "carol@example.com", "s3cur3P@ss")
-				Expect(u.ID).NotTo(BeEmpty())
-				Expect(u.Name).To(Equal("Carol"))
-				Expect(u.Email).To(Equal("carol@example.com"))
-			})
-
-			It("does not expose the password hash in the response", func() {
+		Context("when not authenticated", func() {
+			It("returns 401 (signup is the only open bootstrap — CON-97)", func() {
 				body, _ := json.Marshal(fiber.Map{"name": "X", "email": "x@example.com", "password": "s3cur3P@ss"})
 				req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+		})
+
+		Context("with a valid payload and an authenticated caller", func() {
+			It("creates a user in the caller's tenant and returns 201", func() {
+				createUser("Admin", "admin@example.com", "admin-password")
+				cookie := loginAs("admin@example.com", "admin-password")
+
+				body, _ := json.Marshal(fiber.Map{"name": "Carol", "email": "carol@example.com", "password": "s3cur3P@ss"})
+				req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(cookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+
+				var u models.User
+				Expect(json.NewDecoder(resp.Body).Decode(&u)).To(Succeed())
+				Expect(u.ID).NotTo(BeEmpty())
+				Expect(u.Email).To(Equal("carol@example.com"))
+
+				// The new user is attached to the caller's (default) tenant,
+				// never to a body-supplied tenant.
+				var stored models.User
+				Expect(db.NewSelect().Model(&stored).Where("id = ?", u.ID).
+					Scan(context.Background())).To(Succeed())
+				Expect(stored.TenantID).To(Equal(models.DefaultTenantID))
+			})
+
+			It("ignores a tenant_id in the request body", func() {
+				createUser("Admin", "admin@example.com", "admin-password")
+				cookie := loginAs("admin@example.com", "admin-password")
+
+				body, _ := json.Marshal(fiber.Map{
+					"name": "Mallory", "email": "mallory@example.com",
+					"password": "s3cur3P@ss", "tenant_id": "some-other-tenant",
+				})
+				req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(cookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+
+				var u models.User
+				Expect(json.NewDecoder(resp.Body).Decode(&u)).To(Succeed())
+				var stored models.User
+				Expect(db.NewSelect().Model(&stored).Where("id = ?", u.ID).
+					Scan(context.Background())).To(Succeed())
+				Expect(stored.TenantID).To(Equal(models.DefaultTenantID))
+			})
+
+			It("does not expose the password hash in the response", func() {
+				createUser("Admin", "admin@example.com", "admin-password")
+				cookie := loginAs("admin@example.com", "admin-password")
+
+				body, _ := json.Marshal(fiber.Map{"name": "X", "email": "x@example.com", "password": "s3cur3P@ss"})
+				req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(cookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 
@@ -206,12 +275,16 @@ var _ = Describe("UsersHandler", Ordered, func() {
 			})
 		})
 
-		Context("with invalid payload", func() {
+		Context("with invalid payload (authenticated)", func() {
 			DescribeTable("returns 400",
 				func(payload fiber.Map) {
+					createUser("Admin", "admin@example.com", "admin-password")
+					cookie := loginAs("admin@example.com", "admin-password")
+
 					body, _ := json.Marshal(payload)
 					req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
 					req.Header.Set("Content-Type", "application/json")
+					req.AddCookie(cookie)
 					resp, err := app.Test(req)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(resp.StatusCode).To(Equal(400))
@@ -227,9 +300,13 @@ var _ = Describe("UsersHandler", Ordered, func() {
 			)
 
 			It("returns a descriptive error message for invalid email", func() {
+				createUser("Admin", "admin@example.com", "admin-password")
+				cookie := loginAs("admin@example.com", "admin-password")
+
 				body, _ := json.Marshal(fiber.Map{"name": "X", "email": "bad-email", "password": "s3cur3P@ss"})
 				req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(cookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(400))
@@ -240,9 +317,13 @@ var _ = Describe("UsersHandler", Ordered, func() {
 			})
 
 			It("returns a descriptive error message for short password", func() {
+				createUser("Admin", "admin@example.com", "admin-password")
+				cookie := loginAs("admin@example.com", "admin-password")
+
 				body, _ := json.Marshal(fiber.Map{"name": "X", "email": "x@example.com", "password": "short"})
 				req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(cookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(400))
@@ -480,68 +561,6 @@ var _ = Describe("UsersHandler", Ordered, func() {
 		})
 	})
 
-	// ── Conditional auth on Create ────────────────────────────────────────────
-
-	Describe("POST /api/users conditional auth", func() {
-		setSetupComplete := func(value string) {
-			body, _ := json.Marshal(fiber.Map{"value": value})
-			req := httptest.NewRequest("PUT", "/api/settings/setup_complete", bytes.NewReader(body))
-			req.Header.Set("Content-Type", "application/json")
-
-			// Need a valid session to update settings — create a temp user and log in
-			createUser("TempAdmin", "tempadmin@example.com", "temp-password")
-			cookie := loginAs("tempadmin@example.com", "temp-password")
-			req.AddCookie(cookie)
-
-			resp, err := app.Test(req)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(resp.StatusCode).To(Equal(200))
-		}
-
-		Context("when setup_complete is false", func() {
-			It("allows user creation without authentication", func() {
-				body, _ := json.Marshal(fiber.Map{
-					"name": "New User", "email": "new@example.com", "password": "new-password",
-				})
-				req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-				req.Header.Set("Content-Type", "application/json")
-				resp, err := app.Test(req)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
-			})
-		})
-
-		Context("when setup_complete is true", func() {
-			BeforeEach(func() {
-				setSetupComplete("true")
-			})
-
-			It("rejects unauthenticated user creation with 401", func() {
-				body, _ := json.Marshal(fiber.Map{
-					"name": "Another User", "email": "another@example.com", "password": "another-password",
-				})
-				req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-				req.Header.Set("Content-Type", "application/json")
-				resp, err := app.Test(req)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(resp.StatusCode).To(Equal(401))
-			})
-
-			It("allows user creation with a valid session", func() {
-				cookie := loginAs("tempadmin@example.com", "temp-password")
-
-				body, _ := json.Marshal(fiber.Map{
-					"name": "Another User", "email": "another@example.com", "password": "another-password",
-				})
-				req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-				req.Header.Set("Content-Type", "application/json")
-				req.AddCookie(cookie)
-				resp, err := app.Test(req)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
-			})
-		})
-	})
 })
 
 // mustOpenTestDBWithMigrations returns a fresh, isolated, fully-migrated

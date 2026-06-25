@@ -67,12 +67,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		handlers.NewPostLogsHandler(postLogRepo, postRepo, auth).Register(app)
 
 		// Seed auth user and log in.
-		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "admin@example.com", "password": "admin-password"})
-		req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := app.Test(req)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+		seedTenantUser(db, "Admin", "admin@example.com", "admin-password")
 
 		loginBody, _ := json.Marshal(fiber.Map{"email": "admin@example.com", "password": "admin-password"})
 		loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
@@ -98,21 +93,21 @@ var _ = Describe("PostsHandler", Ordered, func() {
 	})
 
 	AfterEach(func() {
-		_, err := db.NewDelete().TableExpr("post_logs").Where("1 = 1").Exec(context.Background())
+		_, err := db.NewDelete().TableExpr("post_logs").Where("1 = 1").Exec(tenantCtx())
 		Expect(err).NotTo(HaveOccurred())
-		_, err = db.NewDelete().TableExpr("post_assistant_messages").Where("1 = 1").Exec(context.Background())
+		_, err = db.NewDelete().TableExpr("post_assistant_messages").Where("1 = 1").Exec(tenantCtx())
 		Expect(err).NotTo(HaveOccurred())
-		_, err = db.NewDelete().TableExpr("post_versions").Where("1 = 1").Exec(context.Background())
+		_, err = db.NewDelete().TableExpr("post_versions").Where("1 = 1").Exec(tenantCtx())
 		Expect(err).NotTo(HaveOccurred())
-		_, err = db.NewDelete().TableExpr("posts").Where("1 = 1").Exec(context.Background())
+		_, err = db.NewDelete().TableExpr("posts").Where("1 = 1").Exec(tenantCtx())
 		Expect(err).NotTo(HaveOccurred())
-		_, err = db.NewDelete().TableExpr("assets").Where("1 = 1").Exec(context.Background())
+		_, err = db.NewDelete().TableExpr("assets").Where("1 = 1").Exec(tenantCtx())
 		Expect(err).NotTo(HaveOccurred())
-		_, err = db.NewDelete().TableExpr("campaigns").Where("1 = 1").Exec(context.Background())
+		_, err = db.NewDelete().TableExpr("campaigns").Where("1 = 1").Exec(tenantCtx())
 		Expect(err).NotTo(HaveOccurred())
-		_, err = db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(context.Background())
+		_, err = db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(tenantCtx())
 		Expect(err).NotTo(HaveOccurred())
-		_, err = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(context.Background())
+		_, err = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(tenantCtx())
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -718,7 +713,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 
 				// Insert a deliberately-violating attachment row directly
 				// (image/gif is not in Instagram's allowed_formats).
-				ctx := context.Background()
+				ctx := tenantCtx()
 				attID, err := models.NewID()
 				Expect(err).NotTo(HaveOccurred())
 				_, err = db.NewInsert().Model(&models.PostAttachment{
@@ -789,7 +784,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				S3Key:          "post-attachments/" + p.ID + "/" + id,
 				CreatedBy:      p.CreatedBy,
 			}
-			Expect(repository.NewPostAttachmentRepository(db).CreateAtNextPosition(context.Background(), att)).To(Succeed())
+			Expect(repository.NewPostAttachmentRepository(db).CreateAtNextPosition(tenantCtx(), att)).To(Succeed())
 			return id
 		}
 
@@ -1127,11 +1122,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil).Register(stubApp)
 				handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, repository.NewPlatformRepository(db), repository.NewPostAttachmentRepository(db), auth, stub, nil).Register(stubApp)
 
-				body, _ := json.Marshal(fiber.Map{"name": "SSE", "email": "sse-assist@example.com", "password": "sse-password"})
-				regReq := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-				regReq.Header.Set("Content-Type", "application/json")
-				_, err := stubApp.Test(regReq)
-				Expect(err).NotTo(HaveOccurred())
+				seedTenantUser(db, "SSE", "sse-assist@example.com", "sse-password")
 				loginBody, _ := json.Marshal(fiber.Map{"email": "sse-assist@example.com", "password": "sse-password"})
 				loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
 				loginReq.Header.Set("Content-Type", "application/json")
@@ -1310,11 +1301,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				ph.SetQualityAssessor(stub)
 				ph.Register(stubApp)
 
-				body, _ := json.Marshal(fiber.Map{"name": "Assess", "email": "sse-assess@example.com", "password": "sse-password"})
-				regReq := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-				regReq.Header.Set("Content-Type", "application/json")
-				_, err := stubApp.Test(regReq)
-				Expect(err).NotTo(HaveOccurred())
+				seedTenantUser(db, "Assess", "sse-assess@example.com", "sse-password")
 				loginBody, _ := json.Marshal(fiber.Map{"email": "sse-assess@example.com", "password": "sse-password"})
 				loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
 				loginReq.Header.Set("Content-Type", "application/json")
@@ -1435,11 +1422,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 
 				// A second user assesses the first user's post — allowed: posts
 				// are shared across the workspace, no per-user ownership gate.
-				other, _ := json.Marshal(fiber.Map{"name": "Other", "email": "sse-assess-other@example.com", "password": "sse-password"})
-				regReq := httptest.NewRequest("POST", "/api/users", bytes.NewReader(other))
-				regReq.Header.Set("Content-Type", "application/json")
-				_, err := stubApp.Test(regReq)
-				Expect(err).NotTo(HaveOccurred())
+				seedTenantUser(db, "Other", "sse-assess-other@example.com", "sse-password")
 				loginBody, _ := json.Marshal(fiber.Map{"email": "sse-assess-other@example.com", "password": "sse-password"})
 				loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
 				loginReq.Header.Set("Content-Type", "application/json")
@@ -1524,11 +1507,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				ph.SetEvaluationRepo(evalRepo)
 				ph.Register(readApp)
 
-				body, _ := json.Marshal(fiber.Map{"name": "Reader", "email": "assessment-read@example.com", "password": "read-password"})
-				regReq := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-				regReq.Header.Set("Content-Type", "application/json")
-				_, err := readApp.Test(regReq)
-				Expect(err).NotTo(HaveOccurred())
+				seedTenantUser(db, "Reader", "assessment-read@example.com", "read-password")
 				loginBody, _ := json.Marshal(fiber.Map{"email": "assessment-read@example.com", "password": "read-password"})
 				loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
 				loginReq.Header.Set("Content-Type", "application/json")
@@ -1580,7 +1559,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 
 				id, err := models.NewID()
 				Expect(err).NotTo(HaveOccurred())
-				Expect(evalRepo.Upsert(context.Background(), &models.PostEvaluation{
+				Expect(evalRepo.Upsert(tenantCtx(), &models.PostEvaluation{
 					ID:               id,
 					PostID:           postID,
 					PlatformID:       "AXqWG7U2qnpt",
@@ -1805,7 +1784,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 			p := createPost("Cancel Me", nil)
 			// Move the post to scheduled directly via DB so the handler
 			// reaches the dep check.
-			ctx := context.Background()
+			ctx := tenantCtx()
 			_, err := db.NewUpdate().Model((*models.Post)(nil)).
 				Set("status = ?", models.PostStatusScheduled).
 				Where("id = ?", p.ID).Exec(ctx)

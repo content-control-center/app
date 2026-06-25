@@ -1,7 +1,6 @@
 package repository_test
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -51,14 +50,14 @@ func seedPost(t *testing.T, db *bun.DB, id, publisher, publisherPostID string, p
 		CreatedAt:       time.Now().UTC(),
 		UpdatedAt:       time.Now().UTC(),
 	}
-	if _, err := db.NewInsert().Model(post).Exec(context.Background()); err != nil {
+	if _, err := db.NewInsert().Model(post).Exec(tenantCtx()); err != nil {
 		t.Fatalf("seed post %s: %v", id, err)
 	}
 }
 
 func TestPostAnalyticsUpsertAndGet(t *testing.T) {
 	db := openMigratedDB(t)
-	ctx := context.Background()
+	ctx := tenantCtx()
 	repo := repository.NewPostAnalyticsRepository(db)
 
 	seedPost(t, db, "p1", models.PublisherZernio, "z-1", time.Now().UTC())
@@ -124,7 +123,7 @@ func TestPostAnalyticsUpsertAndGet(t *testing.T) {
 
 func TestPostAnalyticsListAndOverview(t *testing.T) {
 	db := openMigratedDB(t)
-	ctx := context.Background()
+	ctx := tenantCtx()
 	repo := repository.NewPostAnalyticsRepository(db)
 
 	now := time.Now().UTC()
@@ -180,7 +179,7 @@ func TestPostAnalyticsListAndOverview(t *testing.T) {
 
 func TestListWithPublisherPostID(t *testing.T) {
 	db := openMigratedDB(t)
-	ctx := context.Background()
+	ctx := tenantCtx()
 	repo := repository.NewPostRepository(db)
 
 	seedPost(t, db, "p1", models.PublisherZernio, "z-1", time.Now().UTC())
@@ -229,7 +228,7 @@ func TestListWithPublisherPostID(t *testing.T) {
 
 func mustUpsert(t *testing.T, repo repository.PostAnalyticsRepository, postID, pubPostID string, impressions, likes int, rate float64) {
 	t.Helper()
-	err := repo.Upsert(context.Background(), &models.PostAnalytics{
+	err := repo.Upsert(tenantCtx(), &models.PostAnalytics{
 		PostID:            postID,
 		PublisherPostID:   pubPostID,
 		Impressions:       impressions,

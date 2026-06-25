@@ -38,7 +38,7 @@ var _ = Describe("Post quality assessment flow", Ordered, func() {
 			Skip("ANTHROPIC_API_KEY not set — skipping post quality integration tests")
 		}
 
-		ctx = context.Background()
+		ctx = tenantCtx()
 		db = mustOpenIntegrationDB()
 
 		tagRepo := repository.NewTagRepository(db)
@@ -56,6 +56,7 @@ var _ = Describe("Post quality assessment flow", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		_, err = db.NewInsert().Model(&models.User{
 			ID:           userID,
+			TenantID:     models.DefaultTenantID,
 			Name:         "Post Quality Tester",
 			Email:        "pq-integration@test.local",
 			PasswordHash: "placeholder",

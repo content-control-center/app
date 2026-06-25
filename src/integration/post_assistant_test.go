@@ -21,14 +21,14 @@ import (
 
 var _ = Describe("Post assistant flow", Ordered, func() {
 	var (
-		ctx        context.Context
-		db         *bun.DB
-		userID     string
-		campaignID string
-		postRepo   repository.PostRepository
+		ctx         context.Context
+		db          *bun.DB
+		userID      string
+		campaignID  string
+		postRepo    repository.PostRepository
 		versionRepo repository.PostVersionRepository
 		messageRepo repository.PostAssistantMessageRepository
-		callback   func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error)
+		callback    func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error)
 
 		platformID = "AXqWG7U2qnpt" // seeded LinkedIn platform (Sqid)
 	)
@@ -39,7 +39,7 @@ var _ = Describe("Post assistant flow", Ordered, func() {
 			Skip("ANTHROPIC_API_KEY not set — skipping post assistant integration tests")
 		}
 
-		ctx = context.Background()
+		ctx = tenantCtx()
 		db = mustOpenIntegrationDB()
 
 		// Wire up every repository the flow consumes.
@@ -59,6 +59,7 @@ var _ = Describe("Post assistant flow", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		_, err = db.NewInsert().Model(&models.User{
 			ID:           userID,
+			TenantID:     models.DefaultTenantID,
 			Name:         "Post Assistant Tester",
 			Email:        "pa-integration@test.local",
 			PasswordHash: "placeholder",

@@ -12,6 +12,7 @@ import (
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/post_actions/logs"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // PollZernioStatusQueue is the River queue name (CON-69 §3, §7).
@@ -47,6 +48,8 @@ type PollZernioStatusProcessor struct {
 
 // Work is the River entrypoint; it delegates to Process.
 func (p *PollZernioStatusProcessor) Work(ctx context.Context, job *river.Job[PollZernioStatusTask]) error {
+	// CON-97: background jobs span tenants (interim until per-tenant, PR4).
+	ctx = tenantctx.WithSystem(ctx)
 	return p.Process(ctx, job.Args)
 }
 
@@ -70,6 +73,8 @@ func (p *PollZernioStatusProcessor) Process(ctx context.Context, task PollZernio
 	if err != nil {
 		return fmt.Errorf("poll: load post %s: %w", task.PostID, err)
 	}
+	// Scope the rest of the job to the owning tenant (CON-97 PR4).
+	ctx = tenantctx.With(ctx, post.TenantID)
 	if post.Status != models.PostStatusScheduled {
 		appendLog(ctx, p.Deps, post.ID, models.PostLogEventTaskSucceeded, post.Status, post.Status,
 			"poll exited: post is no longer Scheduled", `{"reason":"status_changed"}`)

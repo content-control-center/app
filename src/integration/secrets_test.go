@@ -64,19 +64,12 @@ func newSecretsRig() *secretsTestRig {
 	handlers.NewHealthHandler(db, store).Register(app)
 
 	// Register an admin user and capture the session cookie.
-	body, _ := json.Marshal(fiber.Map{
-		"name": "Secrets Tester", "email": "secrets@test.local", "password": "test-password",
-	})
-	req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
+	seedTenantUser(db, "Secrets Tester", "secrets@test.local", "test-password")
+
+	body, _ := json.Marshal(fiber.Map{"email": "secrets@test.local", "password": "test-password"})
+	req := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := app.Test(req)
-	Expect(err).NotTo(HaveOccurred())
-	Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
-
-	body, _ = json.Marshal(fiber.Map{"email": "secrets@test.local", "password": "test-password"})
-	req = httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err = app.Test(req)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
 	var cookie *http.Cookie
@@ -149,7 +142,7 @@ var _ = Describe("Secrets API lifecycle", func() {
 			"updated_at should advance: was %s, now %s", firstUpdate, renewed.UpdatedAt)
 
 		// Ensure the stored value is the rotated one.
-		current, err := rig.store.Get(context.Background(), secrets.NameAnthropicAPIKey)
+		current, err := rig.store.Get(tenantCtx(), secrets.NameAnthropicAPIKey)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(current).To(Equal(plaintext + "-RENEWED"))
 
@@ -200,7 +193,7 @@ var _ = Describe("Secrets API lifecycle", func() {
 
 var _ = Describe("Secrets env-var migration on boot", func() {
 	It("migrates env values into the DB on first boot and DB wins thereafter", func() {
-		ctx := context.Background()
+		ctx := tenantCtx()
 		db := mustOpenIntegrationDB()
 
 		kek := make([]byte, envelope.KeySize)
@@ -242,7 +235,7 @@ var _ = Describe("Secrets env-var migration on boot", func() {
 	})
 
 	It("leaves the app in a degraded state when neither DB nor env has a key", func() {
-		ctx := context.Background()
+		ctx := tenantCtx()
 		db := mustOpenIntegrationDB()
 		kek := make([]byte, envelope.KeySize)
 		_, _ = rand.Read(kek)
@@ -285,7 +278,7 @@ var _ = Describe("Secrets hot-reload subscriber", func() {
 	// store sees the rotated value on its very next call, no restart.
 	It("resolves the new value through a per-call resolver after PUT", func() {
 		rig := newSecretsRig()
-		ctx := context.Background()
+		ctx := tenantCtx()
 		resolver := func(ctx context.Context) (string, error) {
 			return rig.store.Get(ctx, secrets.NameZernioAPIKey)
 		}
@@ -315,8 +308,8 @@ var _ = Describe("Health endpoint reports secret resolvability", func() {
 		Expect(resp.StatusCode).To(Equal(200))
 		body, _ := io.ReadAll(resp.Body)
 		var health struct {
-			Status  string                          `json:"status"`
-			Secrets map[string]map[string]bool      `json:"secrets"`
+			Status  string                     `json:"status"`
+			Secrets map[string]map[string]bool `json:"secrets"`
 		}
 		Expect(json.Unmarshal(body, &health)).To(Succeed())
 		Expect(health.Status).To(Equal("ok"))

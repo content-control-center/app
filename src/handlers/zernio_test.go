@@ -17,8 +17,8 @@ import (
 
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/handlers"
-	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
 )
 
@@ -201,7 +201,9 @@ var _ = Describe("ZernioHandler", Ordered, func() {
 		integ = zernio.NewIntegration(client)
 		integ.SetState(zernio.StateDegraded)
 		bootstrapper = zernio.NewBootstrapper(integ, store)
-		worker = zernio.NewWorker(integ, accountRepo, store, hub, bootstrapper, time.Hour, time.Minute)
+		worker = zernio.NewWorker(integ, accountRepo, store, hub, bootstrapper, time.Hour, time.Minute, func(ctx context.Context) ([]string, error) {
+			return settingRepo.ListTenantIDsByKey(ctx, zernio.SettingProfileID)
+		})
 
 		handlers.NewZernioHandler(
 			integ, bootstrapper, store, platformRepo, accountRepo, worker,
@@ -210,12 +212,7 @@ var _ = Describe("ZernioHandler", Ordered, func() {
 		).Register(app)
 
 		// Seed an auth user and grab a session cookie.
-		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "admin@example.com", "password": "admin-password"})
-		req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := app.Test(req)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+		seedTenantUser(db, "Admin", "admin@example.com", "admin-password")
 
 		loginBody, _ := json.Marshal(fiber.Map{"email": "admin@example.com", "password": "admin-password"})
 		loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
@@ -232,7 +229,7 @@ var _ = Describe("ZernioHandler", Ordered, func() {
 		if stub != nil {
 			stub.Close()
 		}
-		ctx := context.Background()
+		ctx := tenantCtx()
 		_, _ = db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("social_accounts").Where("1 = 1").Exec(ctx)
@@ -242,7 +239,7 @@ var _ = Describe("ZernioHandler", Ordered, func() {
 	Describe("with an API key configured", func() {
 		BeforeEach(func() {
 			setupApp("api-key")
-			Expect(bootstrapper.Run(context.Background())).To(Succeed())
+			Expect(bootstrapper.Run(tenantCtx())).To(Succeed())
 			Expect(integ.State()).To(Equal(zernio.StateOK))
 		})
 
@@ -286,6 +283,24 @@ var _ = Describe("ZernioHandler", Ordered, func() {
 			Expect(resp.StatusCode).To(Equal(400))
 		})
 
+		It("POST /connect-links recovers a degraded integration by bootstrapping on first connect", func() {
+			// Simulate a transient boot-time degradation with no profile yet
+			// (e.g. the warmup ping blipped). The state guard must not short
+			// circuit before the lazy bootstrap gets to heal it (CON-100).
+			ctx := tenantCtx()
+			Expect(store.Delete(ctx, zernio.SettingProfileID)).To(Succeed())
+			integ.SetState(zernio.StateDegraded)
+
+			body, _ := json.Marshal(fiber.Map{"platform": "linkedin"})
+			req := httptest.NewRequest("POST", "/api/integrations/zernio/connect-links", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(200))
+			Expect(integ.State()).To(Equal(zernio.StateOK))
+		})
+
 		It("POST /connect-links returns the URL plus a 30-min ExpiresAt for an allowlisted platform", func() {
 			body, _ := json.Marshal(fiber.Map{"platform": "linkedin"})
 			req := httptest.NewRequest("POST", "/api/integrations/zernio/connect-links", bytes.NewReader(body))
@@ -311,7 +326,7 @@ var _ = Describe("ZernioHandler", Ordered, func() {
 			// Seed a row directly so we exercise the read path without
 			// running the worker.
 			now := time.Now().UTC()
-			Expect(accountRepo.ApplyPlan(context.Background(), []models.SocialAccount{{
+			Expect(accountRepo.ApplyPlan(tenantCtx(), []models.SocialAccount{{
 				ID:           "acc1",
 				Platform:     "linkedin",
 				ProfileID:    "p_test",
@@ -323,8 +338,8 @@ var _ = Describe("ZernioHandler", Ordered, func() {
 				ConnectedAt:  now,
 				LastSyncedAt: now,
 			}}, nil, now)).To(Succeed())
-			Expect(store.Set(context.Background(), zernio.SettingLastSyncAt, now.Format(time.RFC3339))).To(Succeed())
-			Expect(store.Set(context.Background(), zernio.SettingLastSyncStatus, zernio.SyncStatusOK)).To(Succeed())
+			Expect(store.Set(tenantCtx(), zernio.SettingLastSyncAt, now.Format(time.RFC3339))).To(Succeed())
+			Expect(store.Set(tenantCtx(), zernio.SettingLastSyncStatus, zernio.SyncStatusOK)).To(Succeed())
 
 			req := httptest.NewRequest("GET", "/api/integrations/zernio/accounts", nil)
 			req.AddCookie(authCookie)

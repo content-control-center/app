@@ -47,12 +47,7 @@ var _ = Describe("SettingsHandler", Ordered, func() {
 		handlers.NewSettingsHandler(settingRepo, auth).Register(app)
 
 		// Seed an auth user and log in
-		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "admin@example.com", "password": "admin-password"})
-		req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := app.Test(req)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+		seedTenantUser(db, "Admin", "admin@example.com", "admin-password")
 
 		loginBody, _ := json.Marshal(fiber.Map{"email": "admin@example.com", "password": "admin-password"})
 		loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))

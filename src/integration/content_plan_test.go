@@ -33,7 +33,7 @@ var _ = Describe("Content plan flow", Ordered, func() {
 			Skip("ANTHROPIC_API_KEY not set — skipping content plan integration tests")
 		}
 
-		ctx = context.Background()
+		ctx = tenantCtx()
 		db = mustOpenIntegrationDB()
 
 		tagRepo := repository.NewTagRepository(db)
@@ -50,6 +50,7 @@ var _ = Describe("Content plan flow", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		user := &models.User{
 			ID:           userID,
+			TenantID:     models.DefaultTenantID,
 			Name:         "Content Plan Tester",
 			Email:        "cp-integration@test.local",
 			PasswordHash: "placeholder",

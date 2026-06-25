@@ -87,27 +87,39 @@ func (r *postAttachmentRepository) ListS3KeysByPostID(ctx context.Context, postI
 }
 
 func (r *postAttachmentRepository) CreateAtNextPosition(ctx context.Context, att *models.PostAttachment) error {
+	// This INSERT is raw SQL, so the TenantScoped hooks don't fire — stamp and
+	// scope tenant_id by hand (CON-97).
+	tid, err := writeTenantID(ctx, att.TenantID)
+	if err != nil {
+		return err
+	}
+	att.TenantID = tid
+
 	var thumb any
 	if att.ThumbnailS3Key != "" {
 		thumb = att.ThumbnailS3Key
 	}
-	// Lock the parent post row for the duration of the insert so two
-	// concurrent uploads to the same post serialise — otherwise both could
-	// read the same MAX(position) and collide on the (post_id, position)
-	// unique constraint. Postgres runs writers concurrently (SQLite did not),
-	// so the serialisation must be explicit.
+	// Lock the parent post row (within the tenant) for the duration of the
+	// insert so two concurrent uploads to the same post serialise — otherwise
+	// both could read the same MAX(position) and collide on the (post_id,
+	// position) unique constraint. Postgres runs writers concurrently (SQLite
+	// did not), so the serialisation must be explicit.
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.NewRaw(`SELECT 1 FROM posts WHERE id = ? FOR UPDATE`, att.PostID).Exec(ctx); err != nil {
+		// Scan (not Exec) so a zero-row lock is detected: no parent post in this
+		// tenant (deleted mid-upload, or a cross-tenant id) fails closed with
+		// sql.ErrNoRows instead of inserting an orphaned/cross-tenant attachment.
+		var locked int
+		if err := tx.NewRaw(`SELECT 1 FROM posts WHERE id = ? AND tenant_id = ? FOR UPDATE`, att.PostID, tid).Scan(ctx, &locked); err != nil {
 			return err
 		}
 		const q = `INSERT INTO post_attachments
-			(id, post_id, position, mime_type, size_bytes, width, height,
+			(id, post_id, tenant_id, position, mime_type, size_bytes, width, height,
 			 is_animated, page_count, checksum_sha256, s3_key, thumbnail_s3_key, created_by)
-			VALUES (?, ?, COALESCE((SELECT MAX(position)+1 FROM post_attachments WHERE post_id=?), 0),
+			VALUES (?, ?, ?, COALESCE((SELECT MAX(position)+1 FROM post_attachments WHERE post_id=? AND tenant_id=?), 0),
 			        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			RETURNING position`
 		return tx.NewRaw(q,
-			att.ID, att.PostID, att.PostID,
+			att.ID, att.PostID, tid, att.PostID, tid,
 			att.MimeType, att.SizeBytes, att.Width, att.Height,
 			att.IsAnimated, att.PageCount, att.ChecksumSHA256, att.S3Key, thumb, att.CreatedBy,
 		).Scan(ctx, &att.Position)

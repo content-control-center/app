@@ -102,11 +102,7 @@ var _ = Describe("Post clone — CON-59 (real S3/MinIO)", Ordered, func() {
 		handlers.NewPostAttachmentsHandler(postAttRepo, postRepo, store, auth).Register(app)
 
 		// Seed user + session + campaign.
-		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "clone@example.com", "password": "clone-password"})
-		req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		_, err := app.Test(req)
-		Expect(err).NotTo(HaveOccurred())
+		seedTenantUser(db, "Admin", "clone@example.com", "clone-password")
 
 		loginBody, _ := json.Marshal(fiber.Map{"email": "clone@example.com", "password": "clone-password"})
 		loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
@@ -130,7 +126,7 @@ var _ = Describe("Post clone — CON-59 (real S3/MinIO)", Ordered, func() {
 	})
 
 	AfterEach(func() {
-		ctx := context.Background()
+		ctx := tenantCtx()
 		for _, t := range []string{"post_attachments", "post_versions", "post_logs", "post_assistant_messages", "posts", "campaigns", "sessions", "users"} {
 			_, _ = db.NewDelete().TableExpr(t).Where("1 = 1").Exec(ctx)
 		}
@@ -191,20 +187,20 @@ var _ = Describe("Post clone — CON-59 (real S3/MinIO)", Ordered, func() {
 		Expect(*c.ClonedFromPostID).To(Equal(srcID))
 
 		// Source is untouched.
-		src, err := postRepo.GetByID(context.Background(), srcID)
+		src, err := postRepo.GetByID(tenantCtx(), srcID)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(src.Status).To(Equal(models.PostStatusDraft))
 		Expect(src.ClonedFromPostID).To(BeNil())
 
 		// A v1 snapshot exists with the cloned content.
-		versions, err := versionRepo.ListByPostID(context.Background(), c.ID)
+		versions, err := versionRepo.ListByPostID(tenantCtx(), c.ID)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(versions).To(HaveLen(1))
 		Expect(versions[0].VersionNumber).To(Equal(1))
 		Expect(versions[0].Content).To(Equal("# Hello\n\nOriginal body."))
 
 		// An audit entry was recorded on the clone.
-		logs, err := logRepo.ListByPostID(context.Background(), c.ID, 0)
+		logs, err := logRepo.ListByPostID(tenantCtx(), c.ID, 0)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(logs).To(ContainElement(WithTransform(
 			func(l models.PostLog) models.PostLogEventType { return l.EventType },
@@ -224,7 +220,7 @@ var _ = Describe("Post clone — CON-59 (real S3/MinIO)", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(uresp.StatusCode).To(Equal(fiber.StatusCreated))
 
-		srcAtts, err := postAttRepo.ListByPostID(context.Background(), srcID)
+		srcAtts, err := postAttRepo.ListByPostID(tenantCtx(), srcID)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(srcAtts).To(HaveLen(1))
 		srcKey := srcAtts[0].S3Key
@@ -232,13 +228,13 @@ var _ = Describe("Post clone — CON-59 (real S3/MinIO)", Ordered, func() {
 		resp, c := clone(srcID, nil)
 		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
 
-		cloneAtts, err := postAttRepo.ListByPostID(context.Background(), c.ID)
+		cloneAtts, err := postAttRepo.ListByPostID(tenantCtx(), c.ID)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cloneAtts).To(HaveLen(1))
 		Expect(cloneAtts[0].S3Key).NotTo(Equal(srcKey))
 		Expect(cloneAtts[0].PostID).To(Equal(c.ID))
 
-		ctx := context.Background()
+		ctx := tenantCtx()
 		Expect(objectExists(ctx, raw, bucket, srcKey)).To(BeTrue())
 		Expect(objectExists(ctx, raw, bucket, cloneAtts[0].S3Key)).To(BeTrue())
 

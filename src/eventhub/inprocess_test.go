@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // drain reads at most n events from ch with a timeout. Returns the
@@ -105,6 +107,41 @@ func TestAuthzFiltersByUserID(t *testing.T) {
 		if ev.UserID == "bob" {
 			t.Errorf("alice received bob's event: %+v", ev)
 		}
+	}
+}
+
+func TestTenantIsolation(t *testing.T) {
+	h := New(Config{})
+	ctx := context.Background()
+
+	chA, unsubA, err := h.Subscribe(ctx, SubscribeOpts{UserID: "ua", TenantID: "tenant-a", Topics: []string{"all"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsubA()
+	chB, unsubB, err := h.Subscribe(ctx, SubscribeOpts{UserID: "ub", TenantID: "tenant-b", Topics: []string{"all"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsubB()
+
+	// A tenant-tagged event with no UserID (e.g. a job-published analytics
+	// event) must reach only the matching tenant.
+	_ = h.Publish(ctx, Event{Topic: "entity:post:x", TenantID: "tenant-a"})
+	if got, _ := drain(t, chA, 1, time.Second); len(got) != 1 || got[0].TenantID != "tenant-a" {
+		t.Fatalf("tenant A should have received its event, got %+v", got)
+	}
+	if leaked, _ := drain(t, chB, 1, 200*time.Millisecond); len(leaked) != 0 {
+		t.Fatalf("tenant B leaked tenant A's event: %+v", leaked)
+	}
+
+	// Publish derives the tenant from a tenant context when not set explicitly.
+	_ = h.Publish(tenantctx.With(context.Background(), "tenant-b"), Event{Topic: "entity:post:y"})
+	if got, _ := drain(t, chB, 1, time.Second); len(got) != 1 || got[0].TenantID != "tenant-b" {
+		t.Fatalf("tenant B should have received the ctx-derived event, got %+v", got)
+	}
+	if leaked, _ := drain(t, chA, 1, 200*time.Millisecond); len(leaked) != 0 {
+		t.Fatalf("tenant A leaked tenant B's ctx-derived event: %+v", leaked)
 	}
 }
 

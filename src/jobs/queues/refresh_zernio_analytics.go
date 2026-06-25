@@ -13,6 +13,7 @@ import (
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // RefreshZernioAnalyticsQueue is the recurring analytics-refresh queue
@@ -66,6 +67,8 @@ type RefreshZernioAnalyticsProcessor struct {
 
 // Work is the River entrypoint; it delegates to Process.
 func (p *RefreshZernioAnalyticsProcessor) Work(ctx context.Context, job *river.Job[RefreshZernioAnalyticsTask]) error {
+	// CON-97: background jobs span tenants (interim until per-tenant, PR4).
+	ctx = tenantctx.WithSystem(ctx)
 	return p.Process(ctx, job.Args)
 }
 
@@ -128,8 +131,10 @@ func (p *RefreshZernioAnalyticsProcessor) refresh(ctx context.Context, now time.
 	// publisher_post_id → post_id match map. Zernio returns analytics for
 	// every late post on the account; we upsert only the ones Ogen owns.
 	byPublisherID := make(map[string]string, len(posts))
+	tenantByPostID := make(map[string]string, len(posts))
 	for _, post := range posts {
 		byPublisherID[post.PublisherPostID] = post.ID
+		tenantByPostID[post.ID] = post.TenantID
 	}
 
 	from := now.AddDate(0, 0, -p.windowDays()).Format("2006-01-02")
@@ -154,13 +159,16 @@ func (p *RefreshZernioAnalyticsProcessor) refresh(ctx context.Context, now time.
 			if postID == "" {
 				continue
 			}
+			// Upsert + event within the post's tenant (CON-97 PR4); the post
+			// list above ran cross-tenant under the job's system context.
+			pctx := tenantctx.With(ctx, tenantByPostID[postID])
 			snapshot := buildSnapshot(postID, publisherPostID, &items[i], now)
-			if uerr := p.Deps.AnalyticsRepo.Upsert(ctx, snapshot); uerr != nil {
+			if uerr := p.Deps.AnalyticsRepo.Upsert(pctx, snapshot); uerr != nil {
 				log.Printf("zernio.analytics upsert post_id=%s error=%q", postID, uerr.Error())
 				continue
 			}
 			upserts++
-			p.publishUpdated(ctx, snapshot)
+			p.publishUpdated(pctx, snapshot)
 		}
 
 		if pagination.Pages == 0 || page >= pagination.Pages {
@@ -257,8 +265,9 @@ func (p *RefreshZernioAnalyticsProcessor) publishUpdated(ctx context.Context, a 
 		return
 	}
 	if err := p.Hub.Publish(ctx, eventhub.Event{
-		Topic: fmt.Sprintf("entity:post:%s", a.PostID),
-		Type:  "post.analytics.updated",
+		Topic:    fmt.Sprintf("entity:post:%s", a.PostID),
+		TenantID: a.TenantID,
+		Type:     "post.analytics.updated",
 		Payload: map[string]any{
 			"post_id":     a.PostID,
 			"sync_status": a.SyncStatus,

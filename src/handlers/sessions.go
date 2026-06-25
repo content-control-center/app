@@ -81,6 +81,7 @@ func (h *SessionsHandler) Create(c *fiber.Ctx) error {
 	session := &models.Session{
 		ID:        token,
 		UserID:    user.ID,
+		TenantID:  user.TenantID,
 		ExpiresAt: time.Now().UTC().Add(sessionTTL),
 	}
 	if err := h.sessionRepo.Create(c.Context(), session); err != nil {

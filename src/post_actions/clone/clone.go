@@ -351,7 +351,7 @@ func (s *Service) copyAttachments(
 			return nil, copiedKeys, err
 		}
 
-		newKey := "post-attachments/" + newPostID + "/" + attID + path.Ext(a.S3Key)
+		newKey := storage.TenantKey(ctx, "post-attachments/"+newPostID+"/"+attID+path.Ext(a.S3Key))
 		if s.store != nil && a.S3Key != "" {
 			if err := s.store.Copy(ctx, a.S3Key, newKey); err != nil {
 				return nil, copiedKeys, err
@@ -361,7 +361,7 @@ func (s *Service) copyAttachments(
 
 		var newThumb string
 		if a.ThumbnailS3Key != "" {
-			newThumb = "post-attachments/" + newPostID + "/" + attID + ".thumb.png"
+			newThumb = storage.TenantKey(ctx, "post-attachments/"+newPostID+"/"+attID+".thumb.png")
 			if s.store != nil {
 				if err := s.store.Copy(ctx, a.ThumbnailS3Key, newThumb); err != nil {
 					return nil, copiedKeys, err

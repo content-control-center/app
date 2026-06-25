@@ -12,6 +12,7 @@ import (
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/post_actions/logs"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // CancelZernioJobQueue is the River queue name (CON-69 §3, §9).
@@ -55,6 +56,8 @@ type CancelZernioJobProcessor struct {
 
 // Work is the River entrypoint; it delegates to Process.
 func (p *CancelZernioJobProcessor) Work(ctx context.Context, job *river.Job[CancelZernioJobTask]) error {
+	// CON-97: background jobs span tenants (interim until per-tenant, PR4).
+	ctx = tenantctx.WithSystem(ctx)
 	return p.Process(ctx, job.Args)
 }
 
@@ -85,6 +88,8 @@ func (p *CancelZernioJobProcessor) Process(ctx context.Context, task CancelZerni
 	if err != nil {
 		return fmt.Errorf("cancel: load post %s: %w", task.PostID, err)
 	}
+	// Scope the rest of the job to the owning tenant (CON-97 PR4).
+	ctx = tenantctx.With(ctx, post.TenantID)
 	if post.Status != models.PostStatusScheduled {
 		// User raced themselves, or the poller landed Published first.
 		appendLogActor(ctx, p.Deps, post.ID, task.Actor, models.PostLogEventTaskSucceeded, post.Status, post.Status,

@@ -104,8 +104,9 @@ func (h *EventsHandler) Stream(c *fiber.Ctx) error {
 	_ = c.Get("Last-Event-Id")
 
 	eventCh, unsubscribe, err := h.hub.Subscribe(c.Context(), eventhub.SubscribeOpts{
-		UserID: session.UserID,
-		Topics: topics,
+		UserID:   session.UserID,
+		TenantID: session.TenantID, // CON-97 §10.2: only this tenant's events
+		Topics:   topics,
 	})
 	if err != nil {
 		if errors.Is(err, eventhub.ErrTooManySubscribers) {

@@ -91,9 +91,11 @@ func (h *ImagesHandler) Upload(c *fiber.Ctx) error {
 		return fmt.Errorf("images: seek upload: %w", err)
 	}
 
-	key := uuid.NewString() + ext
-	// Strip any directory components from the key for safety.
-	key = filepath.Base(key)
+	// Strip any directory components from the filename for safety, then
+	// namespace the object key by tenant (CON-97). filepath.Base must run on
+	// the filename — running it on the final key would strip the
+	// t/<tenant_id>/ prefix.
+	key := storage.TenantKey(c.Context(), filepath.Base(uuid.NewString()+ext))
 
 	url, err := h.storage.Upload(c.Context(), key, f, fh.Size, mimeType)
 	if err != nil {

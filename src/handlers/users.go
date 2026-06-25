@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"time"
@@ -13,7 +12,11 @@ import (
 )
 
 type UsersHandler struct {
-	repo        repository.UserRepository
+	repo repository.UserRepository
+	// settingRepo backed the setup_complete bootstrap gate, removed in CON-97
+	// (signup via POST /api/tenants is the sole bootstrap). Retained on the
+	// constructor to avoid churn across the ~37 call sites; revisit when
+	// settings become per-tenant (PR3).
 	settingRepo repository.SettingRepository
 	auth        fiber.Handler
 }
@@ -26,24 +29,11 @@ func (h *UsersHandler) Register(app *fiber.App) {
 	app.Get("/api/current_user", h.auth, h.CurrentUser) // always protected
 
 	g := app.Group("/api/users")
-	g.Post("/", h.conditionalAuth, h.Create)  // open while setup_complete=false, protected after
-	g.Get("/", h.auth, h.List)                // always protected
-	g.Get("/:id", h.auth, h.Get)              // always protected
-	g.Put("/:id", h.auth, h.Update)           // always protected
-	g.Delete("/:id", h.auth, h.Delete)        // always protected
-}
-
-// conditionalAuth requires authentication only after setup is complete.
-// This allows the first user to be created without a session during initial setup.
-func (h *UsersHandler) conditionalAuth(c *fiber.Ctx) error {
-	complete, err := setupComplete(c.Context(), h.settingRepo)
-	if err != nil {
-		return err
-	}
-	if complete {
-		return h.auth(c)
-	}
-	return c.Next()
+	g.Post("/", h.auth, h.Create)      // new users join the caller's tenant (CON-97)
+	g.Get("/", h.auth, h.List)         // always protected
+	g.Get("/:id", h.auth, h.Get)       // always protected
+	g.Put("/:id", h.auth, h.Update)    // always protected
+	g.Delete("/:id", h.auth, h.Delete) // always protected
 }
 
 // requireSelf returns 403 unless the authenticated session belongs to the user
@@ -60,18 +50,6 @@ func requireSelf(c *fiber.Ctx) error {
 	return nil
 }
 
-// setupComplete returns true when the "setup_complete" setting is "true".
-func setupComplete(ctx context.Context, repo repository.SettingRepository) (bool, error) {
-	setting, err := repo.GetByKey(ctx, "setup_complete")
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return false, nil
-		}
-		return false, err
-	}
-	return setting.Value == "true", nil
-}
-
 type createUserRequest struct {
 	Name     string `json:"name"     validate:"required"`
 	Email    string `json:"email"    validate:"required,email"`
@@ -79,8 +57,8 @@ type createUserRequest struct {
 }
 
 type updateUserRequest struct {
-	Name     string `json:"name"     validate:"required"`
-	Email    string `json:"email"    validate:"required,email"`
+	Name  string `json:"name"     validate:"required"`
+	Email string `json:"email"    validate:"required,email"`
 	// Password is optional on update; when provided it must be at least 8 characters.
 	Password string `json:"password" validate:"omitempty,min=8"`
 }
@@ -96,7 +74,7 @@ type updateUserRequest struct {
 // @Router       /api/current_user [get]
 func (h *UsersHandler) CurrentUser(c *fiber.Ctx) error {
 	session := c.Locals("session").(*models.Session)
-	user, err := h.repo.GetByID(c.Context(), session.UserID)
+	user, err := h.repo.GetByIDWithTenant(c.Context(), session.UserID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fiber.NewError(fiber.StatusUnauthorized, "user not found")
@@ -125,7 +103,7 @@ func (h *UsersHandler) List(c *fiber.Ctx) error {
 
 // Create godoc
 // @Summary      Create user
-// @Description  Creates a new user. Open (no auth required) while setup_complete=false; requires authentication once setup is complete.
+// @Description  Creates a new user in the authenticated caller's tenant (CON-97). Requires authentication; any tenant_id in the body is ignored.
 // @Tags         users
 // @Accept       json
 // @Produce      json
@@ -136,6 +114,10 @@ func (h *UsersHandler) List(c *fiber.Ctx) error {
 // @Failure      401   {object}  map[string]string
 // @Router       /api/users [post]
 func (h *UsersHandler) Create(c *fiber.Ctx) error {
+	// New users always join the authenticated caller's tenant; a tenant_id in
+	// the request body is never trusted (CON-97 §7.2, §12.2).
+	session := c.Locals("session").(*models.Session)
+
 	var req createUserRequest
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
@@ -156,6 +138,7 @@ func (h *UsersHandler) Create(c *fiber.Ctx) error {
 
 	user := &models.User{
 		ID:           id,
+		TenantID:     session.TenantID,
 		Name:         req.Name,
 		Email:        req.Email,
 		PasswordHash: hash,

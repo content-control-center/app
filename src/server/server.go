@@ -71,6 +71,7 @@ func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secret
 
 	// API routes
 	userRepo := repository.NewUserRepository(db)
+	tenantRepo := repository.NewTenantRepository(db)
 	sessionRepo := repository.NewSessionRepository(db)
 	settingRepo := repository.NewSettingRepository(db)
 	tagRepo := repository.NewTagRepository(db)
@@ -98,6 +99,8 @@ func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secret
 
 	handlers.NewHealthHandler(db, secretStore).Register(app)
 	handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
+	// CON-97: public self-service signup (POST /api/tenants) + tenant CRU.
+	handlers.NewTenantsHandler(db, tenantRepo, userRepo, cfg.SessionCookieName, !cfg.Debug, auth).Register(app)
 	// Session cookies are marked Secure in production. Debug mode is the
 	// development escape hatch so localhost over plain HTTP still works.
 	handlers.NewSessionsHandler(userRepo, sessionRepo, cfg.SessionCookieName, !cfg.Debug).Register(app)

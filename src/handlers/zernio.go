@@ -200,9 +200,6 @@ func (h *ZernioHandler) CreateConnectLink(c *fiber.Ctx) error {
 	if !h.integ.Enabled() {
 		return fiber.NewError(fiber.StatusConflict, "integration_disabled")
 	}
-	if h.integ.State() != zernio.StateOK {
-		return fiber.NewError(fiber.StatusServiceUnavailable, "integration_degraded")
-	}
 
 	var req connectLinkRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -229,8 +226,25 @@ func (h *ZernioHandler) CreateConnectLink(c *fiber.Ctx) error {
 		return err
 	}
 	if !ok || profileID == "" {
-		// Bootstrap should have populated this in StateOK; treat its
-		// absence as a degraded transient and surface as 503.
+		// CON-100: lazily bootstrap THIS tenant's Zernio profile on its first
+		// connect (the request context carries the tenant), then re-read it.
+		if err := h.bootstrapper.Run(c.Context()); err != nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "integration_degraded")
+		}
+		profileID, ok, err = h.settings.Get(c.Context(), zernio.SettingProfileID)
+		if err != nil {
+			return err
+		}
+		if !ok || profileID == "" {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "integration_degraded")
+		}
+	}
+
+	// Health gate runs *after* the lazy bootstrap above: a missing-profile
+	// bootstrap promotes a transient StateDegraded back to StateOK on success
+	// (CON-100), so a first connect can self-heal instead of being short-
+	// circuited to 503 before it ever gets the chance.
+	if h.integ.State() != zernio.StateOK {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "integration_degraded")
 	}
 

@@ -55,7 +55,7 @@ var _ = Describe("Content plan flow — parallel batched generation", Ordered, f
 			Skip("ANTHROPIC_API_KEY not set — skipping batching integration tests")
 		}
 
-		ctx = context.Background()
+		ctx = tenantCtx()
 		db = mustOpenIntegrationDB()
 
 		tagRepo := repository.NewTagRepository(db)
@@ -73,6 +73,7 @@ var _ = Describe("Content plan flow — parallel batched generation", Ordered, f
 		Expect(err).NotTo(HaveOccurred())
 		user := &models.User{
 			ID:           userID,
+			TenantID:     models.DefaultTenantID,
 			Name:         "Batching Tester",
 			Email:        "cp-batching@test.local",
 			PasswordHash: "placeholder",

@@ -2,7 +2,6 @@ package handlers_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -67,14 +66,7 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 		handlers.NewAnalyticsHandler(analyticsRepo, auth).Register(app)
 
 		// Auth user + login.
-		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "admin@example.com", "password": "admin-password"})
-		req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := app.Test(req)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
-		var createdUser models.User
-		Expect(json.NewDecoder(resp.Body).Decode(&createdUser)).To(Succeed())
+		createdUser := seedTenantUser(db, "Admin", "admin@example.com", "admin-password")
 		userID = createdUser.ID
 
 		loginBody, _ := json.Marshal(fiber.Map{"email": "admin@example.com", "password": "admin-password"})
@@ -99,7 +91,7 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 	})
 
 	AfterEach(func() {
-		ctx := context.Background()
+		ctx := tenantCtx()
 		_, _ = db.NewDelete().TableExpr("post_analytics").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("posts").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("campaigns").Where("1 = 1").Exec(ctx)
@@ -123,11 +115,11 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 			CreatedBy:       userID,
 			PublishedAt:     &published,
 		}
-		Expect(postRepo.Create(context.Background(), p)).To(Succeed())
+		Expect(postRepo.Create(tenantCtx(), p)).To(Succeed())
 	}
 
 	seedSnapshot := func(postID, pubPostID string, impressions, likes int, rate float64) {
-		Expect(analyticsRepo.Upsert(context.Background(), &models.PostAnalytics{
+		Expect(analyticsRepo.Upsert(tenantCtx(), &models.PostAnalytics{
 			PostID:          postID,
 			PublisherPostID: pubPostID,
 			Impressions:     impressions,

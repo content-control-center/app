@@ -4,7 +4,6 @@ package integration_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -89,11 +88,7 @@ var _ = Describe("Post schedule — CON-78", Ordered, func() {
 		postsHandler.Register(app)
 
 		// Seed user + session + campaign.
-		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "schedule@example.com", "password": "schedule-password"})
-		req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		_, err := app.Test(req)
-		Expect(err).NotTo(HaveOccurred())
+		seedTenantUser(db, "Admin", "schedule@example.com", "schedule-password")
 
 		loginBody, _ := json.Marshal(fiber.Map{"email": "schedule@example.com", "password": "schedule-password"})
 		loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
@@ -116,7 +111,7 @@ var _ = Describe("Post schedule — CON-78", Ordered, func() {
 	})
 
 	AfterEach(func() {
-		ctx := context.Background()
+		ctx := tenantCtx()
 		for _, t := range []string{"auto_publish_allowlist", "post_versions", "post_logs", "post_assistant_messages", "posts", "campaigns", "sessions", "users"} {
 			_, _ = db.NewDelete().TableExpr(t).Where("1 = 1").Exec(ctx)
 		}
@@ -180,7 +175,7 @@ var _ = Describe("Post schedule — CON-78", Ordered, func() {
 		Expect(out.Post.ScheduledAt.UTC().Unix()).To(Equal(when.Unix()))
 
 		// user_schedule action-log recorded.
-		logs, err := logRepo.ListByPostID(context.Background(), id, 0)
+		logs, err := logRepo.ListByPostID(tenantCtx(), id, 0)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(logs).To(ContainElement(WithTransform(
 			func(l models.PostLog) models.PostLogEventType { return l.EventType },
@@ -189,7 +184,7 @@ var _ = Describe("Post schedule — CON-78", Ordered, func() {
 	})
 
 	It("#2 routes an allowlisted platform to auto-publish (scheduled)", func() {
-		Expect(allowlistRepo.Set(context.Background(), []string{"linkedin"})).To(Succeed())
+		Expect(allowlistRepo.Set(tenantCtx(), []string{"linkedin"})).To(Succeed())
 		id := createPost(linkedinSqid, "text-post", "ready_for_publish")
 
 		resp, out := schedule(id, future(), false)
@@ -206,7 +201,7 @@ var _ = Describe("Post schedule — CON-78", Ordered, func() {
 		Expect(out.Promoted).To(BeTrue())
 		Expect(out.Status).To(Equal(string(models.PostStatusScheduledForManualPublish)))
 
-		live, err := postRepo.GetByID(context.Background(), id)
+		live, err := postRepo.GetByID(tenantCtx(), id)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(live.Status).To(Equal(models.PostStatusScheduledForManualPublish))
 	})
@@ -219,7 +214,7 @@ var _ = Describe("Post schedule — CON-78", Ordered, func() {
 		Expect(resp.StatusCode).To(Equal(fiber.StatusUnprocessableEntity))
 
 		// No state change — still a draft.
-		live, err := postRepo.GetByID(context.Background(), id)
+		live, err := postRepo.GetByID(tenantCtx(), id)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(live.Status).To(Equal(models.PostStatusDraft))
 	})

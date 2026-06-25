@@ -65,6 +65,7 @@ const (
 
 type Post struct {
 	bun.BaseModel `bun:"table:posts,alias:po" swaggerignore:"true"`
+	TenantScoped  // CON-97: tenant_id column + central scoping hooks
 
 	ID         string `bun:"id,pk"                                        json:"id"`
 	CampaignID string `bun:"campaign_id,notnull"                          json:"campaign_id"`

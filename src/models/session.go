@@ -14,6 +14,7 @@ type Session struct {
 
 	ID        string    `bun:"id,pk"                                        json:"id"`
 	UserID    string    `bun:"user_id,notnull"                              json:"user_id"`
+	TenantID  string    `bun:"tenant_id,notnull"                            json:"tenant_id"`
 	ExpiresAt time.Time `bun:"expires_at,notnull"                           json:"expires_at"`
 	CreatedAt time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
 }

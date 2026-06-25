@@ -59,7 +59,7 @@ func mustOpenIntegrationStorage() (storage.Storage, *s3.Client, string) {
 	}
 
 	raw := newRawS3()
-	if _, err := raw.CreateBucket(context.Background(), &s3.CreateBucketInput{
+	if _, err := raw.CreateBucket(tenantCtx(), &s3.CreateBucketInput{
 		Bucket: aws.String(bucket),
 	}); err != nil {
 		var apiErr smithy.APIError

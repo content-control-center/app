@@ -158,7 +158,7 @@ func (r *postRepository) ListWithPublisherPostID(ctx context.Context) ([]models.
 	var posts []models.Post
 	err := r.db.NewSelect().
 		Model(&posts).
-		Column("id", "publisher_post_id").
+		Column("id", "tenant_id", "publisher_post_id").
 		Where("po.publisher = ?", models.PublisherZernio).
 		Where("po.publisher_post_id IS NOT NULL").
 		Where("po.publisher_post_id <> ''").

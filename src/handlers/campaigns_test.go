@@ -57,12 +57,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 		handlers.NewTagsHandler(tagRepo, auth).Register(app)
 
 		// Seed an auth user and log in
-		body, _ := json.Marshal(fiber.Map{"name": "Admin", "email": "admin@example.com", "password": "admin-password"})
-		req := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := app.Test(req)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+		seedTenantUser(db, "Admin", "admin@example.com", "admin-password")
 
 		loginBody, _ := json.Marshal(fiber.Map{"email": "admin@example.com", "password": "admin-password"})
 		loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
@@ -188,7 +183,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 					"key_messages":     "Fast, reliable, affordable",
 					"tone_guidelines":  "Friendly and professional",
 					"use_assets":       true,
-					"asset_ids":       []string{"abc", "def"},
+					"asset_ids":        []string{"abc", "def"},
 					"target_platforms": []fiber.Map{
 						{"id": "rzgpTkARLH0L", "post_types": []string{"image-post", "reel"}},
 						{"id": "tiktok", "post_types": []string{"video"}},
@@ -594,14 +589,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				handlers.NewCampaignsHandler(campaignRepo2, campaignTypeRepo2, auth2, noop, nil, nil).Register(appWithDraft)
 
 				// Register and log in as a second user.
-				body, _ := json.Marshal(fiber.Map{"name": "Other", "email": "other@example.com", "password": "other-password"})
-				regReq := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-				regReq.Header.Set("Content-Type", "application/json")
-				regResp, err := appWithDraft.Test(regReq)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(regResp.StatusCode).To(Equal(fiber.StatusCreated))
-				var otherUser models.User
-				Expect(json.NewDecoder(regResp.Body).Decode(&otherUser)).To(Succeed())
+				seedTenantUser(db, "Other", "other@example.com", "other-password")
 
 				loginBody, _ := json.Marshal(fiber.Map{"email": "other@example.com", "password": "other-password"})
 				loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
@@ -663,11 +651,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				handlers.NewCampaignsHandler(campaignRepo2, campaignTypeRepo2, auth2, stub, nil, nil).Register(appWithDraft)
 
 				// Seed user/session for appWithDraft.
-				body, _ := json.Marshal(fiber.Map{"name": "SSE User", "email": "sse@example.com", "password": "sse-password"})
-				regReq := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-				regReq.Header.Set("Content-Type", "application/json")
-				_, err := appWithDraft.Test(regReq)
-				Expect(err).NotTo(HaveOccurred())
+				seedTenantUser(db, "SSE User", "sse@example.com", "sse-password")
 				loginBody, _ := json.Marshal(fiber.Map{"email": "sse@example.com", "password": "sse-password"})
 				loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
 				loginReq.Header.Set("Content-Type", "application/json")
@@ -758,11 +742,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				handlers.NewCampaignsHandler(campaignRepo2, campaignTypeRepo2, auth2, stub, nil, nil).Register(appWithDraft)
 
 				// Seed user/session.
-				body, _ := json.Marshal(fiber.Map{"name": "Err User", "email": "err@example.com", "password": "err-password"})
-				regReq := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-				regReq.Header.Set("Content-Type", "application/json")
-				_, err := appWithDraft.Test(regReq)
-				Expect(err).NotTo(HaveOccurred())
+				seedTenantUser(db, "Err User", "err@example.com", "err-password")
 				loginBody, _ := json.Marshal(fiber.Map{"email": "err@example.com", "password": "err-password"})
 				loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
 				loginReq.Header.Set("Content-Type", "application/json")
@@ -839,11 +819,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 		// seedCookie registers + logs in a user on the given app and returns
 		// its session cookie.
 		seedCookie := func(a *fiber.App, email string) *http.Cookie {
-			body, _ := json.Marshal(fiber.Map{"name": "Brief User", "email": email, "password": "brief-password"})
-			regReq := httptest.NewRequest("POST", "/api/users", bytes.NewReader(body))
-			regReq.Header.Set("Content-Type", "application/json")
-			_, err := a.Test(regReq)
-			Expect(err).NotTo(HaveOccurred())
+			seedTenantUser(db, "Brief User", email, "brief-password")
 			loginBody, _ := json.Marshal(fiber.Map{"email": email, "password": "brief-password"})
 			loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
 			loginReq.Header.Set("Content-Type", "application/json")

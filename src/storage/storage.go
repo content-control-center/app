@@ -12,7 +12,20 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/ogen-app/ogen/src/config"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
+
+// TenantKey namespaces an object key by the tenant in ctx (CON-97 §10.4):
+// "t/<tenant_id>/<key>". A key built without a tenant in context (system work)
+// is returned unprefixed, so pre-existing and global objects round-trip
+// unchanged. The prefixed key is what callers must both Upload and persist, so
+// every later Delete/Copy/PresignedGetURL operates on the same key.
+func TenantKey(ctx context.Context, key string) string {
+	if tid, ok := tenantctx.From(ctx); ok && tid != "" {
+		return "t/" + tid + "/" + key
+	}
+	return key
+}
 
 // Storage is the interface for object storage backends.
 type Storage interface {
@@ -50,8 +63,8 @@ func New(cfg *config.Config) (Storage, error) {
 	creds := credentials.NewStaticCredentialsProvider(cfg.StorageAccessKey, cfg.StorageSecretKey, "")
 
 	client := s3.New(s3.Options{
-		Region:      cfg.StorageRegion,
-		Credentials: creds,
+		Region:       cfg.StorageRegion,
+		Credentials:  creds,
 		BaseEndpoint: aws.String(cfg.StorageEndpoint),
 		// Required for path-style access used by R2 and DO Spaces.
 		UsePathStyle: true,
