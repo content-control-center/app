@@ -4,20 +4,43 @@ package integration_test
 
 import (
 	"context"
+	"os"
 
-	"github.com/alephbet-ai/llama-genkit-embedder/llama"
+	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
+	"github.com/firebase/genkit/go/plugins/googlegenai"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
 
+	"github.com/ogen-app/ogen/src/genkit/embedopts"
 	"github.com/ogen-app/ogen/src/genkit/flows"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
 )
 
-// embedServerURL points at the llama-embedserver exposed by docker-compose.integration.yml.
-const embedServerURL = "http://localhost:9003"
+// CON-101: embedding integration tests run against the live Gemini Embedding 2
+// API and skip when GEMINI_API_KEY is unset, so the suite still passes without
+// API credentials.
+const (
+	embedModel      = "gemini-embedding-2"
+	embedDimensions = 3072
+)
+
+// initGeminiEmbedder builds a Gemini-backed embedder for a suite and wires it
+// into flows.Init. It Skips the calling spec when GEMINI_API_KEY is unset.
+func initGeminiEmbedder(ctx context.Context, repo repository.AssetChunksRepository) {
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		Skip("GEMINI_API_KEY not set — skipping live Gemini Embedding 2 test")
+	}
+	embedopts.Dimensions = embedDimensions
+	plugin := &googlegenai.GoogleAI{APIKey: apiKey}
+	g := genkit.Init(ctx, genkit.WithPlugins(plugin))
+	embedder, err := plugin.DefineEmbedder(g, embedModel, &ai.EmbedderOptions{Dimensions: embedDimensions})
+	Expect(err).NotTo(HaveOccurred())
+	flows.Init(g, embedder, repo, nil)
+}
 
 var _ = Describe("Asset embedding flow", Ordered, func() {
 	var (
@@ -32,12 +55,8 @@ var _ = Describe("Asset embedding flow", Ordered, func() {
 		db = mustOpenIntegrationDB()
 		repo = repository.NewAssetChunksRepository(db)
 
-		// Initialise Genkit and the llama embedder once for the whole suite.
-		plugin := llama.New(llama.Config{LlamaEmbedServerAddress: embedServerURL})
-		g := genkit.Init(ctx, genkit.WithPlugins(plugin))
-		embedder, err := plugin.DefineEmbedder(g)
-		Expect(err).NotTo(HaveOccurred(), "llama-embedserver must be running at %s", embedServerURL)
-		flows.Init(g, embedder, repo, nil)
+		// Initialise Genkit + the Gemini embedder once for the whole suite.
+		initGeminiEmbedder(ctx, repo)
 
 		// Seed a user and an asset to satisfy foreign-key constraints.
 		userID, err := models.NewID()
@@ -88,9 +107,9 @@ var _ = Describe("Asset embedding flow", Ordered, func() {
 			Expect(chunks[0].Model).NotTo(BeEmpty())
 			Expect(chunks[0].ChunkIndex).To(Equal(0))
 
-			// Verify the embedding decodes to the expected dimension (768 for embeddinggemma-300m).
+			// Verify the embedding decodes to the expected dimension (3072 for Gemini Embedding 2).
 			vec := chunks[0].Embedding.Slice()
-			Expect(vec).To(HaveLen(768))
+			Expect(vec).To(HaveLen(embedDimensions))
 		})
 	})
 

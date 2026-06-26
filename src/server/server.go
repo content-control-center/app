@@ -18,11 +18,7 @@ import (
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/uptrace/bun"
 
-	"github.com/firebase/genkit/go/ai"
-	"github.com/firebase/genkit/go/genkit"
-
 	"github.com/ogen-app/ogen/src/config"
-	"github.com/ogen-app/ogen/src/embedding"
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
@@ -219,28 +215,19 @@ func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secret
 		return nil
 	})
 
-	// Embedding genkit instance: built once at boot with just the
-	// llama plugin and never rebuilt. The Anthropic flows live on a
-	// separate, rebuildable instance owned by genkitRuntime — that
-	// split keeps an Anthropic key rotation from disturbing the
-	// embedder bound here. The dev UI sees only the embedding instance
-	// today; that's an acceptable trade-off for hot-reload.
+	// Embedding genkit instance: built once at boot with just the Gemini
+	// (googlegenai) embedder and never rebuilt. The Anthropic flows live on a
+	// separate, rebuildable instance owned by genkitRuntime — that split keeps
+	// an Anthropic key rotation from disturbing the embedder bound here. The dev
+	// UI sees only the embedding instance today; that's an acceptable trade-off
+	// for hot-reload. When GEMINI_API_KEY is unset, embedding is disabled: the
+	// callbacks and embedder are nil, asset saves still succeed, and semantic
+	// search returns nothing.
 	log.Printf("genkit: initialising (GENKIT_ENV=%s)", os.Getenv("GENKIT_ENV"))
 
-	llamaPlugin, err := embedding.WaitAndNewPlugin(ctx, cfg.EmbedServerURL,
-		embedding.DefaultMaxRetries, embedding.DefaultRetryInterval)
+	embedCallbacks, embedder, err := initEmbedding(ctx, cfg, chunksRepo, pieceRepo, assetFileRepo, store)
 	if err != nil {
 		return nil, err
-	}
-
-	var embedCallbacks embedding.Callbacks
-	var embedder ai.Embedder
-	if llamaPlugin != nil {
-		embeddingG := genkit.Init(ctx, genkit.WithPlugins(llamaPlugin))
-		embedCallbacks, embedder, err = embedding.RegisterFlows(embeddingG, llamaPlugin, chunksRepo, pieceRepo, assetFileRepo, store)
-		if err != nil {
-			return nil, err
-		}
 	}
 	handlers.NewAssetsHandler(pieceRepo, assetFileRepo, store, auth, embedCallbacks.OnMarkdownSave, embedCallbacks.OnPDFProcess).Register(app)
 

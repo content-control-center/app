@@ -21,10 +21,12 @@ type AssetChunk struct {
 	PageEnd    *int   `bun:"page_end"                                     json:"page_end"`
 	Content    string `bun:"content,notnull"                              json:"content"`
 	TokenCount int    `bun:"token_count,notnull"                          json:"token_count"`
-	// Embedding is the chunk's 768-dim vector, stored in a pgvector
-	// vector(768) column. Similarity search runs in-database via the
-	// `<=>` cosine-distance operator (see AssetChunksRepository.SearchSimilar).
-	Embedding pgvector.Vector `bun:"embedding,type:vector(768)" json:"-"`
+	// Embedding is the chunk's 3072-dim Gemini Embedding 2 vector (CON-101),
+	// stored in a pgvector halfvec(3072) column. halfvec (16-bit floats) is
+	// required because pgvector's full-precision vector HNSW index caps at 2000
+	// dimensions. Similarity search runs in-database via the `<=>`
+	// cosine-distance operator (see AssetChunksRepository.SearchSimilar).
+	Embedding pgvector.HalfVector `bun:"embedding,type:halfvec(3072)" json:"-"`
 	Model     string          `bun:"model"                     json:"model"`
 	CreatedAt time.Time       `bun:"created_at,notnull,default:current_timestamp" json:"-"`
 }

@@ -13,8 +13,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      llama-embedserver:
-        condition: service_started
 
   postgres:
     # pgvector image = stock Postgres 17 + the `vector` extension prebuilt
@@ -51,12 +49,6 @@ services:
       api:
         condition: service_started
     restart: unless-stopped
-
-  llama-embedserver:
-    image: alephbetai/llama-embedserver:latest
-    platform: linux/amd64
-    ports:
-      - "9003:8080"
 
   # Frontend dev server (CON-98). The SPA lives in its own repo (ogen-app/ui);
   # this mounts a sibling checkout and runs Vite with hot-reload, proxying

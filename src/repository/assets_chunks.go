@@ -22,7 +22,7 @@ type AssetChunksRepository interface {
 	// query (closest first), keeping only those scoring >= minScore. When
 	// assetIDs is non-empty the search is scoped to those assets; limit <= 0
 	// means no row cap. Backed by the pgvector HNSW index (embedding <=> query).
-	SearchSimilar(ctx context.Context, query pgvector.Vector, assetIDs []string, minScore float64, limit int) ([]models.AssetChunk, error)
+	SearchSimilar(ctx context.Context, query pgvector.HalfVector, assetIDs []string, minScore float64, limit int) ([]models.AssetChunk, error)
 	// DeleteByAssetID removes all chunks for an asset.
 	DeleteByAssetID(ctx context.Context, assetID string) error
 	// GetByIDs returns chunks matching the given primary-key IDs, ordered by
@@ -79,7 +79,7 @@ func (r *assetChunksRepository) GetByAssetID(ctx context.Context, assetID string
 	return chunks, err
 }
 
-func (r *assetChunksRepository) SearchSimilar(ctx context.Context, query pgvector.Vector, assetIDs []string, minScore float64, limit int) ([]models.AssetChunk, error) {
+func (r *assetChunksRepository) SearchSimilar(ctx context.Context, query pgvector.HalfVector, assetIDs []string, minScore float64, limit int) ([]models.AssetChunk, error) {
 	var chunks []models.AssetChunk
 	// `<=>` is pgvector's cosine-distance operator (0 = identical). Cosine
 	// similarity is 1 - distance, so the threshold filter and the

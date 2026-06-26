@@ -12,6 +12,7 @@ import (
 	"github.com/firebase/genkit/go/genkit"
 	"github.com/pgvector/pgvector-go"
 
+	"github.com/ogen-app/ogen/src/genkit/embedopts"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/pdf"
 	"github.com/ogen-app/ogen/src/repository"
@@ -129,7 +130,8 @@ func processPDF(ctx context.Context, d *pdfDeps, in ProcessPDFInput) error {
 			continue
 		}
 		resp, err := d.embedder.Embed(ctx, &ai.EmbedRequest{
-			Input: []*ai.Document{ai.DocumentFromText(pc.Text, nil)},
+			Input:   []*ai.Document{ai.DocumentFromText(pc.Text, nil)},
+			Options: embedopts.Document(),
 		})
 		if err != nil {
 			log.Printf("pdf %s chunk %d: embed failed: %v", in.AssetID, i, err)
@@ -149,7 +151,7 @@ func processPDF(ctx context.Context, d *pdfDeps, in ProcessPDFInput) error {
 			PageEnd:    &pe,
 			Content:    pc.Text,
 			TokenCount: EstimateTokens(pc.Text),
-			Embedding:  pgvector.NewVector(resp.Embeddings[0].Embedding),
+			Embedding:  pgvector.NewHalfVector(resp.Embeddings[0].Embedding),
 			Model:      d.embedder.Name(),
 		})
 	}

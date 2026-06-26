@@ -13,6 +13,7 @@ import (
 	"github.com/firebase/genkit/go/genkit"
 	"github.com/pgvector/pgvector-go"
 
+	"github.com/ogen-app/ogen/src/genkit/embedopts"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
 )
@@ -144,9 +145,9 @@ func embedAsset(ctx context.Context, embedder ai.Embedder, repo repository.Asset
 	}
 	log.Printf("embed asset %s: %d chunk(s) from %d chars", in.AssetID, len(chunkTexts), len(fullText))
 
-	// Embed each chunk individually via the single-document /embed endpoint.
-	// (/embed/batch on llama-embedserver fails with n_tokens == 0 for
-	// multi-document requests.)
+	// Embed each chunk individually. Gemini's EmbedContent can batch multiple
+	// documents per request, but per-chunk calls keep the scheduler simple and
+	// the chunk count per asset is small.
 	chunks := make([]models.AssetChunk, 0, len(chunkTexts))
 	for i, text := range chunkTexts {
 		if !hasWords(text) {
@@ -158,7 +159,8 @@ func embedAsset(ctx context.Context, embedder ai.Embedder, repo repository.Asset
 			in.AssetID, i, len(chunkTexts)-1, len(text), truncate(text, 80))
 
 		resp, err := embedder.Embed(ctx, &ai.EmbedRequest{
-			Input: []*ai.Document{ai.DocumentFromText(text, nil)},
+			Input:   []*ai.Document{ai.DocumentFromText(text, nil)},
+			Options: embedopts.Document(),
 		})
 		if err != nil {
 			return fmt.Errorf("embed asset %s chunk %d: %w", in.AssetID, i, err)
@@ -173,7 +175,7 @@ func embedAsset(ctx context.Context, embedder ai.Embedder, repo repository.Asset
 			ChunkIndex: i,
 			Content:    text,
 			TokenCount: EstimateTokens(text),
-			Embedding:  pgvector.NewVector(resp.Embeddings[0].Embedding),
+			Embedding:  pgvector.NewHalfVector(resp.Embeddings[0].Embedding),
 			Model:      embedder.Name(),
 		})
 	}
@@ -189,7 +191,7 @@ func embedAsset(ctx context.Context, embedder ai.Embedder, repo repository.Asset
 // hasWords returns true when text contains at least one non-whitespace Unicode
 // word character (letter or digit). This is stricter than TrimSpace != ""
 // and catches zero-width spaces, non-breaking spaces, and other invisible
-// Unicode characters that TrimSpace doesn't strip but that the llama tokenizer
+// Unicode characters that TrimSpace doesn't strip but that the embedding model
 // cannot produce tokens from.
 func hasWords(text string) bool {
 	for _, r := range text {

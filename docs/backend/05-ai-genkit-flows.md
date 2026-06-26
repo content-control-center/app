@@ -169,8 +169,8 @@ SaveVersion, VersionNote}`. `SSEEventKind`: `explanation_delta`, `content_delta`
 ## 5. Embedding + RAG
 
 ### Model & store
-- **Model:** `embeddinggemma-300m` via a llama-cpp-style embedserver at `EMBED_SERVER_URL`. `embedder.Name()` recorded on each chunk's `Model`.
-- **Store:** SQLite (no external vector DB). Embeddings `[]float32` serialized little-endian (`encodeVector`/`DecodeVector`) into `assets_chunks.embedding`. Search = brute-force cosine in Go.
+- **Model (CON-101):** hosted **Gemini Embedding 2** (`EMBED_MODEL`, default `gemini-embedding-2`) at **3072 dims** (`EMBED_DIMENSIONS`), via the Genkit `googlegenai` plugin (`GEMINI_API_KEY`; empty disables embedding). Document chunks embed with task type `RETRIEVAL_DOCUMENT`, query-time embeds with `RETRIEVAL_QUERY` (see `genkit/embedopts`). `embedder.Name()` recorded on each chunk's `Model`.
+- **Store:** Postgres + **pgvector** (CON-87). Embeddings live in `assets_chunks.embedding` as **`halfvec(3072)`** (16-bit; `vector` HNSW caps at 2000 dims) with an HNSW `halfvec_cosine_ops` index; search is in-database via the `<=>` cosine-distance operator (`AssetChunksRepository.SearchSimilar`).
 
 ### Chunking (`chunker.go`)
 `ChunkText`: ≤`MaxEmbedChars`(6000) → single chunk; else paragraph-aware split up to

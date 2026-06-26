@@ -11,6 +11,7 @@ import (
 	"github.com/firebase/genkit/go/genkit"
 	"github.com/pgvector/pgvector-go"
 
+	"github.com/ogen-app/ogen/src/genkit/embedopts"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/post_actions/clone"
 	"github.com/ogen-app/ogen/src/post_actions/restore"
@@ -22,6 +23,8 @@ const chunkTokenBudget = 3000
 
 // minSearchSimilarity is the cosine-similarity floor a chunk must clear to be
 // returned by the semantic-search tool (searchAssetChunks).
+// CON-101: tuned for the former embeddinggemma-300m model; revisit against
+// Gemini Embedding 2's cosine distribution once there is real corpus data.
 const minSearchSimilarity = 0.5
 
 // ── Context key for per-request state ────────────────────────────────────────
@@ -286,7 +289,8 @@ func toolSearchAssetChunks(ctx context.Context, in SearchChunksInput) (*ChunksOu
 	}
 
 	qResp, err := st.embedder.Embed(ctx, &ai.EmbedRequest{
-		Input: []*ai.Document{ai.DocumentFromText(in.Query, nil)},
+		Input:   []*ai.Document{ai.DocumentFromText(in.Query, nil)},
+		Options: embedopts.Query(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("embed query: %w", err)
@@ -298,7 +302,7 @@ func toolSearchAssetChunks(ctx context.Context, in SearchChunksInput) (*ChunksOu
 	// pgvector ANN search scoped to this asset, ordered closest-first and
 	// filtered at the similarity floor — in-database via the HNSW index
 	// (replaces the fetch-all-and-cosine-in-Go scan).
-	ranked, err := st.repos.Chunks.SearchSimilar(ctx, pgvector.NewVector(qResp.Embeddings[0].Embedding), []string{in.AssetID}, minSearchSimilarity, 0)
+	ranked, err := st.repos.Chunks.SearchSimilar(ctx, pgvector.NewHalfVector(qResp.Embeddings[0].Embedding), []string{in.AssetID}, minSearchSimilarity, 0)
 	if err != nil {
 		return nil, fmt.Errorf("search chunks: %w", err)
 	}
