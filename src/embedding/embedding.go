@@ -23,6 +23,13 @@ type Callbacks struct {
 	OnPDFProcess   func(flows.ProcessPDFInput)
 }
 
+// embeddingDimensions is the fixed embedding width baked into the
+// assets_chunks.embedding halfvec(3072) column (CON-101 migration). The Gemini
+// embedder must emit exactly this many dimensions; any other value produces
+// vectors that fail to insert. Changing it requires a schema migration, so it
+// is a compile-time constant rather than config-derived.
+const embeddingDimensions = 3072
+
 // Init builds a dedicated Genkit instance backed by the hosted Gemini Embedding
 // 2 model (CON-101), registers the embedding flows, and returns the
 // fire-and-forget callbacks plus the raw embedder (used for query-time semantic
@@ -44,6 +51,15 @@ func Init(
 ) (Callbacks, ai.Embedder, error) {
 	if cfg.GeminiAPIKey == "" {
 		return Callbacks{}, nil, nil
+	}
+
+	// Fail fast at boot if the configured dimension diverges from the fixed
+	// halfvec column contract, rather than surfacing as opaque per-chunk insert
+	// errors deep in the async embed flow.
+	if cfg.EmbedDimensions != embeddingDimensions {
+		return Callbacks{}, nil, fmt.Errorf(
+			"EMBED_DIMENSIONS=%d does not match the assets_chunks.embedding halfvec(%d) column; changing the embedding dimension requires a schema migration",
+			cfg.EmbedDimensions, embeddingDimensions)
 	}
 
 	// Output dimensionality drives every embed request and must match the
