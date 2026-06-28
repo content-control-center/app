@@ -404,10 +404,11 @@ var _ = Describe("AssetsHandler", Ordered, func() {
 
 var _ = Describe("AssetsHandler onSave embed trigger", Ordered, func() {
 	var (
-		app        *fiber.App
-		db         *bun.DB
-		authCookie *http.Cookie
-		onSaveCh   chan string // receives asset IDs whenever onSave fires
+		app          *fiber.App
+		db           *bun.DB
+		authCookie   *http.Cookie
+		onSaveCh     chan string // receives asset IDs whenever onSave fires
+		onSaveTenant chan string // receives the tenant id passed to onSave
 	)
 
 	BeforeAll(func() {
@@ -416,6 +417,7 @@ var _ = Describe("AssetsHandler onSave embed trigger", Ordered, func() {
 
 	BeforeEach(func() {
 		onSaveCh = make(chan string, 16)
+		onSaveTenant = make(chan string, 16)
 
 		app = fiber.New(fiber.Config{
 			ErrorHandler: func(c *fiber.Ctx, err error) error {
@@ -435,8 +437,9 @@ var _ = Describe("AssetsHandler onSave embed trigger", Ordered, func() {
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewTagsHandler(tagRepo, auth).Register(app)
-		handlers.NewAssetsHandler(assetRepo, repository.NewAssetFileRepository(db), nil, auth, func(assetID, _, _, _ string) {
+		handlers.NewAssetsHandler(assetRepo, repository.NewAssetFileRepository(db), nil, auth, func(assetID, _, _, tenantID string) {
 			onSaveCh <- assetID
+			onSaveTenant <- tenantID
 		}, nil).Register(app)
 
 		seedTenantUser(db, "Admin", "admin@example.com", "admin-password")
@@ -502,6 +505,20 @@ var _ = Describe("AssetsHandler onSave embed trigger", Ordered, func() {
 	It("fires onSave on create", func() {
 		createAsset("Title", "Content body")
 		Expect(waitForSave()).To(BeTrue(), "expected onSave to fire on create")
+	})
+
+	// CON-97 file-upload bug: the embed runs in a background goroutine with no
+	// request context, so the handler must thread the caller's tenant into
+	// onSave — otherwise the scheduler's tenant-scoped writes fail closed.
+	It("threads the caller's tenant into onSave", func() {
+		createAsset("Title", "Content body")
+		Expect(waitForSave()).To(BeTrue())
+		select {
+		case tid := <-onSaveTenant:
+			Expect(tid).To(Equal(models.DefaultTenantID))
+		case <-time.After(200 * time.Millisecond):
+			Fail("expected the caller's tenant to be passed to onSave")
+		}
 	})
 
 	It("fires onSave when content changes", func() {
