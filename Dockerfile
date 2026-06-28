@@ -6,19 +6,18 @@ FROM golang:1.26-alpine AS go-builder
 
 WORKDIR /app
 
-# Download Go modules — cached as long as go.mod/go.sum are unchanged.
+# Download Go modules first — this layer is cached as long as go.mod/go.sum are
+# unchanged. (No BuildKit cache mounts below: Railway's builder requires cache-
+# mount ids to be prefixed with a hardcoded `s/<service-id>-`, which would couple
+# this Dockerfile to a single Railway service and break local / CI / prod builds.)
 COPY go.mod go.sum ./
-RUN --mount=type=cache,id=go-mod,target=/go/pkg/mod \
-    go mod download
+RUN go mod download
 
 # Copy source.
 COPY . .
 
-# Build — the Go build cache avoids recompiling unchanged packages even when
-# source files change, which is the main speedup on incremental builds.
-RUN --mount=type=cache,id=go-mod,target=/go/pkg/mod \
-    --mount=type=cache,id=go-build,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux go build -p 4 -trimpath -ldflags="-s -w" -o /server ./cmd/server
+# Build a static binary.
+RUN CGO_ENABLED=0 GOOS=linux go build -p 4 -trimpath -ldflags="-s -w" -o /server ./cmd/server
 
 # ─── Stage 2: Alpine runtime with poppler-utils ──────────────────────────────
 # Alpine is used (not scratch) so the server can exec `pdftotext` and
@@ -26,8 +25,7 @@ RUN --mount=type=cache,id=go-mod,target=/go/pkg/mod \
 # (text extraction fallback + thumbnail rendering).
 FROM alpine:3.20
 
-RUN --mount=type=cache,id=apk-cache,sharing=locked,target=/var/cache/apk \
-    apk add --no-cache ca-certificates tzdata poppler-utils && \
+RUN apk add --no-cache ca-certificates tzdata poppler-utils && \
     addgroup -S appgroup && adduser -S -G appgroup appuser && \
     mkdir -p /var/lib/ogen/keys && \
     chown appuser:appgroup /var/lib/ogen/keys && \
