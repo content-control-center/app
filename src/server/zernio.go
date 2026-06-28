@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/ogen-app/ogen/src/config"
@@ -17,27 +18,24 @@ import (
 	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
-// initZernio constructs the Zernio integration, the Bootstrapper, and a
-// SettingsStore adapter wrapping the host's SettingRepository. Ping and
-// the initial profile bootstrap run in a background goroutine — Ogen
-// boot never blocks on Zernio reachability.
+// initZernio constructs the Zernio integration, Bootstrapper, sync worker, and
+// a SettingsStore adapter wrapping the host's SettingRepository. The full
+// runtime is always wired — even with no API key at boot — so the routes are
+// always registered and a key set later via the secrets API enables the
+// integration with no reboot. Ping/warmup runs in a background goroutine, so
+// Ogen boot never blocks on Zernio reachability.
 //
-// State transitions, all owned by the spawned goroutine:
+// State, set by warmupZernio at boot and re-evaluated whenever zernio_api_key
+// changes (secrets subscription below):
 //
-//   - No API key            → log WARN once, integration stays in
-//     StateDisabled; nil Bootstrapper returned.
-//   - Ping returns 401      → log ERROR, StateDisabled; admin must
-//     repair via /profile/repair.
-//   - Ping transport / 5xx  → log WARN, StateDegraded; bootstrap is
-//     skipped this boot, retried by the worker
-//     (Phase 5) or admin repair.
-//   - Ping returns 200      → run Bootstrapper.Run; on success
-//     StateOK, otherwise StateDegraded.
+//   - No API key            → StateDisabled (endpoints 409, worker idle).
+//   - Ping returns 401      → StateDisabled; admin repairs via /profile/repair.
+//   - Ping transport / 5xx  → StateDegraded; retried by the worker.
+//   - Ping returns 200      → StateOK; per-tenant profiles bootstrap lazily.
 //
-// zernioRuntime bundles the long-lived Zernio runtime collaborators
-// constructed at boot. A nil Bootstrapper indicates the integration is
-// permanently disabled this boot (no API key set), in which case
-// Integration.Enabled() also returns false.
+// zernioRuntime bundles the long-lived collaborators. All fields are non-nil;
+// usability is reflected by Integration.State()/Enabled(), not by which
+// collaborators exist.
 type zernioRuntime struct {
 	Integration  *zernio.Integration
 	Bootstrapper *zernio.Bootstrapper
@@ -60,23 +58,10 @@ func initZernio(
 	// single instance so writes invalidate everyone's view.
 	store := zernio.NewCachedSettingsStore(&settingsStoreAdapter{repo: settingRepo})
 
-	// Treat "no zernio key in DB at boot" as transient — the integration
-	// stays disabled this boot but the resolver will pick up a key
-	// added later via the secrets API on the next outbound call. We
-	// still need a key to attempt the warmup ping; without one we
-	// short-circuit to disabled and skip the worker.
-	if _, err := secretStore.Get(ctx, secrets.NameZernioAPIKey); err != nil {
-		if errors.Is(err, secrets.ErrNotFound) {
-			log.Printf("zernio: integration disabled — zernio_api_key not set")
-		} else {
-			log.Printf("zernio: integration disabled — read zernio_api_key: %v", err)
-		}
-		return zernioRuntime{
-			Integration: zernio.NewIntegration(nil),
-			Settings:    store,
-		}
-	}
-
+	// The integration is always wired, even with no key at boot: the client
+	// resolves the zernio_api_key per call, so a key set/rotated/cleared via the
+	// secrets API takes effect with no reboot. warmupZernio sets the state
+	// (disabled when no key) and the subscription below re-validates on change.
 	resolver := func(ctx context.Context) (string, error) {
 		return secretStore.Get(ctx, secrets.NameZernioAPIKey)
 	}
@@ -96,8 +81,28 @@ func initZernio(
 	// accounts), so they run on a system context. Per-tenant Zernio sync is a
 	// follow-up (CON-97 §10.4).
 	workerCtx = tenantctx.WithSystem(workerCtx)
-	go warmupZernio(workerCtx, integ)
+
+	// warmupEpoch orders concurrent warmups (boot + each key change). A warmup
+	// captures the epoch at its start and only writes state if it's still the
+	// latest, so a slow goroutine from an older change can't overwrite a newer
+	// clear/reject result.
+	warmupEpoch := &atomic.Uint64{}
+	go warmupZernio(workerCtx, integ, secretStore, warmupEpoch, warmupEpoch.Add(1))
 	go worker.Run(workerCtx)
+
+	// Hot-reload: setting / rotating / clearing zernio_api_key via the secrets
+	// API re-validates the key and flips the integration state (and kicks a
+	// sync) with no reboot — mirroring the Anthropic genkit-rebuild
+	// subscription in genkit_runtime.go. store.notify invokes this on the Set
+	// path, so run the network ping off a goroutine to avoid blocking it. The
+	// token is taken synchronously (in Set order) so the latest change wins.
+	secretStore.Subscribe(secrets.NameZernioAPIKey, func() {
+		token := warmupEpoch.Add(1)
+		go func() {
+			warmupZernio(workerCtx, integ, secretStore, warmupEpoch, token)
+			worker.TriggerNow()
+		}()
+	})
 
 	return zernioRuntime{
 		Integration:  integ,
@@ -123,16 +128,37 @@ func (r zernioRuntime) shutdown() {
 	}
 }
 
-// warmupZernio validates the shared API key with a single Ping and marks the
-// instance ready (CON-100). Per-tenant profiles are bootstrapped lazily on
-// connect, not at boot. Errors are logged; the goroutine exits cleanly on ctx
-// cancellation (process shutdown).
-func warmupZernio(ctx context.Context, integ *zernio.Integration) {
+// warmupZernio resolves the desired integration state from the current
+// zernio_api_key + a warmup Ping, then writes it only if no newer key change
+// has superseded this run (epoch == token). That gate stops a slow goroutine
+// from an older change overwriting a newer clear/reject result. Per-tenant
+// profiles are bootstrapped lazily on connect, not here; the goroutine exits
+// cleanly on ctx cancellation (process shutdown).
+func warmupZernio(ctx context.Context, integ *zernio.Integration, secretStore secrets.Store, epoch *atomic.Uint64, token uint64) {
+	desired := resolveZernioState(ctx, integ, secretStore)
+	if epoch.Load() == token {
+		integ.SetState(desired)
+	}
+}
+
+// resolveZernioState computes the integration state without mutating it. A
+// missing key → disabled; a transient secret-read failure → degraded
+// (retryable — the worker keeps retrying, rather than disabling until the next
+// key change or reboot); a 401 → disabled; other ping errors → degraded; a
+// successful ping → ok (each tenant's profile is created lazily on connect).
+func resolveZernioState(ctx context.Context, integ *zernio.Integration, secretStore secrets.Store) zernio.State {
+	if _, err := secretStore.Get(ctx, secrets.NameZernioAPIKey); err != nil {
+		if errors.Is(err, secrets.ErrNotFound) {
+			log.Printf("zernio: integration disabled — zernio_api_key not set")
+			return zernio.StateDisabled
+		}
+		log.Printf("zernio: read zernio_api_key failed (%v) — staying degraded", err)
+		return zernio.StateDegraded
+	}
 	if err := integ.Client.Ping(ctx); err != nil {
 		if zernio.IsStatus(err, http.StatusUnauthorized) {
 			log.Printf("zernio: API key rejected (401) — integration disabled until repaired")
-			integ.SetState(zernio.StateDisabled)
-			return
+			return zernio.StateDisabled
 		}
 		var apiErr *zernio.APIError
 		if errors.As(err, &apiErr) {
@@ -140,14 +166,10 @@ func warmupZernio(ctx context.Context, integ *zernio.Integration) {
 		} else {
 			log.Printf("zernio: ping failed (%v) — staying degraded", err)
 		}
-		integ.SetState(zernio.StateDegraded)
-		return
+		return zernio.StateDegraded
 	}
-
-	// The shared key is reachable, so the instance is ready to serve connects;
-	// each tenant's profile is created lazily on its first connect (CON-100).
 	log.Printf("zernio: API key validated — base=%s", integ.Client.BaseURL())
-	integ.SetState(zernio.StateOK)
+	return zernio.StateOK
 }
 
 // settingsStoreAdapter bridges repository.SettingRepository to the

@@ -61,11 +61,14 @@ func (i *Integration) SetState(s State) {
 	i.state = s
 }
 
-// Enabled reports whether an API key was configured. False means the
-// integration was never going to work this boot — endpoints can short
-// circuit with 409 without consulting State().
+// Enabled reports whether the integration is currently usable: a client is
+// wired AND it is not in the disabled state (no API key configured, or auth
+// rejected). It is evaluated live off the current state, so setting, rotating,
+// or clearing the zernio_api_key via the secrets API flips it without a reboot
+// (the secrets subscription in initZernio re-validates and updates State).
+// Endpoints short-circuit with 409 integration_disabled when this is false.
 func (i *Integration) Enabled() bool {
-	return i != nil && i.Client != nil
+	return i != nil && i.Client != nil && i.State() != StateDisabled
 }
 
 // BumpFastUntil extends the fast-polling deadline so the background
