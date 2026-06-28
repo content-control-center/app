@@ -109,26 +109,29 @@ func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secret
 	// Zernio reachability. The shutdown hook waits up to 2s for the
 	// worker to exit cleanly.
 	zernioRT := initZernio(ctx, cfg, secretStore, settingRepo, socialAccountRepo, hub)
-	if zernioRT.Bootstrapper != nil {
-		handlers.NewZernioHandler(
-			zernioRT.Integration,
-			zernioRT.Bootstrapper,
-			zernioRT.Settings,
-			platformRepo,
-			socialAccountRepo,
-			zernioRT.Worker,
-			zernioRT.RateLimiter,
-			auth,
-		).Register(app)
-		app.Hooks().OnShutdown(func() error {
-			zernioRT.shutdown()
-			return nil
-		})
-	}
+	// Registered unconditionally so /api/integrations/zernio/* (incl. the
+	// unauthenticated /health) always exists. When no key is set the endpoints
+	// report/return integration_disabled; setting zernio_api_key via the
+	// secrets API enables it with no reboot (see initZernio's subscription).
+	handlers.NewZernioHandler(
+		zernioRT.Integration,
+		zernioRT.Bootstrapper,
+		zernioRT.Settings,
+		platformRepo,
+		socialAccountRepo,
+		zernioRT.Worker,
+		zernioRT.RateLimiter,
+		auth,
+	).Register(app)
+	app.Hooks().OnShutdown(func() error {
+		zernioRT.shutdown()
+		return nil
+	})
 
-	// Build the publisher list the platforms handler will surface in
-	// its enriched response. Empty when no integration is configured —
-	// the handler emits `"publishers": []` per platform in that case.
+	// Build the publisher list the platforms handler will surface in its
+	// enriched response. The Zernio publisher is always present (the runtime is
+	// always wired); it self-reports connection state and resolves the API key
+	// per call, so it works once zernio_api_key is set with no reboot.
 	var pubs []publishers.Publisher
 	if zernioRT.Integration != nil && zernioRT.Settings != nil {
 		pubs = append(pubs, pubzernio.NewPublisher(
@@ -167,8 +170,9 @@ func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secret
 
 	// The six workers self-register from their init()s; RegisterAll wires them
 	// to the River registry with one dependency bundle. The analytics periodic
-	// job is only scheduled when the Zernio integration is configured —
-	// otherwise every tick would no-op against a disabled client.
+	// job is always scheduled; it is profile-driven, so when Zernio is disabled
+	// (no key / no profiles) each tick is a harmless no-op, and it starts
+	// producing once a key is set via the secrets API — no reboot.
 	cleanupEvery := time.Hour
 	reconcileEvery := 5 * time.Minute
 	workers := river.NewWorkers()
@@ -191,7 +195,7 @@ func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secret
 			CleanupEvery:     cleanupEvery,
 			ReconcileEvery:   reconcileEvery,
 			AnalyticsEvery:   cfg.ZernioAnalyticsRefreshInterval,
-			IncludeAnalytics: zernioRT.Bootstrapper != nil,
+			IncludeAnalytics: true,
 		}.PeriodicJobs(),
 	})
 	if err != nil {
