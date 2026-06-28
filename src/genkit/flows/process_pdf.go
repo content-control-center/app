@@ -17,6 +17,7 @@ import (
 	"github.com/ogen-app/ogen/src/pdf"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/storage"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // ProcessPDFInput is the typed input for the processPDF flow.
@@ -25,6 +26,11 @@ type ProcessPDFInput struct {
 	Data         []byte `json:"-"`
 	OriginalName string `json:"original_name"`
 	MimeType     string `json:"mime_type"`
+	// TenantID carries the uploader's tenant into the background goroutine,
+	// which runs without a request context. processPDF's tenant-scoped writes
+	// (asset status, chunks, file metadata) and S3 keys would otherwise fail
+	// closed with ErrNoTenant (CON-97).
+	TenantID string `json:"tenant_id"`
 }
 
 // ProcessPDFFlow is the singleton flow for ingesting a PDF into an Asset.
@@ -75,6 +81,9 @@ func NewPDFProcessCallback() func(ProcessPDFInput) {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 			defer cancel()
+			// Rebuild the tenant context the request goroutine carried, so the
+			// flow's tenant-scoped queries run against the right tenant (CON-97).
+			ctx = tenantctx.With(ctx, in.TenantID)
 			if ProcessPDFFlow == nil {
 				log.Printf("process PDF asset %s: flow not initialised", in.AssetID)
 				return

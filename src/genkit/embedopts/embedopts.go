@@ -15,13 +15,15 @@ var Dimensions int32 = 3072
 // Document returns the embed config for content that is stored and later
 // searched against (chunks of assets/PDFs). RETRIEVAL_DOCUMENT tells Gemini to
 // optimise the vector for the corpus side of a retrieval task.
+//
+// Note: we deliberately do not set AutoTruncate — the Gemini Developer API
+// rejects that parameter ("autoTruncate parameter is not supported"). The
+// chunker keeps every chunk well under Gemini's 8192-token input limit, so
+// truncation never applies anyway.
 func Document() *genai.EmbedContentConfig {
 	return &genai.EmbedContentConfig{
 		TaskType:             "RETRIEVAL_DOCUMENT",
 		OutputDimensionality: genai.Ptr(Dimensions),
-		// Chunks are kept well under Gemini's 8192-token input limit, but
-		// truncate rather than error on the rare oversized chunk.
-		AutoTruncate: true,
 	}
 }
 
@@ -32,6 +34,5 @@ func Query() *genai.EmbedContentConfig {
 	return &genai.EmbedContentConfig{
 		TaskType:             "RETRIEVAL_QUERY",
 		OutputDimensionality: genai.Ptr(Dimensions),
-		AutoTruncate:         true,
 	}
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/ogen-app/ogen/src/genkit/embedopts"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // EmbedAssetInput is the typed input for the embedAsset flow.
@@ -23,6 +24,11 @@ type EmbedAssetInput struct {
 	AssetID string `json:"asset_id"`
 	Title   string `json:"title"`
 	Content string `json:"content"` // raw BlockNote JSON
+	// TenantID carries the saver's tenant into the background embed goroutine,
+	// which runs without a request context. The scheduler's status writes and
+	// chunk upserts are tenant-scoped and would otherwise fail closed with
+	// ErrNoTenant (CON-97).
+	TenantID string `json:"tenant_id"`
 }
 
 // EmbedAssetFlow is the singleton flow for embedding an asset.
@@ -77,6 +83,9 @@ func (s *embedScheduler) run(assetID string) {
 		s.mu.Unlock()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		// Rebuild the tenant context the request goroutine carried, so the
+		// status writes and chunk upserts run against the right tenant (CON-97).
+		ctx = tenantctx.With(ctx, in.TenantID)
 		s.setStatus(ctx, in.AssetID, models.AssetStatusProcessing)
 		_, err := EmbedAssetFlow.Run(ctx, in)
 		if err != nil {
@@ -104,12 +113,13 @@ var defaultEmbedScheduler = newEmbedScheduler()
 // embed of the asset. Concurrent saves of the same asset are serialised — at
 // most one embed per asset runs at a time, and intermediate saves are
 // coalesced into the latest content.
-func NewAssetOnSaveCallback() func(assetID, title, content string) {
-	return func(assetID, title, content string) {
+func NewAssetOnSaveCallback() func(assetID, title, content, tenantID string) {
+	return func(assetID, title, content, tenantID string) {
 		defaultEmbedScheduler.Schedule(EmbedAssetInput{
-			AssetID: assetID,
-			Title:   title,
-			Content: content,
+			AssetID:  assetID,
+			Title:    title,
+			Content:  content,
+			TenantID: tenantID,
 		})
 	}
 }

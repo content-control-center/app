@@ -435,7 +435,7 @@ var _ = Describe("AssetsHandler onSave embed trigger", Ordered, func() {
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewTagsHandler(tagRepo, auth).Register(app)
-		handlers.NewAssetsHandler(assetRepo, repository.NewAssetFileRepository(db), nil, auth, func(assetID, _, _ string) {
+		handlers.NewAssetsHandler(assetRepo, repository.NewAssetFileRepository(db), nil, auth, func(assetID, _, _, _ string) {
 			onSaveCh <- assetID
 		}, nil).Register(app)
 

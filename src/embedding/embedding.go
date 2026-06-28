@@ -19,7 +19,7 @@ import (
 // Either field may be nil when embeddings are disabled or the corresponding
 // dependency (e.g. asset file repo) is nil.
 type Callbacks struct {
-	OnMarkdownSave func(assetID, title, content string)
+	OnMarkdownSave func(assetID, title, content, tenantID string)
 	OnPDFProcess   func(flows.ProcessPDFInput)
 }
 
