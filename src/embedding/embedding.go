@@ -2,18 +2,14 @@ package embedding
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"log"
-	"net/http"
-	"time"
 
-	"github.com/alephbet-ai/llama-genkit-embedder/llama"
 	"github.com/firebase/genkit/go/ai"
-	"github.com/firebase/genkit/go/core/api"
 	"github.com/firebase/genkit/go/genkit"
+	"github.com/firebase/genkit/go/plugins/googlegenai"
 
 	"github.com/ogen-app/ogen/src/config"
+	"github.com/ogen-app/ogen/src/genkit/embedopts"
 	"github.com/ogen-app/ogen/src/genkit/flows"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/storage"
@@ -23,18 +19,28 @@ import (
 // Either field may be nil when embeddings are disabled or the corresponding
 // dependency (e.g. asset file repo) is nil.
 type Callbacks struct {
-	OnMarkdownSave func(assetID, title, content string)
+	OnMarkdownSave func(assetID, title, content, tenantID string)
 	OnPDFProcess   func(flows.ProcessPDFInput)
 }
 
-const (
-	DefaultRetryInterval = 5 * time.Second
-	DefaultMaxRetries    = 12 // 12 × 5 s = 1 min total
-)
+// embeddingDimensions is the fixed embedding width baked into the
+// assets_chunks.embedding halfvec(3072) column (CON-101 migration). The Gemini
+// embedder must emit exactly this many dimensions; any other value produces
+// vectors that fail to insert. Changing it requires a schema migration, so it
+// is a compile-time constant rather than config-derived.
+const embeddingDimensions = 3072
 
-// Init initialises Genkit + the llama embedder and returns an onSave callback
-// and the raw embedder (used for semantic ranking). Returns nil, nil, nil when
-// embed server URL is empty (embedding disabled).
+// Init builds a dedicated Genkit instance backed by the hosted Gemini Embedding
+// 2 model (CON-101), registers the embedding flows, and returns the
+// fire-and-forget callbacks plus the raw embedder (used for query-time semantic
+// ranking). The embedding instance is deliberately separate from the Anthropic
+// flow runtime so an Anthropic key rotation never disturbs the embedder bound
+// here.
+//
+// Returns zero values (embedding disabled) when GeminiAPIKey is empty: asset
+// saves still succeed, but no vectors are written and semantic search returns
+// nothing — mirroring the previous empty-EMBED_SERVER_URL behaviour. Because
+// the embedder is a hosted API there is no readiness poll at boot.
 func Init(
 	ctx context.Context,
 	cfg *config.Config,
@@ -43,34 +49,32 @@ func Init(
 	fileRepo repository.AssetFileRepository,
 	store storage.Storage,
 ) (Callbacks, ai.Embedder, error) {
-	return InitWithOptions(ctx, cfg.EmbedServerURL, DefaultMaxRetries, DefaultRetryInterval, chunksRepo, assetRepo, fileRepo, store)
-}
-
-// InitWithOptions is like Init but lets the caller control retry behaviour.
-func InitWithOptions(
-	ctx context.Context,
-	embedServerURL string,
-	maxRetries int,
-	retryInterval time.Duration,
-	chunksRepo repository.AssetChunksRepository,
-	assetRepo repository.AssetRepository,
-	fileRepo repository.AssetFileRepository,
-	store storage.Storage,
-) (Callbacks, ai.Embedder, error) {
-	if embedServerURL == "" {
+	if cfg.GeminiAPIKey == "" {
 		return Callbacks{}, nil, nil
 	}
 
-	if err := waitForEmbedServer(ctx, embedServerURL, maxRetries, retryInterval); err != nil {
-		return Callbacks{}, nil, fmt.Errorf("embed server unavailable: %w", err)
+	// Fail fast at boot if the configured dimension diverges from the fixed
+	// halfvec column contract, rather than surfacing as opaque per-chunk insert
+	// errors deep in the async embed flow.
+	if cfg.EmbedDimensions != embeddingDimensions {
+		return Callbacks{}, nil, fmt.Errorf(
+			"EMBED_DIMENSIONS=%d does not match the assets_chunks.embedding halfvec(%d) column; changing the embedding dimension requires a schema migration",
+			cfg.EmbedDimensions, embeddingDimensions)
 	}
 
-	plugin := llama.New(llama.Config{LlamaEmbedServerAddress: embedServerURL})
+	// Output dimensionality drives every embed request and must match the
+	// assets_chunks.embedding halfvec(N) column; set it before any flow fires.
+	embedopts.Dimensions = int32(cfg.EmbedDimensions)
+
+	plugin := &googlegenai.GoogleAI{APIKey: cfg.GeminiAPIKey}
 	g := genkit.Init(ctx, genkit.WithPlugins(plugin))
 
-	embedder, err := plugin.DefineEmbedder(g)
+	embedder, err := plugin.DefineEmbedder(g, cfg.EmbedModel, &ai.EmbedderOptions{
+		Label:      "Gemini Embedding 2",
+		Dimensions: cfg.EmbedDimensions,
+	})
 	if err != nil {
-		return Callbacks{}, nil, fmt.Errorf("init embedder: %w", err)
+		return Callbacks{}, nil, fmt.Errorf("init gemini embedder %q: %w", cfg.EmbedModel, err)
 	}
 
 	flows.Init(g, embedder, chunksRepo, assetRepo)
@@ -80,86 +84,4 @@ func InitWithOptions(
 		OnMarkdownSave: flows.NewAssetOnSaveCallback(),
 		OnPDFProcess:   flows.NewPDFProcessCallback(),
 	}, embedder, nil
-}
-
-// WaitAndNewPlugin waits for the embed server to be ready and returns the
-// llama plugin so the caller can include it in a shared genkit.Init() call.
-// Returns nil when embedServerURL is empty (embedding disabled).
-func WaitAndNewPlugin(
-	ctx context.Context,
-	embedServerURL string,
-	maxRetries int,
-	retryInterval time.Duration,
-) (api.Plugin, error) {
-	if embedServerURL == "" {
-		return nil, nil
-	}
-	if err := waitForEmbedServer(ctx, embedServerURL, maxRetries, retryInterval); err != nil {
-		return nil, fmt.Errorf("embed server unavailable: %w", err)
-	}
-	return llama.New(llama.Config{LlamaEmbedServerAddress: embedServerURL}), nil
-}
-
-// RegisterFlows defines the embedder and registers embedding flows on the
-// given Genkit instance. Call this after genkit.Init() when using a shared
-// instance created with the plugin from WaitAndNewPlugin.
-func RegisterFlows(
-	g *genkit.Genkit,
-	plugin api.Plugin,
-	chunksRepo repository.AssetChunksRepository,
-	assetRepo repository.AssetRepository,
-	fileRepo repository.AssetFileRepository,
-	store storage.Storage,
-) (Callbacks, ai.Embedder, error) {
-	llamaPlugin, ok := plugin.(*llama.Plugin)
-	if !ok {
-		return Callbacks{}, nil, fmt.Errorf("expected *llama.Plugin, got %T", plugin)
-	}
-
-	embedder, err := llamaPlugin.DefineEmbedder(g)
-	if err != nil {
-		return Callbacks{}, nil, fmt.Errorf("init embedder: %w", err)
-	}
-
-	flows.Init(g, embedder, chunksRepo, assetRepo)
-	flows.InitPDF(g, embedder, chunksRepo, assetRepo, fileRepo, store)
-
-	return Callbacks{
-		OnMarkdownSave: flows.NewAssetOnSaveCallback(),
-		OnPDFProcess:   flows.NewPDFProcessCallback(),
-	}, embedder, nil
-}
-
-func waitForEmbedServer(ctx context.Context, baseURL string, maxRetries int, retryInterval time.Duration) error {
-	healthURL := baseURL + "/health"
-	client := &http.Client{Timeout: retryInterval}
-
-	attempts := maxRetries
-	if attempts < 1 {
-		attempts = 1
-	}
-
-	for i := 1; i <= attempts; i++ {
-		resp, err := client.Get(healthURL)
-		if err == nil {
-			_ = resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				// Also verify the response body contains { "status": "ok" }.
-				body := struct{ Status string }{}
-				resp2, _ := client.Get(healthURL)
-				if resp2 != nil {
-					defer resp2.Body.Close()
-					_ = json.NewDecoder(resp2.Body).Decode(&body)
-				}
-				return nil
-			}
-		}
-		log.Printf("embed server not ready (attempt %d/%d): %v — retrying in %s", i, attempts, err, retryInterval)
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(retryInterval):
-		}
-	}
-	return fmt.Errorf("%s", healthURL)
 }

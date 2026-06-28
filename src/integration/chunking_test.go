@@ -6,8 +6,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/alephbet-ai/llama-genkit-embedder/llama"
-	"github.com/firebase/genkit/go/genkit"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
@@ -32,12 +30,9 @@ var _ = Describe("Asset chunking", Ordered, func() {
 
 		// Initialise a dedicated Genkit instance + embedder for this suite so
 		// it is self-contained and does not depend on embedding_test.go's BeforeAll.
-		plugin := llama.New(llama.Config{LlamaEmbedServerAddress: embedServerURL})
-		g := genkit.Init(ctx, genkit.WithPlugins(plugin))
-		embedder, err := plugin.DefineEmbedder(g)
-		Expect(err).NotTo(HaveOccurred(), "llama-embedserver must be running at %s", embedServerURL)
-		flows.Init(g, embedder, repo, nil)
+		initGeminiEmbedder(ctx, repo)
 
+		var err error
 		userID, err = models.NewID()
 		Expect(err).NotTo(HaveOccurred())
 		_, err = db.NewInsert().Model(&models.User{
@@ -108,10 +103,10 @@ var _ = Describe("Asset chunking", Ordered, func() {
 			Expect(chunks[0].Content).NotTo(BeEmpty())
 		})
 
-		It("stores a valid 768-dim embedding vector", func() {
+		It("stores a valid 3072-dim embedding vector", func() {
 			chunks, err := repo.GetByAssetID(ctx, assetID)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(chunks[0].Embedding.Slice()).To(HaveLen(768))
+			Expect(chunks[0].Embedding.Slice()).To(HaveLen(embedDimensions))
 		})
 
 		It("records a non-zero token count", func() {
@@ -153,11 +148,11 @@ var _ = Describe("Asset chunking", Ordered, func() {
 			}
 		})
 
-		It("stores a valid 768-dim embedding on every chunk", func() {
+		It("stores a valid 3072-dim embedding on every chunk", func() {
 			chunks, err := repo.GetByAssetID(ctx, assetID)
 			Expect(err).NotTo(HaveOccurred())
 			for i, c := range chunks {
-				Expect(c.Embedding.Slice()).To(HaveLen(768),
+				Expect(c.Embedding.Slice()).To(HaveLen(embedDimensions),
 					"chunk %d embedding dimension mismatch", i)
 			}
 		})

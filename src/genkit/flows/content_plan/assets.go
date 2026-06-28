@@ -9,11 +9,14 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	"github.com/pgvector/pgvector-go"
 
+	"github.com/ogen-app/ogen/src/genkit/embedopts"
 	"github.com/ogen-app/ogen/src/models"
 )
 
 // minAssetSimilarity is the minimum cosine similarity a chunk must score
 // against the campaign query to be included in the prompt context.
+// CON-101: tuned for the former embeddinggemma-300m model; revisit against
+// Gemini Embedding 2's cosine distribution once there is real corpus data.
 const minAssetSimilarity = 0.7
 
 func resolveAssets(ctx context.Context, campaign *models.Campaign, cfg ContentPlanFlowConfig, repos ContentPlanRepos) ([]resolvedPiece, []string, error) {
@@ -139,7 +142,8 @@ func rankAndPackChunks(
 	// Embed the campaign query.
 	query := campaign.Name + "\n" + campaign.KeyMessages + "\n" + campaign.Description
 	qResp, err := cfg.Embedder.Embed(ctx, &ai.EmbedRequest{
-		Input: []*ai.Document{ai.DocumentFromText(query, nil)},
+		Input:   []*ai.Document{ai.DocumentFromText(query, nil)},
+		Options: embedopts.Query(),
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("embed query: %w", err)
@@ -157,7 +161,7 @@ func rankAndPackChunks(
 	for id := range candidateSet {
 		candidateIDs = append(candidateIDs, id)
 	}
-	ranked, err := repos.Chunks.SearchSimilar(ctx, pgvector.NewVector(queryVec), candidateIDs, minAssetSimilarity, 0)
+	ranked, err := repos.Chunks.SearchSimilar(ctx, pgvector.NewHalfVector(queryVec), candidateIDs, minAssetSimilarity, 0)
 	if err != nil {
 		return nil, nil, fmt.Errorf("search similar chunks: %w", err)
 	}

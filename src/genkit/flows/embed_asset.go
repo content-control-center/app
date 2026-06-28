@@ -13,8 +13,10 @@ import (
 	"github.com/firebase/genkit/go/genkit"
 	"github.com/pgvector/pgvector-go"
 
+	"github.com/ogen-app/ogen/src/genkit/embedopts"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // EmbedAssetInput is the typed input for the embedAsset flow.
@@ -22,6 +24,11 @@ type EmbedAssetInput struct {
 	AssetID string `json:"asset_id"`
 	Title   string `json:"title"`
 	Content string `json:"content"` // raw BlockNote JSON
+	// TenantID carries the saver's tenant into the background embed goroutine,
+	// which runs without a request context. The scheduler's status writes and
+	// chunk upserts are tenant-scoped and would otherwise fail closed with
+	// ErrNoTenant (CON-97).
+	TenantID string `json:"tenant_id"`
 }
 
 // EmbedAssetFlow is the singleton flow for embedding an asset.
@@ -76,6 +83,9 @@ func (s *embedScheduler) run(assetID string) {
 		s.mu.Unlock()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		// Rebuild the tenant context the request goroutine carried, so the
+		// status writes and chunk upserts run against the right tenant (CON-97).
+		ctx = tenantctx.With(ctx, in.TenantID)
 		s.setStatus(ctx, in.AssetID, models.AssetStatusProcessing)
 		_, err := EmbedAssetFlow.Run(ctx, in)
 		if err != nil {
@@ -103,12 +113,13 @@ var defaultEmbedScheduler = newEmbedScheduler()
 // embed of the asset. Concurrent saves of the same asset are serialised — at
 // most one embed per asset runs at a time, and intermediate saves are
 // coalesced into the latest content.
-func NewAssetOnSaveCallback() func(assetID, title, content string) {
-	return func(assetID, title, content string) {
+func NewAssetOnSaveCallback() func(assetID, title, content, tenantID string) {
+	return func(assetID, title, content, tenantID string) {
 		defaultEmbedScheduler.Schedule(EmbedAssetInput{
-			AssetID: assetID,
-			Title:   title,
-			Content: content,
+			AssetID:  assetID,
+			Title:    title,
+			Content:  content,
+			TenantID: tenantID,
 		})
 	}
 }
@@ -144,9 +155,9 @@ func embedAsset(ctx context.Context, embedder ai.Embedder, repo repository.Asset
 	}
 	log.Printf("embed asset %s: %d chunk(s) from %d chars", in.AssetID, len(chunkTexts), len(fullText))
 
-	// Embed each chunk individually via the single-document /embed endpoint.
-	// (/embed/batch on llama-embedserver fails with n_tokens == 0 for
-	// multi-document requests.)
+	// Embed each chunk individually. Gemini's EmbedContent can batch multiple
+	// documents per request, but per-chunk calls keep the scheduler simple and
+	// the chunk count per asset is small.
 	chunks := make([]models.AssetChunk, 0, len(chunkTexts))
 	for i, text := range chunkTexts {
 		if !hasWords(text) {
@@ -158,7 +169,8 @@ func embedAsset(ctx context.Context, embedder ai.Embedder, repo repository.Asset
 			in.AssetID, i, len(chunkTexts)-1, len(text), truncate(text, 80))
 
 		resp, err := embedder.Embed(ctx, &ai.EmbedRequest{
-			Input: []*ai.Document{ai.DocumentFromText(text, nil)},
+			Input:   []*ai.Document{ai.DocumentFromText(text, nil)},
+			Options: embedopts.Document(),
 		})
 		if err != nil {
 			return fmt.Errorf("embed asset %s chunk %d: %w", in.AssetID, i, err)
@@ -173,7 +185,7 @@ func embedAsset(ctx context.Context, embedder ai.Embedder, repo repository.Asset
 			ChunkIndex: i,
 			Content:    text,
 			TokenCount: EstimateTokens(text),
-			Embedding:  pgvector.NewVector(resp.Embeddings[0].Embedding),
+			Embedding:  pgvector.NewHalfVector(resp.Embeddings[0].Embedding),
 			Model:      embedder.Name(),
 		})
 	}
@@ -189,7 +201,7 @@ func embedAsset(ctx context.Context, embedder ai.Embedder, repo repository.Asset
 // hasWords returns true when text contains at least one non-whitespace Unicode
 // word character (letter or digit). This is stricter than TrimSpace != ""
 // and catches zero-width spaces, non-breaking spaces, and other invisible
-// Unicode characters that TrimSpace doesn't strip but that the llama tokenizer
+// Unicode characters that TrimSpace doesn't strip but that the embedding model
 // cannot produce tokens from.
 func hasWords(text string) bool {
 	for _, r := range text {

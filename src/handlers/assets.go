@@ -16,6 +16,7 @@ import (
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/storage"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 const (
@@ -30,7 +31,7 @@ type AssetsHandler struct {
 	auth     fiber.Handler
 
 	// onSave triggers async embedding for text-based Asset saves (JSON create/update + MD upload).
-	onSave func(assetID, title, content string)
+	onSave func(assetID, title, content, tenantID string)
 	// onPDF triggers async PDF ingestion (upload + extract + chunk + embed + thumbnail).
 	onPDF func(flows.ProcessPDFInput)
 }
@@ -40,7 +41,7 @@ func NewAssetsHandler(
 	fileRepo repository.AssetFileRepository,
 	store storage.Storage,
 	auth fiber.Handler,
-	onSave func(assetID, title, content string),
+	onSave func(assetID, title, content, tenantID string),
 	onPDF func(flows.ProcessPDFInput),
 ) *AssetsHandler {
 	return &AssetsHandler{
@@ -150,7 +151,8 @@ func (h *AssetsHandler) Create(c *fiber.Ctx) error {
 	}
 
 	if h.onSave != nil {
-		go h.onSave(asset.ID, asset.Title, asset.Content)
+		tid, _ := tenantctx.From(c.Context())
+		go h.onSave(asset.ID, asset.Title, asset.Content, tid)
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(asset)
@@ -269,7 +271,8 @@ func (h *AssetsHandler) processMarkdownUpload(c *fiber.Ctx, fh *multipart.FileHe
 	}
 
 	if h.onSave != nil {
-		go h.onSave(asset.ID, asset.Title, asset.Content)
+		tid, _ := tenantctx.From(c.Context())
+		go h.onSave(asset.ID, asset.Title, asset.Content, tid)
 	}
 
 	res.AssetID = asset.ID
@@ -329,6 +332,7 @@ func (h *AssetsHandler) processPDFUpload(c *fiber.Ctx, fh *multipart.FileHeader,
 			Data:         raw,
 			OriginalName: fh.Filename,
 			MimeType:     "application/pdf",
+			TenantID:     session.TenantID,
 		})
 	}
 
@@ -415,7 +419,8 @@ func (h *AssetsHandler) Update(c *fiber.Ctx) error {
 	}
 
 	if h.onSave != nil && embedInputChanged {
-		go h.onSave(asset.ID, asset.Title, asset.Content)
+		tid, _ := tenantctx.From(c.Context())
+		go h.onSave(asset.ID, asset.Title, asset.Content, tid)
 	}
 
 	h.decorateFile(asset)

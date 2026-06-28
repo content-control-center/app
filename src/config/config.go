@@ -17,7 +17,17 @@ type Config struct {
 	DBMaxOpenConns    int    `envconfig:"DB_MAX_OPEN_CONNS" default:"25"`
 	DBMaxIdleConns    int    `envconfig:"DB_MAX_IDLE_CONNS" default:"5"`
 	SessionCookieName string `envconfig:"SESSION_COOKIE_NAME" default:"c3_session"`
-	EmbedServerURL    string `envconfig:"EMBED_SERVER_URL"    default:"http://localhost:8080"`
+
+	// Embeddings (CON-101). Generated via the hosted Gemini Embedding 2 API
+	// (google.golang.org/genai through the Genkit googlegenai plugin), replacing
+	// the former self-hosted llama-embedserver sidecar. Empty GeminiAPIKey
+	// disables embedding entirely (asset saves succeed, no vectors are written,
+	// semantic search returns nothing). EmbedDimensions must match the
+	// assets_chunks.embedding halfvec(N) column — 3072 is Gemini's native size
+	// and is L2-normalized, so cosine search works without renormalization.
+	GeminiAPIKey    string `envconfig:"GEMINI_API_KEY"    default:""`
+	EmbedModel      string `envconfig:"EMBED_MODEL"       default:"gemini-embedding-2"`
+	EmbedDimensions int    `envconfig:"EMBED_DIMENSIONS"  default:"3072"`
 
 	// CORS allowlist for the decoupled UI (CON-98). Comma-separated explicit
 	// origins, e.g. "https://app.getogen.com". Empty disables the CORS

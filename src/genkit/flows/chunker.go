@@ -3,8 +3,10 @@ package flows
 import "strings"
 
 const (
-	// MaxEmbedChars is the safe character limit for embeddinggemma-300m
-	// (~1,700 tokens at 3.5 chars/token, leaving headroom for the task prefix).
+	// MaxEmbedChars caps the characters fed to Gemini Embedding 2 per chunk
+	// (CON-101). At ~3.5 chars/token this is ~1,700 tokens — comfortably inside
+	// Gemini's 8192-token input limit, so chunks never need truncation while
+	// staying small enough for sharp, well-scoped embeddings.
 	MaxEmbedChars = 6000
 	// ChunkTarget is the target size for each chunk when splitting is needed.
 	ChunkTarget = 5500
@@ -13,7 +15,7 @@ const (
 	ChunkOverlap = 500
 )
 
-// ChunkText splits text into chunks suitable for embeddinggemma-300m.
+// ChunkText splits text into chunks suitable for Gemini Embedding 2.
 //
 //   - len(text) <= MaxEmbedChars → returns [text] (single chunk, no split)
 //   - otherwise → paragraph-aware split: accumulates paragraphs up to
