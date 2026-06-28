@@ -418,6 +418,11 @@ var _ = Describe("AssetsHandler onSave embed trigger", Ordered, func() {
 	BeforeEach(func() {
 		onSaveCh = make(chan string, 16)
 		onSaveTenant = make(chan string, 16)
+		// Capture the channels in locals for the onSave closure below. onSave
+		// fires in a fire-and-forget goroutine (go h.onSave) that can outlive
+		// the spec; reading the package-level vars from there would race with
+		// the next spec's BeforeEach reassigning them (a data race under -race).
+		saveCh, tenantCh := onSaveCh, onSaveTenant
 
 		app = fiber.New(fiber.Config{
 			ErrorHandler: func(c *fiber.Ctx, err error) error {
@@ -438,8 +443,8 @@ var _ = Describe("AssetsHandler onSave embed trigger", Ordered, func() {
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewTagsHandler(tagRepo, auth).Register(app)
 		handlers.NewAssetsHandler(assetRepo, repository.NewAssetFileRepository(db), nil, auth, func(assetID, _, _, tenantID string) {
-			onSaveCh <- assetID
-			onSaveTenant <- tenantID
+			saveCh <- assetID
+			tenantCh <- tenantID
 		}, nil).Register(app)
 
 		seedTenantUser(db, "Admin", "admin@example.com", "admin-password")
