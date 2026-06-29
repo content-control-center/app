@@ -95,8 +95,9 @@ func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secret
 
 	handlers.NewHealthHandler(db, secretStore).Register(app)
 	handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
-	// CON-97: public self-service signup (POST /api/tenants) + tenant CRU.
-	handlers.NewTenantsHandler(db, tenantRepo, userRepo, cfg.SessionCookieName, !cfg.Debug, auth).Register(app)
+	// CON-97 signup + CON-102 eager Zernio profile provisioning are registered
+	// below, after the River enqueuer is built (signup enqueues a bootstrap job
+	// in its transaction).
 	// Session cookies are marked Secure in production. Debug mode is the
 	// development escape hatch so localhost over plain HTTP still works.
 	handlers.NewSessionsHandler(userRepo, sessionRepo, cfg.SessionCookieName, !cfg.Debug).Register(app)
@@ -183,6 +184,9 @@ func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secret
 		AnalyticsSettings:   zernioRT.Settings,
 		AnalyticsHub:        hub,
 		AnalyticsWindowDays: cfg.ZernioAnalyticsWindowDays,
+		// CON-102: eager per-tenant profile provisioning at signup.
+		ProfileBootstrapper: zernioRT.Bootstrapper,
+		Integration:         zernioRT.Integration,
 	})
 
 	if err := jobs.MigrateRiver(ctx, db.DB); err != nil {
@@ -202,6 +206,12 @@ func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secret
 		return nil, err
 	}
 	enqueuer := &queues.Enqueuer{Client: riverClient}
+
+	// CON-97: public self-service signup (POST /api/tenants) + tenant CRU.
+	// CON-102: signup enqueues an eager Zernio profile-bootstrap job in its
+	// transaction via the enqueuer, so the registration here waits until the
+	// River client exists.
+	handlers.NewTenantsHandler(db, tenantRepo, userRepo, enqueuer, cfg.SessionCookieName, !cfg.Debug, auth).Register(app)
 
 	// Expose expvar counters for ops health dashboards (CON-69 §13).
 	// Gated by the same auth as the rest of the app so internal

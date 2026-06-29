@@ -10,6 +10,13 @@ const (
 	SettingProfileMeta      = "zernio.profile_meta"
 	SettingLastSyncAt       = "zernio.last_sync_at"
 	SettingLastSyncStatus   = "zernio.last_sync_status"
+	// SettingConnectInitiatedAt (RFC3339) records the first time a tenant
+	// issued a Zernio connect-link (CON-102). Eager profile provisioning means
+	// every tenant has a zernio.profile_id from signup, so profile presence no
+	// longer marks "this tenant uses Zernio". The sync worker enumerates tenants
+	// to sweep by THIS key instead, so freshly-signed-up tenants that never
+	// connected aren't swept.
+	SettingConnectInitiatedAt = "zernio.connect_initiated_at"
 	// Analytics refresh health (CON-93 §11). These live in the Zernio
 	// adapter namespace, so they stay `zernio.`-prefixed even though the
 	// post-side columns are publisher-agnostic.
@@ -29,4 +36,9 @@ const SettingPrefix = "zernio."
 const (
 	ManagedProfileName        = "Ogen integration"
 	ManagedProfileDescription = "Auto-managed by Ogen — do not rename or delete"
+	// ManagedProfileNamePrefix is prepended to a tenant id to form that tenant's
+	// Zernio profile name, "Ogen #<tenant_id>" (CON-102). Existing profiles named
+	// with the older ManagedProfileName form are resolved by their stored
+	// zernio.profile_id and are deliberately left unrenamed.
+	ManagedProfileNamePrefix = "Ogen #"
 )

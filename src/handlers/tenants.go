@@ -18,6 +18,14 @@ import (
 	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
+// ProfileBootstrapEnqueuer enqueues an eager Zernio profile-provisioning job in
+// the caller's transaction, so the job commits atomically with the new tenant
+// (CON-102 §6 FR2). Implemented by *queues.Enqueuer; kept as a narrow interface
+// here so the handler doesn't import the jobs package and stays unit-testable.
+type ProfileBootstrapEnqueuer interface {
+	EnqueueBootstrapProfileTx(ctx context.Context, tx *sql.Tx, tenantID string) error
+}
+
 // TenantsHandler owns tenant provisioning (public self-service signup) and the
 // tenant CRU surface (no delete). Tenants are the isolation boundary, so the
 // read/update endpoints only ever operate on the caller's own tenant (CON-97).
@@ -25,16 +33,18 @@ type TenantsHandler struct {
 	db           *bun.DB
 	tenantRepo   repository.TenantRepository
 	userRepo     repository.UserRepository
+	profileJobs  ProfileBootstrapEnqueuer
 	cookieName   string
 	secureCookie bool
 	auth         fiber.Handler
 }
 
-func NewTenantsHandler(db *bun.DB, tenantRepo repository.TenantRepository, userRepo repository.UserRepository, cookieName string, secureCookie bool, auth fiber.Handler) *TenantsHandler {
+func NewTenantsHandler(db *bun.DB, tenantRepo repository.TenantRepository, userRepo repository.UserRepository, profileJobs ProfileBootstrapEnqueuer, cookieName string, secureCookie bool, auth fiber.Handler) *TenantsHandler {
 	return &TenantsHandler{
 		db:           db,
 		tenantRepo:   tenantRepo,
 		userRepo:     userRepo,
+		profileJobs:  profileJobs,
 		cookieName:   cookieName,
 		secureCookie: secureCookie,
 		auth:         auth,
@@ -131,6 +141,16 @@ func (h *TenantsHandler) Signup(c *fiber.Ctx) error {
 		}
 		if _, err := tx.NewInsert().Model(session).Exec(ctx); err != nil {
 			return err
+		}
+		// CON-102: eagerly provision this tenant's Zernio profile in the
+		// background, enqueued inside THIS tx so the job exists iff the tenant
+		// does. The enqueue is a local DB insert (River shares bun's pool); the
+		// Zernio call happens later in the worker, so signup never blocks on
+		// Zernio reachability.
+		if h.profileJobs != nil {
+			if err := h.profileJobs.EnqueueBootstrapProfileTx(ctx, tx.Tx, tenantID); err != nil {
+				return err
+			}
 		}
 		return nil
 	}); err != nil {

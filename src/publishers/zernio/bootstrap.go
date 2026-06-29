@@ -69,13 +69,12 @@ func NewBootstrapper(integ *Integration, store SettingsStore) *Bootstrapper {
 	return &Bootstrapper{integ: integ, store: store, backoff: defaultBackoff}
 }
 
-// profileName is the Zernio profile name for the context's tenant (CON-100):
-// "<ManagedProfileName> <tenant_id>", so each tenant gets a distinct profile
-// under the shared Zernio account. A system context (no tenant) falls back to
-// the shared name.
+// profileName is the Zernio profile name for the context's tenant (CON-102):
+// "Ogen #<tenant_id>", so each tenant gets a distinct profile under the shared
+// Zernio account. A system context (no tenant) falls back to the shared name.
 func (b *Bootstrapper) profileName(ctx context.Context) string {
 	if tid, ok := tenantctx.From(ctx); ok {
-		return ManagedProfileName + " " + tid
+		return ManagedProfileNamePrefix + tid
 	}
 	return ManagedProfileName
 }

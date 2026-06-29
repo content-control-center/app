@@ -60,12 +60,13 @@ func TestBootstrapPerTenantProfileNaming(t *testing.T) {
 		t.Fatalf("expected distinct per-tenant profile ids, got A=%q B=%q", idA, idB)
 	}
 
-	// The two create calls carried tenant-specific names.
+	// The two create calls carried tenant-specific names: "Ogen #<tenant_id>"
+	// (CON-102 FR6).
 	mu.Lock()
 	defer mu.Unlock()
 	if len(createBodies) != 2 ||
-		!strings.Contains(createBodies[0], "acme") ||
-		!strings.Contains(createBodies[1], "beta") {
-		t.Fatalf("create bodies = %v; want tenant-specific names", createBodies)
+		!strings.Contains(createBodies[0], `"Ogen #acme"`) ||
+		!strings.Contains(createBodies[1], `"Ogen #beta"`) {
+		t.Fatalf("create bodies = %v; want \"Ogen #<tenant_id>\" names", createBodies)
 	}
 }
