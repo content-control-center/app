@@ -200,7 +200,7 @@ var _ = Describe("ZernioHandler", Ordered, func() {
 		client := zernio.NewClient(zernio.StaticKey(apiKey), stub.URL, zernio.ClientOpts{Timeout: time.Second})
 		integ = zernio.NewIntegration(client)
 		integ.SetState(zernio.StateDegraded)
-		bootstrapper = zernio.NewBootstrapper(integ, store)
+		bootstrapper = zernio.NewBootstrapper(integ, store, "dev")
 		worker = zernio.NewWorker(integ, accountRepo, store, hub, bootstrapper, time.Hour, time.Minute, func(ctx context.Context) ([]string, error) {
 			return settingRepo.ListTenantIDsByKey(ctx, zernio.SettingProfileID)
 		})

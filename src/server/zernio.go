@@ -70,7 +70,7 @@ func initZernio(
 		RedirectURL: cfg.ZernioRedirectURL,
 	})
 	integ := zernio.NewIntegration(client)
-	bootstrapper := zernio.NewBootstrapper(integ, store)
+	bootstrapper := zernio.NewBootstrapper(integ, store, cfg.ZernioEnv)
 	// CON-102: sweep tenants that have INITIATED a connection, not merely those
 	// with a profile. Eager provisioning gives every tenant a zernio.profile_id
 	// at signup, so keying the sweep on profile presence would poll every tenant

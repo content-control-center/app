@@ -1,5 +1,7 @@
 package zernio
 
+import "fmt"
+
 // Settings keys used by the integration. All keys live under the
 // "zernio." prefix so the metadata cache (Phase 4) can detect them with
 // a single prefix check on writes.
@@ -36,9 +38,20 @@ const SettingPrefix = "zernio."
 const (
 	ManagedProfileName        = "Ogen integration"
 	ManagedProfileDescription = "Auto-managed by Ogen — do not rename or delete"
-	// ManagedProfileNamePrefix is prepended to a tenant id to form that tenant's
-	// Zernio profile name, "Ogen #<tenant_id>" (CON-102). Existing profiles named
-	// with the older ManagedProfileName form are resolved by their stored
-	// zernio.profile_id and are deliberately left unrenamed.
-	ManagedProfileNamePrefix = "Ogen #"
 )
+
+// defaultProfileEnv is the ZERNIO_ENV fallback baked into a profile name when no
+// environment is configured (mirrors config's default). Keeps a misconfigured
+// empty env from producing a malformed "Ogen--<tenant_id>" name.
+const defaultProfileEnv = "dev"
+
+// ManagedProfileNameFor returns a tenant's Zernio profile name,
+// "Ogen-<env>-<tenant_id>" (CON-102), where env is ZERNIO_ENV (e.g. "dev",
+// "prod"). Profiles created under an older naming scheme are resolved by their
+// stored zernio.profile_id and are deliberately left unrenamed.
+func ManagedProfileNameFor(env, tenantID string) string {
+	if env == "" {
+		env = defaultProfileEnv
+	}
+	return fmt.Sprintf("Ogen-%s-%s", env, tenantID)
+}

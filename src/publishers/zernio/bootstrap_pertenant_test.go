@@ -41,7 +41,7 @@ func TestBootstrapPerTenantProfileNaming(t *testing.T) {
 	integ := makeIntegration(stub)
 	integ.SetState(StateDegraded) // enabled
 	store := &tenantMemStore{data: map[string]string{}}
-	b := NewBootstrapper(integ, store)
+	b := NewBootstrapper(integ, store, "dev")
 
 	ctxA := tenantctx.With(context.Background(), "acme")
 	ctxB := tenantctx.With(context.Background(), "beta")
@@ -60,13 +60,13 @@ func TestBootstrapPerTenantProfileNaming(t *testing.T) {
 		t.Fatalf("expected distinct per-tenant profile ids, got A=%q B=%q", idA, idB)
 	}
 
-	// The two create calls carried tenant-specific names: "Ogen #<tenant_id>"
-	// (CON-102 FR6).
+	// The two create calls carried tenant-specific names:
+	// "Ogen-<env>-<tenant_id>" (CON-102 FR6).
 	mu.Lock()
 	defer mu.Unlock()
 	if len(createBodies) != 2 ||
-		!strings.Contains(createBodies[0], `"Ogen #acme"`) ||
-		!strings.Contains(createBodies[1], `"Ogen #beta"`) {
-		t.Fatalf("create bodies = %v; want \"Ogen #<tenant_id>\" names", createBodies)
+		!strings.Contains(createBodies[0], `"Ogen-dev-acme"`) ||
+		!strings.Contains(createBodies[1], `"Ogen-dev-beta"`) {
+		t.Fatalf("create bodies = %v; want \"Ogen-<env>-<tenant_id>\" names", createBodies)
 	}
 }

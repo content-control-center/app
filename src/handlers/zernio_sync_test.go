@@ -55,7 +55,7 @@ func TestZernioPerTenantSyncIsolation(t *testing.T) {
 	client := zernio.NewClient(zernio.StaticKey("k"), stub.URL, zernio.ClientOpts{Timeout: time.Second})
 	integ := zernio.NewIntegration(client)
 	store := &settingStoreFromRepo{repo: settingRepo}
-	worker := zernio.NewWorker(integ, accountRepo, store, &quietHub{}, zernio.NewBootstrapper(integ, store),
+	worker := zernio.NewWorker(integ, accountRepo, store, &quietHub{}, zernio.NewBootstrapper(integ, store, "dev"),
 		time.Hour, time.Minute,
 		func(ctx context.Context) ([]string, error) {
 			return settingRepo.ListTenantIDsByKey(ctx, zernio.SettingProfileID)

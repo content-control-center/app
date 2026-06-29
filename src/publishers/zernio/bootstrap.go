@@ -58,23 +58,26 @@ var defaultBackoff = []time.Duration{
 type Bootstrapper struct {
 	integ   *Integration
 	store   SettingsStore
+	env     string // ZERNIO_ENV — namespaces the profile name (CON-102)
 	backoff []time.Duration
 
 	mu sync.Mutex
 }
 
 // NewBootstrapper wires a Bootstrapper around the integration and a
-// SettingsStore implementation provided by the host.
-func NewBootstrapper(integ *Integration, store SettingsStore) *Bootstrapper {
-	return &Bootstrapper{integ: integ, store: store, backoff: defaultBackoff}
+// SettingsStore implementation provided by the host. env is ZERNIO_ENV, baked
+// into the per-tenant profile name "Ogen-<env>-<tenant_id>" (CON-102).
+func NewBootstrapper(integ *Integration, store SettingsStore, env string) *Bootstrapper {
+	return &Bootstrapper{integ: integ, store: store, env: env, backoff: defaultBackoff}
 }
 
 // profileName is the Zernio profile name for the context's tenant (CON-102):
-// "Ogen #<tenant_id>", so each tenant gets a distinct profile under the shared
-// Zernio account. A system context (no tenant) falls back to the shared name.
+// "Ogen-<env>-<tenant_id>", so each tenant gets a distinct profile under the
+// shared Zernio account and dev/staging/prod stay distinguishable. A system
+// context (no tenant) falls back to the shared name.
 func (b *Bootstrapper) profileName(ctx context.Context) string {
 	if tid, ok := tenantctx.From(ctx); ok {
-		return ManagedProfileNamePrefix + tid
+		return ManagedProfileNameFor(b.env, tid)
 	}
 	return ManagedProfileName
 }

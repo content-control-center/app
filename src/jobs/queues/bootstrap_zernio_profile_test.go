@@ -84,7 +84,7 @@ func newBootstrapProcessor(stubURL string, state zernio.State, store zernio.Sett
 	integ.SetState(state)
 	return &queues.BootstrapZernioProfileProcessor{
 		Integration:  integ,
-		Bootstrapper: zernio.NewBootstrapper(integ, store),
+		Bootstrapper: zernio.NewBootstrapper(integ, store, "dev"),
 	}
 }
 
@@ -109,9 +109,9 @@ func TestBootstrapJobProvisionsNamedProfile(t *testing.T) {
 	if !ok || id == "" {
 		t.Fatalf("expected profile_id persisted, got ok=%v id=%q", ok, id)
 	}
-	// FR6: the profile name is "Ogen #<tenant_id>".
-	if names := stub.names(); len(names) != 1 || names[0] != "Ogen #acme" {
-		t.Fatalf("created profile names = %v; want [\"Ogen #acme\"]", names)
+	// FR6: the profile name is "Ogen-<env>-<tenant_id>".
+	if names := stub.names(); len(names) != 1 || names[0] != "Ogen-dev-acme" {
+		t.Fatalf("created profile names = %v; want [\"Ogen-dev-acme\"]", names)
 	}
 }
 
