@@ -79,7 +79,11 @@ type healthResponse struct {
 	ProfileID      string `json:"profileId,omitempty"`
 	LastSyncAt     string `json:"lastSyncAt,omitempty"`
 	LastSyncStatus string `json:"lastSyncStatus,omitempty"`
-	AccountCount   int    `json:"accountCount"`
+	// AccountCount is per-tenant, so it is a pointer that stays nil (and is
+	// omitted) on the unauthenticated/tenantless path — a bare "accountCount":0
+	// there would falsely read as "this tenant has 0 accounts". It is set only
+	// inside the tenant-scoped branch below, after ListActive.
+	AccountCount *int `json:"accountCount,omitempty"`
 }
 
 // Health godoc
@@ -113,7 +117,8 @@ func (h *ZernioHandler) Health(c *fiber.Ctx) error {
 			if err != nil {
 				return err
 			}
-			resp.AccountCount = len(rows)
+			count := len(rows)
+			resp.AccountCount = &count
 		}
 		resp.LastSyncAt, _, _ = h.settings.Get(c.Context(), zernio.SettingLastSyncAt)
 		resp.LastSyncStatus, _, _ = h.settings.Get(c.Context(), zernio.SettingLastSyncStatus)
