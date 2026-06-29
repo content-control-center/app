@@ -1,18 +1,21 @@
 package handlers
 
 import (
+	"bytes"
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/uptrace/bun"
 
-	"github.com/ogen-app/ogen/src/genkit/flows"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/storage"
@@ -20,37 +23,48 @@ import (
 )
 
 const (
-	maxMarkdownUploadSize = 10 << 20  // 10 MB
-	maxPDFUploadSize      = 50 << 20  // 50 MB
+	maxMarkdownUploadSize = 10 << 20 // 10 MB
+	maxPDFUploadSize      = 50 << 20 // 50 MB
 )
+
+// PDFIngestEnqueuer enqueues a PDF-ingestion job in the caller's transaction
+// (CON-103). Implemented by *queues.Enqueuer; a narrow interface here keeps the
+// handler off the jobs package.
+type PDFIngestEnqueuer interface {
+	EnqueueProcessPDFTx(ctx context.Context, tx *sql.Tx, assetID, tenantID, originalName, mimeType string) error
+}
 
 type AssetsHandler struct {
 	repo     repository.AssetRepository
 	fileRepo repository.AssetFileRepository
 	storage  storage.Storage
+	db       *bun.DB
 	auth     fiber.Handler
 
 	// onSave triggers async embedding for text-based Asset saves (JSON create/update + MD upload).
 	onSave func(assetID, title, content, tenantID string)
-	// onPDF triggers async PDF ingestion (upload + extract + chunk + embed + thumbnail).
-	onPDF func(flows.ProcessPDFInput)
+	// pdfJobs enqueues PDF ingestion (CON-103). Nil disables it (the asset is
+	// created but left pending).
+	pdfJobs PDFIngestEnqueuer
 }
 
 func NewAssetsHandler(
 	repo repository.AssetRepository,
 	fileRepo repository.AssetFileRepository,
 	store storage.Storage,
+	db *bun.DB,
+	pdfJobs PDFIngestEnqueuer,
 	auth fiber.Handler,
 	onSave func(assetID, title, content, tenantID string),
-	onPDF func(flows.ProcessPDFInput),
 ) *AssetsHandler {
 	return &AssetsHandler{
 		repo:     repo,
 		fileRepo: fileRepo,
 		storage:  store,
+		db:       db,
 		auth:     auth,
 		onSave:   onSave,
-		onPDF:    onPDF,
+		pdfJobs:  pdfJobs,
 	}
 }
 
@@ -160,10 +174,10 @@ func (h *AssetsHandler) Create(c *fiber.Ctx) error {
 
 // uploadResult is the per-file outcome in a batch markdown upload.
 type uploadResult struct {
-	Filename string  `json:"filename"`
-	AssetID  string  `json:"asset_id,omitempty"`
-	Status   string  `json:"status"` // "created" | "failed"
-	Error    string  `json:"error,omitempty"`
+	Filename string        `json:"filename"`
+	AssetID  string        `json:"asset_id,omitempty"`
+	Status   string        `json:"status"` // "created" | "failed"
+	Error    string        `json:"error,omitempty"`
 	Asset    *models.Asset `json:"asset,omitempty"`
 }
 
@@ -320,20 +334,45 @@ func (h *AssetsHandler) processPDFUpload(c *fiber.Ctx, fh *multipart.FileHeader,
 		Tags:      []models.Tag{},
 		CreatedBy: session.UserID,
 	}
-	if err := h.repo.Create(c.Context(), asset); err != nil {
-		res.Status = "failed"
-		res.Error = "could not create asset"
+
+	ctx := c.Context()
+
+	// PDF ingestion (CON-103) needs object storage — the worker re-reads the PDF
+	// from it on each attempt — plus the job enqueuer. Without them, create the
+	// asset but skip processing (it stays pending).
+	if h.storage == nil || h.pdfJobs == nil || h.db == nil {
+		if err := h.repo.Create(ctx, asset); err != nil {
+			res.Status = "failed"
+			res.Error = "could not create asset"
+			return res
+		}
+		log.Printf("assets: pdf ingestion disabled; asset %s left pending", asset.ID)
+		res.AssetID = asset.ID
+		res.Status = "created"
+		res.Asset = asset
 		return res
 	}
 
-	if h.onPDF != nil {
-		h.onPDF(flows.ProcessPDFInput{
-			AssetID:      asset.ID,
-			Data:         raw,
-			OriginalName: fh.Filename,
-			MimeType:     "application/pdf",
-			TenantID:     session.TenantID,
-		})
+	// 1. Store original.pdf BEFORE enqueue so the worker can re-read it on each
+	//    attempt (the 50 MB bytes can't ride in the River job args).
+	key := storage.TenantKey(ctx, fmt.Sprintf("assets/%s/original.pdf", asset.ID))
+	if _, err := h.storage.Upload(ctx, key, bytes.NewReader(raw), int64(len(raw)), "application/pdf"); err != nil {
+		res.Status = "failed"
+		res.Error = "could not store pdf"
+		return res
+	}
+
+	// 2. Insert the asset and enqueue the ingestion job atomically (transactional
+	//    outbox): a committed asset always has a job, a rolled-back one never does.
+	if err := h.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewInsert().Model(asset).Exec(ctx); err != nil {
+			return err
+		}
+		return h.pdfJobs.EnqueueProcessPDFTx(ctx, tx.Tx, asset.ID, session.TenantID, fh.Filename, "application/pdf")
+	}); err != nil {
+		res.Status = "failed"
+		res.Error = "could not create asset"
+		return res
 	}
 
 	res.AssetID = asset.ID

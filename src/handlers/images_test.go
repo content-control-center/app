@@ -64,6 +64,13 @@ func (s *stubStorage) PresignedGetURL(_ context.Context, key string, _ time.Dura
 	return "https://pub.example.com/signed/" + key, nil
 }
 
+func (s *stubStorage) Download(_ context.Context, key string) (io.ReadCloser, error) {
+	if s.returnErr != nil {
+		return nil, s.returnErr
+	}
+	return io.NopCloser(bytes.NewReader(s.objects[key])), nil
+}
+
 // minimalPNG returns the bytes of a tiny valid 1×1 PNG image.
 func minimalPNG() []byte {
 	img := image.NewRGBA(image.Rect(0, 0, 1, 1))

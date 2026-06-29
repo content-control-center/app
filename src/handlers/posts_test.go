@@ -57,7 +57,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil).Register(app)
-		handlers.NewAssetsHandler(pieceRepo, repository.NewAssetFileRepository(db), nil, auth, nil, nil).Register(app)
+		handlers.NewAssetsHandler(pieceRepo, repository.NewAssetFileRepository(db), nil, nil, nil, auth, nil).Register(app)
 		postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 		postLogRepo := repository.NewPostLogRepository(db)
 		ph := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, repository.NewPlatformRepository(db), repository.NewPostAttachmentRepository(db), auth, nil, nil)

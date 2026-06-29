@@ -144,12 +144,18 @@ func (e *Enqueuer) EnqueueBootstrapProfileTx(ctx context.Context, tx *sql.Tx, te
 // EnqueueProcessPDFTx enqueues a PDF-ingestion task inside the given
 // transaction, so it commits atomically with the asset insert (CON-103): a
 // committed upload always has a job, a rolled-back one never does. The worker
-// re-reads original.pdf from storage, so the bytes are not in the args.
-func (e *Enqueuer) EnqueueProcessPDFTx(ctx context.Context, tx *sql.Tx, t ProcessPDFTask) error {
+// re-reads original.pdf from storage, so the bytes are not in the args. Takes
+// primitives so the handler can depend on a narrow interface, not this package.
+func (e *Enqueuer) EnqueueProcessPDFTx(ctx context.Context, tx *sql.Tx, assetID, tenantID, originalName, mimeType string) error {
 	if e == nil || e.Client == nil {
 		return nil
 	}
-	_, err := e.Client.InsertTx(ctx, tx, t, nil)
+	_, err := e.Client.InsertTx(ctx, tx, ProcessPDFTask{
+		AssetID:      assetID,
+		TenantID:     tenantID,
+		OriginalName: originalName,
+		MimeType:     mimeType,
+	}, nil)
 	return err
 }
 

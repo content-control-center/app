@@ -27,6 +27,7 @@ import (
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/jobs/queues"
+	"github.com/ogen-app/ogen/src/pdfclient"
 	"github.com/ogen-app/ogen/src/post_actions/clone"
 	"github.com/ogen-app/ogen/src/post_actions/restore"
 	"github.com/ogen-app/ogen/src/post_actions/schedule"
@@ -147,6 +148,45 @@ func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secret
 		return nil, err
 	}
 
+	// CON-103: gRPC client for the PDF parsing microservice over the Railway
+	// private network. nil when PDF_SERVICE_ADDR is unset; closed on shutdown.
+	pdfClient, err := pdfclient.New(pdfclient.Config{
+		Addr:         cfg.PDFServiceAddr,
+		Timeout:      cfg.PDFServiceTimeout,
+		MaxRecvBytes: cfg.PDFServiceMaxRecvBytes,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if pdfClient != nil {
+		app.Hooks().OnShutdown(func() error { return pdfClient.Close() })
+	}
+
+	// Embedding (Gemini) is initialised here — before the River registry —
+	// because the process_pdf worker (CON-103) needs the embedder in its deps.
+	// When GEMINI_API_KEY is unset the embedder is nil and PDF ingestion +
+	// semantic search are disabled; markdown/JSON saves still succeed.
+	log.Printf("genkit: initialising (GENKIT_ENV=%s)", os.Getenv("GENKIT_ENV"))
+	embedCallbacks, embedder, err := initEmbedding(ctx, cfg, chunksRepo, pieceRepo, assetFileRepo, store)
+	if err != nil {
+		return nil, err
+	}
+
+	// PDF ingestion is live only when the parser, embedder, and storage are all
+	// present (the worker downloads, parses, and embeds). The job's Client field
+	// is left nil otherwise so the worker no-ops.
+	pdfIngestEnabled := pdfClient != nil && embedder != nil && store != nil
+	pdfDeps := queues.PDFDeps{
+		Embedder: embedder,
+		Storage:  store,
+		Assets:   pieceRepo,
+		Chunks:   chunksRepo,
+		Files:    assetFileRepo,
+	}
+	if pdfIngestEnabled {
+		pdfDeps.Client = pdfClient
+	}
+
 	// CON-87 WS3: River background-job queue. Runs on the same
 	// database/sql pool as bun (db.DB), so a submit enqueue can join the
 	// schedule transaction (CON-78 §9). The worker pool starts below and
@@ -187,6 +227,8 @@ func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secret
 		// CON-102: eager per-tenant profile provisioning at signup.
 		ProfileBootstrapper: zernioRT.Bootstrapper,
 		Integration:         zernioRT.Integration,
+		// CON-103: PDF ingestion worker deps.
+		PDF: pdfDeps,
 	})
 
 	if err := jobs.MigrateRiver(ctx, db.DB); err != nil {
@@ -229,21 +271,15 @@ func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secret
 		return nil
 	})
 
-	// Embedding genkit instance: built once at boot with just the Gemini
-	// (googlegenai) embedder and never rebuilt. The Anthropic flows live on a
-	// separate, rebuildable instance owned by genkitRuntime — that split keeps
-	// an Anthropic key rotation from disturbing the embedder bound here. The dev
-	// UI sees only the embedding instance today; that's an acceptable trade-off
-	// for hot-reload. When GEMINI_API_KEY is unset, embedding is disabled: the
-	// callbacks and embedder are nil, asset saves still succeed, and semantic
-	// search returns nothing.
-	log.Printf("genkit: initialising (GENKIT_ENV=%s)", os.Getenv("GENKIT_ENV"))
-
-	embedCallbacks, embedder, err := initEmbedding(ctx, cfg, chunksRepo, pieceRepo, assetFileRepo, store)
-	if err != nil {
-		return nil, err
+	// CON-103: PDF ingestion goes through the process_pdf River job — the handler
+	// stores original.pdf and enqueues in its transaction. The enqueuer is wired
+	// only when ingestion is live; otherwise PDF uploads create a pending asset
+	// and skip processing. Markdown/JSON embedding still uses OnMarkdownSave.
+	var pdfJobs handlers.PDFIngestEnqueuer
+	if pdfIngestEnabled {
+		pdfJobs = enqueuer
 	}
-	handlers.NewAssetsHandler(pieceRepo, assetFileRepo, store, auth, embedCallbacks.OnMarkdownSave, embedCallbacks.OnPDFProcess).Register(app)
+	handlers.NewAssetsHandler(pieceRepo, assetFileRepo, store, db, pdfJobs, auth, embedCallbacks.OnMarkdownSave).Register(app)
 
 	// Anthropic-backed flows live in a hot-reloadable runtime. boot
 	// is allowed to start without an Anthropic key (callbacks return
