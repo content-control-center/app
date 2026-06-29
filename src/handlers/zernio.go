@@ -14,6 +14,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // connectLinkTTL is the client-side TTL hint returned with each connect
@@ -78,15 +79,19 @@ type healthResponse struct {
 	ProfileID      string `json:"profileId,omitempty"`
 	LastSyncAt     string `json:"lastSyncAt,omitempty"`
 	LastSyncStatus string `json:"lastSyncStatus,omitempty"`
-	AccountCount   int    `json:"accountCount"`
+	// AccountCount is per-tenant, so it is a pointer that stays nil (and is
+	// omitted) on the unauthenticated/tenantless path — a bare "accountCount":0
+	// there would falsely read as "this tenant has 0 accounts". It is set only
+	// inside the tenant-scoped branch below, after ListActive.
+	AccountCount *int `json:"accountCount,omitempty"`
 }
 
 // Health godoc
 // @Summary      Zernio integration health
 // @Description  Public endpoint suitable for inclusion in monitoring
-// @Description  dashboards. Reports whether the integration is enabled,
-// @Description  its state (disabled / degraded / ok), the bootstrapped
-// @Description  profile ID, and the most recent sync result.
+// @Description  dashboards. Reports the app-wide enabled flag and state
+// @Description  (disabled / degraded / ok). Per-tenant profile and sync
+// @Description  detail is included only when the caller carries a tenant.
 // @Tags         zernio
 // @Produce      json
 // @Success      200  {object}  healthResponse
@@ -96,20 +101,39 @@ func (h *ZernioHandler) Health(c *fiber.Ctx) error {
 		Enabled: h.integ.Enabled(),
 		State:   string(h.integ.State()),
 	}
-	profileID, _, err := h.settings.Get(c.Context(), zernio.SettingProfileID)
-	if err != nil {
-		return err
-	}
-	resp.ProfileID = profileID
-	if profileID != "" {
-		rows, err := h.accounts.ListActive(c.Context(), profileID)
+	// enabled/state are app-wide — they reflect the shared zernio_api_key, not
+	// any tenant. The profile, last-sync, and account count are per-tenant
+	// (CON-100), so only include them when the caller carries a tenant. This
+	// endpoint is unauthenticated, so it must not run a tenant-scoped query
+	// without one (it would fail closed with ErrNoTenant).
+	if _, ok := tenantctx.From(c.Context()); ok {
+		profileID, _, err := h.settings.Get(c.Context(), zernio.SettingProfileID)
 		if err != nil {
 			return err
 		}
-		resp.AccountCount = len(rows)
+		resp.ProfileID = profileID
+		if profileID != "" {
+			rows, err := h.accounts.ListActive(c.Context(), profileID)
+			if err != nil {
+				return err
+			}
+			count := len(rows)
+			resp.AccountCount = &count
+		}
+		// Surface real store I/O failures instead of masking them as empty
+		// metadata (consistent with the profileID read above). A missing row
+		// (found=false, err=nil) legitimately yields "" and is omitted.
+		lastAt, _, err := h.settings.Get(c.Context(), zernio.SettingLastSyncAt)
+		if err != nil {
+			return err
+		}
+		lastStatus, _, err := h.settings.Get(c.Context(), zernio.SettingLastSyncStatus)
+		if err != nil {
+			return err
+		}
+		resp.LastSyncAt = lastAt
+		resp.LastSyncStatus = lastStatus
 	}
-	resp.LastSyncAt, _, _ = h.settings.Get(c.Context(), zernio.SettingLastSyncAt)
-	resp.LastSyncStatus, _, _ = h.settings.Get(c.Context(), zernio.SettingLastSyncStatus)
 	return c.JSON(resp)
 }
 
