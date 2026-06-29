@@ -399,7 +399,14 @@ func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secret
 	handlers.NewAnalyticsHandler(postAnalyticsRepo, auth).Register(app)
 
 	handlers.NewImagesHandler(store, auth).Register(app)
-	handlers.NewPostAttachmentsHandler(postAttachmentRepo, postRepo, store, auth).Register(app)
+	// CON-103: PDF attachment page-count + thumbnail now come from pdf-service.
+	// nil pdfClient (PDF_SERVICE_ADDR unset) degrades gracefully (no page count
+	// / thumbnail), so it's wired only when present.
+	var attachmentRenderer handlers.PDFRenderer
+	if pdfClient != nil {
+		attachmentRenderer = pdfClient
+	}
+	handlers.NewPostAttachmentsHandler(postAttachmentRepo, postRepo, store, attachmentRenderer, auth).Register(app)
 
 	// The React SPA is deployed separately (CON-98) — the API serves only
 	// /api/* (plus SSE). Non-API routes fall through to a 404.

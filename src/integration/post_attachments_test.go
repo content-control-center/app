@@ -29,6 +29,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/pdfclient"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/storage"
 )
@@ -148,7 +149,7 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 			return nil
 		})
 		postsHandler.Register(app)
-		handlers.NewPostAttachmentsHandler(postAttRepo, postRepo, store, auth).Register(app)
+		handlers.NewPostAttachmentsHandler(postAttRepo, postRepo, store, fakePDFRenderer{}, auth).Register(app)
 
 		seedTenantUser(db, "Admin", "it@example.com", "it-password")
 
@@ -549,6 +550,20 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 // buildIntegrationPDF builds a structurally-valid n-page PDF with
 // correct xref offsets — same shape as the handler-test fixture, kept
 // here so the integration suite stays self-contained.
+// fakePDFRenderer stands in for pdf-service in attachment tests: it counts
+// pages from the fixture's "/Type /Page /Parent" markers and returns a stub
+// thumbnail.
+type fakePDFRenderer struct{}
+
+func (fakePDFRenderer) Render(_ context.Context, r io.Reader, _ pdfclient.RenderOptions) (*pdfclient.RenderResult, error) {
+	data, _ := io.ReadAll(r)
+	pages := bytes.Count(data, []byte("/Type /Page /Parent"))
+	if pages == 0 {
+		pages = 1
+	}
+	return &pdfclient.RenderResult{PageCount: pages, ThumbnailPNG: []byte("PNGTHUMB")}, nil
+}
+
 func buildIntegrationPDF(n int) []byte {
 	if n < 1 {
 		n = 1

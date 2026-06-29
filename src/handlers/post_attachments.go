@@ -7,13 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/pdf"
+	"github.com/ogen-app/ogen/src/pdfclient"
 	"github.com/ogen-app/ogen/src/platforms"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/storage"
@@ -35,10 +36,18 @@ const (
 	// preview for PDF attachments.
 	pdfThumbnailDPI = 96
 
-	// pdfThumbnailRenderTimeout caps how long pdftoppm can run before the
-	// upload falls back to "no thumbnail" — never blocks the request.
-	pdfThumbnailRenderTimeout = 30 * time.Second
+	// pdfRenderTimeout caps the pdf-service Render call for an attachment, so a
+	// slow or unreachable service never blocks the upload request for long — on
+	// failure the attachment is created without page count / thumbnail.
+	pdfRenderTimeout = 30 * time.Second
 )
+
+// PDFRenderer renders an attachment PDF to a page count + first-page thumbnail
+// via pdf-service (CON-103). Implemented by *pdfclient.Client; an interface here
+// keeps the handler testable and nil-tolerant (nil disables it).
+type PDFRenderer interface {
+	Render(ctx context.Context, r io.Reader, opts pdfclient.RenderOptions) (*pdfclient.RenderResult, error)
+}
 
 // PresignedURLTTL controls how long pre-signed GET URLs returned in
 // API responses stay valid. Short window keeps stale URLs out of
@@ -54,6 +63,7 @@ type PostAttachmentsHandler struct {
 	repo     repository.PostAttachmentRepository
 	postRepo repository.PostRepository
 	storage  storage.Storage
+	pdf      PDFRenderer
 	auth     fiber.Handler
 }
 
@@ -61,9 +71,10 @@ func NewPostAttachmentsHandler(
 	repo repository.PostAttachmentRepository,
 	postRepo repository.PostRepository,
 	store storage.Storage,
+	renderer PDFRenderer,
 	auth fiber.Handler,
 ) *PostAttachmentsHandler {
-	return &PostAttachmentsHandler{repo: repo, postRepo: postRepo, storage: store, auth: auth}
+	return &PostAttachmentsHandler{repo: repo, postRepo: postRepo, storage: store, pdf: renderer, auth: auth}
 }
 
 func (h *PostAttachmentsHandler) Register(app *fiber.App) {
@@ -289,6 +300,7 @@ func (h *PostAttachmentsHandler) Upload(c *fiber.Ctx) error {
 	}
 	var data []byte
 	var keyExt string
+	var pendingThumbnail []byte
 
 	if kind == pdfprobe.MIME {
 		if fh.Size > maxPDFUploadBytes {
@@ -306,10 +318,28 @@ func (h *PostAttachmentsHandler) Upload(c *fiber.Ctx) error {
 		}
 		att.MimeType = probe.MIME
 		att.SizeBytes = probe.Size
-		att.PageCount = probe.PageCount
 		att.ChecksumSHA256 = probe.SHA256
 		data = raw
 		keyExt = probe.Extension
+
+		// Page count + first-page thumbnail come from pdf-service (CON-103).
+		// Best-effort: a render failure leaves page_count 0 / no thumbnail
+		// rather than failing the upload. page_count is set here, before the
+		// platform soft-validation below, so the max_pages check still works.
+		if h.pdf != nil {
+			rctx, cancel := context.WithTimeout(c.Context(), pdfRenderTimeout)
+			render, rerr := h.pdf.Render(rctx, bytes.NewReader(raw), pdfclient.RenderOptions{
+				RenderThumbnail: true,
+				ThumbnailDPI:    pdfThumbnailDPI,
+			})
+			cancel()
+			if rerr != nil {
+				log.Printf("post_attachments: pdf render failed (%s): %v", fh.Filename, rerr)
+			} else {
+				att.PageCount = render.PageCount
+				pendingThumbnail = render.ThumbnailPNG
+			}
+		}
 	} else {
 		if fh.Size > maxImageUploadBytes {
 			return fiber.NewError(
@@ -340,18 +370,12 @@ func (h *PostAttachmentsHandler) Upload(c *fiber.Ctx) error {
 		return fmt.Errorf("post_attachments: storage upload: %w", err)
 	}
 
-	// Best-effort PDF thumbnail render. Failures (no pdftoppm, malformed
-	// PDF, timeout) are logged via the returned error but never abort
-	// the upload — the attachment row stays valid without a thumbnail.
-	if att.MimeType == pdfprobe.MIME {
-		thumbCtx, cancel := context.WithTimeout(c.Context(), pdfThumbnailRenderTimeout)
-		thumb, terr := pdf.RenderThumbnail(thumbCtx, data, pdfThumbnailDPI)
-		cancel()
-		if terr == nil && len(thumb) > 0 {
-			thumbKey := storage.TenantKey(c.Context(), "post-attachments/"+post.ID+"/"+id+".thumb.png")
-			if _, uerr := h.storage.Upload(c.Context(), thumbKey, bytes.NewReader(thumb), int64(len(thumb)), "image/png"); uerr == nil {
-				att.ThumbnailS3Key = thumbKey
-			}
+	// Upload the first-page thumbnail rendered by pdf-service (if any). Storing
+	// it is best-effort — the attachment stays valid without a thumbnail.
+	if len(pendingThumbnail) > 0 {
+		thumbKey := storage.TenantKey(c.Context(), "post-attachments/"+post.ID+"/"+id+".thumb.png")
+		if _, uerr := h.storage.Upload(c.Context(), thumbKey, bytes.NewReader(pendingThumbnail), int64(len(pendingThumbnail)), "image/png"); uerr == nil {
+			att.ThumbnailS3Key = thumbKey
 		}
 	}
 

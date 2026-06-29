@@ -14,7 +14,6 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/kelseyhightower/envconfig v1.4.0
-	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/onsi/ginkgo/v2 v2.28.1
 	github.com/onsi/gomega v1.39.1
 	github.com/openai/openai-go v1.12.0
