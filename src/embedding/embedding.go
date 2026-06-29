@@ -16,11 +16,12 @@ import (
 )
 
 // Callbacks bundles the fire-and-forget callbacks registered by Init.
-// Either field may be nil when embeddings are disabled or the corresponding
-// dependency (e.g. asset file repo) is nil.
+// OnMarkdownSave may be nil when embeddings are disabled.
+//
+// PDF ingestion no longer rides a callback here — it goes through the
+// process_pdf River job (CON-103), enqueued by the asset upload handler.
 type Callbacks struct {
 	OnMarkdownSave func(assetID, title, content, tenantID string)
-	OnPDFProcess   func(flows.ProcessPDFInput)
 }
 
 // embeddingDimensions is the fixed embedding width baked into the
@@ -78,10 +79,8 @@ func Init(
 	}
 
 	flows.Init(g, embedder, chunksRepo, assetRepo)
-	flows.InitPDF(g, embedder, chunksRepo, assetRepo, fileRepo, store)
 
 	return Callbacks{
 		OnMarkdownSave: flows.NewAssetOnSaveCallback(),
-		OnPDFProcess:   flows.NewPDFProcessCallback(),
 	}, embedder, nil
 }
