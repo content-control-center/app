@@ -67,6 +67,7 @@ type ztZernioStub struct {
 	authHeaders []string
 	connectPIDs []string
 	nextID      int
+	profiles    []map[string]any // created profiles, served back by GET /profiles
 }
 
 func (s *ztZernioStub) handler() http.HandlerFunc {
@@ -77,21 +78,32 @@ func (s *ztZernioStub) handler() http.HandlerFunc {
 
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/profiles":
-			ztWriteJSON(w, map[string]any{"profiles": []any{}})
+			// Serve the profiles created so far (a real Zernio would), so the
+			// bootstrapper's adopt/re-list path is exercised — a non-distinct
+			// profile name would otherwise let one tenant adopt another's profile
+			// and this stub would hide it by always returning empty.
+			s.mu.Lock()
+			list := append([]map[string]any(nil), s.profiles...)
+			s.mu.Unlock()
+			ztWriteJSON(w, map[string]any{"profiles": list})
 		case r.Method == http.MethodPost && r.URL.Path == "/profiles":
 			body, _ := io.ReadAll(r.Body)
 			var in struct {
 				Name string `json:"name"`
 			}
 			_ = json.Unmarshal(body, &in)
+			now := time.Now().UTC().Format(time.RFC3339)
 			s.mu.Lock()
 			s.nextID++
-			id := fmt.Sprintf("prof-%d", s.nextID)
+			profile := map[string]any{
+				"_id":       fmt.Sprintf("prof-%d", s.nextID),
+				"name":      in.Name,
+				"createdAt": now,
+				"updatedAt": now,
+			}
+			s.profiles = append(s.profiles, profile)
 			s.mu.Unlock()
-			now := time.Now().UTC().Format(time.RFC3339)
-			ztWriteJSON(w, map[string]any{"profile": map[string]any{
-				"_id": id, "name": in.Name, "createdAt": now, "updatedAt": now,
-			}})
+			ztWriteJSON(w, map[string]any{"profile": profile})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/connect/"):
 			pid := r.URL.Query().Get("profileId")
 			s.mu.Lock()
@@ -108,6 +120,18 @@ func (s *ztZernioStub) snapshot() (auths, connectPIDs []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.authHeaders...), append([]string(nil), s.connectPIDs...)
+}
+
+func (s *ztZernioStub) createdNames() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	names := make([]string, 0, len(s.profiles))
+	for _, p := range s.profiles {
+		if n, ok := p["name"].(string); ok {
+			names = append(names, n)
+		}
+	}
+	return names
 }
 
 func ztWriteJSON(w http.ResponseWriter, body any) {
@@ -284,6 +308,14 @@ var _ = Describe("Zernio per-tenant profiles on one shared key (CON-102)", func(
 		Expect(pidA).NotTo(BeEmpty())
 		Expect(pidB).NotTo(BeEmpty())
 		Expect(pidA).NotTo(Equal(pidB), "tenants must not share a Zernio profile")
+
+		// Each profile carries its env-scoped, tenant-specific name, so the
+		// adopt-by-name path (now exercised by the persisting stub) can't cross
+		// tenants.
+		Expect(rig.stubState.createdNames()).To(ConsistOf(
+			zernio.ManagedProfileNameFor("dev", tidA),
+			zernio.ManagedProfileNameFor("dev", tidB),
+		))
 
 		// The connect-links each carried the caller-tenant's profileId — nothing
 		// crossed tenants.
