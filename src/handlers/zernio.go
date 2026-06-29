@@ -289,11 +289,17 @@ func (h *ZernioHandler) CreateConnectLink(c *fiber.Ctx) error {
 	// background sync worker starts sweeping it. With eager provisioning every
 	// tenant has a profile from signup, so the worker keys its sweep on this
 	// marker — not mere profile presence — to avoid polling tenants that never
-	// connected. Written once and best-effort: a failure here must not fail the
-	// connect-link the user just obtained (the next connect-link retries it).
-	if _, ok, _ := h.settings.Get(c.Context(), zernio.SettingConnectInitiatedAt); !ok {
+	// connected. This marker is the *only* sweep selector for the tenant, so the
+	// write must be durable: surface store failures as a retryable error rather
+	// than silently stranding the account the user is about to authorize (they
+	// already received a link, so they would not retry on their own). Written once.
+	marker, ok, err := h.settings.Get(c.Context(), zernio.SettingConnectInitiatedAt)
+	if err != nil {
+		return err
+	}
+	if !ok || marker == "" {
 		if err := h.settings.Set(c.Context(), zernio.SettingConnectInitiatedAt, time.Now().UTC().Format(time.RFC3339)); err != nil {
-			log.Printf("zernio: failed to record %s (profile=%s): %v", zernio.SettingConnectInitiatedAt, profileID, err)
+			return err
 		}
 	}
 
