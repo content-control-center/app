@@ -90,7 +90,7 @@ func TestBootstrapAdoptsByStoredID(t *testing.T) {
 	store := newMemStore()
 	_ = store.Set(context.Background(), SettingProfileID, "p1")
 
-	b := NewBootstrapper(makeIntegration(stub), store)
+	b := NewBootstrapper(makeIntegration(stub), store, "dev")
 	b.backoff = nil // skip retries to keep the test fast on failure paths
 
 	if err := b.Run(context.Background()); err != nil {
@@ -117,7 +117,7 @@ func TestBootstrapClearsStaleIDOn404ThenAdoptsByName(t *testing.T) {
 	store := newMemStore()
 	_ = store.Set(context.Background(), SettingProfileID, "old")
 
-	b := NewBootstrapper(makeIntegration(stub), store)
+	b := NewBootstrapper(makeIntegration(stub), store, "dev")
 	b.backoff = nil
 
 	if err := b.Run(context.Background()); err != nil {
@@ -155,7 +155,7 @@ func TestBootstrapCreatesWhenNoMatchInList(t *testing.T) {
 	}))
 
 	store := newMemStore()
-	b := NewBootstrapper(makeIntegration(stub), store)
+	b := NewBootstrapper(makeIntegration(stub), store, "dev")
 	b.backoff = nil
 
 	if err := b.Run(context.Background()); err != nil {
@@ -173,7 +173,7 @@ func TestBootstrapReturnsAuthErrorOn401(t *testing.T) {
 
 	store := newMemStore()
 	integ := makeIntegration(stub)
-	b := NewBootstrapper(integ, store)
+	b := NewBootstrapper(integ, store, "dev")
 	b.backoff = nil
 
 	err := b.Run(context.Background())
@@ -194,7 +194,7 @@ func TestBootstrapAuthHeaderIsPresent(t *testing.T) {
 
 	store := newMemStore()
 	_ = store.Set(context.Background(), SettingProfileID, "p1")
-	b := NewBootstrapper(makeIntegration(stub), store)
+	b := NewBootstrapper(makeIntegration(stub), store, "dev")
 	b.backoff = nil
 
 	if err := b.Run(context.Background()); err != nil {

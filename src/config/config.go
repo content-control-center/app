@@ -85,6 +85,12 @@ type Config struct {
 	ZernioSyncInterval     time.Duration `envconfig:"ZERNIO_SYNC_INTERVAL"      default:"30s"`
 	ZernioSyncIntervalFast time.Duration `envconfig:"ZERNIO_SYNC_INTERVAL_FAST" default:"5s"`
 
+	// ZernioEnv namespaces each tenant's Zernio profile name,
+	// "Ogen-<ZernioEnv>-<tenant_id>" (CON-102), so profiles created by dev,
+	// staging, and prod Ogen instances against the same shared Zernio account
+	// stay distinguishable on the Zernio dashboard. Defaults to "dev".
+	ZernioEnv string `envconfig:"ZERNIO_ENV" default:"dev"`
+
 	// Analytics refresh (CON-93 §6 FR3). The refresh_zernio_analytics
 	// queue batch-fetches engagement analytics on this cadence and only
 	// considers posts published within the lookback window (Zernio caps

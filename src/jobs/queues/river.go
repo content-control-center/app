@@ -33,6 +33,11 @@ type Deps struct {
 	AnalyticsSettings   zernio.SettingsStore
 	AnalyticsHub        eventhub.Hub
 	AnalyticsWindowDays int
+	// CON-102: eager per-tenant Zernio profile provisioning. The bootstrap job
+	// reuses the connect-link handler's Bootstrapper (tenant-scoped profile
+	// create/adopt + settings write) and Integration (enabled/state gating).
+	ProfileBootstrapper *zernio.Bootstrapper
+	Integration         *zernio.Integration
 }
 
 // registrars is appended to by each worker file's init(). A job is registered
@@ -115,6 +120,19 @@ func (e *Enqueuer) EnqueueSubmitTx(ctx context.Context, tx *sql.Tx, postID strin
 		return nil
 	}
 	_, err := e.Client.InsertTx(ctx, tx, SubmitPostTask{PostID: postID}, nil)
+	return err
+}
+
+// EnqueueBootstrapProfileTx enqueues an eager Zernio profile-provisioning task
+// inside the given transaction, so it commits atomically with the tenant insert
+// (CON-102 §6 FR2): a rolled-back signup creates no job, a committed one
+// durably queues exactly one. A nil enqueuer (Zernio queue unwired) is a no-op —
+// the lazy on-connect bootstrap remains the fallback.
+func (e *Enqueuer) EnqueueBootstrapProfileTx(ctx context.Context, tx *sql.Tx, tenantID string) error {
+	if e == nil || e.Client == nil {
+		return nil
+	}
+	_, err := e.Client.InsertTx(ctx, tx, BootstrapZernioProfileTask{TenantID: tenantID}, nil)
 	return err
 }
 

@@ -285,6 +285,24 @@ func (h *ZernioHandler) CreateConnectLink(c *fiber.Ctx) error {
 	// fastPollWindow so the user sees their connected account fast.
 	h.integ.BumpFastUntil(time.Now().Add(fastPollWindow))
 
+	// CON-102: mark this tenant as having initiated a Zernio connection so the
+	// background sync worker starts sweeping it. With eager provisioning every
+	// tenant has a profile from signup, so the worker keys its sweep on this
+	// marker — not mere profile presence — to avoid polling tenants that never
+	// connected. This marker is the *only* sweep selector for the tenant, so the
+	// write must be durable: surface store failures as a retryable error rather
+	// than silently stranding the account the user is about to authorize (they
+	// already received a link, so they would not retry on their own). Written once.
+	marker, ok, err := h.settings.Get(c.Context(), zernio.SettingConnectInitiatedAt)
+	if err != nil {
+		return err
+	}
+	if !ok || marker == "" {
+		if err := h.settings.Set(c.Context(), zernio.SettingConnectInitiatedAt, time.Now().UTC().Format(time.RFC3339)); err != nil {
+			return err
+		}
+	}
+
 	// Log redacted URL only — the query string contains a short-lived
 	// token that must not appear in log lines.
 	log.Printf("zernio: connect link issued (platform=%s profile=%s url=%s)",

@@ -9,9 +9,9 @@ import (
 // TestAllWorkersSelfRegister asserts the B2 self-registration: every job file's
 // init() appended exactly one registrar, and RegisterAll wires them all to a
 // River registry without panicking (river.AddWorker panics on duplicate kinds,
-// so this also proves the six kinds are distinct).
+// so this also proves the kinds are distinct).
 func TestAllWorkersSelfRegister(t *testing.T) {
-	const wantWorkers = 6 // submit, poll, cancel, cleanup, reconcile, analytics
+	const wantWorkers = 7 // submit, poll, cancel, cleanup, reconcile, analytics, bootstrap-profile
 	if len(registrars) != wantWorkers {
 		t.Fatalf("self-registered workers: got %d, want %d", len(registrars), wantWorkers)
 	}

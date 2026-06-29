@@ -3,6 +3,7 @@ package handlers_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -19,10 +20,31 @@ import (
 	"github.com/ogen-app/ogen/src/repository"
 )
 
+// fakeProfileEnqueuer records the tenant ids signup asks to provision a Zernio
+// profile for (CON-102 FR2). Returning nil lets the signup transaction commit.
+type fakeProfileEnqueuer struct {
+	mu        sync.Mutex
+	tenantIDs []string
+}
+
+func (f *fakeProfileEnqueuer) EnqueueBootstrapProfileTx(_ context.Context, _ *sql.Tx, tenantID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.tenantIDs = append(f.tenantIDs, tenantID)
+	return nil
+}
+
+func (f *fakeProfileEnqueuer) ids() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.tenantIDs...)
+}
+
 var _ = Describe("TenantsHandler", Ordered, func() {
 	var (
 		app *fiber.App
 		db  *bun.DB
+		enq *fakeProfileEnqueuer
 	)
 
 	BeforeAll(func() {
@@ -43,7 +65,8 @@ var _ = Describe("TenantsHandler", Ordered, func() {
 		tenantRepo := repository.NewTenantRepository(db)
 		sessionRepo := repository.NewSessionRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
-		handlers.NewTenantsHandler(db, tenantRepo, userRepo, testCookieName, false, auth).Register(app)
+		enq = &fakeProfileEnqueuer{}
+		handlers.NewTenantsHandler(db, tenantRepo, userRepo, enq, testCookieName, false, auth).Register(app)
 	})
 
 	AfterEach(func() {
@@ -98,6 +121,12 @@ var _ = Describe("TenantsHandler", Ordered, func() {
 			user := out["user"].(map[string]any)
 			Expect(user["email"]).To(Equal("alice@acme.test"))
 			Expect(user).NotTo(HaveKey("password_hash"))
+		})
+
+		It("enqueues an eager Zernio profile-bootstrap for the new tenant (CON-102)", func() {
+			_, out := signup("Acme Inc", "Alice", "alice@acme.test", "password-alice")
+			Expect(enq.ids()).To(ConsistOf(tenantID(out)),
+				"signup must enqueue exactly one bootstrap job for the created tenant")
 		})
 
 		It("rejects a duplicate email with 409", func() {

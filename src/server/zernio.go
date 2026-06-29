@@ -70,9 +70,14 @@ func initZernio(
 		RedirectURL: cfg.ZernioRedirectURL,
 	})
 	integ := zernio.NewIntegration(client)
-	bootstrapper := zernio.NewBootstrapper(integ, store)
+	bootstrapper := zernio.NewBootstrapper(integ, store, cfg.ZernioEnv)
+	// CON-102: sweep tenants that have INITIATED a connection, not merely those
+	// with a profile. Eager provisioning gives every tenant a zernio.profile_id
+	// at signup, so keying the sweep on profile presence would poll every tenant
+	// each tick — even ones that never connected. The connect_initiated_at marker
+	// (written on the first connect-link) is the effective "uses Zernio" signal.
 	worker := zernio.NewWorker(integ, accountRepo, store, hub, bootstrapper, cfg.ZernioSyncInterval, cfg.ZernioSyncIntervalFast, func(ctx context.Context) ([]string, error) {
-		return settingRepo.ListTenantIDsByKey(ctx, zernio.SettingProfileID)
+		return settingRepo.ListTenantIDsByKey(ctx, zernio.SettingConnectInitiatedAt)
 	})
 
 	workerCtx, workerCancel := context.WithCancel(ctx)
