@@ -83,6 +83,23 @@ services:
       api:
         condition: service_started
 
+  # PDF parsing microservice (CON-103). Parses content-bank PDFs (text + page-
+  # aware chunks + thumbnail) and renders attachment thumbnails / page counts.
+  # Built and published from the separate ogen-app/pdf-service repo (CGO +
+  # libpdfium). The API reaches it over the private network ONLY — no host
+  # `ports:` — at pdf-service:50051 (PDF_SERVICE_ADDR in .env).
+  #
+  # Gated behind the `pdf` profile until that image is published, so the default
+  # `docker compose up` keeps working (the API degrades gracefully: PDF features
+  # off). Once the image exists, drop the profile to enable PDF by default:
+  #   docker compose --profile pdf up
+  pdf-service:
+    image: "${PDF_SERVICE_IMAGE:-ogen-app/pdf-service:latest}"
+    platform: linux/amd64
+    profiles: ["pdf"]
+    expose:
+      - "50051"
+
 volumes:
   postgres-data:
   ogen-keys:
