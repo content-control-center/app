@@ -290,6 +290,17 @@ func (w *Worker) tick(ctx context.Context) error {
 		return err
 	}
 
+	// A successful authenticated list is positive proof the shared key and this
+	// tenant's profile both work, so clear any stale app-wide StateDegraded (the
+	// warmup Ping only re-runs on a key change, and the lazy connect-link
+	// bootstrap only re-runs for a tenant with no profile — so without this a
+	// transient boot-time Ping failure would strand the instance in degraded for
+	// the life of the process). PromoteOK is a no-op unless degraded, so it never
+	// resurrects a disabled (401) integration.
+	if w.integ.PromoteOK() {
+		log.Printf("zernio.sync recovered zernio.profile_id=%s — integration promoted degraded→ok", profileID)
+	}
+
 	local, err := w.accounts.ListAll(ctx, profileID)
 	if err != nil {
 		w.recordSyncStatus(ctx, err)

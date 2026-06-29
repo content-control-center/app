@@ -44,3 +44,35 @@ func TestIntegrationEnabledIsStateAware(t *testing.T) {
 		t.Fatal("disabled integration must report not enabled")
 	}
 }
+
+// TestPromoteOKOnlyFromDegraded locks the self-heal contract: a successful
+// background sync clears a stale StateDegraded, but PromoteOK must never
+// resurrect a disabled integration (no key / 401-rejected) nor disturb an
+// already-ok one — otherwise the worker could race its own 401 demotion back to
+// ok. Without this recovery path a transient boot-time Ping failure pins the
+// instance to degraded for the life of the process.
+func TestPromoteOKOnlyFromDegraded(t *testing.T) {
+	integ := NewIntegration(&Client{})
+
+	// Disabled (boot default / no key) → no promotion, stays disabled.
+	if integ.PromoteOK() {
+		t.Fatal("PromoteOK must not promote a disabled integration")
+	}
+	if got := integ.State(); got != StateDisabled {
+		t.Fatalf("state should stay disabled, got %s", got)
+	}
+
+	// Degraded → promoted to ok, reports the change.
+	integ.SetState(StateDegraded)
+	if !integ.PromoteOK() {
+		t.Fatal("PromoteOK should promote a degraded integration")
+	}
+	if got := integ.State(); got != StateOK {
+		t.Fatalf("state should be ok after promote, got %s", got)
+	}
+
+	// Already ok → no-op (no spurious "changed" signal).
+	if integ.PromoteOK() {
+		t.Fatal("PromoteOK should be a no-op when already ok")
+	}
+}

@@ -102,6 +102,52 @@ func TestZernioPerTenantSyncIsolation(t *testing.T) {
 	}
 }
 
+// TestZernioSyncSelfHealsDegraded proves the worker promotes a stale app-wide
+// StateDegraded back to ok on a successful sync. A transient boot-time Ping
+// failure leaves the instance degraded, and the warmup never re-runs without a
+// key change — so a clean sync tick (which proves the key + profile work) is the
+// recovery path. Regression guard for the "stuck degraded" bug.
+func TestZernioSyncSelfHealsDegraded(t *testing.T) {
+	db := mustOpenTestDBWithMigrations()
+
+	stub := newZernioStub()
+	defer stub.Close()
+	now := time.Now().UTC().Format(time.RFC3339)
+	stub.handle("GET", "/accounts", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"accounts": []any{}})
+	})
+	stub.handle("GET", "/profiles/p-a", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"profile": map[string]any{"_id": "p-a", "name": "Ogen", "createdAt": now, "updatedAt": now},
+		})
+	})
+
+	settingRepo := repository.NewSettingRepository(db)
+	accountRepo := repository.NewSocialAccountRepository(db)
+	client := zernio.NewClient(zernio.StaticKey("k"), stub.URL, zernio.ClientOpts{Timeout: time.Second})
+	integ := zernio.NewIntegration(client)
+	// Simulate the stuck instance: the key is valid, but a transient boot-time
+	// Ping failure left the app-wide state pinned to degraded.
+	integ.SetState(zernio.StateDegraded)
+
+	store := &settingStoreFromRepo{repo: settingRepo}
+	worker := zernio.NewWorker(integ, accountRepo, store, &quietHub{}, zernio.NewBootstrapper(integ, store, "dev"),
+		time.Hour, time.Minute,
+		func(ctx context.Context) ([]string, error) {
+			return settingRepo.ListTenantIDsByKey(ctx, zernio.SettingProfileID)
+		})
+
+	ctxA := tenantctx.With(context.Background(), models.DefaultTenantID)
+	mustUpsertSetting(t, settingRepo, ctxA, zernio.SettingProfileID, "p-a")
+
+	if err := worker.SyncOnce(tenantctx.WithSystem(context.Background())); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if got := integ.State(); got != zernio.StateOK {
+		t.Fatalf("expected integration to self-heal degraded→ok, got %s", got)
+	}
+}
+
 func mustUpsertSetting(t *testing.T, repo repository.SettingRepository, ctx context.Context, key, val string) {
 	t.Helper()
 	if err := repo.Upsert(ctx, &models.Setting{Key: key, Value: val}); err != nil {
