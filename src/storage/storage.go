@@ -44,6 +44,10 @@ type Storage interface {
 	// at key. Used for serving private images to the browser and for
 	// handing image bytes to Zernio at publish time (CON-73).
 	PresignedGetURL(ctx context.Context, key string, ttl time.Duration) (string, error)
+	// Download returns a reader over the object at key; the caller must close
+	// it. Used by the PDF ingestion job (CON-103) to re-read original.pdf from
+	// the bucket on each attempt.
+	Download(ctx context.Context, key string) (io.ReadCloser, error)
 }
 
 type s3Storage struct {
@@ -115,6 +119,17 @@ func (s *s3Storage) Delete(ctx context.Context, key string) error {
 		return fmt.Errorf("storage: delete %s: %w", key, err)
 	}
 	return nil
+}
+
+func (s *s3Storage) Download(ctx context.Context, key string) (io.ReadCloser, error) {
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("storage: download %s: %w", key, err)
+	}
+	return out.Body, nil
 }
 
 func (s *s3Storage) PublicURL(key string) string {
