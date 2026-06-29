@@ -120,8 +120,19 @@ func (h *ZernioHandler) Health(c *fiber.Ctx) error {
 			count := len(rows)
 			resp.AccountCount = &count
 		}
-		resp.LastSyncAt, _, _ = h.settings.Get(c.Context(), zernio.SettingLastSyncAt)
-		resp.LastSyncStatus, _, _ = h.settings.Get(c.Context(), zernio.SettingLastSyncStatus)
+		// Surface real store I/O failures instead of masking them as empty
+		// metadata (consistent with the profileID read above). A missing row
+		// (found=false, err=nil) legitimately yields "" and is omitted.
+		lastAt, _, err := h.settings.Get(c.Context(), zernio.SettingLastSyncAt)
+		if err != nil {
+			return err
+		}
+		lastStatus, _, err := h.settings.Get(c.Context(), zernio.SettingLastSyncStatus)
+		if err != nil {
+			return err
+		}
+		resp.LastSyncAt = lastAt
+		resp.LastSyncStatus = lastStatus
 	}
 	return c.JSON(resp)
 }
