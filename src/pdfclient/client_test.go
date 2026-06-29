@@ -20,6 +20,29 @@ type stubServer struct {
 	gotOptions *pdfv1.ParseOptions
 	gotBytes   []byte
 	resp       *pdfv1.ParseResponse
+
+	gotRenderOpts  *pdfv1.RenderOptions
+	gotRenderBytes []byte
+	renderResp     *pdfv1.RenderResponse
+}
+
+func (s *stubServer) Render(stream grpc.ClientStreamingServer[pdfv1.RenderRequest, pdfv1.RenderResponse]) error {
+	for {
+		req, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		switch p := req.Payload.(type) {
+		case *pdfv1.RenderRequest_Options:
+			s.gotRenderOpts = p.Options
+		case *pdfv1.RenderRequest_Chunk:
+			s.gotRenderBytes = append(s.gotRenderBytes, p.Chunk...)
+		}
+	}
+	return stream.SendAndClose(s.renderResp)
 }
 
 func (s *stubServer) Parse(stream grpc.ClientStreamingServer[pdfv1.ParseRequest, pdfv1.ParseResponse]) error {
@@ -93,6 +116,36 @@ func TestParseStreamsBytesAndReturnsResult(t *testing.T) {
 	}
 	if !bytes.Equal(res.ThumbnailPNG, []byte{0x89, 'P', 'N', 'G'}) {
 		t.Fatalf("thumbnail mismatch: %v", res.ThumbnailPNG)
+	}
+}
+
+func TestRenderStreamsBytesAndReturnsPageCountAndThumbnail(t *testing.T) {
+	stub := &stubServer{renderResp: &pdfv1.RenderResponse{
+		PageCount:    7,
+		ThumbnailPng: []byte{0x89, 'P', 'N', 'G'},
+	}}
+	addr := serveStub(t, stub)
+
+	client, err := pdfclient.New(pdfclient.Config{Addr: addr, Timeout: 5 * time.Second, MaxRecvBytes: 1 << 20})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer client.Close()
+
+	pdf := bytes.Repeat([]byte("%PDF-1.7 data "), 110_000) // multi-frame
+	res, err := client.Render(context.Background(), bytes.NewReader(pdf),
+		pdfclient.RenderOptions{RenderThumbnail: true, ThumbnailDPI: 96})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !bytes.Equal(stub.gotRenderBytes, pdf) {
+		t.Fatalf("server got %d bytes, want %d", len(stub.gotRenderBytes), len(pdf))
+	}
+	if got := stub.gotRenderOpts; got == nil || !got.GetRenderThumbnail() || got.GetThumbnailDpi() != 96 {
+		t.Fatalf("render options not propagated: %+v", stub.gotRenderOpts)
+	}
+	if res.PageCount != 7 || !bytes.Equal(res.ThumbnailPNG, []byte{0x89, 'P', 'N', 'G'}) {
+		t.Fatalf("unexpected render result: %+v", res)
 	}
 }
 

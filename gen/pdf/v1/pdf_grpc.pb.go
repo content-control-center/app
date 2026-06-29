@@ -19,7 +19,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PdfService_Parse_FullMethodName = "/pdf.v1.PdfService/Parse"
+	PdfService_Parse_FullMethodName  = "/pdf.v1.PdfService/Parse"
+	PdfService_Render_FullMethodName = "/pdf.v1.PdfService/Render"
 )
 
 // PdfServiceClient is the client API for PdfService service.
@@ -36,6 +37,11 @@ type PdfServiceClient interface {
 	// subsequent frame carries raw PDF bytes. The server replies once with the
 	// parsed result.
 	Parse(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[ParseRequest, ParseResponse], error)
+	// Render returns a PDF's page count and (optionally) a first-page thumbnail,
+	// WITHOUT text extraction or chunking. Used for post attachments (CON-103),
+	// which only need a thumbnail + page count. Same client-streaming framing as
+	// Parse.
+	Render(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[RenderRequest, RenderResponse], error)
 }
 
 type pdfServiceClient struct {
@@ -59,6 +65,19 @@ func (c *pdfServiceClient) Parse(ctx context.Context, opts ...grpc.CallOption) (
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type PdfService_ParseClient = grpc.ClientStreamingClient[ParseRequest, ParseResponse]
 
+func (c *pdfServiceClient) Render(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[RenderRequest, RenderResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &PdfService_ServiceDesc.Streams[1], PdfService_Render_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[RenderRequest, RenderResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type PdfService_RenderClient = grpc.ClientStreamingClient[RenderRequest, RenderResponse]
+
 // PdfServiceServer is the server API for PdfService service.
 // All implementations must embed UnimplementedPdfServiceServer
 // for forward compatibility.
@@ -73,6 +92,11 @@ type PdfServiceServer interface {
 	// subsequent frame carries raw PDF bytes. The server replies once with the
 	// parsed result.
 	Parse(grpc.ClientStreamingServer[ParseRequest, ParseResponse]) error
+	// Render returns a PDF's page count and (optionally) a first-page thumbnail,
+	// WITHOUT text extraction or chunking. Used for post attachments (CON-103),
+	// which only need a thumbnail + page count. Same client-streaming framing as
+	// Parse.
+	Render(grpc.ClientStreamingServer[RenderRequest, RenderResponse]) error
 	mustEmbedUnimplementedPdfServiceServer()
 }
 
@@ -85,6 +109,9 @@ type UnimplementedPdfServiceServer struct{}
 
 func (UnimplementedPdfServiceServer) Parse(grpc.ClientStreamingServer[ParseRequest, ParseResponse]) error {
 	return status.Error(codes.Unimplemented, "method Parse not implemented")
+}
+func (UnimplementedPdfServiceServer) Render(grpc.ClientStreamingServer[RenderRequest, RenderResponse]) error {
+	return status.Error(codes.Unimplemented, "method Render not implemented")
 }
 func (UnimplementedPdfServiceServer) mustEmbedUnimplementedPdfServiceServer() {}
 func (UnimplementedPdfServiceServer) testEmbeddedByValue()                    {}
@@ -114,6 +141,13 @@ func _PdfService_Parse_Handler(srv interface{}, stream grpc.ServerStream) error 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type PdfService_ParseServer = grpc.ClientStreamingServer[ParseRequest, ParseResponse]
 
+func _PdfService_Render_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(PdfServiceServer).Render(&grpc.GenericServerStream[RenderRequest, RenderResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type PdfService_RenderServer = grpc.ClientStreamingServer[RenderRequest, RenderResponse]
+
 // PdfService_ServiceDesc is the grpc.ServiceDesc for PdfService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -125,6 +159,11 @@ var PdfService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "Parse",
 			Handler:       _PdfService_Parse_Handler,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "Render",
+			Handler:       _PdfService_Render_Handler,
 			ClientStreams: true,
 		},
 	},

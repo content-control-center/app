@@ -161,3 +161,60 @@ func (c *Client) Parse(ctx context.Context, r io.Reader, opts Options) (*Result,
 	}
 	return out, nil
 }
+
+// RenderOptions controls a Render call.
+type RenderOptions struct {
+	RenderThumbnail bool
+	ThumbnailDPI    int
+}
+
+// RenderResult is a PDF's page count and optional first-page thumbnail.
+type RenderResult struct {
+	PageCount    int
+	ThumbnailPNG []byte
+}
+
+// Render streams the PDF in r to the service and returns its page count and
+// (optionally) a first-page thumbnail — no text extraction or chunking. Used
+// for post attachments.
+func (c *Client) Render(ctx context.Context, r io.Reader, opts RenderOptions) (*RenderResult, error) {
+	if c == nil {
+		return nil, ErrDisabled
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	stream, err := c.rpc.Render(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("pdfclient: open render stream: %w", err)
+	}
+
+	if err := stream.Send(&pdfv1.RenderRequest{Payload: &pdfv1.RenderRequest_Options{Options: &pdfv1.RenderOptions{
+		RenderThumbnail: opts.RenderThumbnail,
+		ThumbnailDpi:    int32(opts.ThumbnailDPI),
+	}}}); err != nil {
+		return nil, fmt.Errorf("pdfclient: send render options: %w", err)
+	}
+
+	buf := make([]byte, streamFrameSize)
+	for {
+		n, rerr := r.Read(buf)
+		if n > 0 {
+			if err := stream.Send(&pdfv1.RenderRequest{Payload: &pdfv1.RenderRequest_Chunk{Chunk: buf[:n]}}); err != nil {
+				return nil, fmt.Errorf("pdfclient: send pdf bytes: %w", err)
+			}
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			return nil, fmt.Errorf("pdfclient: read pdf: %w", rerr)
+		}
+	}
+
+	resp, err := stream.CloseAndRecv()
+	if err != nil {
+		return nil, fmt.Errorf("pdfclient: render: %w", err)
+	}
+	return &RenderResult{PageCount: int(resp.GetPageCount()), ThumbnailPNG: resp.GetThumbnailPng()}, nil
+}

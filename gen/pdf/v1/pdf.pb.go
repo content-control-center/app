@@ -317,6 +317,192 @@ func (x *Chunk) GetPageEnd() int32 {
 	return 0
 }
 
+type RenderRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Payload:
+	//
+	//	*RenderRequest_Options
+	//	*RenderRequest_Chunk
+	Payload       isRenderRequest_Payload `protobuf_oneof:"payload"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RenderRequest) Reset() {
+	*x = RenderRequest{}
+	mi := &file_pdf_v1_pdf_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenderRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenderRequest) ProtoMessage() {}
+
+func (x *RenderRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pdf_v1_pdf_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenderRequest.ProtoReflect.Descriptor instead.
+func (*RenderRequest) Descriptor() ([]byte, []int) {
+	return file_pdf_v1_pdf_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *RenderRequest) GetPayload() isRenderRequest_Payload {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *RenderRequest) GetOptions() *RenderOptions {
+	if x != nil {
+		if x, ok := x.Payload.(*RenderRequest_Options); ok {
+			return x.Options
+		}
+	}
+	return nil
+}
+
+func (x *RenderRequest) GetChunk() []byte {
+	if x != nil {
+		if x, ok := x.Payload.(*RenderRequest_Chunk); ok {
+			return x.Chunk
+		}
+	}
+	return nil
+}
+
+type isRenderRequest_Payload interface {
+	isRenderRequest_Payload()
+}
+
+type RenderRequest_Options struct {
+	Options *RenderOptions `protobuf:"bytes,1,opt,name=options,proto3,oneof"` // first frame only
+}
+
+type RenderRequest_Chunk struct {
+	Chunk []byte `protobuf:"bytes,2,opt,name=chunk,proto3,oneof"` // subsequent frames: PDF bytes
+}
+
+func (*RenderRequest_Options) isRenderRequest_Payload() {}
+
+func (*RenderRequest_Chunk) isRenderRequest_Payload() {}
+
+type RenderOptions struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	RenderThumbnail bool                   `protobuf:"varint,1,opt,name=render_thumbnail,json=renderThumbnail,proto3" json:"render_thumbnail,omitempty"`
+	ThumbnailDpi    int32                  `protobuf:"varint,2,opt,name=thumbnail_dpi,json=thumbnailDpi,proto3" json:"thumbnail_dpi,omitempty"` // 0 -> service default (96)
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *RenderOptions) Reset() {
+	*x = RenderOptions{}
+	mi := &file_pdf_v1_pdf_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenderOptions) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenderOptions) ProtoMessage() {}
+
+func (x *RenderOptions) ProtoReflect() protoreflect.Message {
+	mi := &file_pdf_v1_pdf_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenderOptions.ProtoReflect.Descriptor instead.
+func (*RenderOptions) Descriptor() ([]byte, []int) {
+	return file_pdf_v1_pdf_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *RenderOptions) GetRenderThumbnail() bool {
+	if x != nil {
+		return x.RenderThumbnail
+	}
+	return false
+}
+
+func (x *RenderOptions) GetThumbnailDpi() int32 {
+	if x != nil {
+		return x.ThumbnailDpi
+	}
+	return 0
+}
+
+type RenderResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PageCount     int32                  `protobuf:"varint,1,opt,name=page_count,json=pageCount,proto3" json:"page_count,omitempty"`
+	ThumbnailPng  []byte                 `protobuf:"bytes,2,opt,name=thumbnail_png,json=thumbnailPng,proto3" json:"thumbnail_png,omitempty"` // empty if not requested / render failed
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RenderResponse) Reset() {
+	*x = RenderResponse{}
+	mi := &file_pdf_v1_pdf_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenderResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenderResponse) ProtoMessage() {}
+
+func (x *RenderResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pdf_v1_pdf_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenderResponse.ProtoReflect.Descriptor instead.
+func (*RenderResponse) Descriptor() ([]byte, []int) {
+	return file_pdf_v1_pdf_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *RenderResponse) GetPageCount() int32 {
+	if x != nil {
+		return x.PageCount
+	}
+	return 0
+}
+
+func (x *RenderResponse) GetThumbnailPng() []byte {
+	if x != nil {
+		return x.ThumbnailPng
+	}
+	return nil
+}
+
 var File_pdf_v1_pdf_proto protoreflect.FileDescriptor
 
 const file_pdf_v1_pdf_proto_rawDesc = "" +
@@ -343,10 +529,22 @@ const file_pdf_v1_pdf_proto_rawDesc = "" +
 	"\x04text\x18\x02 \x01(\tR\x04text\x12\x1d\n" +
 	"\n" +
 	"page_start\x18\x03 \x01(\x05R\tpageStart\x12\x19\n" +
-	"\bpage_end\x18\x04 \x01(\x05R\apageEnd2D\n" +
+	"\bpage_end\x18\x04 \x01(\x05R\apageEnd\"e\n" +
+	"\rRenderRequest\x121\n" +
+	"\aoptions\x18\x01 \x01(\v2\x15.pdf.v1.RenderOptionsH\x00R\aoptions\x12\x16\n" +
+	"\x05chunk\x18\x02 \x01(\fH\x00R\x05chunkB\t\n" +
+	"\apayload\"_\n" +
+	"\rRenderOptions\x12)\n" +
+	"\x10render_thumbnail\x18\x01 \x01(\bR\x0frenderThumbnail\x12#\n" +
+	"\rthumbnail_dpi\x18\x02 \x01(\x05R\fthumbnailDpi\"T\n" +
+	"\x0eRenderResponse\x12\x1d\n" +
+	"\n" +
+	"page_count\x18\x01 \x01(\x05R\tpageCount\x12#\n" +
+	"\rthumbnail_png\x18\x02 \x01(\fR\fthumbnailPng2\x7f\n" +
 	"\n" +
 	"PdfService\x126\n" +
-	"\x05Parse\x12\x14.pdf.v1.ParseRequest\x1a\x15.pdf.v1.ParseResponse(\x01Bz\n" +
+	"\x05Parse\x12\x14.pdf.v1.ParseRequest\x1a\x15.pdf.v1.ParseResponse(\x01\x129\n" +
+	"\x06Render\x12\x15.pdf.v1.RenderRequest\x1a\x16.pdf.v1.RenderResponse(\x01Bz\n" +
 	"\n" +
 	"com.pdf.v1B\bPdfProtoP\x01Z)github.com/ogen-app/ogen/gen/pdf/v1;pdfv1\xa2\x02\x03PXX\xaa\x02\x06Pdf.V1\xca\x02\x06Pdf\\V1\xe2\x02\x12Pdf\\V1\\GPBMetadata\xea\x02\aPdf::V1b\x06proto3"
 
@@ -362,23 +560,29 @@ func file_pdf_v1_pdf_proto_rawDescGZIP() []byte {
 	return file_pdf_v1_pdf_proto_rawDescData
 }
 
-var file_pdf_v1_pdf_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_pdf_v1_pdf_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_pdf_v1_pdf_proto_goTypes = []any{
-	(*ParseRequest)(nil),  // 0: pdf.v1.ParseRequest
-	(*ParseOptions)(nil),  // 1: pdf.v1.ParseOptions
-	(*ParseResponse)(nil), // 2: pdf.v1.ParseResponse
-	(*Chunk)(nil),         // 3: pdf.v1.Chunk
+	(*ParseRequest)(nil),   // 0: pdf.v1.ParseRequest
+	(*ParseOptions)(nil),   // 1: pdf.v1.ParseOptions
+	(*ParseResponse)(nil),  // 2: pdf.v1.ParseResponse
+	(*Chunk)(nil),          // 3: pdf.v1.Chunk
+	(*RenderRequest)(nil),  // 4: pdf.v1.RenderRequest
+	(*RenderOptions)(nil),  // 5: pdf.v1.RenderOptions
+	(*RenderResponse)(nil), // 6: pdf.v1.RenderResponse
 }
 var file_pdf_v1_pdf_proto_depIdxs = []int32{
 	1, // 0: pdf.v1.ParseRequest.options:type_name -> pdf.v1.ParseOptions
 	3, // 1: pdf.v1.ParseResponse.chunks:type_name -> pdf.v1.Chunk
-	0, // 2: pdf.v1.PdfService.Parse:input_type -> pdf.v1.ParseRequest
-	2, // 3: pdf.v1.PdfService.Parse:output_type -> pdf.v1.ParseResponse
-	3, // [3:4] is the sub-list for method output_type
-	2, // [2:3] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	5, // 2: pdf.v1.RenderRequest.options:type_name -> pdf.v1.RenderOptions
+	0, // 3: pdf.v1.PdfService.Parse:input_type -> pdf.v1.ParseRequest
+	4, // 4: pdf.v1.PdfService.Render:input_type -> pdf.v1.RenderRequest
+	2, // 5: pdf.v1.PdfService.Parse:output_type -> pdf.v1.ParseResponse
+	6, // 6: pdf.v1.PdfService.Render:output_type -> pdf.v1.RenderResponse
+	5, // [5:7] is the sub-list for method output_type
+	3, // [3:5] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_pdf_v1_pdf_proto_init() }
@@ -390,13 +594,17 @@ func file_pdf_v1_pdf_proto_init() {
 		(*ParseRequest_Options)(nil),
 		(*ParseRequest_Chunk)(nil),
 	}
+	file_pdf_v1_pdf_proto_msgTypes[4].OneofWrappers = []any{
+		(*RenderRequest_Options)(nil),
+		(*RenderRequest_Chunk)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pdf_v1_pdf_proto_rawDesc), len(file_pdf_v1_pdf_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

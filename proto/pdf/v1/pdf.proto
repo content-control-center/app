@@ -12,6 +12,12 @@ service PdfService {
   // subsequent frame carries raw PDF bytes. The server replies once with the
   // parsed result.
   rpc Parse(stream ParseRequest) returns (ParseResponse);
+
+  // Render returns a PDF's page count and (optionally) a first-page thumbnail,
+  // WITHOUT text extraction or chunking. Used for post attachments (CON-103),
+  // which only need a thumbnail + page count. Same client-streaming framing as
+  // Parse.
+  rpc Render(stream RenderRequest) returns (RenderResponse);
 }
 
 message ParseRequest {
@@ -44,4 +50,21 @@ message Chunk {
   string text = 2;
   int32 page_start = 3;
   int32 page_end = 4;
+}
+
+message RenderRequest {
+  oneof payload {
+    RenderOptions options = 1; // first frame only
+    bytes chunk = 2;           // subsequent frames: PDF bytes
+  }
+}
+
+message RenderOptions {
+  bool render_thumbnail = 1;
+  int32 thumbnail_dpi = 2; // 0 -> service default (96)
+}
+
+message RenderResponse {
+  int32 page_count = 1;
+  bytes thumbnail_png = 2; // empty if not requested / render failed
 }
