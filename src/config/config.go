@@ -77,6 +77,18 @@ type Config struct {
 	StorageBucket    string `envconfig:"STORAGE_BUCKET"     default:""`
 	StoragePublicURL string `envconfig:"STORAGE_PUBLIC_URL" default:""` // CDN/public base URL for returned object URLs
 
+	// PDF parsing microservice (CON-103). The API streams PDF bytes to
+	// pdf-service over gRPC — exclusively over the Railway private network — and
+	// gets back page-attributed chunks + a thumbnail. Empty PDFServiceAddr
+	// disables PDF ingestion (uploads accepted, parsing skipped), mirroring the
+	// empty-key pattern above. In prod this is the private hostname
+	// (pdf-service.railway.internal:50051); compose/tests use pdf-service:50051.
+	// MaxRecvBytes raises the gRPC client receive cap (the response carries chunk
+	// text + thumbnail, which can exceed gRPC's 4MB default) — 64 MiB here.
+	PDFServiceAddr         string        `envconfig:"PDF_SERVICE_ADDR"           default:""`
+	PDFServiceTimeout      time.Duration `envconfig:"PDF_SERVICE_TIMEOUT"        default:"2m"`
+	PDFServiceMaxRecvBytes int           `envconfig:"PDF_SERVICE_MAX_RECV_BYTES" default:"67108864"`
+
 	// Zernio integration. Empty ZernioAPIKey disables the
 	// integration entirely; everything else stays defaulted.
 	ZernioAPIKey           string        `envconfig:"ZERNIO_API_KEY"            default:""`
