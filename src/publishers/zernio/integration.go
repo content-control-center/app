@@ -61,6 +61,30 @@ func (i *Integration) SetState(s State) {
 	i.state = s
 }
 
+// PromoteOK transitions a StateDegraded integration to StateOK atomically,
+// returning true when it made the change. It is a no-op (returning false) from
+// any other state, so a successful background sync can clear a *stale* degraded
+// without ever resurrecting a disabled integration (no key / 401-rejected) or
+// racing a concurrent disable. The compare-and-set is held under the same mutex
+// as SetState so the read and write can't interleave with the worker's own 401
+// demotion.
+//
+// This is the self-heal path. The boot/key-change warmup Ping is the only other
+// writer of StateOK, and it never re-runs unless zernio_api_key changes — so a
+// transient boot-time Ping failure (network blip / 5xx) would otherwise pin the
+// instance to degraded for the life of the process, even while the key and every
+// per-tenant profile work fine. A clean sync tick is positive proof to the
+// contrary, so it promotes back to ok.
+func (i *Integration) PromoteOK() bool {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.state == StateDegraded {
+		i.state = StateOK
+		return true
+	}
+	return false
+}
+
 // Enabled reports whether the integration is currently usable: a client is
 // wired AND it is not in the disabled state (no API key configured, or auth
 // rejected). It is evaluated live off the current state, so setting, rotating,
