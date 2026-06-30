@@ -9,6 +9,7 @@ import (
 	"github.com/ogen-app/ogen/src/embedding"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/storage"
+	"github.com/ogen-app/ogen/src/usage"
 )
 
 // initEmbedding delegates to the embedding package so the same setup can be
@@ -20,6 +21,7 @@ func initEmbedding(
 	assetRepo repository.AssetRepository,
 	fileRepo repository.AssetFileRepository,
 	store storage.Storage,
+	recorder *usage.Recorder,
 ) (embedding.Callbacks, ai.Embedder, error) {
-	return embedding.Init(ctx, cfg, chunksRepo, assetRepo, fileRepo, store)
+	return embedding.Init(ctx, cfg, chunksRepo, assetRepo, fileRepo, store, recorder)
 }

@@ -172,7 +172,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// When GEMINI_API_KEY is unset the embedder is nil and PDF ingestion +
 	// semantic search are disabled; markdown/JSON saves still succeed.
 	log.Printf("genkit: initialising (GENKIT_ENV=%s)", os.Getenv("GENKIT_ENV"))
-	embedCallbacks, embedder, err := initEmbedding(ctx, cfg, chunksRepo, pieceRepo, assetFileRepo, store)
+	embedCallbacks, embedder, err := initEmbedding(ctx, cfg, chunksRepo, pieceRepo, assetFileRepo, store, usageWiring.recorder)
 	if err != nil {
 		return nil, err
 	}
@@ -182,11 +182,13 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// is left nil otherwise so the worker no-ops.
 	pdfIngestEnabled := pdfClient != nil && embedder != nil && store != nil
 	pdfDeps := queues.PDFDeps{
-		Embedder: embedder,
-		Storage:  store,
-		Assets:   pieceRepo,
-		Chunks:   chunksRepo,
-		Files:    assetFileRepo,
+		Embedder:   embedder,
+		Storage:    store,
+		Assets:     pieceRepo,
+		Chunks:     chunksRepo,
+		Files:      assetFileRepo,
+		Recorder:   usageWiring.recorder,
+		EmbedModel: cfg.EmbedModel,
 	}
 	if pdfIngestEnabled {
 		pdfDeps.Client = pdfClient
