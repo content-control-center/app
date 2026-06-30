@@ -1,0 +1,145 @@
+@baseUrl = http://localhost:9001
+
+# Usage metering & per-tenant cost limits (CON-86).
+#
+# All endpoints require authentication — run "Login" from sessions/sessions.http
+# first; the HTTP client stores and sends the session cookie automatically. Reads
+# auto-scope to the logged-in tenant.
+#
+# These endpoints only return data when the server has ANALYTICS_DSN set (the
+# bundled `timescaledb` compose service). With it empty, the summary returns
+# zeros and the limits read shows source "unlimited" — nothing is recorded.
+#
+# Costs are USD-micros (1_000_000 micros = $1). The summary also returns a
+# convenience `usd` string.
+
+### Usage summary — current month (default)  [protected]
+# Period-to-date totals + a per-vendor/family/model/feature/platform breakdown.
+GET {{baseUrl}}/api/usage
+Accept: application/json
+
+### Usage summary — current day  [protected]
+GET {{baseUrl}}/api/usage?period=day
+Accept: application/json
+
+### Usage summary — only the model family  [protected]
+GET {{baseUrl}}/api/usage?period=month&family=model
+Accept: application/json
+
+### Usage summary — only the publisher family (Zernio)  [protected]
+GET {{baseUrl}}/api/usage?period=month&family=publisher
+Accept: application/json
+
+### Usage summary — explicit window (from/to, RFC3339)  [protected]
+GET {{baseUrl}}/api/usage?from=2026-06-01T00:00:00Z&to=2026-07-01T00:00:00Z
+Accept: application/json
+
+### Usage summary — invalid period (expects 400)  [protected]
+GET {{baseUrl}}/api/usage?period=week
+Accept: application/json
+
+### Usage summary — malformed from (expects 400)  [protected]
+GET {{baseUrl}}/api/usage?from=yesterday
+Accept: application/json
+
+###
+# ── Effective limits ──────────────────────────────────────────────────────────
+###
+
+### Get effective limits + period-to-date spend  [protected]
+# Resolves tenant-row -> config-default -> unlimited; `source` says which.
+# Returns daily/monthly caps (micros, nullable), mode, enabled, and
+# day_spent_micros / month_spent_micros.
+GET {{baseUrl}}/api/usage/limits
+Accept: application/json
+
+###
+# ── Set limits (operator-only) ────────────────────────────────────────────────
+#
+# PUT is gated behind an OPERATOR token, not tenant self-service: raising a cap
+# or disabling enforcement is an operator action. Send X-Admin-Token matching the
+# server's USAGE_ADMIN_TOKEN. When USAGE_ADMIN_TOKEN is empty (the default), the
+# route FAILS CLOSED and every PUT returns 403 — tenants cannot lift their own
+# caps. Set @adminToken below to the server's USAGE_ADMIN_TOKEN.
+###
+@adminToken = change-me-to-USAGE_ADMIN_TOKEN
+
+### Set limits — $5/day, $100/month, enforce  [protected, operator]
+# Caps are USD-micros: $5 = 5_000_000, $100 = 100_000_000. Full replace of the
+# tenant's row; omitted caps become null (no cap for that period).
+PUT {{baseUrl}}/api/usage/limits
+Content-Type: application/json
+X-Admin-Token: {{adminToken}}
+
+{
+  "daily_cap_micros": 5000000,
+  "monthly_cap_micros": 100000000,
+  "mode": "enforce",
+  "enabled": true
+}
+
+### Set limits — warn mode, monthly cap only  [protected, operator]
+PUT {{baseUrl}}/api/usage/limits
+Content-Type: application/json
+X-Admin-Token: {{adminToken}}
+
+{
+  "monthly_cap_micros": 250000000,
+  "mode": "warn"
+}
+
+### Set limits — clear caps (unlimited, record-only)  [protected, operator]
+PUT {{baseUrl}}/api/usage/limits
+Content-Type: application/json
+X-Admin-Token: {{adminToken}}
+
+{
+  "daily_cap_micros": null,
+  "monthly_cap_micros": null,
+  "enabled": true
+}
+
+### Set limits — MISSING token (expects 403, fail-closed)  [protected]
+PUT {{baseUrl}}/api/usage/limits
+Content-Type: application/json
+
+{
+  "daily_cap_micros": 999999999999
+}
+
+### Set limits — WRONG token (expects 403)  [protected]
+PUT {{baseUrl}}/api/usage/limits
+Content-Type: application/json
+X-Admin-Token: definitely-not-the-token
+
+{
+  "daily_cap_micros": 999999999999
+}
+
+### Set limits — invalid mode (expects 400)  [protected, operator]
+PUT {{baseUrl}}/api/usage/limits
+Content-Type: application/json
+X-Admin-Token: {{adminToken}}
+
+{
+  "mode": "silent"
+}
+
+### Set limits — negative cap (expects 400)  [protected, operator]
+PUT {{baseUrl}}/api/usage/limits
+Content-Type: application/json
+X-Admin-Token: {{adminToken}}
+
+{
+  "daily_cap_micros": -1
+}
+
+### Set limits — unknown field (expects 400, strict decode)  [protected, operator]
+PUT {{baseUrl}}/api/usage/limits
+Content-Type: application/json
+X-Admin-Token: {{adminToken}}
+
+{
+  "daily_cap_micros": 5000000,
+  "hourly_cap_micros": 1000
+}

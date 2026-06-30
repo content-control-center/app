@@ -6,12 +6,19 @@ services:
         # Copy .env.example -> .env and fill it in before `docker compose up`.
         env_file:
             - .env
+        environment:
+            # CON-86 usage analytics. Default the API at the bundled TimescaleDB
+            # service so the stack meters out of the box. Override (or set empty
+            # to disable usage analytics entirely) via ANALYTICS_DSN in .env.
+            ANALYTICS_DSN: "${ANALYTICS_DSN:-postgres://ogen:ogen@timescaledb:5432/ogen_analytics?sslmode=disable}"
         volumes:
             - ./ogen-keys:/var/lib/ogen/keys
         ports:
             - "9001:9001"
         depends_on:
             postgres:
+                condition: service_healthy
+            timescaledb:
                 condition: service_healthy
 
     postgres:
@@ -31,6 +38,34 @@ services:
                 [
                     "CMD-SHELL",
                     "pg_isready -U ${POSTGRES_USER:-ogen} -d ${POSTGRES_DB:-ogen}",
+                ]
+            interval: 2s
+            timeout: 2s
+            retries: 30
+
+    # Isolated analytics database (CON-86): TimescaleDB on PG17 for usage_events
+    # — the hypertable + continuous-aggregate rollups + compression/retention.
+    # Kept SEPARATE from the control-plane postgres above so the extension
+    # dependency stays quarantined and the control plane stays vanilla. The API
+    # points here via ANALYTICS_DSN (see the api service) and runs the analytics
+    # migrations at boot; the same migrations also run on plain Postgres (the
+    # TimescaleDB-specific DDL is guarded), so this image is what enables the
+    # hypertable path. Host port 5433 avoids clashing with postgres on 5432.
+    timescaledb:
+        image: timescale/timescaledb:latest-pg17
+        environment:
+            POSTGRES_USER: "${POSTGRES_USER:-ogen}"
+            POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-ogen}"
+            POSTGRES_DB: "ogen_analytics"
+        volumes:
+            - timescale-data:/var/lib/postgresql/data
+        ports:
+            - "5433:5432"
+        healthcheck:
+            test:
+                [
+                    "CMD-SHELL",
+                    "pg_isready -U ${POSTGRES_USER:-ogen} -d ogen_analytics",
                 ]
             interval: 2s
             timeout: 2s
@@ -105,4 +140,5 @@ services:
 
 volumes:
     postgres-data:
+    timescale-data:
     ogen-keys:
