@@ -12,11 +12,11 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
 	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 func runPostAssistant(
@@ -168,7 +168,7 @@ func runPostAssistant(
 		maxTurns = 8
 	}
 
-	modelName := "anthropic/" + cfg.ModelID
+	modelName := cfg.Provider.Ref(llm.RoleGeneration)
 
 	// System + context block forms the stable cached prefix.
 	systemBlock := actx.SystemPrompt + "\n\n" + actx.ContextBlock
@@ -251,9 +251,7 @@ func runPostAssistant(
 		ai.WithTools(tools.listAssets, tools.getAssetChunks, tools.searchAssetChunks, tools.getCurrentContent, tools.clonePost, tools.restoreVersion, tools.schedulePost),
 		ai.WithMaxTurns(maxTurns),
 		ai.WithStreaming(streamCb),
-		ai.WithConfig(anthropic.MessageNewParams{
-			MaxTokens: maxTokens,
-		}),
+		cfg.Provider.CallConfig(maxTokens),
 	)
 	if err != nil {
 		log.Printf("post_assistant[%s]: model call failed after %s: %v", req.PostID, time.Since(start).Round(time.Millisecond), err)

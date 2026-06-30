@@ -2,6 +2,7 @@ package enrich_brief
 
 import (
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 // EnrichBriefRequest is the input to the enrichBrief flow.
@@ -34,7 +35,9 @@ type EnrichBriefRepos struct {
 
 // EnrichBriefFlowConfig holds static settings for the flow.
 type EnrichBriefFlowConfig struct {
-	ModelID string
+	// Provider resolves the model reference + call config by role (CON-86 FR12).
+	Provider *llm.Provider
+	ModelID  string
 	// MaxOutputTokens caps a single model call. 0 falls back to 32768 — a
 	// brief is well under that, so truncation should never fire; the cap is
 	// just a guard.

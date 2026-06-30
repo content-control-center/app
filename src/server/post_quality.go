@@ -9,6 +9,7 @@ import (
 	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_quality"
+	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 // initPostQuality registers the assessPostQuality flow on the shared
@@ -19,6 +20,7 @@ import (
 func initPostQuality(
 	g *genkit.Genkit,
 	cfg *config.Config,
+	provider *llm.Provider,
 	hub eventhub.Hub,
 	repos post_quality.PostQualityRepos,
 ) (func(ctx context.Context, postID string, onEvent post_quality.OnEventFunc) (*post_quality.PostQualityResponse, error), error) {
@@ -32,9 +34,10 @@ func initPostQuality(
 	// would trip the Anthropic non-streaming guard — evaluate uses a blocking
 	// GenerateData call, and a scoring response is only a few thousand tokens.
 	flowCfg := post_quality.PostQualityFlowConfig{
-		ModelID: cfg.QualityModelID,
-		Weights: weights,
-		Hub:     hub,
+		Provider: provider,
+		ModelID:  cfg.QualityModelID,
+		Weights:  weights,
+		Hub:      hub,
 	}
 	if err := post_quality.InitPostQuality(g, flowCfg, repos); err != nil {
 		return nil, fmt.Errorf("init post quality flow: %w", err)

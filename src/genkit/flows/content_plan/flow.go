@@ -15,6 +15,7 @@ import (
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 //go:embed prompts/content_plan.tmpl
@@ -31,10 +32,14 @@ var contentPlanRunner func(ctx context.Context, req ContentPlanRequest, onEvent 
 
 // ContentPlanFlowConfig holds the settings for the content plan flow.
 type ContentPlanFlowConfig struct {
+	// Provider resolves the model reference + call config by role, so the
+	// flow doesn't hardcode the "anthropic/" prefix or the Anthropic SDK
+	// config type (CON-86 FR12).
+	Provider         *llm.Provider
 	ModelID          string
-	MaxContextAssets int         // max assets when no embedder (creation-order fallback)
-	MaxContextChars  int         // character budget for asset context in the prompt
-	MaxOutputTokens  int64       // max_tokens sent to the model; 0 falls back to 8192
+	MaxContextAssets int   // max assets when no embedder (creation-order fallback)
+	MaxContextChars  int   // character budget for asset context in the prompt
+	MaxOutputTokens  int64 // max_tokens sent to the model; 0 falls back to 8192
 	// MaxPostsPerBatch caps the number of posts the model is asked to
 	// produce in a single batched call. Sized so 800 tokens/post stays
 	// comfortably under MaxOutputTokens with headroom for slower
@@ -54,11 +59,11 @@ type ContentPlanFlowConfig struct {
 
 // ContentPlanRepos bundles all repository dependencies for the flow.
 type ContentPlanRepos struct {
-	Campaigns  repository.CampaignRepository
-	Assets     repository.AssetRepository
-	Chunks     repository.AssetChunksRepository
-	Platforms  repository.PlatformRepository
-	Posts      repository.PostRepository
+	Campaigns repository.CampaignRepository
+	Assets    repository.AssetRepository
+	Chunks    repository.AssetChunksRepository
+	Platforms repository.PlatformRepository
+	Posts     repository.PostRepository
 }
 
 // InitContentPlan registers the generateContentPlan Genkit flow. It must be

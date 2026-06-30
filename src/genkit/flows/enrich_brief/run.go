@@ -9,9 +9,10 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
+
+	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 // defaultMaxOutputTokens caps a single brief generation. A brief is well
@@ -58,7 +59,7 @@ func runEnrichBrief(
 	if maxTokens == 0 {
 		maxTokens = defaultMaxOutputTokens
 	}
-	modelName := "anthropic/" + cfg.ModelID
+	modelName := cfg.Provider.Ref(llm.RoleGeneration)
 
 	// Watch the four brief fields so the client previews each one as it
 	// streams. The scanner decodes JSON escapes as they arrive, so the
@@ -103,9 +104,7 @@ func runEnrichBrief(
 		ai.WithSystem(bctx.SystemPrompt),
 		ai.WithPrompt(bctx.ContextBlock),
 		ai.WithStreaming(streamCb),
-		ai.WithConfig(anthropic.MessageNewParams{
-			MaxTokens: maxTokens,
-		}),
+		cfg.Provider.CallConfig(maxTokens),
 	)
 	if err != nil {
 		log.Printf("enrich_brief[%s]: model call failed after %s: %v",

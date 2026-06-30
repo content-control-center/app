@@ -8,6 +8,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
+	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 // initEnrichBrief registers the enrichBrief flow on the shared Genkit
@@ -19,10 +20,12 @@ import (
 func initEnrichBrief(
 	g *genkit.Genkit,
 	cfg *config.Config,
+	provider *llm.Provider,
 	repos enrich_brief.EnrichBriefRepos,
 ) (func(ctx context.Context, req enrich_brief.EnrichBriefRequest, onEvent enrich_brief.OnEventFunc) (*enrich_brief.EnrichBriefResponse, error), error) {
 	flowCfg := enrich_brief.EnrichBriefFlowConfig{
-		ModelID: cfg.ModelID,
+		Provider: provider,
+		ModelID:  cfg.ModelID,
 	}
 	if err := enrich_brief.InitEnrichBrief(g, flowCfg, repos); err != nil {
 		return nil, fmt.Errorf("init enrich brief flow: %w", err)

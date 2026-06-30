@@ -18,6 +18,7 @@ import (
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/post_actions/logs"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 // defaultSuggestionCap is the top-N suggestions per dimension when the
@@ -26,6 +27,9 @@ const defaultSuggestionCap = 3
 
 // PostQualityFlowConfig holds the settings for the assessPostQuality flow.
 type PostQualityFlowConfig struct {
+	// Provider resolves the model reference + call config by role; post_quality
+	// uses the quality role (cfg.QualityModelID) (CON-86 FR12).
+	Provider *llm.Provider
 	// ModelID is the Anthropic model used for scoring — Sonnet 4.5 by
 	// default, specified separately from the generation flows.
 	ModelID string

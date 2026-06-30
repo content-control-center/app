@@ -8,11 +8,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
 	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 // retryBackoff is the pause before the single retry on a failed or
@@ -110,7 +110,7 @@ func evaluateDimension(
 	if maxTokens == 0 {
 		maxTokens = defaultMaxOutputTokens
 	}
-	modelName := "anthropic/" + cfg.ModelID
+	modelName := cfg.Provider.Ref(llm.RoleQuality)
 	userPrompt := prompts.user + dimensionInstruction(label, cfg.SuggestionCap)
 
 	var lastErr error
@@ -131,7 +131,7 @@ func evaluateDimension(
 			ai.WithModelName(modelName),
 			ai.WithSystem("%s", prompts.system),
 			ai.WithPrompt("%s", userPrompt),
-			ai.WithConfig(anthropic.MessageNewParams{MaxTokens: maxTokens}),
+			cfg.Provider.CallConfig(maxTokens),
 		)
 		if resp != nil && resp.FinishReason == ai.FinishReasonLength {
 			var outputTokens int64

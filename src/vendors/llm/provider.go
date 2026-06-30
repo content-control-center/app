@@ -1,5 +1,10 @@
 package llm
 
+import (
+	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/firebase/genkit/go/ai"
+)
+
 // Role selects which configured model a flow wants. content_plan,
 // post_assistant, and enrich_brief use generation; post_quality uses quality.
 type Role string
@@ -36,4 +41,19 @@ func (p *Provider) Model(role Role) string {
 // e.g. "anthropic/claude-sonnet-4-5-20250929".
 func (p *Provider) Ref(role Role) string {
 	return VendorAnthropic + "/" + p.Model(role)
+}
+
+// Vendor returns the vendor slug backing these roles — the `vendor` dimension
+// recorded for generation/quality calls. Single-vendor today.
+func (p *Provider) Vendor() string {
+	return VendorAnthropic
+}
+
+// CallConfig builds the genkit config option carrying the max-tokens setting,
+// so flows pass it without importing the Anthropic SDK (CON-86 FR12). The
+// returned ConfigOption satisfies ai.GenerateOption and is accepted by
+// genkit.Generate, GenerateStream, and GenerateData alike. WithConfig rejects
+// being set twice, so a flow must pass exactly one CallConfig per call.
+func (p *Provider) CallConfig(maxTokens int64) ai.GenerateOption {
+	return ai.WithConfig(anthropic.MessageNewParams{MaxTokens: maxTokens})
 }
