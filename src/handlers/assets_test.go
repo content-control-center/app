@@ -47,7 +47,7 @@ var _ = Describe("AssetsHandler", Ordered, func() {
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
-		handlers.NewAssetsHandler(pieceRepo, repository.NewAssetFileRepository(db), nil, auth, nil, nil).Register(app)
+		handlers.NewAssetsHandler(pieceRepo, repository.NewAssetFileRepository(db), nil, nil, nil, auth, nil).Register(app)
 		handlers.NewTagsHandler(tagRepo, auth).Register(app)
 
 		// Seed an auth user and log in
@@ -442,10 +442,10 @@ var _ = Describe("AssetsHandler onSave embed trigger", Ordered, func() {
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewTagsHandler(tagRepo, auth).Register(app)
-		handlers.NewAssetsHandler(assetRepo, repository.NewAssetFileRepository(db), nil, auth, func(assetID, _, _, tenantID string) {
+		handlers.NewAssetsHandler(assetRepo, repository.NewAssetFileRepository(db), nil, nil, nil, auth, func(assetID, _, _, tenantID string) {
 			saveCh <- assetID
 			tenantCh <- tenantID
-		}, nil).Register(app)
+		}).Register(app)
 
 		seedTenantUser(db, "Admin", "admin@example.com", "admin-password")
 
