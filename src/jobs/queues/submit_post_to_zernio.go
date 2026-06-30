@@ -16,6 +16,7 @@ import (
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/settings"
 	"github.com/ogen-app/ogen/src/tenantctx"
+	"github.com/ogen-app/ogen/src/vendors"
 )
 
 // SubmitPostToZernioQueue is the River queue name (CON-69 §3).
@@ -104,7 +105,7 @@ func (p *SubmitPostProcessor) Process(ctx context.Context, task SubmitPostTask) 
 				"transient Zernio retry error; River will retry", `{"error":"`+retryErr.Error()+`"}`)
 			return retryErr
 		}
-		return p.persistSuccess(ctx, post, job)
+		return p.persistSuccess(ctx, post, job, "")
 	}
 
 	platform := post.Platform
@@ -172,7 +173,7 @@ func (p *SubmitPostProcessor) Process(ctx context.Context, task SubmitPostTask) 
 			if ferr == nil && recovered != nil {
 				appendLog(ctx, p.Deps, post.ID, models.PostLogEventZernioSubmit, post.Status, post.Status,
 					"recovered Zernio job after 409 dedupe", logs.MarshalCapped(recovered))
-				return p.persistSuccess(ctx, post, recovered)
+				return p.persistSuccess(ctx, post, recovered, accountID)
 			}
 			return p.terminal(ctx, post, "zernio_dedupe_unrecoverable",
 				"Zernio reported duplicate content but no matching job was found")
@@ -189,10 +190,10 @@ func (p *SubmitPostProcessor) Process(ctx context.Context, task SubmitPostTask) 
 	}
 
 	jobs.ZernioSubmitSucceeded.Add(1)
-	return p.persistSuccess(ctx, post, job)
+	return p.persistSuccess(ctx, post, job, accountID)
 }
 
-func (p *SubmitPostProcessor) persistSuccess(ctx context.Context, post *models.Post, job *zernio.Job) error {
+func (p *SubmitPostProcessor) persistSuccess(ctx context.Context, post *models.Post, job *zernio.Job, accountID string) error {
 	post.Publisher = zernio.PublisherID
 	post.PublisherPostID = job.ID
 	post.PublisherStatus = string(job.Status)
@@ -205,8 +206,33 @@ func (p *SubmitPostProcessor) persistSuccess(ctx context.Context, post *models.P
 			"publisher_post_id": job.ID,
 			"publisher_status":  job.Status,
 		}))
+	p.recordPublish(ctx, post, accountID)
 	p.enqueuePoll(ctx, post)
 	return nil
+}
+
+// recordPublish emits a CON-86 publish/schedule usage event (one post unit)
+// carrying platform + social_account_id. The operation is schedule when the
+// post has a future ScheduledAt, else publish. accountID is "" on the manual-
+// retry path (not re-resolved there). Nil recorder = no-op; tenant is in ctx.
+func (p *SubmitPostProcessor) recordPublish(ctx context.Context, post *models.Post, accountID string) {
+	op := zernio.OpPublish
+	if post.ScheduledAt != nil {
+		op = zernio.OpSchedule
+	}
+	platform := ""
+	if post.Platform != nil {
+		if s := zernio.LookupSupportedBySqid(post.Platform.ID); s != nil {
+			platform = s.ZernioID
+		}
+	}
+	p.Deps.Recorder.Record(ctx, zernio.VendorZernio, "zernio_submit", vendors.MeterEvent{
+		Model:           platform,
+		Operation:       op,
+		Usage:           vendors.Usage{vendors.KindPost: 1},
+		Platform:        platform,
+		SocialAccountID: accountID,
+	})
 }
 
 func (p *SubmitPostProcessor) enqueuePoll(ctx context.Context, post *models.Post) {
