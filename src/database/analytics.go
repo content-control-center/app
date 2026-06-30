@@ -40,6 +40,15 @@ func NewAnalytics(dsn string, debug bool) (*bun.DB, error) {
 
 	db := bun.NewDB(sqldb, pgdialect.New())
 
+	// Close the pool on any early return below (e.g. a failed Ping); disarmed
+	// once we successfully hand the handle to the caller, who then owns it.
+	ok := false
+	defer func() {
+		if !ok {
+			db.Close()
+		}
+	}()
+
 	if debug {
 		db.AddQueryHook(bundebug.NewQueryHook(bundebug.WithVerbose(true)))
 	}
@@ -48,6 +57,7 @@ func NewAnalytics(dsn string, debug bool) (*bun.DB, error) {
 		return nil, fmt.Errorf("ping analytics database: %w", err)
 	}
 
+	ok = true
 	return db, nil
 }
 
