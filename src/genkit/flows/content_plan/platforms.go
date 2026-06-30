@@ -54,4 +54,3 @@ func resolvePlatforms(ctx context.Context, targetPlatforms models.CampaignPlatfo
 	}
 	return platforms, nil
 }
-

@@ -12,6 +12,8 @@ import (
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/tenantctx"
+	"github.com/ogen-app/ogen/src/usage"
+	"github.com/ogen-app/ogen/src/vendors"
 )
 
 // SyncIntervalFloor is the hard lower bound the worker enforces in
@@ -74,6 +76,7 @@ type Worker struct {
 	settings     SettingsStore
 	hub          eventhub.Hub
 	bootstrapper *Bootstrapper
+	recorder     *usage.Recorder // CON-86: account_connect events; nil = no-op
 
 	// tenantsWithProfile lists the tenant ids that have a Zernio profile
 	// configured (CON-100); the sweep runs one tick per returned tenant. It is
@@ -97,6 +100,7 @@ func NewWorker(
 	settings SettingsStore,
 	hub eventhub.Hub,
 	bootstrapper *Bootstrapper,
+	recorder *usage.Recorder,
 	interval, fastInterval time.Duration,
 	tenantsWithProfile func(context.Context) ([]string, error),
 ) *Worker {
@@ -112,6 +116,7 @@ func NewWorker(
 		settings:           settings,
 		hub:                hub,
 		bootstrapper:       bootstrapper,
+		recorder:           recorder,
 		tenantsWithProfile: tenantsWithProfile,
 		interval:           interval,
 		fastInterval:       fastInterval,
@@ -328,6 +333,7 @@ func (w *Worker) tick(ctx context.Context) error {
 		case ChangeAttached:
 			added++
 			w.publishAccountEvent(ctx, EventTypeAttached, ch.Account, "")
+			w.recordAccountConnect(ctx, ch.Account)
 			log.Printf("zernio.account.attached zernio.profile_id=%s zernio.platform=%s zernio.account_id=%s",
 				profileID, ch.Account.Platform, ch.Account.ID)
 		case ChangeUpdated:
@@ -341,6 +347,7 @@ func (w *Worker) tick(ctx context.Context) error {
 		case ChangeRevived:
 			added++
 			w.publishAccountEvent(ctx, EventTypeRevived, ch.Account, "")
+			w.recordAccountConnect(ctx, ch.Account)
 		}
 	}
 
@@ -402,6 +409,21 @@ func (w *Worker) refreshProfileMeta(ctx context.Context, profileID string) {
 	if err := w.settings.Set(ctx, SettingProfileName, profile.Name); err != nil {
 		log.Printf("zernio: write %s: %v", SettingProfileName, err)
 	}
+}
+
+// recordAccountConnect emits a CON-86 account_connect usage event when a social
+// account is attached or revived — the "Zernio platform (social account) added"
+// event. Count-only (the connect itself isn't billed) but tracked with the
+// platform + social_account_id dimensions. The tick ctx is tenant-scoped; a nil
+// recorder is a no-op.
+func (w *Worker) recordAccountConnect(ctx context.Context, account models.SocialAccount) {
+	w.recorder.Record(ctx, VendorZernio, "zernio_sync", vendors.MeterEvent{
+		Model:           account.Platform,
+		Operation:       OpAccountConnect,
+		Usage:           vendors.Usage{vendors.KindAccount: 1},
+		Platform:        account.Platform,
+		SocialAccountID: account.ID,
+	})
 }
 
 // publishAccountEvent fires an eventhub event for one account change.

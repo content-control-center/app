@@ -11,12 +11,12 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 // jsonPostScanner incrementally scans a stream of JSON text and yields complete
@@ -139,7 +139,16 @@ func generatePosts(
 		maxParallel = 5
 	}
 
-	modelName := "anthropic/" + cfg.ModelID
+	modelName := cfg.Provider.Ref(llm.RoleGeneration)
+	modelCfg := cfg.Provider.CallConfig(maxTokens)
+	usageVendor := cfg.Provider.Vendor()
+	usageModel := cfg.Provider.Model(llm.RoleGeneration)
+	// recordUsage records one usage event per model call — the stream Done path
+	// and the blocking fallback each call it once (a partial double-count on
+	// fallback is tolerated, CON-86 §10). Nil recorder = no-op.
+	recordUsage := func(ctx context.Context, resp *ai.ModelResponse) {
+		cfg.Recorder.RecordResp(ctx, usageVendor, usageModel, "content_plan", resp)
+	}
 
 	// Per CON-66 every parsed post is validated and persisted inline,
 	// before its post-event fires — the validator is built once and
@@ -163,7 +172,7 @@ func generatePosts(
 			return nil, nil, fmt.Errorf("render user prompt: %w", err)
 		}
 		log.Printf("content_plan: user prompt (no batch plan):\n%s", userPrompt)
-		posts, genErr := generatePostsStreaming(ctx, g, modelName, systemPrompt, userPrompt, maxTokens, 0, validate, persistFn, onEvent)
+		posts, genErr := generatePostsStreaming(ctx, g, modelName, systemPrompt, userPrompt, modelCfg, recordUsage, 0, validate, persistFn, onEvent)
 		if genErr != nil {
 			// Even on hard failure, return what was persisted so the
 			// caller's partial-success aggregation has the rows.
@@ -184,7 +193,7 @@ func generatePosts(
 		}
 		log.Printf("content_plan: batch %d/%d (posts=%d window=%s..%s) user prompt:\n%s",
 			spec.Index+1, len(batches), spec.PostCount, spec.DateWindow.Start, spec.DateWindow.End, userPrompt)
-		return generatePostsStreaming(ctx, g, modelName, systemPrompt, userPrompt, maxTokens, spec.GlobalStartIndex, validate, persistFn, emit)
+		return generatePostsStreaming(ctx, g, modelName, systemPrompt, userPrompt, modelCfg, recordUsage, spec.GlobalStartIndex, validate, persistFn, emit)
 	}
 	return runBatchesParallel(ctx, batches, maxParallel, gen, onEvent)
 }
@@ -307,16 +316,13 @@ func generatePostsStreaming(
 	ctx context.Context,
 	g *genkit.Genkit,
 	modelName, systemPrompt, userPrompt string,
-	maxOutputTokens int64,
+	modelCfg ai.GenerateOption,
+	recordUsage func(context.Context, *ai.ModelResponse),
 	globalStartIndex int,
 	validate postValidator,
 	persistFn func(ctx context.Context, post DraftPost) (string, error),
 	onEvent OnEventFunc,
 ) ([]DraftPost, error) {
-	modelCfg := ai.WithConfig(anthropic.MessageNewParams{
-		MaxTokens: maxOutputTokens,
-	})
-
 	scanner := newJSONPostScanner()
 	var posts []DraftPost
 	// persistedPositions tracks the raw parse position (0-based, includes
@@ -374,6 +380,7 @@ func generatePostsStreaming(
 				respText := result.Response.Text()
 				log.Printf("content_plan: stream finish_reason=%q posts_persisted=%d parsed=%d chunks=%d bytes=%d response_len=%d response_tail=%s",
 					result.Response.FinishReason, len(posts), parsedPosition, chunkCount, totalBytes, len(respText), tailOf(respText, 200))
+				recordUsage(ctx, result.Response)
 			}
 			break
 		}
@@ -421,6 +428,7 @@ func generatePostsStreaming(
 			resp.Usage.InputTokens, resp.Usage.OutputTokens,
 			resp.Usage.InputTokens+resp.Usage.OutputTokens)
 	}
+	recordUsage(ctx, resp)
 
 	text := strings.TrimSpace(resp.Text())
 	if strings.HasPrefix(text, "```") {

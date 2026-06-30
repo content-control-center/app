@@ -17,6 +17,8 @@ import (
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/tenantctx"
+	"github.com/ogen-app/ogen/src/usage"
+	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 // EmbedAssetInput is the typed input for the embedAsset flow.
@@ -128,16 +130,16 @@ func NewAssetOnSaveCallback() func(assetID, title, content, tenantID string) {
 // startup, after the Genkit instance and embedder have been initialised.
 // assetRepo is optional — when non-nil, the scheduler flips asset.status as
 // embeds run.
-func Init(g *genkit.Genkit, embedder ai.Embedder, repo repository.AssetChunksRepository, assetRepo repository.AssetRepository) {
+func Init(g *genkit.Genkit, embedder ai.Embedder, repo repository.AssetChunksRepository, assetRepo repository.AssetRepository, recorder *usage.Recorder, embedModel string) {
 	defaultEmbedScheduler.assetRepo = assetRepo
 	EmbedAssetFlow = genkit.DefineFlow(g, "embedAsset",
 		func(ctx context.Context, in EmbedAssetInput) (struct{}, error) {
-			return struct{}{}, embedAsset(ctx, embedder, repo, in)
+			return struct{}{}, embedAsset(ctx, embedder, repo, recorder, embedModel, in)
 		},
 	)
 }
 
-func embedAsset(ctx context.Context, embedder ai.Embedder, repo repository.AssetChunksRepository, in EmbedAssetInput) error {
+func embedAsset(ctx context.Context, embedder ai.Embedder, repo repository.AssetChunksRepository, recorder *usage.Recorder, embedModel string, in EmbedAssetInput) error {
 	// Asset content is stored as Markdown — feed it directly to the
 	// chunker/embedder. Markdown is readable enough for embeddings; stripping
 	// syntax wasn't worth its complexity cost.
@@ -159,6 +161,7 @@ func embedAsset(ctx context.Context, embedder ai.Embedder, repo repository.Asset
 	// documents per request, but per-chunk calls keep the scheduler simple and
 	// the chunk count per asset is small.
 	chunks := make([]models.AssetChunk, 0, len(chunkTexts))
+	var totalTokens int64
 	for i, text := range chunkTexts {
 		if !hasWords(text) {
 			log.Printf("embed asset %s: chunk %d/%d SKIPPED (no words) len=%d repr=%q",
@@ -179,12 +182,14 @@ func embedAsset(ctx context.Context, embedder ai.Embedder, repo repository.Asset
 			return fmt.Errorf("embed asset %s chunk %d: expected 1 embedding, got %d", in.AssetID, i, len(resp.Embeddings))
 		}
 
+		tokens := EstimateTokens(text)
+		totalTokens += int64(tokens)
 		chunks = append(chunks, models.AssetChunk{
 			ID:         fmt.Sprintf("%s:%d", in.AssetID, i),
 			AssetID:    in.AssetID,
 			ChunkIndex: i,
 			Content:    text,
-			TokenCount: EstimateTokens(text),
+			TokenCount: tokens,
 			Embedding:  pgvector.NewHalfVector(resp.Embeddings[0].Embedding),
 			Model:      embedder.Name(),
 		})
@@ -193,6 +198,10 @@ func embedAsset(ctx context.Context, embedder ai.Embedder, repo repository.Asset
 	if err := repo.UpsertChunks(ctx, in.AssetID, chunks); err != nil {
 		return fmt.Errorf("store chunks for asset %s: %w", in.AssetID, err)
 	}
+
+	// CON-86: one usage event per asset embed. The Gemini embed response carries
+	// no token usage, so we meter the chunker's estimate. Nil recorder = no-op.
+	recorder.RecordResp(ctx, llm.VendorGemini, embedModel, "asset_embed", llm.EmbedUsage{Tokens: totalTokens})
 
 	log.Printf("embed asset %s: stored %d chunk(s)", in.AssetID, len(chunks))
 	return nil

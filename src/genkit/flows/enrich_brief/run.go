@@ -9,9 +9,10 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
+
+	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 // defaultMaxOutputTokens caps a single brief generation. A brief is well
@@ -31,6 +32,12 @@ func runEnrichBrief(
 	// Log the instruction length, not its content — it is user-provided
 	// free text and has no place in operational logs.
 	log.Printf("enrich_brief[%s]: starting (instruction_len=%d)", req.CampaignID, len(req.Instruction))
+
+	// Enforcement gate (CON-86 FR9): in enforce mode, block before any provider
+	// call when the tenant is already over a cap. Nil checker = no gate.
+	if err := cfg.Checker.Enforce(ctx); err != nil {
+		return nil, err
+	}
 
 	// ── Validate ─────────────────────────────────────────────────────────────
 	if req.CampaignID == "" {
@@ -58,7 +65,7 @@ func runEnrichBrief(
 	if maxTokens == 0 {
 		maxTokens = defaultMaxOutputTokens
 	}
-	modelName := "anthropic/" + cfg.ModelID
+	modelName := cfg.Provider.Ref(llm.RoleGeneration)
 
 	// Watch the four brief fields so the client previews each one as it
 	// streams. The scanner decodes JSON escapes as they arrive, so the
@@ -103,9 +110,7 @@ func runEnrichBrief(
 		ai.WithSystem(bctx.SystemPrompt),
 		ai.WithPrompt(bctx.ContextBlock),
 		ai.WithStreaming(streamCb),
-		ai.WithConfig(anthropic.MessageNewParams{
-			MaxTokens: maxTokens,
-		}),
+		cfg.Provider.CallConfig(maxTokens),
 	)
 	if err != nil {
 		log.Printf("enrich_brief[%s]: model call failed after %s: %v",
@@ -126,6 +131,7 @@ func runEnrichBrief(
 			req.CampaignID, resp.Usage.InputTokens, resp.Usage.OutputTokens,
 			resp.Usage.InputTokens+resp.Usage.OutputTokens)
 	}
+	cfg.Recorder.RecordResp(ctx, cfg.Provider.Vendor(), cfg.Provider.Model(llm.RoleGeneration), "enrich_brief", resp)
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "generate", Status: "done"})
 
 	// ── Assemble response from scanner ───────────────────────────────────────

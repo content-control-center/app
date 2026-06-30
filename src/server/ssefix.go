@@ -95,5 +95,5 @@ outerLoop:
 }
 
 func (s *skipEmptySSEDecoder) Event() ssestream.Event { return s.evt }
-func (s *skipEmptySSEDecoder) Err() error              { return s.err }
-func (s *skipEmptySSEDecoder) Close() error            { return s.rc.Close() }
+func (s *skipEmptySSEDecoder) Err() error             { return s.err }
+func (s *skipEmptySSEDecoder) Close() error           { return s.rc.Close() }

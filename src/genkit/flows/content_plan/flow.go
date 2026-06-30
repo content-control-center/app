@@ -15,6 +15,8 @@ import (
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/usage"
+	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 //go:embed prompts/content_plan.tmpl
@@ -31,10 +33,20 @@ var contentPlanRunner func(ctx context.Context, req ContentPlanRequest, onEvent 
 
 // ContentPlanFlowConfig holds the settings for the content plan flow.
 type ContentPlanFlowConfig struct {
+	// Provider resolves the model reference + call config by role, so the
+	// flow doesn't hardcode the "anthropic/" prefix or the Anthropic SDK
+	// config type (CON-86 FR12).
+	Provider *llm.Provider
+	// Recorder captures one usage event per model call; nil disables recording
+	// (CON-86 FR5/FR10).
+	Recorder *usage.Recorder
+	// Checker gates the flow against the tenant's spend caps before the model
+	// call; nil = no enforcement (CON-86 FR9).
+	Checker          *usage.Checker
 	ModelID          string
-	MaxContextAssets int         // max assets when no embedder (creation-order fallback)
-	MaxContextChars  int         // character budget for asset context in the prompt
-	MaxOutputTokens  int64       // max_tokens sent to the model; 0 falls back to 8192
+	MaxContextAssets int   // max assets when no embedder (creation-order fallback)
+	MaxContextChars  int   // character budget for asset context in the prompt
+	MaxOutputTokens  int64 // max_tokens sent to the model; 0 falls back to 8192
 	// MaxPostsPerBatch caps the number of posts the model is asked to
 	// produce in a single batched call. Sized so 800 tokens/post stays
 	// comfortably under MaxOutputTokens with headroom for slower
@@ -54,11 +66,11 @@ type ContentPlanFlowConfig struct {
 
 // ContentPlanRepos bundles all repository dependencies for the flow.
 type ContentPlanRepos struct {
-	Campaigns  repository.CampaignRepository
-	Assets     repository.AssetRepository
-	Chunks     repository.AssetChunksRepository
-	Platforms  repository.PlatformRepository
-	Posts      repository.PostRepository
+	Campaigns repository.CampaignRepository
+	Assets    repository.AssetRepository
+	Chunks    repository.AssetChunksRepository
+	Platforms repository.PlatformRepository
+	Posts     repository.PostRepository
 }
 
 // InitContentPlan registers the generateContentPlan Genkit flow. It must be
@@ -166,6 +178,12 @@ func runContentPlan(
 ) (out *ContentPlanResponse, retErr error) {
 	start := time.Now()
 	log.Printf("content_plan[%s]: starting", req.CampaignID)
+
+	// Enforcement gate (CON-86 FR9): block before any provider call when the
+	// tenant is already over a cap in enforce mode. Nil checker = no gate.
+	if err := cfg.Checker.Enforce(ctx); err != nil {
+		return nil, err
+	}
 
 	// finaliseOwnerID is captured once the campaign is loaded so the
 	// deferred finalisation event can be scoped to the campaign owner.

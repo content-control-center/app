@@ -16,6 +16,7 @@ import (
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/secrets"
 	"github.com/ogen-app/ogen/src/tenantctx"
+	"github.com/ogen-app/ogen/src/usage"
 )
 
 // initZernio constructs the Zernio integration, Bootstrapper, sync worker, and
@@ -52,6 +53,7 @@ func initZernio(
 	settingRepo repository.SettingRepository,
 	accountRepo repository.SocialAccountRepository,
 	hub eventhub.Hub,
+	recorder *usage.Recorder,
 ) zernioRuntime {
 	// 30s in-process TTL cache around zernio.* setting reads. All
 	// downstream callers (handlers, bootstrap, worker) share this
@@ -76,7 +78,7 @@ func initZernio(
 	// at signup, so keying the sweep on profile presence would poll every tenant
 	// each tick — even ones that never connected. The connect_initiated_at marker
 	// (written on the first connect-link) is the effective "uses Zernio" signal.
-	worker := zernio.NewWorker(integ, accountRepo, store, hub, bootstrapper, cfg.ZernioSyncInterval, cfg.ZernioSyncIntervalFast, func(ctx context.Context) ([]string, error) {
+	worker := zernio.NewWorker(integ, accountRepo, store, hub, bootstrapper, recorder, cfg.ZernioSyncInterval, cfg.ZernioSyncIntervalFast, func(ctx context.Context) ([]string, error) {
 		return settingRepo.ListTenantIDsByKey(ctx, zernio.SettingConnectInitiatedAt)
 	})
 

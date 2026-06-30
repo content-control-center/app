@@ -13,6 +13,7 @@ import (
 	"github.com/ogen-app/ogen/src/genkit/flows"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/storage"
+	"github.com/ogen-app/ogen/src/usage"
 )
 
 // Callbacks bundles the fire-and-forget callbacks registered by Init.
@@ -49,6 +50,7 @@ func Init(
 	assetRepo repository.AssetRepository,
 	fileRepo repository.AssetFileRepository,
 	store storage.Storage,
+	recorder *usage.Recorder,
 ) (Callbacks, ai.Embedder, error) {
 	if cfg.GeminiAPIKey == "" {
 		return Callbacks{}, nil, nil
@@ -78,7 +80,7 @@ func Init(
 		return Callbacks{}, nil, fmt.Errorf("init gemini embedder %q: %w", cfg.EmbedModel, err)
 	}
 
-	flows.Init(g, embedder, chunksRepo, assetRepo)
+	flows.Init(g, embedder, chunksRepo, assetRepo, recorder, cfg.EmbedModel)
 
 	return Callbacks{
 		OnMarkdownSave: flows.NewAssetOnSaveCallback(),

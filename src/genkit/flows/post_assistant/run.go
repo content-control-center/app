@@ -12,11 +12,11 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
 	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 func runPostAssistant(
@@ -31,6 +31,12 @@ func runPostAssistant(
 ) (out *PostAssistantResponse, retErr error) {
 	start := time.Now()
 	log.Printf("post_assistant[%s]: starting instruction=%.80s", req.PostID, req.Instruction)
+
+	// Enforcement gate (CON-86 FR9): block before any provider call when the
+	// tenant is already over a cap in enforce mode. Nil checker = no gate.
+	if err := cfg.Checker.Enforce(ctx); err != nil {
+		return nil, err
+	}
 
 	// finaliseOwnerID is captured once the post is loaded so the deferred
 	// finalisation event can be scoped to the post owner. Empty before
@@ -168,7 +174,7 @@ func runPostAssistant(
 		maxTurns = 8
 	}
 
-	modelName := "anthropic/" + cfg.ModelID
+	modelName := cfg.Provider.Ref(llm.RoleGeneration)
 
 	// System + context block forms the stable cached prefix.
 	systemBlock := actx.SystemPrompt + "\n\n" + actx.ContextBlock
@@ -251,9 +257,7 @@ func runPostAssistant(
 		ai.WithTools(tools.listAssets, tools.getAssetChunks, tools.searchAssetChunks, tools.getCurrentContent, tools.clonePost, tools.restoreVersion, tools.schedulePost),
 		ai.WithMaxTurns(maxTurns),
 		ai.WithStreaming(streamCb),
-		ai.WithConfig(anthropic.MessageNewParams{
-			MaxTokens: maxTokens,
-		}),
+		cfg.Provider.CallConfig(maxTokens),
 	)
 	if err != nil {
 		log.Printf("post_assistant[%s]: model call failed after %s: %v", req.PostID, time.Since(start).Round(time.Millisecond), err)
@@ -278,6 +282,7 @@ func runPostAssistant(
 			req.PostID, resp.Usage.InputTokens, resp.Usage.OutputTokens,
 			resp.Usage.InputTokens+resp.Usage.OutputTokens)
 	}
+	cfg.Recorder.RecordResp(ctx, cfg.Provider.Vendor(), cfg.Provider.Model(llm.RoleGeneration), "post_assistant", resp)
 
 	// ── Assemble response from scanner ───────────────────────────────────────
 	// The scanner has been processing every chunk in the streaming callback

@@ -69,8 +69,8 @@ type valueAcc struct {
 type scannerState int
 
 const (
-	stPreamble       scannerState = iota
-	stTop                          // between keys at the top level
+	stPreamble scannerState = iota
+	stTop                   // between keys at the top level
 	stInKey
 	stAfterKey
 	stAwaitValue

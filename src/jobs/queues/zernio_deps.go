@@ -7,6 +7,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/usage"
 )
 
 // ProfileIDResolver returns the Zernio profile id this single-tenant
@@ -34,4 +35,6 @@ type ZernioDeps struct {
 	AnalyticsRepo repository.PostAnalyticsRepository
 	Client        *zernio.Client
 	ProfileID     ProfileIDResolver
+	// Recorder meters publish/schedule usage events (CON-86). nil = no-op.
+	Recorder *usage.Recorder
 }

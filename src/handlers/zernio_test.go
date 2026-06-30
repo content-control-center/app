@@ -201,7 +201,7 @@ var _ = Describe("ZernioHandler", Ordered, func() {
 		integ = zernio.NewIntegration(client)
 		integ.SetState(zernio.StateDegraded)
 		bootstrapper = zernio.NewBootstrapper(integ, store, "dev")
-		worker = zernio.NewWorker(integ, accountRepo, store, hub, bootstrapper, time.Hour, time.Minute, func(ctx context.Context) ([]string, error) {
+		worker = zernio.NewWorker(integ, accountRepo, store, hub, bootstrapper, nil, time.Hour, time.Minute, func(ctx context.Context) ([]string, error) {
 			// Mirror production (server/zernio.go): the sweep enumerates tenants
 			// by the connect-initiated marker, not mere profile presence.
 			return settingRepo.ListTenantIDsByKey(ctx, zernio.SettingConnectInitiatedAt)

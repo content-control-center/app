@@ -18,6 +18,8 @@ import (
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/post_actions/logs"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/usage"
+	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 // defaultSuggestionCap is the top-N suggestions per dimension when the
@@ -26,6 +28,13 @@ const defaultSuggestionCap = 3
 
 // PostQualityFlowConfig holds the settings for the assessPostQuality flow.
 type PostQualityFlowConfig struct {
+	// Provider resolves the model reference + call config by role; post_quality
+	// uses the quality role (cfg.QualityModelID) (CON-86 FR12).
+	Provider *llm.Provider
+	// Recorder captures usage events; nil disables recording (CON-86 FR5/FR10).
+	Recorder *usage.Recorder
+	// Checker gates the flow against the tenant's spend caps; nil = no gate.
+	Checker *usage.Checker
 	// ModelID is the Anthropic model used for scoring — Sonnet 4.5 by
 	// default, specified separately from the generation flows.
 	ModelID string
@@ -165,6 +174,12 @@ func runPostQuality(
 		}
 		emit(onEvent, SSEEventComplete, resp)
 		return resp, nil
+	}
+
+	// Enforcement gate (CON-86 FR9): placed AFTER the cache short-circuit so a
+	// cached assessment (no provider call) is never blocked. Nil checker = no gate.
+	if err := cfg.Checker.Enforce(ctx); err != nil {
+		return nil, err
 	}
 
 	// ── Step 3: evaluate (single model call, 1-retry/2s-backoff) ─────────

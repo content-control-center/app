@@ -10,6 +10,8 @@ import (
 	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
+	"github.com/ogen-app/ogen/src/usage"
+	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 // initContentPlan registers the content plan flow on the shared Genkit
@@ -17,11 +19,17 @@ import (
 func initContentPlan(
 	g *genkit.Genkit,
 	cfg *config.Config,
+	provider *llm.Provider,
+	recorder *usage.Recorder,
+	checker *usage.Checker,
 	embedder ai.Embedder,
 	hub eventhub.Hub,
 	repos content_plan.ContentPlanRepos,
 ) (func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error), error) {
 	flowCfg := content_plan.ContentPlanFlowConfig{
+		Provider:           provider,
+		Recorder:           recorder,
+		Checker:            checker,
 		ModelID:            cfg.ModelID,
 		MaxContextAssets:   cfg.MaxContextAssets,
 		MaxContextChars:    cfg.MaxContextChars,

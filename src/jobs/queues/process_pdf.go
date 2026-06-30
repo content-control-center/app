@@ -20,6 +20,8 @@ import (
 	"github.com/ogen-app/ogen/src/pdfclient"
 	"github.com/ogen-app/ogen/src/storage"
 	"github.com/ogen-app/ogen/src/tenantctx"
+	"github.com/ogen-app/ogen/src/usage"
+	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 // ProcessPDFQueue ingests an uploaded PDF (CON-103): download original.pdf from
@@ -71,6 +73,10 @@ type PDFDeps struct {
 	Chunks       chunkUpserter
 	Files        fileUpserter
 	ThumbnailDPI int
+	// Recorder + EmbedModel meter PDF-ingestion embedding usage (CON-86). nil
+	// Recorder = no-op. EmbedModel is the price-map key (cfg.EmbedModel).
+	Recorder   *usage.Recorder
+	EmbedModel string
 }
 
 // ProcessPDFTask carries the asset to ingest. The PDF bytes are NOT in the args
@@ -161,6 +167,7 @@ func (p *ProcessPDFProcessor) process(ctx context.Context, in ProcessPDFTask, la
 	// 3. Embed each chunk that has words.
 	chunks := make([]models.AssetChunk, 0, len(res.Chunks))
 	var embedAttempts, embedFailures int
+	var totalEmbedTokens int64
 	for _, ch := range res.Chunks {
 		if !hasWords(ch.Text) {
 			continue
@@ -174,12 +181,14 @@ func (p *ProcessPDFProcessor) process(ctx context.Context, in ProcessPDFTask, la
 			embedFailures++
 			continue
 		}
+		tokens := estimateTokens(ch.Text)
+		totalEmbedTokens += int64(tokens)
 		chunk := models.AssetChunk{
 			ID:         fmt.Sprintf("%s:%d", in.AssetID, ch.Index),
 			AssetID:    in.AssetID,
 			ChunkIndex: ch.Index,
 			Content:    ch.Text,
-			TokenCount: estimateTokens(ch.Text),
+			TokenCount: tokens,
 			Embedding:  pgvector.NewHalfVector(emb.Embeddings[0].Embedding),
 			Model:      p.Deps.Embedder.Name(),
 		}
@@ -201,6 +210,10 @@ func (p *ProcessPDFProcessor) process(ctx context.Context, in ProcessPDFTask, la
 			return fmt.Errorf("process_pdf %s: store chunks: %w", in.AssetID, err)
 		}
 	}
+
+	// CON-86: one usage event per PDF ingest (sum of embedded-chunk token
+	// estimates; the Gemini embed response carries no usage). Nil recorder = no-op.
+	p.Deps.Recorder.RecordResp(ctx, llm.VendorGemini, p.Deps.EmbedModel, "pdf_extract", llm.EmbedUsage{Tokens: totalEmbedTokens})
 
 	// 4. Thumbnail (non-fatal). 5. File metadata — retried on failure so the
 	//    asset never lands "ready" without its file row / page count / thumbnail.

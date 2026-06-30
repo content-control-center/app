@@ -62,22 +62,22 @@ type resolvedPhase struct {
 // Batch is nil, the template falls back to the global EstimatedPostCount
 // rendering for a single-shot run.
 type contentPlanTemplateData struct {
-	Name                   string
-	Description            string
-	CampaignTypeLabel      string
+	Name                    string
+	Description             string
+	CampaignTypeLabel       string
 	CampaignTypeDescription string
-	Phases                 []resolvedPhase
-	TargetPersona          string
-	KeyMessages            string
-	ToneGuidelines         string
-	Language               string
-	StartDate              string
-	EndDate                string
-	DayCount               int
-	EstimatedPostCount     int
-	Platforms              []resolvedPlatform
-	Assets                 []resolvedPiece
-	Batch                  *batchSpec
+	Phases                  []resolvedPhase
+	TargetPersona           string
+	KeyMessages             string
+	ToneGuidelines          string
+	Language                string
+	StartDate               string
+	EndDate                 string
+	DayCount                int
+	EstimatedPostCount      int
+	Platforms               []resolvedPlatform
+	Assets                  []resolvedPiece
+	Batch                   *batchSpec
 }
 
 // ValidationError is returned by the flow when preconditions are not met.

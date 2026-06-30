@@ -16,6 +16,7 @@ import (
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 var validStatuses = map[models.CampaignStatus]bool{
@@ -81,7 +82,7 @@ type campaignRequest struct {
 	KeyMessages        string                   `json:"key_messages"`
 	ToneGuidelines     string                   `json:"tone_guidelines"`
 	UseAssets          bool                     `json:"use_assets"`
-	AssetIDs          models.StringSlice       `json:"asset_ids"`
+	AssetIDs           models.StringSlice       `json:"asset_ids"`
 	TargetPlatforms    models.CampaignPlatforms `json:"target_platforms"`
 	CampaignTypeID     string                   `json:"campaign_type_id"    validate:"required"`
 	Status             models.CampaignStatus    `json:"status"`
@@ -161,7 +162,7 @@ func (h *CampaignsHandler) Create(c *fiber.Ctx) error {
 		KeyMessages:        req.KeyMessages,
 		ToneGuidelines:     req.ToneGuidelines,
 		UseAssets:          req.UseAssets,
-		AssetIDs:          nullSlice(req.AssetIDs),
+		AssetIDs:           nullSlice(req.AssetIDs),
 		TargetPlatforms:    nullCampaignPlatforms(req.TargetPlatforms),
 		CampaignTypeID:     req.CampaignTypeID,
 		Status:             status,
@@ -331,6 +332,10 @@ func (h *CampaignsHandler) GenerateDraft(c *fiber.Ctx) error {
 
 	campaignID := campaign.ID
 	generateDraft := h.generateDraft
+	// Carry the tenant into the detached flow context (the StreamWriter runs
+	// after this handler returns) so usage recording + enforcement attribute
+	// to the right tenant (CON-86).
+	flowCtx := tenantctx.With(context.Background(), session.TenantID)
 
 	c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
 		writeEvent := func(event string, data any) {
@@ -343,7 +348,7 @@ func (h *CampaignsHandler) GenerateDraft(c *fiber.Ctx) error {
 			writeEvent(string(name), data)
 		})
 
-		resp, err := generateDraft(context.Background(), campaignID, onEvent)
+		resp, err := generateDraft(flowCtx, campaignID, onEvent)
 		if err != nil {
 			code := fiber.StatusInternalServerError
 			msg := err.Error()
@@ -426,6 +431,7 @@ func (h *CampaignsHandler) EnrichBrief(c *fiber.Ctx) error {
 
 	req := enrich_brief.EnrichBriefRequest{CampaignID: campaign.ID, Instruction: body.Instruction}
 	enrichBrief := h.enrichBrief
+	flowCtx := tenantctx.With(context.Background(), session.TenantID)
 
 	c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
 		writeEvent := func(event string, data any) {
@@ -438,7 +444,7 @@ func (h *CampaignsHandler) EnrichBrief(c *fiber.Ctx) error {
 			writeEvent(string(name), data)
 		})
 
-		resp, err := enrichBrief(context.Background(), req, onEvent)
+		resp, err := enrichBrief(flowCtx, req, onEvent)
 		if err != nil {
 			code := fiber.StatusInternalServerError
 			msg := err.Error()

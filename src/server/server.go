@@ -36,10 +36,11 @@ import (
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/secrets"
 	"github.com/ogen-app/ogen/src/storage"
+	"github.com/ogen-app/ogen/src/usage"
 )
 
 // TODO: refactor this function
-func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secrets.Store) (*fiber.App, error) {
+func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secretStore secrets.Store) (*fiber.App, error) {
 	app := fiber.New(fiber.Config{
 		ErrorHandler: defaultErrorHandler,
 		// WriteTimeout 0 disables the per-response write deadline so that SSE
@@ -89,6 +90,16 @@ func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secret
 	autoPublishAllowlistRepo := repository.NewAutoPublishAllowlistRepository(db)
 	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
 
+	// CON-86: apply any operator price-map override (USAGE_MODEL_PRICES) before
+	// metering starts; a malformed payload or unknown vendor fails boot.
+	if err := usage.ApplyModelPrices(cfg.UsageModelPrices); err != nil {
+		return nil, err
+	}
+	// usage metering + per-tenant cost enforcement. recorder/checker are nil
+	// when analytics is disabled — both are nil-safe in the flows.
+	usageWiring := initUsage(cfg, db, analyticsDB)
+	handlers.NewUsageHandler(usageWiring.events, usageWiring.limits, usageWiring.defaults, auth, cfg.UsageAdminToken).Register(app)
+
 	// In-process event hub: backend code publishes; the SSE endpoint
 	// fans events out to authenticated clients.
 	hub := eventhub.New(eventhub.Config{})
@@ -110,7 +121,7 @@ func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secret
 	// all run in background goroutines so Ogen boot never blocks on
 	// Zernio reachability. The shutdown hook waits up to 2s for the
 	// worker to exit cleanly.
-	zernioRT := initZernio(ctx, cfg, secretStore, settingRepo, socialAccountRepo, hub)
+	zernioRT := initZernio(ctx, cfg, secretStore, settingRepo, socialAccountRepo, hub, usageWiring.recorder)
 	// Registered unconditionally so /api/integrations/zernio/* (incl. the
 	// unauthenticated /health) always exists. When no key is set the endpoints
 	// report/return integration_disabled; setting zernio_api_key via the
@@ -167,7 +178,7 @@ func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secret
 	// When GEMINI_API_KEY is unset the embedder is nil and PDF ingestion +
 	// semantic search are disabled; markdown/JSON saves still succeed.
 	log.Printf("genkit: initialising (GENKIT_ENV=%s)", os.Getenv("GENKIT_ENV"))
-	embedCallbacks, embedder, err := initEmbedding(ctx, cfg, chunksRepo, pieceRepo, assetFileRepo, store)
+	embedCallbacks, embedder, err := initEmbedding(ctx, cfg, chunksRepo, pieceRepo, assetFileRepo, store, usageWiring.recorder)
 	if err != nil {
 		return nil, err
 	}
@@ -177,11 +188,13 @@ func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secret
 	// is left nil otherwise so the worker no-ops.
 	pdfIngestEnabled := pdfClient != nil && embedder != nil && store != nil
 	pdfDeps := queues.PDFDeps{
-		Embedder: embedder,
-		Storage:  store,
-		Assets:   pieceRepo,
-		Chunks:   chunksRepo,
-		Files:    assetFileRepo,
+		Embedder:   embedder,
+		Storage:    store,
+		Assets:     pieceRepo,
+		Chunks:     chunksRepo,
+		Files:      assetFileRepo,
+		Recorder:   usageWiring.recorder,
+		EmbedModel: cfg.EmbedModel,
 	}
 	if pdfIngestEnabled {
 		pdfDeps.Client = pdfClient
@@ -203,6 +216,7 @@ func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secret
 		SettingRepo:        settingRepo,
 		AnalyticsRepo:      postAnalyticsRepo,
 		Client:             zernioRT.Integration.Client,
+		Recorder:           usageWiring.recorder,
 		ProfileID: func(ctx context.Context) (string, error) {
 			id, _, err := zernioRT.Settings.Get(ctx, pubzernio.SettingProfileID)
 			return id, err
@@ -271,6 +285,19 @@ func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secret
 		return nil
 	})
 
+	// Drain the usage recorder LAST. Fiber runs OnShutdown hooks in registration
+	// order, so this must come after the river/zernio producer hooks above:
+	// otherwise recorder.loop() can drain and exit while a worker is still
+	// calling Record(), silently dropping queued usage events. Nil-safe when
+	// analytics is disabled.
+	if usageWiring.recorder != nil {
+		app.Hooks().OnShutdown(func() error {
+			sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			return usageWiring.recorder.Close(sctx)
+		})
+	}
+
 	// CON-103: PDF ingestion goes through the process_pdf River job — the handler
 	// stores original.pdf and enqueues in its transaction. The enqueuer is wired
 	// only when ingestion is live; otherwise PDF uploads create a pending asset
@@ -337,6 +364,8 @@ func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secret
 		cloneSvc:    cloneSvc,
 		restoreSvc:  restoreSvc,
 		scheduleSvc: scheduleSvc,
+		recorder:    usageWiring.recorder,
+		checker:     usageWiring.checker,
 	}, secretStore)
 	if err != nil {
 		return nil, err
