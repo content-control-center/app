@@ -49,5 +49,11 @@ type UsageEvent struct {
 	CostMicros   int64  `bun:"cost_micros,notnull"    json:"cost_micros"`
 	PriceVersion string `bun:"price_version,nullzero" json:"price_version,omitempty"`
 
+	// OccurredAt is the event time, snapshotted by the Recorder at record time —
+	// NOT insert time, since the write is async/batched. Intentionally not
+	// nullzero: the recorder always sets it, and were it ever left zero we want
+	// the glaring 0001-01-01 over the default current_timestamp, which would
+	// silently stamp the later flush time and mis-bucket usage + enforcement
+	// windows. So do not "harden" this with nullzero (unlike audit created_at).
 	OccurredAt time.Time `bun:"occurred_at,notnull,default:current_timestamp" json:"occurred_at"`
 }
