@@ -115,7 +115,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// all run in background goroutines so Ogen boot never blocks on
 	// Zernio reachability. The shutdown hook waits up to 2s for the
 	// worker to exit cleanly.
-	zernioRT := initZernio(ctx, cfg, secretStore, settingRepo, socialAccountRepo, hub)
+	zernioRT := initZernio(ctx, cfg, secretStore, settingRepo, socialAccountRepo, hub, usageWiring.recorder)
 	// Registered unconditionally so /api/integrations/zernio/* (incl. the
 	// unauthenticated /health) always exists. When no key is set the endpoints
 	// report/return integration_disabled; setting zernio_api_key via the

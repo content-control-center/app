@@ -219,9 +219,14 @@ func (r *Recorder) flush(batch []*models.UsageEvent) {
 }
 
 // costFor computes the snapshot cost for ev under the descriptor's price
-// table. priced is false when the model/sku has no rate entry — the caller
-// records cost 0 and counts an unknown-model miss (CON-86 FR3).
+// table. An empty price table is "count-only" (e.g. a publisher we count but
+// don't price): cost 0 is expected, not a gap. When the table HAS models but
+// this one is missing, priced is false so the caller counts an unknown-model
+// miss (CON-86 FR3).
 func costFor(d vendors.Descriptor, model string, u vendors.Usage) (micros int64, priced bool) {
+	if len(d.Prices.Models) == 0 {
+		return 0, true
+	}
 	rates, ok := d.Prices.Models[model]
 	if !ok {
 		return 0, false

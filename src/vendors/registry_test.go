@@ -48,9 +48,8 @@ func TestRegister_DuplicatePanics(t *testing.T) {
 
 func TestRegister_ValidationPanics(t *testing.T) {
 	cases := map[string]Descriptor{
-		"empty name":       {Family: FamilyModel},
-		"empty family":     {Name: "x"},
-		"metered no meter": {Name: "y", Family: FamilyModel, Metered: true},
+		"empty name":   {Family: FamilyModel},
+		"empty family": {Name: "x"},
 	}
 	for name, d := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -70,6 +69,15 @@ func TestRegister_MeteredWithMeterOK(t *testing.T) {
 	Register(Descriptor{Name: "m", Family: FamilyModel, Metered: true, Meter: fakeMeter{}})
 	if _, ok := Get("m"); !ok {
 		t.Fatal("metered vendor with Meter should register")
+	}
+}
+
+func TestRegister_MeteredWithoutMeterOK(t *testing.T) {
+	// Publishers are metered but build events directly (no Meter) — must register.
+	clearRegistry()
+	Register(Descriptor{Name: "pub", Family: FamilyPublisher, Metered: true})
+	if _, ok := Get("pub"); !ok {
+		t.Fatal("metered publisher without Meter should register")
 	}
 }
 

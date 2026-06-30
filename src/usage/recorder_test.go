@@ -27,6 +27,13 @@ func init() {
 			},
 		},
 	})
+	// A count-only publisher (empty price table) — cost 0, not an unknown-model gap.
+	vendors.Register(vendors.Descriptor{
+		Name:    "test-publisher",
+		Family:  vendors.FamilyPublisher,
+		Metered: true,
+		Prices:  vendors.PriceTable{Version: "count-only"},
+	})
 }
 
 type fakeWriter struct {
@@ -160,6 +167,40 @@ func TestRecorder_UnknownModelRecordedZeroCost(t *testing.T) {
 	}
 	if m.UnknownModel.Value() != 1 {
 		t.Errorf("UnknownModel = %d, want 1", m.UnknownModel.Value())
+	}
+}
+
+func TestRecorder_CountOnlyPublisherEvent(t *testing.T) {
+	w := &fakeWriter{}
+	m := testMetrics()
+	r := usage.NewRecorder(w, m, usage.Config{})
+
+	r.Record(tenantCtx("t"), "test-publisher", "auto_publish", vendors.MeterEvent{
+		Model:           "instagram",
+		Operation:       "publish",
+		Usage:           vendors.Usage{vendors.KindPost: 1},
+		Platform:        "instagram",
+		SocialAccountID: "acc-1",
+	})
+	closeRecorder(t, r)
+
+	got := w.all()
+	if len(got) != 1 {
+		t.Fatalf("got %d events, want 1", len(got))
+	}
+	e := got[0]
+	if e.Family != "publisher" || e.CostMicros != 0 {
+		t.Errorf("family=%q cost=%d, want publisher/0", e.Family, e.CostMicros)
+	}
+	if e.Platform != "instagram" || e.SocialAccountID != "acc-1" {
+		t.Errorf("platform=%q social_account_id=%q", e.Platform, e.SocialAccountID)
+	}
+	if e.ExtraUnits["post"] != 1 {
+		t.Errorf("ExtraUnits[post]=%d, want 1", e.ExtraUnits["post"])
+	}
+	// Count-only is intentional, not an unknown-model gap.
+	if m.UnknownModel.Value() != 0 {
+		t.Errorf("UnknownModel=%d, want 0", m.UnknownModel.Value())
 	}
 }
 

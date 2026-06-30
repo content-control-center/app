@@ -21,14 +21,16 @@ type Descriptor struct {
 	// stored, for hot-reload subscription. Empty when the key comes from
 	// config/env (e.g. Gemini today) or the vendor needs no key.
 	SecretKey string
-	// Metered reports whether this vendor emits usage events. When true,
-	// Meter must be non-nil.
+	// Metered reports whether this vendor emits usage events.
 	Metered bool
 	// Prices is the versioned per-model rate table used to snapshot cost at
-	// write time. The zero value is count-only (all rates 0).
+	// write time. An empty Models map is "count-only": every event costs 0
+	// (intentional, not an unknown-model gap) — used by publishers we count
+	// but don't yet price.
 	Prices PriceTable
-	// Meter normalises a completed call's result into a usage event. Nil
-	// unless Metered.
+	// Meter normalises a provider response into (operation, Usage) for
+	// RecordResp. Nil for vendors that build MeterEvents directly and call
+	// Record (publishers) — only the RecordResp convenience path uses it.
 	Meter Meter
 }
 
@@ -73,8 +75,6 @@ func Register(d Descriptor) {
 		panic("vendor: Register with empty Name")
 	case d.Family == "":
 		panic(fmt.Sprintf("vendor: Register %q with empty Family", d.Name))
-	case d.Metered && d.Meter == nil:
-		panic(fmt.Sprintf("vendor: Register %q is Metered but Meter is nil", d.Name))
 	}
 	mu.Lock()
 	defer mu.Unlock()
