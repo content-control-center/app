@@ -171,6 +171,12 @@ func TestProcessPDF_PartialOnSomeEmbedFailures(t *testing.T) {
 	if len(chunks.got) != 1 {
 		t.Fatalf("expected 1 successfully embedded chunk stored, got %d", len(chunks.got))
 	}
+	// The stored chunk had zero-value (unknown) page bounds — they must stay nil,
+	// not be persisted as an invalid page 0.
+	if chunks.got[0].PageStart != nil || chunks.got[0].PageEnd != nil {
+		t.Fatalf("unknown page bounds should be nil, got start=%v end=%v",
+			chunks.got[0].PageStart, chunks.got[0].PageEnd)
+	}
 }
 
 func TestProcessPDF_AllEmbedsFail_RetriesThenFailsOnLastAttempt(t *testing.T) {

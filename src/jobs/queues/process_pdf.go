@@ -172,18 +172,26 @@ func (p *ProcessPDFProcessor) process(ctx context.Context, in ProcessPDFTask, la
 			embedFailures++
 			continue
 		}
-		ps, pe := ch.PageStart, ch.PageEnd
-		chunks = append(chunks, models.AssetChunk{
+		chunk := models.AssetChunk{
 			ID:         fmt.Sprintf("%s:%d", in.AssetID, ch.Index),
 			AssetID:    in.AssetID,
 			ChunkIndex: ch.Index,
-			PageStart:  &ps,
-			PageEnd:    &pe,
 			Content:    ch.Text,
 			TokenCount: estimateTokens(ch.Text),
 			Embedding:  pgvector.NewHalfVector(emb.Embeddings[0].Embedding),
 			Model:      p.Deps.Embedder.Name(),
-		})
+		}
+		// Page bounds are optional: pdfium pages are 1-based, so a zero value
+		// means "unknown" — leave the pointers nil rather than store page 0.
+		if ch.PageStart > 0 {
+			ps := ch.PageStart
+			chunk.PageStart = &ps
+		}
+		if ch.PageEnd > 0 {
+			pe := ch.PageEnd
+			chunk.PageEnd = &pe
+		}
+		chunks = append(chunks, chunk)
 	}
 
 	if len(chunks) > 0 && p.Deps.Chunks != nil {
