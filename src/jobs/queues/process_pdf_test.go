@@ -105,11 +105,14 @@ func (f *fakeChunks) UpsertChunks(_ context.Context, _ string, chunks []models.A
 	return nil
 }
 
-type fakeFiles struct{ got *models.AssetFile }
+type fakeFiles struct {
+	got *models.AssetFile
+	err error // when set, Upsert fails
+}
 
 func (f *fakeFiles) Upsert(_ context.Context, file *models.AssetFile) error {
 	f.got = file
-	return nil
+	return f.err
 }
 
 func newProc(d PDFDeps) *ProcessPDFProcessor { return &ProcessPDFProcessor{Deps: d} }
@@ -172,6 +175,26 @@ func TestProcessPDF_FinalStatusWriteFailurePropagates(t *testing.T) {
 	// asset stranded in "processing".
 	if err := p.process(context.Background(), ProcessPDFTask{AssetID: "a8"}, false); err == nil {
 		t.Fatal("expected non-nil error when the final status write fails")
+	}
+}
+
+func TestProcessPDF_FileUpsertFailurePropagates(t *testing.T) {
+	parser := &fakeParser{res: &pdfclient.Result{
+		PageCount: 1,
+		Chunks:    []pdfclient.Chunk{{Index: 0, Text: "hello world", PageStart: 1, PageEnd: 1}},
+	}}
+	status := &fakeStatus{}
+	files := &fakeFiles{err: errors.New("files: db down")}
+	p := newProc(PDFDeps{Client: parser, Embedder: &fakeEmbedder{},
+		Storage: &fakeBlob{data: []byte("pdf")}, Assets: status, Chunks: &fakeChunks{}, Files: files})
+
+	// A failed asset_file upsert must fail the job (so River retries) and must
+	// not let the asset be marked ready without its file row.
+	if err := p.process(context.Background(), ProcessPDFTask{AssetID: "a9"}, false); err == nil {
+		t.Fatal("expected non-nil error when the asset_file upsert fails")
+	}
+	if status.last() == models.AssetStatusReady {
+		t.Fatalf("asset must not be ready when the file row failed to persist; saw %v", status.all)
 	}
 }
 

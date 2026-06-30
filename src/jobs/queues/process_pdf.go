@@ -202,9 +202,12 @@ func (p *ProcessPDFProcessor) process(ctx context.Context, in ProcessPDFTask, la
 		}
 	}
 
-	// 4. Thumbnail (non-fatal) + 5. file metadata (best-effort).
+	// 4. Thumbnail (non-fatal). 5. File metadata — retried on failure so the
+	//    asset never lands "ready" without its file row / page count / thumbnail.
 	thumbKey := p.uploadThumbnail(ctx, in.AssetID, res.ThumbnailPNG)
-	p.persistFile(ctx, in, key, thumbKey, len(data), res.PageCount)
+	if err := p.persistFile(ctx, in, key, thumbKey, len(data), res.PageCount); err != nil {
+		return err
+	}
 
 	// 6. Final status. Propagate a write failure so the worker retries rather
 	//    than reporting success with the asset stuck in "processing".
@@ -259,14 +262,17 @@ func (p *ProcessPDFProcessor) uploadThumbnail(ctx context.Context, assetID strin
 	return &k
 }
 
-func (p *ProcessPDFProcessor) persistFile(ctx context.Context, in ProcessPDFTask, s3Key string, thumbKey *string, size, pageCount int) {
+// persistFile upserts the asset_file row (page count, thumbnail key, s3 key).
+// The Upsert conflicts on asset_id, so it is idempotent across retries; the
+// error is returned so a write failure retries the job rather than leaving the
+// asset "ready" without its file row. A nil Files dep is a no-op.
+func (p *ProcessPDFProcessor) persistFile(ctx context.Context, in ProcessPDFTask, s3Key string, thumbKey *string, size, pageCount int) error {
 	if p.Deps.Files == nil {
-		return
+		return nil
 	}
 	fileID, err := models.NewID()
 	if err != nil {
-		log.Printf("process_pdf %s: new file id: %v", in.AssetID, err)
-		return
+		return fmt.Errorf("process_pdf %s: new file id: %w", in.AssetID, err)
 	}
 	var pcPtr *int
 	if pageCount > 0 {
@@ -283,8 +289,9 @@ func (p *ProcessPDFProcessor) persistFile(ctx context.Context, in ProcessPDFTask
 		ThumbnailS3Key: thumbKey,
 		PageCount:      pcPtr,
 	}); err != nil {
-		log.Printf("process_pdf %s: upsert asset_files: %v", in.AssetID, err)
+		return fmt.Errorf("process_pdf %s: upsert asset_files: %w", in.AssetID, err)
 	}
+	return nil
 }
 
 // isTerminalParseErr reports whether a pdf-service Parse error is terminal (the
