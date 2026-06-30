@@ -8,10 +8,16 @@
 #
 # These endpoints only return data when the server has ANALYTICS_DSN set (the
 # bundled `timescaledb` compose service). With it empty, the summary returns
-# zeros and the limits read shows source "unlimited" — nothing is recorded.
+# zeros with "analytics_enabled": false (vs. true when it's on but this tenant
+# simply has no usage) and the limits read shows source "unlimited".
+#
+# Reads auto-scope to the LOGGED-IN tenant: usage recorded while logged in as
+# one account is invisible when you query as another (each user has its own
+# tenant). If the summary is unexpectedly empty, check which account you're on.
 #
 # Costs are USD-micros (1_000_000 micros = $1). The summary also returns a
-# convenience `usd` string.
+# convenience `usd` string. Token totals/breakdown include `extra_units` — the
+# long-tail kinds (embed_input, reasoning, post, api_call, account).
 
 ### Usage summary — current month (default)  [protected]
 # Period-to-date totals + a per-vendor/family/model/feature/platform breakdown.

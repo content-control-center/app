@@ -66,21 +66,27 @@ func (h *UsageHandler) requireOperator(c *fiber.Ctx) error {
 }
 
 type usageTotals struct {
-	InputTokens         int64  `json:"input_tokens"`
-	OutputTokens        int64  `json:"output_tokens"`
-	CacheReadTokens     int64  `json:"cache_read_tokens"`
-	CacheCreationTokens int64  `json:"cache_creation_tokens"`
-	CostMicros          int64  `json:"cost_micros"`
-	USD                 string `json:"usd"`
-	Count               int64  `json:"count"`
+	InputTokens         int64            `json:"input_tokens"`
+	OutputTokens        int64            `json:"output_tokens"`
+	CacheReadTokens     int64            `json:"cache_read_tokens"`
+	CacheCreationTokens int64            `json:"cache_creation_tokens"`
+	ExtraUnits          map[string]int64 `json:"extra_units,omitempty"`
+	CostMicros          int64            `json:"cost_micros"`
+	USD                 string           `json:"usd"`
+	Count               int64            `json:"count"`
 }
 
 type usageSummaryResponse struct {
-	Period    string                         `json:"period"`
-	From      time.Time                      `json:"from"`
-	To        time.Time                      `json:"to"`
-	Totals    usageTotals                    `json:"totals"`
-	Breakdown []repository.UsageBreakdownRow `json:"breakdown"`
+	Period string    `json:"period"`
+	From   time.Time `json:"from"`
+	To     time.Time `json:"to"`
+	// AnalyticsEnabled is false when ANALYTICS_DSN is empty: then the zeros below
+	// mean "recording is off", not "no usage". Without this flag the two are
+	// indistinguishable. When true, empty totals genuinely mean this tenant has
+	// no usage in the window (e.g. you're logged into a different tenant).
+	AnalyticsEnabled bool                           `json:"analytics_enabled"`
+	Totals           usageTotals                    `json:"totals"`
+	Breakdown        []repository.UsageBreakdownRow `json:"breakdown"`
 }
 
 // Summary godoc — GET /api/usage?period=day|month&from=&to=&family=
@@ -111,10 +117,16 @@ func (h *UsageHandler) Summary(c *fiber.Ctx) error {
 		end = t.UTC()
 	}
 
-	resp := usageSummaryResponse{Period: period, From: start, To: end, Breakdown: []repository.UsageBreakdownRow{}}
+	resp := usageSummaryResponse{
+		Period:           period,
+		From:             start,
+		To:               end,
+		AnalyticsEnabled: h.events != nil,
+		Breakdown:        []repository.UsageBreakdownRow{},
+	}
 
-	// Analytics disabled → no events; return zeros rather than an error so a
-	// future UI degrades gracefully.
+	// Analytics disabled → no events; return zeros (with analytics_enabled=false)
+	// rather than an error so a future UI degrades gracefully.
 	if h.events != nil {
 		rows, err := h.events.Summary(c.Context(), start, end)
 		if err != nil {
@@ -132,6 +144,12 @@ func (h *UsageHandler) Summary(c *fiber.Ctx) error {
 			resp.Totals.CacheCreationTokens += r.CacheCreationTokens
 			resp.Totals.CostMicros += r.CostMicros
 			resp.Totals.Count += r.Count
+			for k, v := range r.ExtraUnits {
+				if resp.Totals.ExtraUnits == nil {
+					resp.Totals.ExtraUnits = make(map[string]int64)
+				}
+				resp.Totals.ExtraUnits[k] += v
+			}
 		}
 	}
 	resp.Totals.USD = microsUSD(resp.Totals.CostMicros)

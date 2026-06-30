@@ -147,6 +147,25 @@ var _ = Describe("Usage metering (CON-86)", Ordered, func() {
 			Expect(aSpend).To(Equal(int64(1000)))
 			Expect(bSpend).To(Equal(int64(2000)))
 		})
+
+		It("surfaces long-tail extra_units per group (embed_input etc.)", func() {
+			now := time.Now().UTC()
+			at := now.Add(-time.Minute)
+			// Two embedding events in the same group: the embed tokens live in
+			// extra_units, not input_tokens — the summary must still expose them.
+			e1 := mkEvent("t-extra", "gemini", "model", "gemini-embedding-2", "embed", "pdf_extract", 0, 2514, at)
+			e1.ExtraUnits = map[string]int64{"embed_input": 16764}
+			e2 := mkEvent("t-extra", "gemini", "model", "gemini-embedding-2", "embed", "pdf_extract", 0, 1000, at)
+			e2.ExtraUnits = map[string]int64{"embed_input": 5000}
+			insertEvents(e1, e2)
+
+			rows, err := events.Summary(asTenant("t-extra"), now.Add(-time.Hour), now.Add(time.Hour))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rows).To(HaveLen(1))
+			Expect(rows[0].InputTokens).To(Equal(int64(0)))                              // embeds aren't "input"
+			Expect(rows[0].CostMicros).To(Equal(int64(3514)))                            // 2514 + 1000
+			Expect(rows[0].ExtraUnits).To(HaveKeyWithValue("embed_input", int64(21764))) // 16764 + 5000
+		})
 	})
 
 	Describe("async Recorder end-to-end", func() {
