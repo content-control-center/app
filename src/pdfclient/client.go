@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	grpcstatus "google.golang.org/grpc/status"
 
 	pdfv1 "github.com/ogen-app/ogen/gen/pdf/v1"
 )
@@ -28,6 +30,16 @@ const defaultTimeout = 2 * time.Minute
 // ErrDisabled is returned when Parse is called on a disabled (nil) client —
 // i.e. PDF_SERVICE_ADDR was not configured.
 var ErrDisabled = errors.New("pdfclient: disabled (PDF_SERVICE_ADDR not set)")
+
+// IsInvalidPDF reports whether err is the service's terminal "not a usable PDF"
+// verdict — gRPC InvalidArgument: the input is corrupt, encrypted, or not a
+// PDF, and will never parse, so it must not be retried. Transport/internal
+// failures (Unavailable, DeadlineExceeded, Internal) are transient and return
+// false, so callers can degrade gracefully rather than reject the upload.
+func IsInvalidPDF(err error) bool {
+	st, ok := grpcstatus.FromError(err)
+	return ok && st.Code() == codes.InvalidArgument
+}
 
 // Options controls a single Parse call. Zero values mean "service default".
 type Options struct {

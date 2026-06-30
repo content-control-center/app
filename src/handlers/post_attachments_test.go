@@ -19,6 +19,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/models"
@@ -64,7 +66,10 @@ func (fakePDFRenderer) Render(_ context.Context, r io.Reader, _ pdfclient.Render
 	data, _ := io.ReadAll(r)
 	pages := bytes.Count(data, []byte("/Type /Page /Parent"))
 	if pages == 0 {
-		pages = 1
+		// Mirror pdf-service: a file with no parseable page is rejected as an
+		// invalid PDF (terminal gRPC InvalidArgument), not silently accepted —
+		// magic bytes alone are not a PDF.
+		return nil, status.Error(codes.InvalidArgument, "fake: not a parseable PDF")
 	}
 	return &pdfclient.RenderResult{PageCount: pages, ThumbnailPNG: []byte("PNGTHUMB")}, nil
 }

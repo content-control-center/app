@@ -334,6 +334,15 @@ func (h *PostAttachmentsHandler) Upload(c *fiber.Ctx) error {
 			})
 			cancel()
 			if rerr != nil {
+				// A terminal "not a usable PDF" verdict (corrupt/encrypted/not a
+				// PDF) is a client error — reject before storing anything. Magic
+				// bytes alone are not enough; pdfprobe only checks the prefix, so
+				// pdf-service is the structural validator. Transient/unreachable
+				// failures degrade gracefully: keep the attachment, no page count
+				// or thumbnail.
+				if pdfclient.IsInvalidPDF(rerr) {
+					return fiber.NewError(fiber.StatusBadRequest, "uploaded file is not a readable PDF")
+				}
 				log.Printf("post_attachments: pdf render failed (%s): %v", fh.Filename, rerr)
 			} else {
 				att.PageCount = render.PageCount
