@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -31,11 +32,12 @@ type pdfEnqueueCall struct {
 // River job table. It runs inside db.RunInTx and just no-ops on the tx.
 type fakePDFEnqueuer struct {
 	calls []pdfEnqueueCall
+	err   error // when set, fails the enqueue (and so the surrounding tx)
 }
 
 func (f *fakePDFEnqueuer) EnqueueProcessPDFTx(_ context.Context, _ *sql.Tx, assetID, tenantID, originalName, mimeType string) error {
 	f.calls = append(f.calls, pdfEnqueueCall{assetID, tenantID, originalName, mimeType})
-	return nil
+	return f.err
 }
 
 var _ = Describe("AssetsHandler upload", Ordered, func() {
@@ -230,6 +232,25 @@ var _ = Describe("AssetsHandler upload", Ordered, func() {
 		Expect(enq.calls[0].assetID).To(Equal(assetID))
 		Expect(enq.calls[0].originalName).To(Equal("report.pdf"))
 		Expect(enq.calls[0].mimeType).To(Equal("application/pdf"))
+	})
+
+	It("deletes the orphaned original.pdf when the insert/enqueue transaction fails", func() {
+		// Force the tx to roll back after the blob upload by failing the enqueue.
+		enq.err = errors.New("enqueue boom")
+		body, ct := buildMultipart([]struct{ Name, Body string }{
+			{"oops.pdf", "%PDF-1.4\n%orphan cleanup"},
+		})
+		resp := post(body, ct)
+		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+		results := decode(resp)
+		Expect(results).To(HaveLen(1))
+		Expect(results[0]["status"]).To(Equal("failed"))
+		Expect(results[0]["error"]).To(ContainSubstring("create asset"))
+
+		// The upload ran (enqueue was reached inside the tx), but the rollback
+		// must not leave original.pdf behind — the key is cleaned up.
+		Expect(enq.calls).To(HaveLen(1))
+		Expect(store.objects).To(BeEmpty(), "original.pdf must be cleaned up after tx failure")
 	})
 
 	It("rejects .pdf files failing the magic-byte sniff", func() {

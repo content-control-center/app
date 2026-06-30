@@ -370,6 +370,10 @@ func (h *AssetsHandler) processPDFUpload(c *fiber.Ctx, fh *multipart.FileHeader,
 		}
 		return h.pdfJobs.EnqueueProcessPDFTx(ctx, tx.Tx, asset.ID, session.TenantID, fh.Filename, "application/pdf")
 	}); err != nil {
+		// The transaction rolled back, so the asset/job never persisted — delete
+		// the original.pdf uploaded above (same key) so it isn't left orphaned in
+		// the bucket. Best-effort: the failed upload is what the caller acts on.
+		_ = h.storage.Delete(ctx, key)
 		res.Status = "failed"
 		res.Error = "could not create asset"
 		return res
