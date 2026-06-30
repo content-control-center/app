@@ -19,9 +19,10 @@ type Writer interface {
 
 // Config tunes the Recorder's buffer and batching.
 type Config struct {
-	BufferSize int           // bounded queue depth; overflow drops + counts
-	BatchSize  int           // max rows per insert
-	FlushEvery time.Duration // max latency before a partial batch is flushed
+	BufferSize   int           // bounded queue depth; overflow drops + counts
+	BatchSize    int           // max rows per insert
+	FlushEvery   time.Duration // max latency before a partial batch is flushed
+	WriteTimeout time.Duration // per-batch Insert deadline; bounds a stalled DB
 }
 
 func (c Config) withDefaults() Config {
@@ -33,6 +34,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.FlushEvery <= 0 {
 		c.FlushEvery = time.Second
+	}
+	if c.WriteTimeout <= 0 {
+		c.WriteTimeout = 30 * time.Second
 	}
 	return c
 }
@@ -53,8 +57,9 @@ type Recorder struct {
 	done chan struct{}
 	wg   sync.WaitGroup
 
-	batchSize  int
-	flushEvery time.Duration
+	batchSize    int
+	flushEvery   time.Duration
+	writeTimeout time.Duration
 
 	now func() time.Time // injectable clock for tests
 }
@@ -63,13 +68,14 @@ type Recorder struct {
 func NewRecorder(w Writer, m *Metrics, cfg Config) *Recorder {
 	cfg = cfg.withDefaults()
 	r := &Recorder{
-		writer:     w,
-		metrics:    m,
-		ch:         make(chan *models.UsageEvent, cfg.BufferSize),
-		done:       make(chan struct{}),
-		batchSize:  cfg.BatchSize,
-		flushEvery: cfg.FlushEvery,
-		now:        func() time.Time { return time.Now().UTC() },
+		writer:       w,
+		metrics:      m,
+		ch:           make(chan *models.UsageEvent, cfg.BufferSize),
+		done:         make(chan struct{}),
+		batchSize:    cfg.BatchSize,
+		flushEvery:   cfg.FlushEvery,
+		writeTimeout: cfg.WriteTimeout,
+		now:          func() time.Time { return time.Now().UTC() },
 	}
 	r.wg.Add(1)
 	go r.loop()
@@ -206,11 +212,14 @@ func (r *Recorder) loop() {
 }
 
 func (r *Recorder) flush(batch []*models.UsageEvent) {
+	// Bound the batch write so a stalled analytics DB can't hang the loop
+	// goroutine forever (which would also leak it past Close).
+	ctx, cancel := context.WithTimeout(context.Background(), r.writeTimeout)
+	defer cancel()
 	// Writes are intentionally untenanted-but-system: each row already carries
 	// its tenant_id (set at Record time), which BeforeAppendModel preserves in
 	// a system context (models/tenant_scoped.go).
-	ctx := tenantctx.WithSystem(context.Background())
-	if err := r.writer.Insert(ctx, batch); err != nil {
+	if err := r.writer.Insert(tenantctx.WithSystem(ctx), batch); err != nil {
 		r.metrics.WriteErrors.Add(1)
 		log.Printf("usage: write batch of %d events failed: %v", len(batch), err)
 		return
