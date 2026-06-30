@@ -97,7 +97,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	}
 	// usage metering + per-tenant cost enforcement. recorder/checker are nil
 	// when analytics is disabled — both are nil-safe in the flows.
-	usageWiring := initUsage(app, cfg, db, analyticsDB)
+	usageWiring := initUsage(cfg, db, analyticsDB)
 	handlers.NewUsageHandler(usageWiring.events, usageWiring.limits, usageWiring.defaults, auth, cfg.UsageAdminToken).Register(app)
 
 	// In-process event hub: backend code publishes; the SSE endpoint
@@ -284,6 +284,19 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		_ = riverClient.Stop(sctx)
 		return nil
 	})
+
+	// Drain the usage recorder LAST. Fiber runs OnShutdown hooks in registration
+	// order, so this must come after the river/zernio producer hooks above:
+	// otherwise recorder.loop() can drain and exit while a worker is still
+	// calling Record(), silently dropping queued usage events. Nil-safe when
+	// analytics is disabled.
+	if usageWiring.recorder != nil {
+		app.Hooks().OnShutdown(func() error {
+			sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			return usageWiring.recorder.Close(sctx)
+		})
+	}
 
 	// CON-103: PDF ingestion goes through the process_pdf River job — the handler
 	// stores original.pdf and enqueues in its transaction. The enqueuer is wired

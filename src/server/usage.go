@@ -1,12 +1,9 @@
 package server
 
 import (
-	"context"
 	"log"
 	"sync"
-	"time"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/uptrace/bun"
 
 	"github.com/ogen-app/ogen/src/config"
@@ -43,8 +40,10 @@ type usageDeps struct {
 // empty, or the analytics DB was unreachable at boot) the recorder/checker/
 // events are left nil: flows then record nothing and never enforce — the
 // graceful-disable path (FR10) — while the limits config surface stays usable.
-// The recorder's background writer is drained on shutdown.
-func initUsage(app *fiber.App, cfg *config.Config, db, analyticsDB *bun.DB) usageDeps {
+// The caller drains the recorder on shutdown via recorder.Close, registered
+// AFTER the river/zernio producers stop so loop() never exits while a worker is
+// still calling Record() (see server.New).
+func initUsage(cfg *config.Config, db, analyticsDB *bun.DB) usageDeps {
 	deps := usageDeps{
 		limits: repository.NewUsageLimitsRepository(db),
 		defaults: usage.Defaults{
@@ -63,12 +62,6 @@ func initUsage(app *fiber.App, cfg *config.Config, db, analyticsDB *bun.DB) usag
 	deps.events = repository.NewUsageRepository(analyticsDB)
 	deps.recorder = usage.NewRecorder(deps.events, metrics, usage.Config{})
 	deps.checker = usage.NewChecker(deps.limits, deps.events, deps.defaults, metrics, 0)
-
-	app.Hooks().OnShutdown(func() error {
-		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		return deps.recorder.Close(sctx)
-	})
 
 	log.Println("usage analytics enabled")
 	return deps
