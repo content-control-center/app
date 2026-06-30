@@ -32,6 +32,12 @@ func runPostAssistant(
 	start := time.Now()
 	log.Printf("post_assistant[%s]: starting instruction=%.80s", req.PostID, req.Instruction)
 
+	// Enforcement gate (CON-86 FR9): block before any provider call when the
+	// tenant is already over a cap in enforce mode. Nil checker = no gate.
+	if err := cfg.Checker.Enforce(ctx); err != nil {
+		return nil, err
+	}
+
 	// finaliseOwnerID is captured once the post is loaded so the deferred
 	// finalisation event can be scoped to the post owner. Empty before
 	// load → finalisation events for very-early failures are skipped.
@@ -276,6 +282,7 @@ func runPostAssistant(
 			req.PostID, resp.Usage.InputTokens, resp.Usage.OutputTokens,
 			resp.Usage.InputTokens+resp.Usage.OutputTokens)
 	}
+	cfg.Recorder.RecordResp(ctx, cfg.Provider.Vendor(), cfg.Provider.Model(llm.RoleGeneration), "post_assistant", resp)
 
 	// ── Assemble response from scanner ───────────────────────────────────────
 	// The scanner has been processing every chunk in the streaming callback

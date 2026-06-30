@@ -24,6 +24,7 @@ import (
 	"github.com/ogen-app/ogen/src/post_actions/restore"
 	"github.com/ogen-app/ogen/src/post_actions/schedule"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 var validPostStatuses = map[models.PostStatus]bool{
@@ -987,6 +988,11 @@ func (h *PostsHandler) Assistant(c *fiber.Ctx) error {
 	postID := c.Params("id")
 	instruction := req.Instruction
 	assistant := h.assistant
+	// Carry the tenant into the detached flow context (the StreamWriter runs
+	// after this handler returns) so usage recording + enforcement attribute
+	// to the right tenant (CON-86).
+	tenantID, _ := c.Locals(tenantctx.Key).(string)
+	flowCtx := tenantctx.With(context.Background(), tenantID)
 
 	c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
 		writeEvent := func(event string, data any) {
@@ -999,7 +1005,7 @@ func (h *PostsHandler) Assistant(c *fiber.Ctx) error {
 			writeEvent(string(name), data)
 		})
 
-		_, err := assistant(context.Background(), post_assistant.PostAssistantRequest{
+		_, err := assistant(flowCtx, post_assistant.PostAssistantRequest{
 			PostID:      postID,
 			Instruction: instruction,
 		}, onEvent)
@@ -1068,6 +1074,8 @@ func (h *PostsHandler) Assess(c *fiber.Ctx) error {
 
 	postID := post.ID
 	assess := h.assessQuality
+	tenantID, _ := c.Locals(tenantctx.Key).(string)
+	flowCtx := tenantctx.With(context.Background(), tenantID)
 
 	c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
 		writeEvent := func(event string, data any) {
@@ -1080,7 +1088,7 @@ func (h *PostsHandler) Assess(c *fiber.Ctx) error {
 			writeEvent(string(name), data)
 		})
 
-		_, err := assess(context.Background(), postID, onEvent)
+		_, err := assess(flowCtx, postID, onEvent)
 		if err != nil {
 			code := fiber.StatusInternalServerError
 			msg := err.Error()

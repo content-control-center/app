@@ -146,6 +146,9 @@ func evaluateDimension(
 			log.Printf("post_quality[%s]: attempt %d failed: %v", label, attempt+1, lastErr)
 			continue
 		}
+		// Record every completed call (one per dimension, plus any empty-rationale
+		// retry that still consumed tokens) (CON-86 FR1). Nil recorder = no-op.
+		cfg.Recorder.RecordResp(ctx, cfg.Provider.Vendor(), cfg.Provider.Model(llm.RoleQuality), "post_quality", resp)
 		if strings.TrimSpace(out.Rationale) == "" {
 			lastErr = fmt.Errorf("empty rationale")
 			log.Printf("post_quality[%s]: attempt %d returned empty rationale", label, attempt+1)

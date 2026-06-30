@@ -13,6 +13,7 @@ import (
 	"github.com/ogen-app/ogen/src/post_actions/clone"
 	"github.com/ogen-app/ogen/src/post_actions/restore"
 	"github.com/ogen-app/ogen/src/post_actions/schedule"
+	"github.com/ogen-app/ogen/src/usage"
 	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
@@ -22,6 +23,8 @@ func initPostAssistant(
 	g *genkit.Genkit,
 	cfg *config.Config,
 	provider *llm.Provider,
+	recorder *usage.Recorder,
+	checker *usage.Checker,
 	embedder ai.Embedder,
 	hub eventhub.Hub,
 	repos post_assistant.PostAssistantRepos,
@@ -31,6 +34,8 @@ func initPostAssistant(
 ) (func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error), error) {
 	flowCfg := post_assistant.PostAssistantFlowConfig{
 		Provider:        provider,
+		Recorder:        recorder,
+		Checker:         checker,
 		ModelID:         cfg.ModelID,
 		MaxOutputTokens: cfg.MaxOutputTokens,
 		Embedder:        embedder,

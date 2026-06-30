@@ -33,6 +33,12 @@ func runEnrichBrief(
 	// free text and has no place in operational logs.
 	log.Printf("enrich_brief[%s]: starting (instruction_len=%d)", req.CampaignID, len(req.Instruction))
 
+	// Enforcement gate (CON-86 FR9): in enforce mode, block before any provider
+	// call when the tenant is already over a cap. Nil checker = no gate.
+	if err := cfg.Checker.Enforce(ctx); err != nil {
+		return nil, err
+	}
+
 	// ── Validate ─────────────────────────────────────────────────────────────
 	if req.CampaignID == "" {
 		return nil, &ValidationError{Msg: "campaign id is required"}
@@ -125,6 +131,7 @@ func runEnrichBrief(
 			req.CampaignID, resp.Usage.InputTokens, resp.Usage.OutputTokens,
 			resp.Usage.InputTokens+resp.Usage.OutputTokens)
 	}
+	cfg.Recorder.RecordResp(ctx, cfg.Provider.Vendor(), cfg.Provider.Model(llm.RoleGeneration), "enrich_brief", resp)
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "generate", Status: "done"})
 
 	// ── Assemble response from scanner ───────────────────────────────────────

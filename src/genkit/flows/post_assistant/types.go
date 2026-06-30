@@ -8,6 +8,7 @@ import (
 	"github.com/ogen-app/ogen/src/post_actions/restore"
 	"github.com/ogen-app/ogen/src/post_actions/schedule"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/usage"
 	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
@@ -93,7 +94,11 @@ type PostAssistantRepos struct {
 type PostAssistantFlowConfig struct {
 	// Provider resolves the model reference + call config by role (CON-86 FR12).
 	Provider *llm.Provider
-	ModelID  string
+	// Recorder captures usage events; nil disables recording (CON-86 FR5/FR10).
+	Recorder *usage.Recorder
+	// Checker gates the flow against the tenant's spend caps; nil = no gate.
+	Checker *usage.Checker
+	ModelID string
 	// MaxOutputTokens caps the model's output for a single call. 0 falls
 	// back to 64000 — Claude 4.x Haiku/Sonnet's max output. Anthropic
 	// charges only for tokens actually emitted, so a generous cap costs

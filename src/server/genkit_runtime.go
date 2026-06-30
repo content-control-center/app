@@ -21,6 +21,7 @@ import (
 	"github.com/ogen-app/ogen/src/post_actions/restore"
 	"github.com/ogen-app/ogen/src/post_actions/schedule"
 	"github.com/ogen-app/ogen/src/secrets"
+	"github.com/ogen-app/ogen/src/usage"
 	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
@@ -61,6 +62,8 @@ type genkitRuntime struct {
 	cloneSvc         *clone.Service
 	restoreSvc       *restore.Service
 	scheduleSvc      *schedule.Service
+	recorder         *usage.Recorder
+	checker          *usage.Checker
 }
 
 // genkitDeps groups the runtime's static inputs: things captured at
@@ -76,6 +79,8 @@ type genkitDeps struct {
 	cloneSvc         *clone.Service
 	restoreSvc       *restore.Service
 	scheduleSvc      *schedule.Service
+	recorder         *usage.Recorder
+	checker          *usage.Checker
 }
 
 // newGenkitRuntime builds the runtime and runs the initial rebuild.
@@ -96,6 +101,8 @@ func newGenkitRuntime(ctx context.Context, deps genkitDeps, store secrets.Store)
 		cloneSvc:         deps.cloneSvc,
 		restoreSvc:       deps.restoreSvc,
 		scheduleSvc:      deps.scheduleSvc,
+		recorder:         deps.recorder,
+		checker:          deps.checker,
 	}
 
 	if err := r.rebuild(ctx, store); err != nil {
@@ -196,19 +203,19 @@ func (r *genkitRuntime) rebuild(ctx context.Context, store secrets.Store) error 
 	// generation flows use cfg.ModelID, post_quality uses cfg.QualityModelID.
 	provider := llm.NewProvider(r.cfg.ModelID, r.cfg.QualityModelID)
 
-	contentPlanFn, err := initContentPlan(g, r.cfg, provider, r.embedder, r.hub, r.contentPlanRepos)
+	contentPlanFn, err := initContentPlan(g, r.cfg, provider, r.recorder, r.checker, r.embedder, r.hub, r.contentPlanRepos)
 	if err != nil {
 		return fmt.Errorf("init content plan: %w", err)
 	}
-	postAssistantFn, err := initPostAssistant(g, r.cfg, provider, r.embedder, r.hub, r.postAssistRepos, r.cloneSvc, r.restoreSvc, r.scheduleSvc)
+	postAssistantFn, err := initPostAssistant(g, r.cfg, provider, r.recorder, r.checker, r.embedder, r.hub, r.postAssistRepos, r.cloneSvc, r.restoreSvc, r.scheduleSvc)
 	if err != nil {
 		return fmt.Errorf("init post assistant: %w", err)
 	}
-	postQualityFn, err := initPostQuality(g, r.cfg, provider, r.hub, r.postQualityRepos)
+	postQualityFn, err := initPostQuality(g, r.cfg, provider, r.recorder, r.checker, r.hub, r.postQualityRepos)
 	if err != nil {
 		return fmt.Errorf("init post quality: %w", err)
 	}
-	enrichBriefFn, err := initEnrichBrief(g, r.cfg, provider, r.enrichBriefRepos)
+	enrichBriefFn, err := initEnrichBrief(g, r.cfg, provider, r.recorder, r.checker, r.enrichBriefRepos)
 	if err != nil {
 		return fmt.Errorf("init enrich brief: %w", err)
 	}

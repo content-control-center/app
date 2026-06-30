@@ -9,6 +9,7 @@ import (
 	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_quality"
+	"github.com/ogen-app/ogen/src/usage"
 	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
@@ -21,6 +22,8 @@ func initPostQuality(
 	g *genkit.Genkit,
 	cfg *config.Config,
 	provider *llm.Provider,
+	recorder *usage.Recorder,
+	checker *usage.Checker,
 	hub eventhub.Hub,
 	repos post_quality.PostQualityRepos,
 ) (func(ctx context.Context, postID string, onEvent post_quality.OnEventFunc) (*post_quality.PostQualityResponse, error), error) {
@@ -35,6 +38,8 @@ func initPostQuality(
 	// GenerateData call, and a scoring response is only a few thousand tokens.
 	flowCfg := post_quality.PostQualityFlowConfig{
 		Provider: provider,
+		Recorder: recorder,
+		Checker:  checker,
 		ModelID:  cfg.QualityModelID,
 		Weights:  weights,
 		Hub:      hub,

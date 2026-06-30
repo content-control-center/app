@@ -8,6 +8,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
+	"github.com/ogen-app/ogen/src/usage"
 	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
@@ -21,10 +22,14 @@ func initEnrichBrief(
 	g *genkit.Genkit,
 	cfg *config.Config,
 	provider *llm.Provider,
+	recorder *usage.Recorder,
+	checker *usage.Checker,
 	repos enrich_brief.EnrichBriefRepos,
 ) (func(ctx context.Context, req enrich_brief.EnrichBriefRequest, onEvent enrich_brief.OnEventFunc) (*enrich_brief.EnrichBriefResponse, error), error) {
 	flowCfg := enrich_brief.EnrichBriefFlowConfig{
 		Provider: provider,
+		Recorder: recorder,
+		Checker:  checker,
 		ModelID:  cfg.ModelID,
 	}
 	if err := enrich_brief.InitEnrichBrief(g, flowCfg, repos); err != nil {

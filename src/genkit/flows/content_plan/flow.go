@@ -15,6 +15,7 @@ import (
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/usage"
 	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
@@ -35,7 +36,13 @@ type ContentPlanFlowConfig struct {
 	// Provider resolves the model reference + call config by role, so the
 	// flow doesn't hardcode the "anthropic/" prefix or the Anthropic SDK
 	// config type (CON-86 FR12).
-	Provider         *llm.Provider
+	Provider *llm.Provider
+	// Recorder captures one usage event per model call; nil disables recording
+	// (CON-86 FR5/FR10).
+	Recorder *usage.Recorder
+	// Checker gates the flow against the tenant's spend caps before the model
+	// call; nil = no enforcement (CON-86 FR9).
+	Checker          *usage.Checker
 	ModelID          string
 	MaxContextAssets int   // max assets when no embedder (creation-order fallback)
 	MaxContextChars  int   // character budget for asset context in the prompt
@@ -171,6 +178,12 @@ func runContentPlan(
 ) (out *ContentPlanResponse, retErr error) {
 	start := time.Now()
 	log.Printf("content_plan[%s]: starting", req.CampaignID)
+
+	// Enforcement gate (CON-86 FR9): block before any provider call when the
+	// tenant is already over a cap in enforce mode. Nil checker = no gate.
+	if err := cfg.Checker.Enforce(ctx); err != nil {
+		return nil, err
+	}
 
 	// finaliseOwnerID is captured once the campaign is loaded so the
 	// deferred finalisation event can be scoped to the campaign owner.
