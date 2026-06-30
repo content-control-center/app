@@ -1,105 +1,108 @@
 services:
-  api:
-    image: serhiiherasymovbndigital/ogen:latest
-    platform: linux/amd64
-    # All configuration (incl. secrets) lives in .env, which is gitignored.
-    # Copy .env.example -> .env and fill it in before `docker compose up`.
-    env_file:
-      - .env
-    volumes:
-      - ./ogen-keys:/var/lib/ogen/keys
-    ports:
-      - "9001:9001"
-    depends_on:
-      postgres:
-        condition: service_healthy
+    api:
+        image: alephbetai/ogen:latest
+        platform: linux/amd64
+        # All configuration (incl. secrets) lives in .env, which is gitignored.
+        # Copy .env.example -> .env and fill it in before `docker compose up`.
+        env_file:
+            - .env
+        volumes:
+            - ./ogen-keys:/var/lib/ogen/keys
+        ports:
+            - "9001:9001"
+        depends_on:
+            postgres:
+                condition: service_healthy
 
-  postgres:
-    # pgvector image = stock Postgres 17 + the `vector` extension prebuilt
-    # (CON-87 WS4). Multi-arch, so it runs native on arm64/amd64 hosts.
-    image: pgvector/pgvector:pg17
-    environment:
-      POSTGRES_USER: "${POSTGRES_USER:-ogen}"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-ogen}"
-      POSTGRES_DB: "${POSTGRES_DB:-ogen}"
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ogen} -d ${POSTGRES_DB:-ogen}"]
-      interval: 2s
-      timeout: 2s
-      retries: 30
+    postgres:
+        # pgvector image = stock Postgres 17 + the `vector` extension prebuilt
+        # (CON-87 WS4). Multi-arch, so it runs native on arm64/amd64 hosts.
+        image: pgvector/pgvector:pg17
+        environment:
+            POSTGRES_USER: "${POSTGRES_USER:-ogen}"
+            POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-ogen}"
+            POSTGRES_DB: "${POSTGRES_DB:-ogen}"
+        volumes:
+            - postgres-data:/var/lib/postgresql/data
+        ports:
+            - "5432:5432"
+        healthcheck:
+            test:
+                [
+                    "CMD-SHELL",
+                    "pg_isready -U ${POSTGRES_USER:-ogen} -d ${POSTGRES_DB:-ogen}",
+                ]
+            interval: 2s
+            timeout: 2s
+            retries: 30
 
-  # River job-queue dashboard (CON-87 WS3). Standalone UI image that reads
-  # River's tables — it runs no migrations of its own, so it needs them to
-  # already exist. The API creates them via jobs.MigrateRiver at boot;
-  # riverui therefore depends on the API and restarts until the schema is
-  # present. UI at http://localhost:9004.
-  riverui:
-    image: ghcr.io/riverqueue/riverui:latest
-    environment:
-      DATABASE_URL: "${DATABASE_DSN:-postgres://ogen:ogen@postgres:5432/ogen?sslmode=disable}"
-    ports:
-      - "9004:8080"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      api:
-        condition: service_started
-    restart: unless-stopped
+    # River job-queue dashboard (CON-87 WS3). Standalone UI image that reads
+    # River's tables — it runs no migrations of its own, so it needs them to
+    # already exist. The API creates them via jobs.MigrateRiver at boot;
+    # riverui therefore depends on the API and restarts until the schema is
+    # present. UI at http://localhost:9004.
+    riverui:
+        image: ghcr.io/riverqueue/riverui:latest
+        environment:
+            DATABASE_URL: "${DATABASE_DSN:-postgres://ogen:ogen@postgres:5432/ogen?sslmode=disable}"
+        ports:
+            - "9004:8080"
+        depends_on:
+            postgres:
+                condition: service_healthy
+            api:
+                condition: service_started
+        restart: unless-stopped
 
-  # Frontend dev server (CON-98). The SPA lives in its own repo (ogen-app/ui);
-  # this mounts a sibling checkout and runs Vite with hot-reload, proxying
-  # /api to the api service (see that repo's vite.config.ts — the browser stays
-  # same-origin, so no CORS is needed in dev). Opt-in via a profile so the
-  # default `docker compose up` stays backend-only:
-  #   docker compose --profile ui up
-  # Override UI_PATH if your ui checkout isn't at ../ui.
-  ui:
-    image: node:24-alpine
-    profiles: ["ui"]
-    working_dir: /app
-    environment:
-      # Let corepack fetch the pnpm version pinned in package.json non-interactively.
-      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
-      # Vite proxies /api here (the api service on the compose network).
-      API_URL: "http://api:9001"
-      # Native FS events don't cross the bind mount on macOS/Windows — poll instead.
-      CHOKIDAR_USEPOLLING: "true"
-    volumes:
-      # Local UI source -> live hot-reload. node_modules stays in an anonymous
-      # volume so the host's (wrong-arch) modules don't shadow the container's.
-      - "${UI_PATH:-../ui}:/app"
-      - /app/node_modules
-    ports:
-      - "9002:9002"   # Vite dev server (port set in ui/vite.config.ts)
-    # `pnpm exec vite` invokes the Vite binary directly so `--host 0.0.0.0`
-    # reaches it (a plain `pnpm dev -- --host` forwards the `--` literally and
-    # Vite stays bound to the container's localhost, unreachable from the host).
-    command: sh -c "corepack enable && pnpm install --frozen-lockfile && pnpm exec vite --host 0.0.0.0"
-    depends_on:
-      api:
-        condition: service_started
+    # Frontend dev server (CON-98). The SPA lives in its own repo (ogen-app/ui);
+    # this mounts a sibling checkout and runs Vite with hot-reload, proxying
+    # /api to the api service (see that repo's vite.config.ts — the browser stays
+    # same-origin, so no CORS is needed in dev). Opt-in via a profile so the
+    # default `docker compose up` stays backend-only:
+    #   docker compose --profile ui up
+    # Override UI_PATH if your ui checkout isn't at ../ui.
+    ui:
+        image: node:24-alpine
+        profiles: ["ui"]
+        working_dir: /app
+        environment:
+            # Let corepack fetch the pnpm version pinned in package.json non-interactively.
+            COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+            # Vite proxies /api here (the api service on the compose network).
+            API_URL: "http://api:9001"
+            # Native FS events don't cross the bind mount on macOS/Windows — poll instead.
+            CHOKIDAR_USEPOLLING: "true"
+        volumes:
+            # Local UI source -> live hot-reload. node_modules stays in an anonymous
+            # volume so the host's (wrong-arch) modules don't shadow the container's.
+            - "${UI_PATH:-../ui}:/app"
+            - /app/node_modules
+        ports:
+            - "9002:9002" # Vite dev server (port set in ui/vite.config.ts)
+        # `pnpm exec vite` invokes the Vite binary directly so `--host 0.0.0.0`
+        # reaches it (a plain `pnpm dev -- --host` forwards the `--` literally and
+        # Vite stays bound to the container's localhost, unreachable from the host).
+        command: sh -c "corepack enable && pnpm install --frozen-lockfile && pnpm exec vite --host 0.0.0.0"
+        depends_on:
+            api:
+                condition: service_started
 
-  # PDF parsing microservice (CON-103). Parses content-bank PDFs (text + page-
-  # aware chunks + thumbnail) and renders attachment thumbnails / page counts.
-  # Built and published from the separate ogen-app/pdf-service repo (CGO +
-  # libpdfium). The API reaches it over the private network ONLY — no host
-  # `ports:` — at pdf-service:50051 (PDF_SERVICE_ADDR in .env).
-  #
-  # Gated behind the `pdf` profile until that image is published, so the default
-  # `docker compose up` keeps working (the API degrades gracefully: PDF features
-  # off). Once the image exists, drop the profile to enable PDF by default:
-  #   docker compose --profile pdf up
-  pdf-service:
-    image: "${PDF_SERVICE_IMAGE:-ogen-app/pdf-service:latest}"
-    platform: linux/amd64
-    profiles: ["pdf"]
-    expose:
-      - "50051"
+    # PDF parsing microservice (CON-103). Parses content-bank PDFs (text + page-
+    # aware chunks + thumbnail) and renders attachment thumbnails / page counts.
+    # Built and published from the separate ogen-app/pdf-service repo (CGO +
+    # libpdfium). The API reaches it over the private network ONLY — no host
+    # `ports:` — at pdf-service:50051 (PDF_SERVICE_ADDR in .env).
+    #
+    # Gated behind the `pdf` profile until that image is published, so the default
+    # `docker compose up` keeps working (the API degrades gracefully: PDF features
+    # off). Once the image exists, drop the profile to enable PDF by default:
+    #   docker compose --profile pdf up
+    pdf-service:
+        image: alephbetai/pdf-service:latest
+        platform: linux/amd64
+        expose:
+            - "50051"
 
 volumes:
-  postgres-data:
-  ogen-keys:
+    postgres-data:
+    ogen-keys:
