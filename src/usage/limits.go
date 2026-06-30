@@ -197,8 +197,8 @@ func (c *Checker) load(ctx context.Context, tenantID string) (Effective, int64, 
 		return Effective{}, 0, 0, err
 	}
 
-	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	// Reuse PeriodBounds so enforcement and the HTTP summary never drift apart.
+	dayStart, monthStart := PeriodBounds(now)
 
 	daySpent, err := c.spend.SpendBetween(ctx, dayStart, now)
 	if err != nil {
