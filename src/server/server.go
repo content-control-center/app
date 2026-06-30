@@ -36,6 +36,7 @@ import (
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/secrets"
 	"github.com/ogen-app/ogen/src/storage"
+	"github.com/ogen-app/ogen/src/usage"
 )
 
 // TODO: refactor this function
@@ -89,8 +90,13 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	autoPublishAllowlistRepo := repository.NewAutoPublishAllowlistRepository(db)
 	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
 
-	// CON-86: usage metering + per-tenant cost enforcement. recorder/checker
-	// are nil when analytics is disabled — both are nil-safe in the flows.
+	// CON-86: apply any operator price-map override (USAGE_MODEL_PRICES) before
+	// metering starts; a malformed payload or unknown vendor fails boot.
+	if err := usage.ApplyModelPrices(cfg.UsageModelPrices); err != nil {
+		return nil, err
+	}
+	// usage metering + per-tenant cost enforcement. recorder/checker are nil
+	// when analytics is disabled — both are nil-safe in the flows.
 	usageWiring := initUsage(app, cfg, db, analyticsDB)
 	handlers.NewUsageHandler(usageWiring.events, usageWiring.limits, usageWiring.defaults, auth, cfg.UsageAdminToken).Register(app)
 

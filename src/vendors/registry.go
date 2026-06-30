@@ -133,3 +133,27 @@ func CostOf(vendorName, model string, u Usage) (micros int64, version string, ok
 	}
 	return Cost(u, rates), d.Prices.Version, true
 }
+
+// MergePrices merges per-model rate overrides into a registered vendor's price
+// table and re-tags the table with version (boot-time, from USAGE_MODEL_PRICES).
+// Models present in the override replace the in-code defaults; other models are
+// kept. It returns false when the vendor isn't registered. Copy-on-write: a
+// fresh Models map is built so already-handed-out descriptors aren't mutated.
+func MergePrices(vendorName, version string, models map[string]Rates) bool {
+	mu.Lock()
+	defer mu.Unlock()
+	d, ok := registry[vendorName]
+	if !ok {
+		return false
+	}
+	merged := make(map[string]Rates, len(d.Prices.Models)+len(models))
+	for k, v := range d.Prices.Models {
+		merged[k] = v
+	}
+	for k, v := range models {
+		merged[k] = v
+	}
+	d.Prices = PriceTable{Version: version, Models: merged}
+	registry[vendorName] = d
+	return true
+}

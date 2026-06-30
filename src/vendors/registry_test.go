@@ -144,6 +144,43 @@ func TestCostOf(t *testing.T) {
 	})
 }
 
+func TestMergePrices(t *testing.T) {
+	clearRegistry()
+	Register(Descriptor{
+		Name:   "v",
+		Family: FamilyModel,
+		Prices: PriceTable{Version: "base", Models: map[string]Rates{
+			"a": {KindInput: 1_000_000},
+			"c": {KindInput: 7_000_000},
+		}},
+	})
+
+	if !MergePrices("v", "ovr", map[string]Rates{
+		"a": {KindInput: 5_000_000},  // override
+		"b": {KindOutput: 2_000_000}, // add
+	}) {
+		t.Fatal("MergePrices returned false for a registered vendor")
+	}
+
+	d, _ := Get("v")
+	if d.Prices.Version != "ovr" {
+		t.Errorf("version = %q, want ovr", d.Prices.Version)
+	}
+	if d.Prices.Models["a"][KindInput] != 5_000_000 {
+		t.Errorf("model a not overridden: %v", d.Prices.Models["a"])
+	}
+	if d.Prices.Models["b"][KindOutput] != 2_000_000 {
+		t.Errorf("model b not added: %v", d.Prices.Models["b"])
+	}
+	if d.Prices.Models["c"][KindInput] != 7_000_000 {
+		t.Errorf("model c (not in override) should survive the merge: %v", d.Prices.Models["c"])
+	}
+
+	if MergePrices("unregistered", "x", nil) {
+		t.Error("MergePrices on an unregistered vendor should return false")
+	}
+}
+
 // TestCostOf_SnapshotIsPure verifies cost is a pure function of (usage,
 // rates): a cost computed against a captured rate set never changes if the
 // vendor's registered prices are later edited. The recorder relies on this

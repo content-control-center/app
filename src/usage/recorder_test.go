@@ -34,6 +34,15 @@ func init() {
 		Metered: true,
 		Prices:  vendors.PriceTable{Version: "count-only"},
 	})
+	// Dedicated vendor for the price-override test, so mutating its prices via
+	// ApplyModelPrices doesn't pollute the shared "test-model".
+	vendors.Register(vendors.Descriptor{
+		Name:   "test-pricing",
+		Family: vendors.FamilyModel,
+		Prices: vendors.PriceTable{Version: "base", Models: map[string]vendors.Rates{
+			"keep": {vendors.KindInput: 1_000_000},
+		}},
+	})
 }
 
 type fakeWriter struct {
