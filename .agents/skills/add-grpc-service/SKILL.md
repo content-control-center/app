@@ -77,8 +77,22 @@ message ParseRequest {
     bytes chunk = 2;          // subsequent frames: payload bytes
   }
 }
-message ParseOptions { string filename = 1; int32 thumbnail_dpi = 3; /* 0 -> service default */ }
-message ParseResponse { int32 page_count = 1; repeated Chunk chunks = 2; bytes thumbnail_png = 3; }
+message ParseOptions {
+  string filename = 1;
+  bool render_thumbnail = 2;  // server example reads opts.GetRenderThumbnail()
+  int32 thumbnail_dpi = 3;    // 0 -> service default
+}
+message ParseResponse {
+  int32 page_count = 1;
+  repeated Chunk chunks = 2;
+  bytes thumbnail_png = 3;    // empty if not requested
+}
+message Chunk {               // referenced by ParseResponse — must be defined
+  int32 index = 1;
+  string text = 2;
+  int32 page_start = 3;
+  int32 page_end = 4;
+}
 ```
 
 Conventions: zero-value scalar = "service default" (document it inline); keep the
@@ -221,23 +235,26 @@ func New(cfg Config) (*Client, error) {
 	return &Client{conn: conn, rpc: pdfv1.NewPdfServiceClient(conn), timeout: cfg.Timeout}, nil
 }
 
-func (c *Client) Render(ctx context.Context, r io.Reader, opts RenderOptions) (*RenderResult, error) {
+func (c *Client) Parse(ctx context.Context, r io.Reader, opts Options) (*Result, error) {
 	if c == nil { return nil, ErrDisabled }
 	ctx, cancel := context.WithTimeout(ctx, c.timeout); defer cancel()
-	stream, err := c.rpc.Render(ctx)
-	if err != nil { return nil, fmt.Errorf("pdfclient: open render stream: %w", err) }
+	stream, err := c.rpc.Parse(ctx)
+	if err != nil { return nil, fmt.Errorf("pdfclient: open parse stream: %w", err) }
 	// 1) options frame, then 2) byte frames < 4 MiB each.
-	_ = stream.Send(&pdfv1.RenderRequest{Payload: &pdfv1.RenderRequest_Options{Options: /* ... */}})
+	_ = stream.Send(&pdfv1.ParseRequest{Payload: &pdfv1.ParseRequest_Options{Options: &pdfv1.ParseOptions{
+		Filename: opts.Filename, RenderThumbnail: opts.RenderThumbnail, ThumbnailDpi: int32(opts.ThumbnailDPI),
+	}}})
 	buf := make([]byte, 1<<20) // 1 MiB frame, well under gRPC's 4 MiB message cap
 	for {
 		n, rerr := r.Read(buf)
-		if n > 0 { _ = stream.Send(&pdfv1.RenderRequest{Payload: &pdfv1.RenderRequest_Chunk{Chunk: buf[:n]}}) }
+		if n > 0 { _ = stream.Send(&pdfv1.ParseRequest{Payload: &pdfv1.ParseRequest_Chunk{Chunk: buf[:n]}}) }
 		if rerr == io.EOF { break }
 		if rerr != nil { return nil, fmt.Errorf("pdfclient: read: %w", rerr) }
 	}
-	resp, err := stream.CloseAndRecv()
-	if err != nil { return nil, fmt.Errorf("pdfclient: render: %w", err) }
-	return &RenderResult{PageCount: int(resp.GetPageCount()), ThumbnailPNG: resp.GetThumbnailPng()}, nil
+	resp, err := stream.CloseAndRecv() // ParseResponse
+	if err != nil { return nil, fmt.Errorf("pdfclient: parse: %w", err) }
+	// Map resp.GetChunks() into Result.Chunks too; elided here for brevity.
+	return &Result{PageCount: int(resp.GetPageCount()), ThumbnailPNG: resp.GetThumbnailPng()}, nil
 }
 ```
 
@@ -307,16 +324,16 @@ push with `if: github.event_name == 'push' && github.repository_owner == '...'`.
   listener (or `bufconn`) and call via the generated client. Assert status codes
   with `status.Code(err)`.
 - **Client / handler / job**: define a **narrow interface** in the consumer
-  package (e.g. `handlers.PDFRenderer`, `queues.pdfParser`) and inject a fake —
+  package (e.g. `queues.pdfParser`, `handlers.PDFRenderer`) and inject a fake —
   never the real gRPC client. To exercise the terminal path, the fake returns a
   real gRPC status error so the production classifier recognizes it:
 
 ```go
-func (fakeRenderer) Render(_ context.Context, r io.Reader, _ pdfclient.RenderOptions) (*pdfclient.RenderResult, error) {
+func (fakeParser) Parse(_ context.Context, r io.Reader, _ pdfclient.Options) (*pdfclient.Result, error) {
 	if /* unparseable */ {
 		return nil, status.Error(codes.InvalidArgument, "fake: not a parseable PDF")
 	}
-	return &pdfclient.RenderResult{ /* ... */ }, nil
+	return &pdfclient.Result{ /* ... */ }, nil
 }
 ```
 
