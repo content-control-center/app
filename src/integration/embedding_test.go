@@ -39,7 +39,7 @@ func initGeminiEmbedder(ctx context.Context, repo repository.AssetChunksReposito
 	g := genkit.Init(ctx, genkit.WithPlugins(plugin))
 	embedder, err := plugin.DefineEmbedder(g, embedModel, &ai.EmbedderOptions{Dimensions: embedDimensions})
 	Expect(err).NotTo(HaveOccurred())
-	flows.Init(g, embedder, repo, nil)
+	flows.Init(g, embedder, repo, nil, nil, embedModel)
 }
 
 var _ = Describe("Asset embedding flow", Ordered, func() {
