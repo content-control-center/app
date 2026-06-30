@@ -10,7 +10,7 @@ import (
 )
 
 // buildPDF synthesises a structurally-valid n-page PDF with correct
-// xref offsets so pdf.PageCount and pdfprobe.Probe both succeed.
+// xref offsets so pdfprobe.Probe succeeds.
 func buildPDF(n int) []byte {
 	if n < 1 {
 		n = 1
@@ -63,9 +63,6 @@ func TestProbeSinglePage(t *testing.T) {
 	if res.Extension != ".pdf" {
 		t.Errorf("ext = %q, want .pdf", res.Extension)
 	}
-	if res.PageCount != 1 {
-		t.Errorf("pages = %d, want 1", res.PageCount)
-	}
 	if res.SHA256 == "" {
 		t.Error("sha256 is empty")
 	}
@@ -79,12 +76,12 @@ func TestProbeSinglePage(t *testing.T) {
 
 func TestProbeMultiPage(t *testing.T) {
 	data := buildPDF(7)
-	res, _, err := pdfprobe.Probe(bytes.NewReader(data), 10<<20)
+	res, raw, err := pdfprobe.Probe(bytes.NewReader(data), 10<<20)
 	if err != nil {
 		t.Fatalf("probe: %v", err)
 	}
-	if res.PageCount != 7 {
-		t.Errorf("pages = %d, want 7", res.PageCount)
+	if res.Size != int64(len(data)) || !bytes.Equal(raw, data) {
+		t.Errorf("probe did not round-trip a multi-page PDF")
 	}
 }
 

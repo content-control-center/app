@@ -26,9 +26,12 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/pdfclient"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/storage"
 )
@@ -148,7 +151,7 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 			return nil
 		})
 		postsHandler.Register(app)
-		handlers.NewPostAttachmentsHandler(postAttRepo, postRepo, store, auth).Register(app)
+		handlers.NewPostAttachmentsHandler(postAttRepo, postRepo, store, fakePDFRenderer{}, auth).Register(app)
 
 		seedTenantUser(db, "Admin", "it@example.com", "it-password")
 
@@ -350,7 +353,8 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resp.StatusCode).To(Equal(415))
 
-		// Fake PDF bytes (magic prefix only) — pdfprobe rejects it (400).
+		// Fake PDF bytes (magic prefix only) — pdf-service rejects it as an
+		// invalid PDF, so the upload is refused (400).
 		body, ct = multipartBody("file", "evil.pdf", "application/pdf", []byte("%PDF-1.4\nnot really a pdf"))
 		req = httptest.NewRequest("POST", "/api/posts/"+postID+"/attachments", body)
 		req.Header.Set("Content-Type", ct)
@@ -549,6 +553,21 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 // buildIntegrationPDF builds a structurally-valid n-page PDF with
 // correct xref offsets — same shape as the handler-test fixture, kept
 // here so the integration suite stays self-contained.
+// fakePDFRenderer stands in for pdf-service in attachment tests: it counts
+// pages from the fixture's "/Type /Page /Parent" markers and returns a stub
+// thumbnail. With no parseable page it mirrors pdf-service's terminal
+// InvalidArgument verdict so the handler rejects magic-bytes-only garbage.
+type fakePDFRenderer struct{}
+
+func (fakePDFRenderer) Render(_ context.Context, r io.Reader, _ pdfclient.RenderOptions) (*pdfclient.RenderResult, error) {
+	data, _ := io.ReadAll(r)
+	pages := bytes.Count(data, []byte("/Type /Page /Parent"))
+	if pages == 0 {
+		return nil, status.Error(codes.InvalidArgument, "fake: not a parseable PDF")
+	}
+	return &pdfclient.RenderResult{PageCount: pages, ThumbnailPNG: []byte("PNGTHUMB")}, nil
+}
+
 func buildIntegrationPDF(n int) []byte {
 	if n < 1 {
 		n = 1

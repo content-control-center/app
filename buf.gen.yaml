@@ -1,0 +1,16 @@
+# CON-103: generate the Go gRPC client/server stubs for proto/pdf/v1.
+# Bootstrap: stubs are generated into ./gen so the API can build its client now.
+# When ogen-app/pdf-service ships, the proto's canonical home moves there (BSR /
+# a pinned module) and the API switches its import path.
+version: v1
+managed:
+  enabled: true
+  go_package_prefix:
+    default: github.com/ogen-app/ogen/gen
+plugins:
+  - plugin: go
+    out: gen
+    opt: paths=source_relative
+  - plugin: go-grpc
+    out: gen
+    opt: paths=source_relative

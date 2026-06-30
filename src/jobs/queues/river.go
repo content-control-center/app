@@ -38,6 +38,11 @@ type Deps struct {
 	// create/adopt + settings write) and Integration (enabled/state gating).
 	ProfileBootstrapper *zernio.Bootstrapper
 	Integration         *zernio.Integration
+
+	// CON-103: the process_pdf worker's dependencies (pdf-service client,
+	// embedder, storage, asset repos). A nil Client (no PDF_SERVICE_ADDR) makes
+	// the job a no-op.
+	PDF PDFDeps
 }
 
 // registrars is appended to by each worker file's init(). A job is registered
@@ -133,6 +138,24 @@ func (e *Enqueuer) EnqueueBootstrapProfileTx(ctx context.Context, tx *sql.Tx, te
 		return nil
 	}
 	_, err := e.Client.InsertTx(ctx, tx, BootstrapZernioProfileTask{TenantID: tenantID}, nil)
+	return err
+}
+
+// EnqueueProcessPDFTx enqueues a PDF-ingestion task inside the given
+// transaction, so it commits atomically with the asset insert (CON-103): a
+// committed upload always has a job, a rolled-back one never does. The worker
+// re-reads original.pdf from storage, so the bytes are not in the args. Takes
+// primitives so the handler can depend on a narrow interface, not this package.
+func (e *Enqueuer) EnqueueProcessPDFTx(ctx context.Context, tx *sql.Tx, assetID, tenantID, originalName, mimeType string) error {
+	if e == nil || e.Client == nil {
+		return nil
+	}
+	_, err := e.Client.InsertTx(ctx, tx, ProcessPDFTask{
+		AssetID:      assetID,
+		TenantID:     tenantID,
+		OriginalName: originalName,
+		MimeType:     mimeType,
+	}, nil)
 	return err
 }
 

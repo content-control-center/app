@@ -19,14 +19,14 @@ COPY . .
 # Build a static binary.
 RUN CGO_ENABLED=0 GOOS=linux go build -p 4 -trimpath -ldflags="-s -w" -o /server ./cmd/server
 
-# ─── Stage 2: Alpine runtime with poppler-utils ──────────────────────────────
-# Alpine is used (not scratch) so the server can exec `pdftotext` and
-# `pdftoppm` from poppler-utils — required by the PDF asset ingestion path
-# (text extraction fallback + thumbnail rendering).
+# ─── Stage 2: Alpine runtime ─────────────────────────────────────────────────
+# Alpine (not scratch) for ca-certificates/tzdata and su-exec. PDF parsing,
+# thumbnails, and page counting moved to the pdf-service microservice (CON-103),
+# so poppler-utils (pdftotext/pdftoppm) is no longer installed here.
 FROM alpine:3.20
 
 # su-exec lets the entrypoint drop from root to appuser after fixing volume perms.
-RUN apk add --no-cache ca-certificates tzdata poppler-utils su-exec && \
+RUN apk add --no-cache ca-certificates tzdata su-exec && \
     addgroup -S appgroup && adduser -S -G appgroup appuser && \
     mkdir -p /var/lib/ogen/keys && \
     chown appuser:appgroup /var/lib/ogen/keys && \

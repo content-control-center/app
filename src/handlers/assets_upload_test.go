@@ -3,7 +3,9 @@ package handlers_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -20,11 +22,31 @@ import (
 	"github.com/ogen-app/ogen/src/repository"
 )
 
+// pdfEnqueueCall captures one EnqueueProcessPDFTx invocation.
+type pdfEnqueueCall struct {
+	assetID, tenantID, originalName, mimeType string
+}
+
+// fakePDFEnqueuer records EnqueueProcessPDFTx calls so the PDF upload test can
+// assert ingestion was enqueued — in the same tx as the insert — without a real
+// River job table. It runs inside db.RunInTx and just no-ops on the tx.
+type fakePDFEnqueuer struct {
+	calls []pdfEnqueueCall
+	err   error // when set, fails the enqueue (and so the surrounding tx)
+}
+
+func (f *fakePDFEnqueuer) EnqueueProcessPDFTx(_ context.Context, _ *sql.Tx, assetID, tenantID, originalName, mimeType string) error {
+	f.calls = append(f.calls, pdfEnqueueCall{assetID, tenantID, originalName, mimeType})
+	return f.err
+}
+
 var _ = Describe("AssetsHandler upload", Ordered, func() {
 	var (
 		app        *fiber.App
 		db         *bun.DB
 		authCookie *http.Cookie
+		store      *stubStorage
+		enq        *fakePDFEnqueuer
 	)
 
 	BeforeAll(func() {
@@ -48,9 +70,13 @@ var _ = Describe("AssetsHandler upload", Ordered, func() {
 		tagRepo := repository.NewTagRepository(db)
 		assetRepo := repository.NewAssetRepository(db, tagRepo, repository.NewAssetFileRepository(db))
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
+		// Wire the real PDF ingestion path: object storage for original.pdf and a
+		// recording enqueuer, plus the test DB for the insert+enqueue transaction.
+		store = &stubStorage{returnURL: "https://pub.example.com/x", objects: map[string][]byte{}}
+		enq = &fakePDFEnqueuer{}
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
-		handlers.NewAssetsHandler(assetRepo, repository.NewAssetFileRepository(db), nil, auth, nil, nil).Register(app)
+		handlers.NewAssetsHandler(assetRepo, repository.NewAssetFileRepository(db), store, db, enq, auth, nil).Register(app)
 
 		seedTenantUser(db, "Admin", "up@example.com", "pw-password")
 
@@ -168,12 +194,14 @@ var _ = Describe("AssetsHandler upload", Ordered, func() {
 		Expect(resp.StatusCode).To(Equal(fiber.StatusBadRequest))
 	})
 
-	It("creates a PDF asset with type=PDF, status=pending (async processing deferred)", func() {
-		// Minimal valid PDF magic header followed by plausible body. The handler
-		// only checks the `%PDF` prefix and size; the async flow is not fired
-		// because onPDF is nil in this suite.
+	It("creates a PDF asset: stores original.pdf and enqueues ingestion (status=pending)", func() {
+		// Minimal valid PDF magic header followed by a plausible body. The handler
+		// checks the `%PDF` prefix and size, stores original.pdf to object storage,
+		// then inserts the asset and enqueues the ingestion job in one transaction
+		// (CON-103). Real processing runs async in the worker.
+		const pdfBody = "%PDF-1.4\n%...dummy body..."
 		body, ct := buildMultipart([]struct{ Name, Body string }{
-			{"report.pdf", "%PDF-1.4\n%...dummy body..."},
+			{"report.pdf", pdfBody},
 		})
 		resp := post(body, ct)
 		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
@@ -184,6 +212,45 @@ var _ = Describe("AssetsHandler upload", Ordered, func() {
 		Expect(asset["type"]).To(Equal(models.AssetTypePDF))
 		Expect(asset["status"]).To(Equal(models.AssetStatusPending))
 		Expect(asset["title"]).To(Equal("report"))
+
+		assetID := results[0]["asset_id"].(string)
+		Expect(assetID).NotTo(BeEmpty())
+
+		// The original PDF was stored under the tenant-scoped key before enqueue,
+		// with the exact uploaded bytes (the worker re-reads it per attempt).
+		var storedKey string
+		for k := range store.objects {
+			if strings.HasSuffix(k, "assets/"+assetID+"/original.pdf") {
+				storedKey = k
+			}
+		}
+		Expect(storedKey).NotTo(BeEmpty(), "original.pdf should be stored")
+		Expect(store.objects[storedKey]).To(Equal([]byte(pdfBody)))
+
+		// The ingestion job was enqueued for that asset, in the same tx.
+		Expect(enq.calls).To(HaveLen(1))
+		Expect(enq.calls[0].assetID).To(Equal(assetID))
+		Expect(enq.calls[0].originalName).To(Equal("report.pdf"))
+		Expect(enq.calls[0].mimeType).To(Equal("application/pdf"))
+	})
+
+	It("deletes the orphaned original.pdf when the insert/enqueue transaction fails", func() {
+		// Force the tx to roll back after the blob upload by failing the enqueue.
+		enq.err = errors.New("enqueue boom")
+		body, ct := buildMultipart([]struct{ Name, Body string }{
+			{"oops.pdf", "%PDF-1.4\n%orphan cleanup"},
+		})
+		resp := post(body, ct)
+		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+		results := decode(resp)
+		Expect(results).To(HaveLen(1))
+		Expect(results[0]["status"]).To(Equal("failed"))
+		Expect(results[0]["error"]).To(ContainSubstring("create asset"))
+
+		// The upload ran (enqueue was reached inside the tx), but the rollback
+		// must not leave original.pdf behind — the key is cleaned up.
+		Expect(enq.calls).To(HaveLen(1))
+		Expect(store.objects).To(BeEmpty(), "original.pdf must be cleaned up after tx failure")
 	})
 
 	It("rejects .pdf files failing the magic-byte sniff", func() {

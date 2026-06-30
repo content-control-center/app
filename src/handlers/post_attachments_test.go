@@ -2,6 +2,7 @@ package handlers_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -9,6 +10,7 @@ import (
 	"image/gif"
 	"image/jpeg"
 	"image/png"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -17,9 +19,12 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/pdfclient"
 	"github.com/ogen-app/ogen/src/repository"
 )
 
@@ -53,8 +58,24 @@ func animatedGIF() []byte {
 	return buf.Bytes()
 }
 
-// minimalPDF returns the bytes of a tiny structurally-valid 1-page PDF
-// that ledongthuc/pdf.PageCount can parse. Used by CON-75 PDF tests.
+// fakePDFRenderer stands in for pdf-service: it counts pages by scanning the
+// fixture's "/Type /Page /Parent" markers and returns a stub thumbnail.
+type fakePDFRenderer struct{}
+
+func (fakePDFRenderer) Render(_ context.Context, r io.Reader, _ pdfclient.RenderOptions) (*pdfclient.RenderResult, error) {
+	data, _ := io.ReadAll(r)
+	pages := bytes.Count(data, []byte("/Type /Page /Parent"))
+	if pages == 0 {
+		// Mirror pdf-service: a file with no parseable page is rejected as an
+		// invalid PDF (terminal gRPC InvalidArgument), not silently accepted —
+		// magic bytes alone are not a PDF.
+		return nil, status.Error(codes.InvalidArgument, "fake: not a parseable PDF")
+	}
+	return &pdfclient.RenderResult{PageCount: pages, ThumbnailPNG: []byte("PNGTHUMB")}, nil
+}
+
+// minimalPDF returns the bytes of a tiny structurally-valid 1-page PDF.
+// Used by CON-75 PDF tests.
 func minimalPDF() []byte {
 	return minimalPDFWithPages(1)
 }
@@ -165,7 +186,7 @@ var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 		postVersionRepo := repository.NewPostVersionRepository(db)
 		postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 		handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, repository.NewPlatformRepository(db), postAttRepo, auth, nil, nil).Register(app)
-		handlers.NewPostAttachmentsHandler(postAttRepo, postRepo, stub, auth).Register(app)
+		handlers.NewPostAttachmentsHandler(postAttRepo, postRepo, stub, fakePDFRenderer{}, auth).Register(app)
 
 		seedTenantUser(db, "Admin", "att@example.com", "att-password")
 
