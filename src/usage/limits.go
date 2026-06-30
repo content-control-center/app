@@ -222,6 +222,14 @@ func (c *Checker) effective(ctx context.Context) (Effective, error) {
 	if err != nil {
 		return Effective{}, err
 	}
+	return Resolve(row, c.defaults), nil
+}
+
+// Resolve applies the effective-limit precedence tenant-row → config-default →
+// unlimited (CON-86 FR7/AC6). Pure (no I/O): the HTTP layer reuses it for
+// GET /api/usage/limits, where the spend numbers come separately and the
+// analytics-backed Checker may be absent.
+func Resolve(row *models.TenantUsageLimit, def Defaults) Effective {
 	if row != nil {
 		return Effective{
 			DailyCapMicros:   row.DailyCapMicros,
@@ -229,20 +237,33 @@ func (c *Checker) effective(ctx context.Context) (Effective, error) {
 			Mode:             row.Mode,
 			Enabled:          row.Enabled,
 			Source:           "tenant",
-		}, nil
+		}
 	}
 
-	eff := Effective{Mode: c.defaults.Mode, Enabled: true, Source: "default"}
-	if c.defaults.DailyCapMicros > 0 {
-		v := c.defaults.DailyCapMicros
+	eff := Effective{Mode: def.Mode, Enabled: true, Source: "default"}
+	if eff.Mode == "" {
+		eff.Mode = models.LimitModeEnforce
+	}
+	if def.DailyCapMicros > 0 {
+		v := def.DailyCapMicros
 		eff.DailyCapMicros = &v
 	}
-	if c.defaults.MonthlyCapMicros > 0 {
-		v := c.defaults.MonthlyCapMicros
+	if def.MonthlyCapMicros > 0 {
+		v := def.MonthlyCapMicros
 		eff.MonthlyCapMicros = &v
 	}
 	if eff.DailyCapMicros == nil && eff.MonthlyCapMicros == nil {
 		eff.Source = "unlimited"
 	}
-	return eff, nil
+	return eff
+}
+
+// PeriodBounds returns the UTC day-start and month-start for now — the windows
+// used for period-to-date spend (CON-86 §10). Exposed so the HTTP summary uses
+// the same boundaries as enforcement.
+func PeriodBounds(now time.Time) (dayStart, monthStart time.Time) {
+	now = now.UTC()
+	dayStart = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	monthStart = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	return dayStart, monthStart
 }

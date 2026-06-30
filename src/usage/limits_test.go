@@ -205,6 +205,31 @@ func TestChecker_EnforceReturnsLimitError(t *testing.T) {
 	}
 }
 
+func TestResolve(t *testing.T) {
+	t.Run("tenant row wins", func(t *testing.T) {
+		row := &models.TenantUsageLimit{DailyCapMicros: ptr(500), Mode: models.LimitModeWarn, Enabled: true}
+		eff := usage.Resolve(row, usage.Defaults{DailyCapMicros: 999})
+		if eff.Source != "tenant" || eff.Mode != models.LimitModeWarn || eff.DailyCapMicros == nil || *eff.DailyCapMicros != 500 {
+			t.Fatalf("resolve(tenant) = %+v", eff)
+		}
+	})
+	t.Run("config default when no row", func(t *testing.T) {
+		eff := usage.Resolve(nil, usage.Defaults{DailyCapMicros: 100, Mode: models.LimitModeEnforce})
+		if eff.Source != "default" || eff.DailyCapMicros == nil || *eff.DailyCapMicros != 100 {
+			t.Fatalf("resolve(default) = %+v", eff)
+		}
+	})
+	t.Run("unlimited when no row and no caps", func(t *testing.T) {
+		eff := usage.Resolve(nil, usage.Defaults{})
+		if eff.Source != "unlimited" || eff.DailyCapMicros != nil || eff.MonthlyCapMicros != nil {
+			t.Fatalf("resolve(unlimited) = %+v", eff)
+		}
+		if eff.Mode != models.LimitModeEnforce {
+			t.Errorf("empty default mode should fall back to enforce, got %q", eff.Mode)
+		}
+	})
+}
+
 func TestChecker_UntenantedNotGated(t *testing.T) {
 	row := &models.TenantUsageLimit{DailyCapMicros: ptr(1), Mode: models.LimitModeEnforce, Enabled: true}
 	c, _ := newChecker(t, fakeLimits{row: row}, &fakeSpend{vals: []int64{100, 100}}, usage.Defaults{})

@@ -27,34 +27,49 @@ func sharedUsageMetrics() *usage.Metrics {
 	return usageMetricsInst
 }
 
-// initUsage wires the CON-86 metering layer onto the analytics pool. When
-// analyticsDB is nil (ANALYTICS_DSN empty, or the analytics DB was unreachable
-// at boot) it returns (nil, nil): the recorder and checker are nil-safe, so
-// flows then record nothing and never enforce — the graceful-disable path
-// (FR10). The recorder's background writer is drained on shutdown.
-func initUsage(app *fiber.App, cfg *config.Config, db, analyticsDB *bun.DB) (*usage.Recorder, *usage.Checker) {
+// usageDeps bundles the wired CON-86 metering pieces. limits + defaults are
+// always present (the tenant_usage_limits table lives in the control-plane
+// DB, so limits read/write works even when analytics is off). events,
+// recorder, and checker are nil when analytics is disabled — all nil-safe.
+type usageDeps struct {
+	recorder *usage.Recorder
+	checker  *usage.Checker
+	events   repository.UsageRepository // analytics pool; nil when disabled
+	limits   repository.UsageLimitsRepository
+	defaults usage.Defaults
+}
+
+// initUsage wires the metering layer. When analyticsDB is nil (ANALYTICS_DSN
+// empty, or the analytics DB was unreachable at boot) the recorder/checker/
+// events are left nil: flows then record nothing and never enforce — the
+// graceful-disable path (FR10) — while the limits config surface stays usable.
+// The recorder's background writer is drained on shutdown.
+func initUsage(app *fiber.App, cfg *config.Config, db, analyticsDB *bun.DB) usageDeps {
+	deps := usageDeps{
+		limits: repository.NewUsageLimitsRepository(db),
+		defaults: usage.Defaults{
+			DailyCapMicros:   cfg.UsageDefaultDailyCapMicros,
+			MonthlyCapMicros: cfg.UsageDefaultMonthlyCapMicros,
+			Mode:             cfg.UsageDefaultMode,
+		},
+	}
+
 	if analyticsDB == nil {
 		log.Println("usage analytics disabled (ANALYTICS_DSN empty)")
-		return nil, nil
+		return deps
 	}
 
 	metrics := sharedUsageMetrics()
-	usageRepo := repository.NewUsageRepository(analyticsDB) // analytics pool
-	limitsRepo := repository.NewUsageLimitsRepository(db)   // control-plane pool
-
-	recorder := usage.NewRecorder(usageRepo, metrics, usage.Config{})
-	checker := usage.NewChecker(limitsRepo, usageRepo, usage.Defaults{
-		DailyCapMicros:   cfg.UsageDefaultDailyCapMicros,
-		MonthlyCapMicros: cfg.UsageDefaultMonthlyCapMicros,
-		Mode:             cfg.UsageDefaultMode,
-	}, metrics, 0)
+	deps.events = repository.NewUsageRepository(analyticsDB)
+	deps.recorder = usage.NewRecorder(deps.events, metrics, usage.Config{})
+	deps.checker = usage.NewChecker(deps.limits, deps.events, deps.defaults, metrics, 0)
 
 	app.Hooks().OnShutdown(func() error {
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		return recorder.Close(sctx)
+		return deps.recorder.Close(sctx)
 	})
 
 	log.Println("usage analytics enabled")
-	return recorder, checker
+	return deps
 }

@@ -89,9 +89,10 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	autoPublishAllowlistRepo := repository.NewAutoPublishAllowlistRepository(db)
 	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
 
-	// CON-86: usage metering + per-tenant cost enforcement. nil/nil when
-	// analytics is disabled — both are nil-safe in the flows.
-	usageRecorder, usageChecker := initUsage(app, cfg, db, analyticsDB)
+	// CON-86: usage metering + per-tenant cost enforcement. recorder/checker
+	// are nil when analytics is disabled — both are nil-safe in the flows.
+	usageWiring := initUsage(app, cfg, db, analyticsDB)
+	handlers.NewUsageHandler(usageWiring.events, usageWiring.limits, usageWiring.defaults, auth).Register(app)
 
 	// In-process event hub: backend code publishes; the SSE endpoint
 	// fans events out to authenticated clients.
@@ -341,8 +342,8 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		cloneSvc:    cloneSvc,
 		restoreSvc:  restoreSvc,
 		scheduleSvc: scheduleSvc,
-		recorder:    usageRecorder,
-		checker:     usageChecker,
+		recorder:    usageWiring.recorder,
+		checker:     usageWiring.checker,
 	}, secretStore)
 	if err != nil {
 		return nil, err
