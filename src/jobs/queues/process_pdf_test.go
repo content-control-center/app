@@ -75,10 +75,16 @@ func (f *fakeBlob) Upload(_ context.Context, key string, r io.Reader, _ int64, _
 	return "https://stub/" + key, nil
 }
 
-type fakeStatus struct{ all []string }
+type fakeStatus struct {
+	all    []string
+	failOn string // when set, UpdateStatus fails for this status value
+}
 
 func (f *fakeStatus) UpdateStatus(_ context.Context, _, status string) error {
 	f.all = append(f.all, status)
+	if f.failOn != "" && status == f.failOn {
+		return errors.New("status: db down")
+	}
 	return nil
 }
 func (f *fakeStatus) last() string {
@@ -149,6 +155,23 @@ func TestProcessPDF_Success(t *testing.T) {
 	}
 	if status.last() != models.AssetStatusReady {
 		t.Fatalf("final status = %q, want ready (saw %v)", status.last(), status.all)
+	}
+}
+
+func TestProcessPDF_FinalStatusWriteFailurePropagates(t *testing.T) {
+	parser := &fakeParser{res: &pdfclient.Result{
+		PageCount: 1,
+		Chunks:    []pdfclient.Chunk{{Index: 0, Text: "hello world", PageStart: 1, PageEnd: 1}},
+	}}
+	// "processing" succeeds; the terminal "ready" write fails.
+	status := &fakeStatus{failOn: models.AssetStatusReady}
+	p := newProc(PDFDeps{Client: parser, Embedder: &fakeEmbedder{},
+		Storage: &fakeBlob{data: []byte("pdf")}, Assets: status, Chunks: &fakeChunks{}, Files: &fakeFiles{}})
+
+	// The job must fail (so River retries) rather than report success with the
+	// asset stranded in "processing".
+	if err := p.process(context.Background(), ProcessPDFTask{AssetID: "a8"}, false); err == nil {
+		t.Fatal("expected non-nil error when the final status write fails")
 	}
 }
 

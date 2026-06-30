@@ -122,11 +122,14 @@ func (p *ProcessPDFProcessor) process(ctx context.Context, in ProcessPDFTask, la
 		return nil
 	}
 	if p.Deps.Storage == nil {
-		p.setStatus(ctx, in.AssetID, models.AssetStatusFailed)
+		// Best-effort status write; we return the more descriptive error below.
+		_ = p.setStatus(ctx, in.AssetID, models.AssetStatusFailed)
 		return fmt.Errorf("process_pdf %s: storage not configured", in.AssetID)
 	}
 
-	p.setStatus(ctx, in.AssetID, models.AssetStatusProcessing)
+	if err := p.setStatus(ctx, in.AssetID, models.AssetStatusProcessing); err != nil {
+		return err
+	}
 
 	// 1. Re-read original.pdf (the upload handler stored it before enqueue).
 	//    Transient read errors retry.
@@ -150,8 +153,7 @@ func (p *ProcessPDFProcessor) process(ctx context.Context, in ProcessPDFTask, la
 	if err != nil {
 		if isTerminalParseErr(err) {
 			log.Printf("process_pdf %s: unparseable pdf: %v", in.AssetID, err)
-			p.setStatus(ctx, in.AssetID, models.AssetStatusFailed)
-			return nil
+			return p.setStatus(ctx, in.AssetID, models.AssetStatusFailed)
 		}
 		return fmt.Errorf("process_pdf %s: parse: %w", in.AssetID, err)
 	}
@@ -204,26 +206,25 @@ func (p *ProcessPDFProcessor) process(ctx context.Context, in ProcessPDFTask, la
 	thumbKey := p.uploadThumbnail(ctx, in.AssetID, res.ThumbnailPNG)
 	p.persistFile(ctx, in, key, thumbKey, len(data), res.PageCount)
 
-	// 6. Final status.
+	// 6. Final status. Propagate a write failure so the worker retries rather
+	//    than reporting success with the asset stuck in "processing".
 	switch {
 	case embedAttempts == 0:
 		// No embeddable text (empty or image-only PDF) — ready with 0 chunks.
-		p.setStatus(ctx, in.AssetID, models.AssetStatusReady)
+		return p.setStatus(ctx, in.AssetID, models.AssetStatusReady)
 	case len(chunks) == 0:
 		// Every chunk failed to embed — almost always a transient embedder
 		// outage. Retry; give up (failed) only once attempts are exhausted, so
 		// the asset never stays stuck in "processing".
 		if lastAttempt {
-			p.setStatus(ctx, in.AssetID, models.AssetStatusFailed)
-			return nil
+			return p.setStatus(ctx, in.AssetID, models.AssetStatusFailed)
 		}
 		return fmt.Errorf("process_pdf %s: all %d chunk(s) failed to embed", in.AssetID, embedAttempts)
 	case embedFailures > 0:
-		p.setStatus(ctx, in.AssetID, models.AssetStatusPartial)
+		return p.setStatus(ctx, in.AssetID, models.AssetStatusPartial)
 	default:
-		p.setStatus(ctx, in.AssetID, models.AssetStatusReady)
+		return p.setStatus(ctx, in.AssetID, models.AssetStatusReady)
 	}
-	return nil
 }
 
 func (p *ProcessPDFProcessor) thumbnailDPI() int {
@@ -233,13 +234,17 @@ func (p *ProcessPDFProcessor) thumbnailDPI() int {
 	return thumbnailDPIDefault
 }
 
-func (p *ProcessPDFProcessor) setStatus(ctx context.Context, assetID, status string) {
+// setStatus persists the asset status, returning the error so callers can fail
+// the job rather than reporting success with an unpersisted status. A nil Assets
+// dep (status updates disabled) is a no-op.
+func (p *ProcessPDFProcessor) setStatus(ctx context.Context, assetID, status string) error {
 	if p.Deps.Assets == nil {
-		return
+		return nil
 	}
 	if err := p.Deps.Assets.UpdateStatus(ctx, assetID, status); err != nil {
-		log.Printf("process_pdf %s: set status %s: %v", assetID, status, err)
+		return fmt.Errorf("process_pdf %s: set status %s: %w", assetID, status, err)
 	}
+	return nil
 }
 
 func (p *ProcessPDFProcessor) uploadThumbnail(ctx context.Context, assetID string, png []byte) *string {
