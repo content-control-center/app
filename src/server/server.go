@@ -39,7 +39,7 @@ import (
 )
 
 // TODO: refactor this function
-func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secrets.Store) (*fiber.App, error) {
+func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secretStore secrets.Store) (*fiber.App, error) {
 	app := fiber.New(fiber.Config{
 		ErrorHandler: defaultErrorHandler,
 		// WriteTimeout 0 disables the per-response write deadline so that SSE
@@ -88,6 +88,10 @@ func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secret
 	socialAccountRepo := repository.NewSocialAccountRepository(db)
 	autoPublishAllowlistRepo := repository.NewAutoPublishAllowlistRepository(db)
 	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
+
+	// CON-86: usage metering + per-tenant cost enforcement. nil/nil when
+	// analytics is disabled — both are nil-safe in the flows.
+	usageRecorder, usageChecker := initUsage(app, cfg, db, analyticsDB)
 
 	// In-process event hub: backend code publishes; the SSE endpoint
 	// fans events out to authenticated clients.
@@ -337,6 +341,8 @@ func New(ctx context.Context, db *bun.DB, cfg *config.Config, secretStore secret
 		cloneSvc:    cloneSvc,
 		restoreSvc:  restoreSvc,
 		scheduleSvc: scheduleSvc,
+		recorder:    usageRecorder,
+		checker:     usageChecker,
 	}, secretStore)
 	if err != nil {
 		return nil, err

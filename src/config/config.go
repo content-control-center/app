@@ -143,6 +143,26 @@ type Config struct {
 	// PostLog retention (CON-69 §11). Older entries are removed by the
 	// cleanup_post_logs recurring task. 0 disables cleanup entirely.
 	PostLogRetentionDays int `envconfig:"POSTLOG_RETENTION_DAYS" default:"90"`
+
+	// Usage metering & per-tenant cost limits (CON-86). AnalyticsDSN points at
+	// the isolated analytics (TimescaleDB) database; empty disables usage
+	// recording + enforcement entirely (calls proceed, nothing recorded) and
+	// is the graceful-disable default, mirroring empty GeminiAPIKey.
+	AnalyticsDSN string `envconfig:"ANALYTICS_DSN" default:""`
+	// UsageRetentionDays mirrors PostLogRetentionDays; the analytics-DB
+	// retention policy drops usage_events chunks older than this. (The current
+	// migration installs a fixed 90-day policy; operators adjust it out of band.)
+	UsageRetentionDays int `envconfig:"USAGE_RETENTION_DAYS" default:"90"`
+	// Global default spend caps in USD-micros, applied to any tenant without a
+	// tenant_usage_limits row; 0 = no default cap for that period. Mode is
+	// enforce (block once over) or warn (record + count, proceed).
+	UsageDefaultDailyCapMicros   int64  `envconfig:"USAGE_DEFAULT_DAILY_CAP_MICROS"   default:"0"`
+	UsageDefaultMonthlyCapMicros int64  `envconfig:"USAGE_DEFAULT_MONTHLY_CAP_MICROS" default:"0"`
+	UsageDefaultMode             string `envconfig:"USAGE_DEFAULT_MODE"               default:"enforce"`
+	// Optional JSON override of the in-code per-model price map (mirrors
+	// QualityWeightProfiles); empty uses the built-in vendor defaults. (Parsing
+	// into the registry is a follow-up; the in-code prices are authoritative.)
+	UsageModelPrices string `envconfig:"USAGE_MODEL_PRICES" default:""`
 }
 
 func Load() (*Config, error) {

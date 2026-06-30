@@ -15,6 +15,8 @@ import (
 	"log"
 	"path/filepath"
 
+	"github.com/uptrace/bun"
+
 	_ "github.com/ogen-app/ogen/docs"
 	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/database"
@@ -41,6 +43,27 @@ func main() {
 		log.Fatalf("run migrations: %v", err)
 	}
 
+	// CON-86: the isolated analytics (TimescaleDB) pool for usage_events. When
+	// ANALYTICS_DSN is unset, analytics is disabled. A connect/migrate failure
+	// at boot is NOT fatal — usage is analytics-grade and must never take down
+	// the API (fail-open, FR10) — so we log and proceed with it disabled.
+	var analyticsDB *bun.DB
+	if cfg.AnalyticsDSN != "" {
+		adb, aerr := database.NewAnalytics(cfg.AnalyticsDSN, cfg.Debug)
+		switch {
+		case aerr != nil:
+			log.Printf("usage analytics: connect failed, disabling (fail-open): %v", aerr)
+		default:
+			if merr := database.MigrateAnalytics(context.Background(), adb); merr != nil {
+				log.Printf("usage analytics: migrate failed, disabling (fail-open): %v", merr)
+				_ = adb.Close()
+			} else {
+				analyticsDB = adb
+				defer analyticsDB.Close()
+			}
+		}
+	}
+
 	// Envelope encryption: load (or generate) the KEK, build a
 	// Cipher, then expose Get/Set through SecretStore. Boot fails on
 	// any KEK file error — running without an unwrapper is worse than
@@ -60,7 +83,7 @@ func main() {
 	}
 	secrets.LogBootSummary(kekSrc, filepath.Join(cfg.KEKPath, secrets.KEKFilename), bootResult)
 
-	app, err := server.New(context.Background(), db, cfg, store)
+	app, err := server.New(context.Background(), db, analyticsDB, cfg, store)
 	if err != nil {
 		log.Fatalf("init server: %v", err)
 	}
