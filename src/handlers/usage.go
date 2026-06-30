@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -20,10 +21,11 @@ import (
 // read/write works regardless. Every query auto-scopes to the caller's tenant
 // via the TenantScoped hooks, so one tenant never sees another's data.
 type UsageHandler struct {
-	events   repository.UsageRepository // nil when analytics disabled
-	limits   repository.UsageLimitsRepository
-	defaults usage.Defaults
-	auth     fiber.Handler
+	events     repository.UsageRepository // nil when analytics disabled
+	limits     repository.UsageLimitsRepository
+	defaults   usage.Defaults
+	auth       fiber.Handler
+	adminToken string // gates the write route; empty = write disabled (fail-closed)
 }
 
 func NewUsageHandler(
@@ -31,18 +33,36 @@ func NewUsageHandler(
 	limits repository.UsageLimitsRepository,
 	defaults usage.Defaults,
 	auth fiber.Handler,
+	adminToken string,
 ) *UsageHandler {
-	return &UsageHandler{events: events, limits: limits, defaults: defaults, auth: auth}
+	return &UsageHandler{events: events, limits: limits, defaults: defaults, auth: auth, adminToken: adminToken}
 }
 
 func (h *UsageHandler) Register(app *fiber.App) {
 	g := app.Group("/api/usage")
 	g.Get("/", h.auth, h.Summary)
 	g.Get("/limits", h.auth, h.GetLimits)
-	// Setting a cap (especially raising one) is an operator concern. The user
-	// model has no admin/owner role yet (CON-86 §15), so PUT is gated behind
-	// RequireAuth like the reads; operator-only RBAC is a tracked follow-up.
-	g.Put("/limits", h.auth, h.SetLimits)
+	// Raising a cap or disabling enforcement is an operator action, not tenant
+	// self-service — otherwise a tenant could lift its own spend limit. The
+	// user model has no admin/owner role yet (CON-86 §15), so the write is
+	// gated behind an operator token (X-Admin-Token == USAGE_ADMIN_TOKEN) on
+	// top of auth. Empty token fails closed. Operator-only RBAC is the
+	// follow-up that replaces this stopgap.
+	g.Put("/limits", h.auth, h.requireOperator, h.SetLimits)
+}
+
+// requireOperator rejects the request unless USAGE_ADMIN_TOKEN is configured
+// and the X-Admin-Token header matches it (constant-time). When unset it fails
+// closed, so tenant users can never mutate their own limits.
+func (h *UsageHandler) requireOperator(c *fiber.Ctx) error {
+	if h.adminToken == "" {
+		return fiber.NewError(fiber.StatusForbidden, "setting usage limits is disabled (no operator token configured)")
+	}
+	got := c.Get("X-Admin-Token")
+	if subtle.ConstantTimeCompare([]byte(got), []byte(h.adminToken)) != 1 {
+		return fiber.NewError(fiber.StatusForbidden, "operator token required")
+	}
+	return c.Next()
 }
 
 type usageTotals struct {

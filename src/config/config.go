@@ -163,6 +163,13 @@ type Config struct {
 	// QualityWeightProfiles); empty uses the built-in vendor defaults. (Parsing
 	// into the registry is a follow-up; the in-code prices are authoritative.)
 	UsageModelPrices string `envconfig:"USAGE_MODEL_PRICES" default:""`
+
+	// UsageAdminToken gates PUT /api/usage/limits — raising a cap or disabling
+	// enforcement is an operator action, not tenant self-service, and the user
+	// model has no admin/owner role yet (CON-86 §15). A caller must present
+	// this value in the X-Admin-Token header. EMPTY (the default) FAILS CLOSED:
+	// the write route rejects everyone, so tenants cannot lift their own caps.
+	UsageAdminToken string `envconfig:"USAGE_ADMIN_TOKEN" default:""`
 }
 
 func Load() (*Config, error) {

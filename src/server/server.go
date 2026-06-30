@@ -92,7 +92,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// CON-86: usage metering + per-tenant cost enforcement. recorder/checker
 	// are nil when analytics is disabled — both are nil-safe in the flows.
 	usageWiring := initUsage(app, cfg, db, analyticsDB)
-	handlers.NewUsageHandler(usageWiring.events, usageWiring.limits, usageWiring.defaults, auth).Register(app)
+	handlers.NewUsageHandler(usageWiring.events, usageWiring.limits, usageWiring.defaults, auth, cfg.UsageAdminToken).Register(app)
 
 	// In-process event hub: backend code publishes; the SSE endpoint
 	// fans events out to authenticated clients.
