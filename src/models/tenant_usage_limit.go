@@ -28,6 +28,11 @@ type TenantUsageLimit struct {
 	Mode             string `bun:"mode,notnull"                json:"mode"` // enforce | warn
 	Enabled          bool   `bun:"enabled,notnull"             json:"enabled"`
 
-	CreatedAt time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
+	// nullzero so the Upsert (which never sets CreatedAt — only UpdatedAt) lets
+	// the DB default apply on insert instead of bun writing a zero time. With a
+	// default tag, bun emits SQL DEFAULT for the zero value, so the NOT NULL
+	// column still gets now(). UpdatedAt is always stamped by the repo, so it
+	// needs no such treatment.
+	CreatedAt time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
 }
