@@ -5,7 +5,7 @@ Covers `src/server/{genkit_runtime,content_plan,post_assistant,embedding,ssefix}
 
 AI runs on **Firebase Genkit (Go)** with two providers in two separate Genkit instances:
 - **Anthropic Claude** — the two generative flows (content-plan, post-assistant).
-- **A local llama embedding server** — chunking, embedding, semantic retrieval (RAG).
+- **Gemini Embedding 2** (hosted, via the `googlegenai` plugin) — chunking, embedding, semantic retrieval (RAG).
 
 Both flow families stream progress to the browser over SSE.
 
@@ -13,13 +13,14 @@ Both flow families stream progress to the browser over SSE.
 
 ## 1. The two-runtime split
 
-### Embedding instance — built once at boot, never rebuilt
-In `server.New` (`src/server/server.go`): `embedding.WaitAndNewPlugin(ctx, EMBED_SERVER_URL,
-...)` polls the embed server `/health` up to 12× @ 5s (~1 min) → `llama.Plugin`
-(nil when `EMBED_SERVER_URL` empty). `genkit.Init(WithPlugins(llamaPlugin))` →
-`embedding.RegisterFlows` defines the shared `ai.Embedder` and registers the `embedAsset` +
-`processPDF` flows. The captured `embedder` is shared with the Anthropic runtime. The dev
-Genkit UI sees only this instance.
+### Embedding instance — Gemini, backing embedder rebuilt on key rotation
+In `server.New` (`src/server/server.go` → `src/embedding/embedding.go` `Init`): builds the
+Genkit `googlegenai` plugin (Gemini Embedding 2) and registers the `embedAsset` + `processPDF`
+flows against a stable `reloadableEmbedder` wrapper. The Gemini key is read from the secret
+store (`gemini_api_key`); when it is set/rotated via the secrets API the wrapper's backing
+embedder is rebuilt in place (CON-104), and when it is absent the embedder reports unavailable
+(embedding/RAG disabled — asset saves still succeed). The captured `embedder` is shared with
+the Anthropic runtime. The dev Genkit UI sees only this instance.
 
 ### Anthropic flows runtime — hot-reloadable on key rotation
 `genkitRuntime` (`src/server/genkit_runtime.go`) owns a *separate* `*genkit.Genkit` for the
@@ -216,6 +217,6 @@ See [README §3](./README.md#3-configuration--environment-variables) for the ful
 AI-relevant: `ANTHROPIC_API_KEY` (bootstrap; live key = secret `anthropic_api_key`),
 `MODEL_ID` (`claude-sonnet-4-5-20250929`), `MAX_OUTPUT_TOKENS` (64000),
 `MAX_ASSET_CONTEXT` (15), `MAX_CONTEXT_CHARS` (10000), `MAX_POSTS_PER_BATCH` (30),
-`MAX_PARALLEL_BATCHES` (5), `EMBED_SERVER_URL` (empty disables embedding/RAG),
+`MAX_PARALLEL_BATCHES` (5), `GEMINI_API_KEY` / `EMBED_MODEL` (embedding; empty key disables embedding/RAG),
 `GENKIT_ENV` (dev-mode toggle, only logged). Post-assistant `MaxTurns` defaults to 8 in
 `runPostAssistant` (not env-driven).

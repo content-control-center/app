@@ -1,8 +1,7 @@
 # Mirror of docker-compose.yml, but the api is built locally from
 # Dockerfile.genkit (Genkit Dev UI baked in) instead of the prebuilt
 # image, and exposes the extra Dev UI port. Run with `make docker-genkit`.
-# Keep the postgres/riverui/llama-embedserver services in sync with
-# docker-compose.yml.
+# Keep the postgres/riverui services in sync with docker-compose.yml.
 services:
   api:
     build:
@@ -21,8 +20,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      llama-embedserver:
-        condition: service_started
 
   postgres:
     # pgvector image = stock Postgres 17 + the `vector` extension prebuilt
@@ -59,12 +56,6 @@ services:
       api:
         condition: service_started
     restart: unless-stopped
-
-  llama-embedserver:
-    image: alephbetai/llama-embedserver:latest
-    platform: linux/amd64
-    ports:
-      - "9003:8080"
 
 volumes:
   postgres-data:

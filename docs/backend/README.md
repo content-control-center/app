@@ -19,7 +19,7 @@
 | [`03-campaigns-posts-platforms.md`](./03-campaigns-posts-platforms.md) | Campaigns, campaign types & phases, **posts (status state machine)**, tags, platforms, platform/post-type validation |
 | [`04-publishing-zernio-jobs.md`](./04-publishing-zernio-jobs.md) | Zernio integration, auto-publish allowlist, post logs, SSE events, Backlite job queues, end-to-end publish flow |
 | [`05-ai-genkit-flows.md`](./05-ai-genkit-flows.md) | Genkit runtime split, content-plan flow, post-assistant flow, embedding + RAG, AI config |
-| [`06-data-layer-schema.md`](./06-data-layer-schema.md) | DB setup, **full SQL schema (all tables)**, IDs, password hashing, custom column types, repository catalog, dev seeding |
+| [`06-data-layer-schema.md`](./06-data-layer-schema.md) | DB setup, **full SQL schema (all tables)**, IDs, password hashing, custom column types, repository catalog |
 
 ---
 
@@ -30,7 +30,7 @@ Single Go binary serving both the REST API and the embedded React SPA.
 - **Web framework:** Fiber v2 (`gofiber/fiber/v2`).
 - **ORM / DB:** Bun (`uptrace/bun`) over SQLite. Driver `ncruces/go-sqlite3` (pure Go, also pulls `modernc` per go.mod history). **Single connection** (`SetMaxOpenConns(1)`), WAL journal mode.
 - **Background jobs:** Backlite (`mikestefanello/backlite`) — SQLite-native typed job queues sharing the same DB file.
-- **AI:** Firebase Genkit (Go) with two providers — **Anthropic Claude** (generative flows) and a **local llama embedding server** (embeddings/RAG).
+- **AI:** Firebase Genkit (Go) with two providers — **Anthropic Claude** (generative flows) and the hosted **Gemini Embedding 2** API via the `googlegenai` plugin (embeddings/RAG).
 - **Object storage:** S3-compatible (Cloudflare R2 / DO Spaces / AWS S3) via AWS SDK v2, path-style addressing. Optional — disabled when `STORAGE_ENDPOINT` is empty.
 - **External publisher:** **Zernio** (`zernio.com/api/v1`) for actually posting to social platforms. Optional — disabled when `zernio_api_key` is absent.
 - **Secrets at rest:** envelope encryption (AES-256-GCM, KEK on a mounted volume) for third-party API keys.
@@ -57,7 +57,7 @@ The compiled SPA (`web/dist`) is embedded via `//go:embed` (`web/embed.go`) and 
 | `eventhub` | in-process pub/sub powering the SSE `/api/events` stream. |
 | `postlog` | post-log payload sanitization + size capping. |
 | `genkit/flows/*` | Anthropic generative flows (content_plan, post_assistant) + embedding/PDF flows. |
-| `embedding` | llama embedding plugin + flow registration. |
+| `embedding` | Gemini (`googlegenai`) embedding plugin + flow registration. |
 | `pdf` | PDF text extraction, page chunking, thumbnail rendering. |
 
 ### Boot sequence (`cmd/server/main.go` → `server.New`)
@@ -139,7 +139,8 @@ All config is env-driven via `kelseyhightower/envconfig` (`src/config/config.go`
 | `MAX_CONTEXT_CHARS` | `10000` | Char budget for packed asset chunks (content-plan) |
 | `MAX_POSTS_PER_BATCH` | `30` | Posts per batched content-plan model call |
 | `MAX_PARALLEL_BATCHES` | `5` | Concurrent content-plan batches |
-| `EMBED_SERVER_URL` | `http://localhost:8080` | llama embedserver base URL (empty disables embedding/RAG) |
+| `GEMINI_API_KEY` | empty | Gemini Embedding 2 key (also settable via `PUT /api/secrets/gemini_api_key`; empty disables embedding/RAG) |
+| `EMBED_MODEL` / `EMBED_DIMENSIONS` | `gemini-embedding-2` / `3072` | Embedding model + vector width |
 | `GENKIT_ENV` | (unset) | Genkit dev-mode toggle (only logged at boot) |
 
 ### Object storage (S3-compatible)
@@ -201,6 +202,5 @@ All config is env-driven via `kelseyhightower/envconfig` (`src/config/config.go`
 - `make build` — build SPA → `web/dist`, then compile Go (`./server`). `web/dist` must exist (embedded).
 - `make run` — live-reload server via `air`.
 - `make test` — Ginkgo v2 + Gomega, `--randomize-all --randomize-suites -race -procs=2` (tests must be parallel-safe & order-independent).
-- `make seed` — dev seeding tool (`cmd/seed`) — **note: currently stale vs the `Campaign` model**, see [`06-data-layer-schema.md`](./06-data-layer-schema.md#dev-seeding).
 - `make openapi` — regenerate `docs/` from swag annotations.
 - Single package: `ginkgo ./src/handlers` or `go test ./src/handlers`.

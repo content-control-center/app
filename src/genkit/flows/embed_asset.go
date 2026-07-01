@@ -42,7 +42,7 @@ var EmbedAssetFlow *core.Flow[EmbedAssetInput, struct{}, struct{}]
 // only the latest input is kept as "pending" — intermediate saves are
 // discarded. When the running embed finishes, the pending one runs with the
 // latest content. This prevents concurrent embeds of the same asset from
-// flooding the embedserver and contending for the same database rows.
+// flooding the embedder and contending for the same database rows.
 type embedScheduler struct {
 	mu        sync.Mutex
 	pending   map[string]EmbedAssetInput

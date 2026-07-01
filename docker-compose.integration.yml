@@ -1,10 +1,4 @@
 services:
-  llama-embedserver:
-    image: alephbetai/llama-embedserver:latest
-    platform: linux/amd64
-    ports:
-      - "9003:8080"
-
   # Postgres (pgvector image) backing the integration suite (CON-87 WS5).
   # The suite connects to localhost:5432 and isolates per ginkgo worker.
   postgres:

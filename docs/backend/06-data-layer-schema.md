@@ -1,8 +1,8 @@
 # Data Layer: DB Setup, Full Schema, IDs, Column Types, Repositories
 
 Covers `src/database/*`, `src/database/migrations/*.up.sql` (current schema after all ~50
-migrations), `src/models/{id,password,types,session,user,setting,secret}.go`,
-`src/repository/*`, and `cmd/seed`.
+migrations), `src/models/{id,password,types,session,user,setting,secret}.go`, and
+`src/repository/*`.
 
 Go + [Bun ORM](https://bun.uptrace.dev/) over SQLite (pure-Go `ncruces/go-sqlite3`). Single
 binary, single SQLite file. Schema below is reconstructed from all migrations, accounting
@@ -252,18 +252,3 @@ constructors, wired in `src/server/server.go`. Common CRUD shape; `Delete` retur
 | `PostLogRepository` | `PostLog`/`post_logs` | **`Append`**, **`AppendTx(tx, …)`** (joins outer tx), **`ListFiltered`**, **`DeleteOlderThan → int64`** (no sanitization — writers pre-sanitize) |
 | `SocialAccountRepository` | `social_accounts` | `ListAll`/`ListActive`, **`ApplyPlan(upserts, softDeleteIDs, now)`** (single `RunInTx`: upsert/revive + bulk soft-delete) |
 | `AutoPublishAllowlistRepository` | `auto_publish_allowlist` | `List → []string`, **`Set`** (replace whole list), **`Contains`** |
-
----
-
-## 6. Dev seeding — `cmd/seed/main.go` + `seeds/` {#dev-seeding}
-
-`make seed`; resolves `seeds/` relative to repo root. Opens DB, runs migrations, then
-**aborts if any users exist**. Fixtures (`mustLoad[T]`): `seeds/tags.json` (8),
-`seeds/assets.json` (8, `content` is raw BlockNote JSON), `seeds/campaigns.json` (6),
-`seeds/posts.json` (6). Creates one user (`seed@example.com` / `Seed1234!`) → tags → assets
-→ campaigns → posts. Optionally generates embeddings if `EMBED_SERVER_URL` is reachable.
-
-> ⚠️ **Known issue:** `cmd/seed/main.go` is **stale vs the current `Campaign` model** — it sets
-> `TargetPlatformIDs` which no longer exists (reshaped to `TargetPlatforms CampaignPlatforms`).
-> As written it will not compile. To revive it, map `target_platform_ids` slugs into
-> `[]models.CampaignPlatform{{ID, PostTypes}}` and assign to `TargetPlatforms`.

@@ -29,7 +29,7 @@ React + Vite SPA lives in its own repository,
 | Area | What's there |
 |------|--------------|
 | **Campaigns & posts** | Campaign types, campaigns, posts, post versions, post assistant (SSE-streamed Claude conversations), per-platform validation. |
-| **Content bank** | Markdown notes and PDF assets with chunking, embeddings (Llama via `llama-genkit-embedder`), and similarity search used to ground the assistant. |
+| **Content bank** | Markdown notes and PDF assets with chunking, embeddings (Gemini Embedding 2 via the Genkit `googlegenai` plugin), and similarity search used to ground the assistant. |
 | **Post attachments** | Image uploads (JPEG/PNG/WebP/GIF) and PDF uploads with first-page thumbnail rendering, all backed by S3-compatible object storage (MinIO locally, Cloudflare R2 in deployment). Per-platform constraints (size/format/animated/page-count) surface as soft validation warnings. |
 | **Zernio auto-publish** | `Publisher` abstraction with Zernio as the first concrete implementation. Submit / poll / cancel / retry queues are typed Backlite tasks; a reconciliation sweeper guards against stuck `Scheduled` posts. |
 | **Post Log** | An auditable history table that records every meaningful operation against a post — state transitions, validation outcomes, allowlist decisions, background-task lifecycle, Zernio API interactions, reconciliation timeouts, user actions. Sanitized of secrets, capped at 64 KB per entry, configurable retention. |
@@ -50,14 +50,14 @@ React + Vite SPA lives in its own repository,
                                         │  ┌──────────────────────────────┐ │
                                         │  │ Genkit runtime               │ │
                                         │  │  Anthropic instance (rotat.) │ │
-                                        │  │  Llama instance (stable)     │ │
+                                        │  │  Gemini instance (stable)    │ │
                                         │  └──────────────────────────────┘ │
                                         └─┬─────────┬──────────┬──────────┬─┘
                                           │         │          │          │
                           ┌───────────────▼──┐ ┌────▼─────┐ ┌──▼──────┐ ┌─▼──────────────┐
-                          │ Anthropic Claude │ │ Llama    │ │ MinIO   │ │ Zernio API     │
+                          │ Anthropic Claude │ │ Gemini   │ │ MinIO   │ │ Zernio API     │
                           │ API (LLM)        │ │ embed    │ │ / R2    │ │ (cross-network │
-                          │ • content plans  │ │ server   │ │ blob    │ │  publishing,   │
+                          │ • content plans  │ │ API      │ │ blob    │ │  publishing,   │
                           │ • post assistant │ │ (vector  │ │ storage │ │  status,       │
                           │                  │ │  embeds) │ │ (images,│ │  cancel,       │
                           │                  │ │ • assets │ │  PDFs)  │ │  reconcile)    │
@@ -66,7 +66,7 @@ React + Vite SPA lives in its own repository,
                                   ▲                ▲
                                   │                │
                           consumed by         consumed by
-                       Genkit Anthropic    Genkit Llama
+                       Genkit Anthropic    Genkit Gemini
                           instance            instance
 ```
 
@@ -75,13 +75,12 @@ React + Vite SPA lives in its own repository,
 | Model | Plugin | Used by | Hot-rotatable? |
 |-------|--------|---------|----------------|
 | **Anthropic Claude** (Sonnet 4.5 default; configurable via `MODEL_ID`) | `genkit/anthropic` | `generateContentPlan`, `postAssistant` | Yes — `PUT /api/secrets/anthropic_api_key` rebuilds the Anthropic Genkit instance without restart. |
-| **Llama embedding model** (`embeddinggemma-300m` via `llama-genkit-embedder`) | `llama-genkit-embedder` | `embedAsset`, `processPDF` (chunk embedding for vector search) | No — pinned at boot since the embedder URL doesn't rotate; rebuild the model server image to upgrade. |
+| **Gemini Embedding 2** (`gemini-embedding-2`, 3072-dim; configurable via `EMBED_MODEL`) | Genkit `googlegenai` | `embedAsset`, `processPDF` (chunk embedding for vector search) | Yes — `PUT /api/secrets/gemini_api_key` swaps the backing embedder in place without restart (CON-104). |
 
 ### Layered Go layout
 
 ```
 cmd/server/        # main entrypoint; loads config, opens DB, runs server.New
-cmd/seed/          # one-off seed utility
 
 src/
   config/          # envconfig-loaded Config struct
@@ -98,10 +97,10 @@ src/
   secrets/         # envelope-encrypted secret store
   storage/         # S3-compatible blob storage; subpackages probe images/PDFs
   pdf/             # PDF text extraction + thumbnail rendering (poppler-utils)
-  embedding/       # llama-genkit embedding flows + chunk repo
+  embedding/       # Gemini embedding flows + chunk repo
   genkit/          # Anthropic-backed Genkit flows (assistant, content plan)
   eventhub/        # in-process SSE event hub
-  integration/     # `//go:build integration` suite running against MinIO + llama
+  integration/     # `//go:build integration` suite running against MinIO + Postgres
 ```
 
 ### Persistence
@@ -118,13 +117,13 @@ transaction (used for the auto-publish schedule decision).
 
 All AI-powered features are implemented as [Firebase Genkit](https://firebase.google.com/docs/genkit) flows under `src/genkit/flows/`. There are two long-lived Genkit instances at runtime:
 
-- **Embedding instance** — built once at boot with the [`llama-genkit-embedder`](https://github.com/alephbet-ai/llama-genkit-embedder) plugin. Stable for the lifetime of the process; the Llama embed-server URL doesn't rotate.
+- **Embedding instance** — built at boot with the Genkit `googlegenai` plugin (Gemini Embedding 2). The wrapper reference is stable for the process lifetime, but its backing embedder is rebuilt when `gemini_api_key` is set or rotated via the secrets API, so the key rotates without restart (CON-104).
 - **Anthropic instance** — owned by `gkRuntime` (see `src/server/genkit_runtime.go`). Hot-rebuildable so a `PUT /api/secrets/anthropic_api_key` rotation rebuilds the instance and re-registers all Anthropic flows without restarting the server. When no key is set, the runtime stays nil and the consuming handlers return 503 via the `IsAnthropicAvailable` predicate.
 
 | Flow | Plugin | Purpose | Triggered by |
 |------|--------|---------|--------------|
-| `embedAsset` | Llama | Chunks an asset's Markdown content (paragraph-aware, with overlap) and writes embeddings into `asset_chunks`. | Asset save callback (`OnMarkdownSave`). |
-| `processPDF` | Llama | End-to-end PDF asset ingestion: extracts text via `ledongthuc/pdf` (with `pdftotext` fallback), renders a thumbnail with `pdftoppm`, uploads both the PDF and thumbnail to S3, then chunks + embeds. Fire-and-forget background callback. | Asset upload of a PDF file (`OnPDFProcess`). |
+| `embedAsset` | Gemini | Chunks an asset's Markdown content (paragraph-aware, with overlap) and writes embeddings into `asset_chunks`. | Asset save callback (`OnMarkdownSave`). |
+| `processPDF` | Gemini | End-to-end PDF asset ingestion: extracts text via `ledongthuc/pdf` (with `pdftotext` fallback), renders a thumbnail with `pdftoppm`, uploads both the PDF and thumbnail to S3, then chunks + embeds. Fire-and-forget background callback. | Asset upload of a PDF file (`OnPDFProcess`). |
 | `generateContentPlan` | Anthropic | Produces a per-phase, per-platform set of post drafts for a campaign. Splits the work into K-sized batches that run in parallel against Anthropic; surfaces SSE progress events (`batch_started`, `post_generated`, `complete`). See `src/genkit/flows/content_plan/PERFORMANCE.md` for the parallel-batching design. | `POST /api/campaigns/:id/generate-draft` (SSE). |
 | `postAssistant` | Anthropic | Interactive post editor. Streams `explanation_delta` and `content_delta` SSE events as the model writes its rationale and the updated post body. Supports tool use against the asset library: `listAssets`, `getAssetChunks`, `searchAssetChunks`, `getCurrentContent`. Per-turn token budget enforced via the `packChunks` helper. | `POST /api/posts/:id/assistant` (SSE). |
 
@@ -146,7 +145,7 @@ There are two supported workflows depending on what you're working on:
 | You're working on | Use this workflow | What you need installed |
 |--------------------|-------------------|-------------------------|
 | Frontend only | In the **[`ogen-app/ui`](https://github.com/ogen-app/ui)** repo — run its Vite dev server, which proxies `/api` to a locally-running API. | See that repo (Node + pnpm). |
-| Backend (`src/`, `cmd/`) — including end-to-end testing of the SPA against an in-progress API | **[Backend development](#backend-development)** — build the API from source; point the UI at `http://localhost:9001`. | Go 1.26 + poppler-utils + Docker (for the Llama sidecar). |
+| Backend (`src/`, `cmd/`) — including end-to-end testing of the SPA against an in-progress API | **[Backend development](#backend-development)** — build the API from source; point the UI at `http://localhost:9001`. | Go 1.26 + poppler-utils + Docker (for the integration suite). |
 
 The UI points at `http://localhost:9001` by default (via its Vite `/api` proxy), so a backend running locally from source is picked up automatically.
 
@@ -159,10 +158,10 @@ The UI points at `http://localhost:9001` by default (via its Vite `/api` proxy),
 | Tool | Minimum version | Notes |
 |------|-----------------|-------|
 | Go | 1.26 | The module sets `go 1.26.1`. |
-| `make` | any | Build / test / openapi / seed targets. |
+| `make` | any | Build / test / openapi targets. |
 | SQLite | bundled | The `ncruces/go-sqlite3` driver is pure Go; no system SQLite needed. |
 | `pdftoppm`, `pdftotext` (poppler-utils) | any | Required for PDF thumbnail and text extraction. Optional for tests. |
-| Docker Desktop | 4.x | For the integration suite (MinIO + llama-embedserver) and for running the full app stack locally. |
+| Docker Desktop | 4.x | For the integration suite (MinIO + Postgres) and for running the full app stack locally. |
 
 ### Development setup
 
@@ -190,19 +189,17 @@ go mod download
 
 The first run generates one for you under `OGEN_KEK_PATH` (default `./kek/kek.v1`). **Back this file up** — losing it bricks every encrypted secret in the SQLite DB. For a production deployment, mount it from a separate volume.
 
-#### 4. Start the Llama embedding sidecar
+#### 4. (Optional) Configure the Gemini embedding key
+
+Embeddings + semantic search use the hosted **Gemini Embedding 2** API — there is
+no local sidecar. Set `GEMINI_API_KEY` to enable them (it is a first-boot seed
+migrated into the encrypted secret store; thereafter set/rotate it via
+`PUT /api/secrets/gemini_api_key`). With no key the server still boots: asset
+saves succeed, but no vectors are written and semantic search returns nothing.
 
 ```bash
-docker compose -f docker-compose.integration.yml up -d llama-embedserver
+export GEMINI_API_KEY=AIza...   # optional; enables embedding + RAG
 ```
-
-Or run the standalone image directly:
-
-```bash
-docker run --rm -p 8080:8080 alephbetai/llama-embedserver:latest
-```
-
-Set `EMBED_SERVER_URL` accordingly if it isn't on `http://localhost:8080`.
 
 #### 5. Frontend (separate repo)
 
@@ -244,14 +241,6 @@ curl -X PUT http://localhost:9001/api/secrets/zernio_api_key \
 
 Both keys are encrypted at rest with a per-secret DEK wrapped by the KEK. The Anthropic Genkit instance auto-rebuilds on the first call after the key is set; the Zernio client resolves the key per outbound request, so rotations land without restart.
 
-#### 8. (Optional) seed local fixture data
-
-```bash
-make seed
-```
-
-This populates a small set of campaigns, platforms, and assets useful for trying out the UI.
-
 ### Common Make targets
 
 ```bash
@@ -259,9 +248,8 @@ make build           # build the server binary into ./server
 make run             # air-powered hot reload for the API
 make genkit          # boot the API with Genkit dev UI on :4000
 make test            # ginkgo handler/unit suites with coverage
-make test-integration # spins up MinIO + llama-embedserver, runs `//go:build integration` specs
+make test-integration # spins up MinIO + Postgres, runs `//go:build integration` specs
 make openapi         # regenerates docs/swagger.json from swag annotations
-make seed            # runs cmd/seed for local fixture data
 make tidy            # go mod tidy
 make docker          # build the API Docker image
 ```
@@ -274,7 +262,8 @@ All runtime knobs are env-vars, loaded by [`envconfig`](https://github.com/kelse
 |----------|---------|---------|
 | `ADDR` | `:9001` | HTTP listen address |
 | `DATABASE_DSN` | `file:data/app.db?cache=shared&_pragma=journal_mode(WAL)` | SQLite file location |
-| `EMBED_SERVER_URL` | `http://localhost:8080` | Llama embed server |
+| `GEMINI_API_KEY` | empty | Gemini Embedding 2 key — first-boot seed; also settable via `PUT /api/secrets/gemini_api_key` for hot rotation. Empty disables embedding/RAG |
+| `EMBED_MODEL` / `EMBED_DIMENSIONS` | `gemini-embedding-2` / `3072` | Embedding model and vector width (must match the `assets_chunks.embedding` column) |
 | `OGEN_KEK_PATH` | `./kek` | Directory holding `kek.v1` for envelope encryption — losing it bricks every encrypted secret |
 | `STORAGE_*` | empty | S3-compatible storage (R2/MinIO/AWS); empty disables uploads |
 | `ANTHROPIC_API_KEY` | empty | Claude key — also settable via `PUT /api/secrets/anthropic_api_key` for hot rotation |
@@ -287,13 +276,15 @@ All runtime knobs are env-vars, loaded by [`envconfig`](https://github.com/kelse
 
 The handler suite uses real in-memory SQLite (no mocks) — every
 test boots through the migration chain. The integration suite
-(`//go:build integration`) brings up MinIO and llama-embedserver via
+(`//go:build integration`) brings up MinIO and Postgres via
 `docker-compose.integration.yml` and runs end-to-end flows
-including the post-attachment round-trip.
+including the post-attachment round-trip. The embedding + chunking
+suites additionally hit the live Gemini Embedding API and skip unless
+`GEMINI_API_KEY` is set.
 
 ```bash
 make test                  # handler/unit (fast, in-process)
-make test-integration      # MinIO + llama (slow, docker compose)
+make test-integration      # MinIO + Postgres (slow, docker compose)
 ```
 
 ### Admin surfaces
@@ -320,7 +311,7 @@ To run the API the UI talks to, see **[Backend development](#backend-development
 above, or start the published image plus its dependencies:
 
 ```bash
-docker compose pull && docker compose up   # API + Postgres + llama-embedserver
+docker compose pull && docker compose up   # API + Postgres
 ```
 
 ### Full stack via Docker Compose (API + UI hot-reload)
