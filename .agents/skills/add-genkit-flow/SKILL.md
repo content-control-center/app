@@ -799,6 +799,126 @@ func emit(onEvent OnEventFunc, name SSEEventKind, data any) {
 
 ---
 
+## Step 8b: Usage metering & enforcement (CON-86) — every model-calling flow needs this
+
+Every flow that calls a model is metered and gated by the CON-86 usage layer.
+Three **nil-safe** dependencies thread through `FlowConfig`. They are all nil
+when `ANALYTICS_DSN` is empty (analytics disabled) — so guard nothing, just call
+the methods; nil receivers are no-ops. Miss the wiring and the flow silently
+records nothing / never enforces (no error, no signal).
+
+### FlowConfig fields (`flow.go`)
+
+Add alongside `ModelID`/`MaxOutputTokens`, and import
+`"github.com/ogen-app/ogen/src/vendors/llm"` + `"github.com/ogen-app/ogen/src/usage"`:
+
+```go
+// Provider resolves the model ref + call config by role, so the flow never
+// hardcodes a model id or imports the Anthropic SDK (CON-86 FR12).
+Provider *llm.Provider
+// Recorder captures usage events async; nil disables recording (FR5/FR10).
+Recorder *usage.Recorder
+// Checker gates the flow against the tenant's spend caps; nil = no gate.
+Checker *usage.Checker
+```
+
+Keep `ModelID`/`QualityModelID` in config too — `llm.NewProvider` is built from
+them — but resolve the model through `Provider`, never the raw string.
+
+### Pick a role once
+
+`llm.RoleGeneration` (default → `cfg.ModelID`) or `llm.RoleQuality`
+(→ `cfg.QualityModelID`, for scoring/eval flows like post_quality). Use the
+**same** role for `Ref`, `Model`, and `CallConfig` in a given call.
+
+### Enforcement gate — before the first paid call
+
+Call `Enforce` once, AFTER any cache short-circuit (never block a cached,
+provider-free result) and BEFORE the first model call:
+
+```go
+// Enforcement gate (CON-86 FR9). Nil checker = no gate.
+if err := cfg.Checker.Enforce(ctx); err != nil {
+    return nil, err // *usage.LimitExceededError when blocked
+}
+```
+
+`Enforce` is nil-safe and **fails open** (analytics read errors → allow). It
+returns `*usage.LimitExceededError` (embeds `Period`, `CapMicros`, `SpentMicros`,
+`Mode`) only when the tenant is genuinely over an *enforce*-mode cap; `warn`
+mode never blocks.
+
+### Model call goes through the Provider
+
+Replace the hardcoded model id + Anthropic config with the Provider:
+
+```go
+modelName := cfg.Provider.Ref(role) // e.g. "anthropic/claude-sonnet-4-5-20250929"
+...
+out, resp, err := genkit.GenerateData[T](ctx, g,
+    ai.WithModelName(modelName),
+    ai.WithSystem("%s", prompts.system),
+    ai.WithPrompt("%s", userPrompt),
+    cfg.Provider.CallConfig(maxTokens), // carries MaxTokens
+)
+```
+
+`CallConfig` returns an `ai.WithConfig(...)` option — genkit **rejects two
+`WithConfig`s**, so pass exactly one `CallConfig` per call and no other config
+option.
+
+### Record usage — after each completed call
+
+After every successful generation (including a retry that still consumed
+tokens), record it. `RecordResp` runs the vendor's meter over the genkit
+`*ai.ModelResponse` (the second return of `genkit.Generate*`):
+
+```go
+// One event per completed call (CON-86 FR1). Nil recorder = no-op.
+cfg.Recorder.RecordResp(ctx, cfg.Provider.Vendor(), cfg.Provider.Model(role), "<feature>", resp)
+```
+
+- `"<feature>"` is a stable slug for this flow (e.g. `"content_plan"`,
+  `"post_quality"`) — it becomes the `feature` dimension in `usage_events` and
+  the summary breakdown. Pick one, use it everywhere in the flow.
+- In batched/multi-call flows, call `RecordResp` **inside the per-call loop** so
+  each model call is one event.
+
+### Tenant context is mandatory
+
+Recorder and Checker read the tenant from `ctx` (`tenantctx.From`). An
+untenanted call records nothing (the Recorder skips it) and cannot enforce.
+Run the flow in a tenant context — the same scoping every repo relies on:
+- Request-driven handler: pass `c.Context()` (the auth middleware sets
+  `c.Locals(tenantctx.Key, session.TenantID)`, which `c.Context().Value` reads).
+- Background goroutine: rebuild it — `tenantctx.With(context.Background(), session.TenantID)`.
+If your repo reads work in the flow, the meter works.
+
+### HTTP handler — map the block to 402
+
+The enforcement error must surface as **402 Payment Required**, not a 500. Add a
+case to the handler's error switch (SSE `code`/`msg` or JSON), alongside the
+existing `ValidationError`/`AIError` cases:
+
+```go
+var le *usage.LimitExceededError
+switch {
+case errors.As(err, &le):
+    code = fiber.StatusPaymentRequired // 402
+    msg = le.Error()
+case errors.As(err, &ve): // ...existing ValidationError → 400
+    ...
+}
+```
+
+> ⚠️ The existing flows (content_plan, post_assistant, post_quality,
+> enrich_brief) do **not** yet add this case, so a blocked tenant currently falls
+> through to a 500 — don't copy their handler error switch verbatim. New flows
+> should add the 402 case; retrofitting the four old handlers is a known
+> follow-up.
+
+---
+
 ## Step 9: Server wiring (`src/server/<flow_name>.go` + edits to `src/server/server.go`)
 
 Small adapter file to keep server.go clean:
@@ -816,15 +936,23 @@ import (
 
     "github.com/ogen-app/ogen/src/config"
     "github.com/ogen-app/ogen/src/genkit/flows/<flow_name>"
+    "github.com/ogen-app/ogen/src/usage"
+    "github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 func init<FlowName>(
     g *genkit.Genkit,
     cfg *config.Config,
+    provider *llm.Provider,   // CON-86 — see Step 8b
+    recorder *usage.Recorder, // nil when analytics disabled (nil-safe)
+    checker *usage.Checker,   // nil when analytics disabled (nil-safe)
     embedder ai.Embedder,
     repos <flow_name>.<FlowName>Repos,
 ) (func(ctx context.Context, req <flow_name>.<FlowName>Request, onEvent <flow_name>.OnEventFunc) (*<flow_name>.<FlowName>Response, error), error) {
     flowCfg := <flow_name>.<FlowName>FlowConfig{
+        Provider:        provider,
+        Recorder:        recorder,
+        Checker:         checker,
         ModelID:         cfg.ModelID,
         MaxOutputTokens: cfg.MaxOutputTokens,
         Embedder:        embedder,
@@ -841,9 +969,12 @@ In `src/server/server.go`, add the callback var declaration near the other callb
 ```go
 var <flowName>Callback func(context.Context, <flow_name>.<FlowName>Request, <flow_name>.OnEventFunc) (*<flow_name>.<FlowName>Response, error)
 
-// ... later, inside the Anthropic-key block:
+// ... later, inside the Anthropic-key block. provider is already built there
+// (provider := llm.NewProvider(cfg.ModelID, cfg.QualityModelID)); recorder and
+// checker come from initUsage's usageWiring (usageWiring.recorder/.checker) —
+// both nil-safe when analytics is disabled:
 <flowName>Repos := <flow_name>.<FlowName>Repos{ /* ... */ }
-<flowName>Callback, err = init<FlowName>(g, cfg, embedder, <flowName>Repos)
+<flowName>Callback, err = init<FlowName>(g, cfg, provider, usageWiring.recorder, usageWiring.checker, embedder, <flowName>Repos)
 if err != nil {
     return nil, err
 }
@@ -1638,6 +1769,7 @@ Fix any compile or test errors before reporting success. Do not claim success wi
 - `flow.go` created — `InitX`, `NewXCallback`, `emit` helper
 - `src/server/<flow_name>.go` adapter created
 - `src/server/server.go` edited — callback var + `initX` call + handler registration gated on API key
+- **Usage metering wired (CON-86, Step 8b)** — `Provider`/`Recorder`/`Checker` in `FlowConfig`; `cfg.Checker.Enforce(ctx)` gate placed after any cache short-circuit; `cfg.Recorder.RecordResp(ctx, Provider.Vendor(), Provider.Model(role), "<feature>", resp)` after each completed call; model resolved via `Provider.Ref(role)` + `Provider.CallConfig(maxTokens)`; `initX` threads `provider, recorder, checker`; handler maps `*usage.LimitExceededError` → 402
 - HTTP handler added to `src/handlers/<resource>.go` — SSE or JSON shape, swagger comments, service-unavailable branch
 - Callback threaded through `New<Resource>Handler` constructor signature
 - Handler test added (`src/handlers/<resource>_test.go`) — stub callback, SSE frame parser, happy path + error path
