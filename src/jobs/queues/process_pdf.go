@@ -133,6 +133,20 @@ func (p *ProcessPDFProcessor) process(ctx context.Context, in ProcessPDFTask, la
 		return fmt.Errorf("process_pdf %s: storage not configured", in.AssetID)
 	}
 
+	// No gemini_api_key configured yet (CON-104): checked up front so we don't
+	// download + parse the PDF only to fail every chunk embed. Retry rather than
+	// fail — a key set via the secrets API takes effect without a restart, so a
+	// later attempt can succeed; give up (failed) only once attempts are
+	// exhausted, mirroring the all-chunks-failed path below, so the asset never
+	// stays stuck in "processing".
+	if !embedopts.Available(p.Deps.Embedder) {
+		if lastAttempt {
+			return p.setStatus(ctx, in.AssetID, models.AssetStatusFailed)
+		}
+		log.Printf("process_pdf %s: embedder unavailable (no gemini_api_key) — will retry", in.AssetID)
+		return fmt.Errorf("process_pdf %s: embedder unavailable", in.AssetID)
+	}
+
 	if err := p.setStatus(ctx, in.AssetID, models.AssetStatusProcessing); err != nil {
 		return err
 	}

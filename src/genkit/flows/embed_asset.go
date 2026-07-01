@@ -48,6 +48,7 @@ type embedScheduler struct {
 	pending   map[string]EmbedAssetInput
 	running   map[string]bool
 	assetRepo repository.AssetRepository // optional; when set, used to flip asset.status
+	embedder  ai.Embedder                // set by Init; used to skip when no key (CON-104)
 }
 
 func newEmbedScheduler() *embedScheduler {
@@ -83,6 +84,16 @@ func (s *embedScheduler) run(assetID string) {
 		}
 		delete(s.pending, assetID)
 		s.mu.Unlock()
+
+		// Skip when no gemini_api_key is configured (CON-104): leave the asset's
+		// status untouched (a later save re-triggers once a key is set via the
+		// secrets API) rather than marking it failed. Unlike the process_pdf River
+		// job, the markdown embed is fire-and-forget with no retry, so skip is the
+		// only sane no-key behaviour.
+		if !embedopts.Available(s.embedder) {
+			log.Printf("embed asset %s: skipped — no gemini_api_key configured", in.AssetID)
+			continue
+		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		// Rebuild the tenant context the request goroutine carried, so the
@@ -132,6 +143,7 @@ func NewAssetOnSaveCallback() func(assetID, title, content, tenantID string) {
 // embeds run.
 func Init(g *genkit.Genkit, embedder ai.Embedder, repo repository.AssetChunksRepository, assetRepo repository.AssetRepository, recorder *usage.Recorder, embedModel string) {
 	defaultEmbedScheduler.assetRepo = assetRepo
+	defaultEmbedScheduler.embedder = embedder
 	EmbedAssetFlow = genkit.DefineFlow(g, "embedAsset",
 		func(ctx context.Context, in EmbedAssetInput) (struct{}, error) {
 			return struct{}{}, embedAsset(ctx, embedder, repo, recorder, embedModel, in)

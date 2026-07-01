@@ -175,18 +175,21 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 
 	// Embedding (Gemini) is initialised here — before the River registry —
 	// because the process_pdf worker (CON-103) needs the embedder in its deps.
-	// When GEMINI_API_KEY is unset the embedder is nil and PDF ingestion +
-	// semantic search are disabled; markdown/JSON saves still succeed.
+	// The returned embedder is a stable reloadable wrapper (always non-nil): when
+	// gemini_api_key is unset it reports unavailable, so PDF ingestion + semantic
+	// search are dormant until a key is added via the secrets API (CON-104), with
+	// no restart; markdown/JSON saves still succeed meanwhile.
 	log.Printf("genkit: initialising (GENKIT_ENV=%s)", os.Getenv("GENKIT_ENV"))
-	embedCallbacks, embedder, err := initEmbedding(ctx, cfg, chunksRepo, pieceRepo, assetFileRepo, store, usageWiring.recorder)
+	embedCallbacks, embedder, err := initEmbedding(ctx, cfg, chunksRepo, pieceRepo, assetFileRepo, store, secretStore, usageWiring.recorder)
 	if err != nil {
 		return nil, err
 	}
 
-	// PDF ingestion is live only when the parser, embedder, and storage are all
-	// present (the worker downloads, parses, and embeds). The job's Client field
-	// is left nil otherwise so the worker no-ops.
-	pdfIngestEnabled := pdfClient != nil && embedder != nil && store != nil
+	// PDF ingestion is live when the parser and storage are present; embedder
+	// availability is checked per-run by the worker (a key set later re-enables
+	// it without a restart), not gated at boot. The Client field is left nil
+	// otherwise so the worker no-ops.
+	pdfIngestEnabled := pdfClient != nil && store != nil
 	pdfDeps := queues.PDFDeps{
 		Embedder:   embedder,
 		Storage:    store,

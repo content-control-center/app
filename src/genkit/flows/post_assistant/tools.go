@@ -284,7 +284,7 @@ func toolGetAssetChunks(ctx context.Context, in GetChunksInput) (*ChunksOutput, 
 
 func toolSearchAssetChunks(ctx context.Context, in SearchChunksInput) (*ChunksOutput, error) {
 	st := getRequestState(ctx)
-	if st.embedder == nil {
+	if !embedopts.Available(st.embedder) {
 		return nil, fmt.Errorf("semantic search is unavailable (no embedder configured); use getAssetChunks to retrieve chunks by ID instead")
 	}
 

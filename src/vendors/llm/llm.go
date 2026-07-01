@@ -55,11 +55,9 @@ func init() {
 	})
 
 	vendors.Register(vendors.Descriptor{
-		Name:   VendorGemini,
-		Family: vendors.FamilyModel,
-		// Gemini's key comes from config (GEMINI_API_KEY), not the secrets
-		// store, so there is no hot-reload secret name.
-		SecretKey: "",
+		Name:      VendorGemini,
+		Family:    vendors.FamilyModel,
+		SecretKey: "gemini_api_key", // must match secrets.NameGeminiAPIKey (CON-104)
 		Metered:   true,
 		Meter:     embedMeter{},
 		Prices: vendors.PriceTable{

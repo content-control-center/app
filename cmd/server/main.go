@@ -77,6 +77,7 @@ func main() {
 	bootResult, err := secrets.MigrateFromEnv(context.Background(), store, []secrets.EnvSource{
 		{Name: secrets.NameAnthropicAPIKey, EnvValue: cfg.AnthropicAPIKey},
 		{Name: secrets.NameZernioAPIKey, EnvValue: cfg.ZernioAPIKey},
+		{Name: secrets.NameGeminiAPIKey, EnvValue: cfg.GeminiAPIKey},
 	})
 	if err != nil {
 		log.Fatalf("migrate secrets from env: %v", err)

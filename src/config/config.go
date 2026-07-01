@@ -20,11 +20,15 @@ type Config struct {
 
 	// Embeddings (CON-101). Generated via the hosted Gemini Embedding 2 API
 	// (google.golang.org/genai through the Genkit googlegenai plugin), replacing
-	// the former self-hosted llama-embedserver sidecar. Empty GeminiAPIKey
-	// disables embedding entirely (asset saves succeed, no vectors are written,
-	// semantic search returns nothing). EmbedDimensions must match the
-	// assets_chunks.embedding halfvec(N) column — 3072 is Gemini's native size
-	// and is L2-normalized, so cosine search works without renormalization.
+	// the former self-hosted llama-embedserver sidecar. GeminiAPIKey is now a
+	// first-boot seed source only (CON-104): it is migrated into the encrypted
+	// `secret` table on startup and thereafter read from — and rotated via — the
+	// secrets API (PUT /api/secrets/gemini_api_key), mirroring the Anthropic /
+	// Zernio keys. With no key the embedder is unavailable (asset saves succeed,
+	// no vectors are written, semantic search returns nothing) until one is set.
+	// EmbedDimensions must match the assets_chunks.embedding halfvec(N) column —
+	// 3072 is Gemini's native size and is L2-normalized, so cosine search works
+	// without renormalization.
 	GeminiAPIKey    string `envconfig:"GEMINI_API_KEY"    default:""`
 	EmbedModel      string `envconfig:"EMBED_MODEL"       default:"gemini-embedding-2"`
 	EmbedDimensions int    `envconfig:"EMBED_DIMENSIONS"  default:"3072"`
