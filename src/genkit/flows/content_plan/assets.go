@@ -15,8 +15,8 @@ import (
 
 // minAssetSimilarity is the minimum cosine similarity a chunk must score
 // against the campaign query to be included in the prompt context.
-// CON-101: tuned for the former embeddinggemma-300m model; revisit against
-// Gemini Embedding 2's cosine distribution once there is real corpus data.
+// CON-101: a conservative starting threshold; revisit against Gemini Embedding
+// 2's cosine distribution once there is real corpus data.
 const minAssetSimilarity = 0.7
 
 func resolveAssets(ctx context.Context, campaign *models.Campaign, cfg ContentPlanFlowConfig, repos ContentPlanRepos) ([]resolvedPiece, []string, error) {

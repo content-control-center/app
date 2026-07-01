@@ -23,8 +23,8 @@ const chunkTokenBudget = 3000
 
 // minSearchSimilarity is the cosine-similarity floor a chunk must clear to be
 // returned by the semantic-search tool (searchAssetChunks).
-// CON-101: tuned for the former embeddinggemma-300m model; revisit against
-// Gemini Embedding 2's cosine distribution once there is real corpus data.
+// CON-101: a conservative starting threshold; revisit against Gemini Embedding
+// 2's cosine distribution once there is real corpus data.
 const minSearchSimilarity = 0.5
 
 // ── Context key for per-request state ────────────────────────────────────────

@@ -20,7 +20,7 @@ type Config struct {
 
 	// Embeddings (CON-101). Generated via the hosted Gemini Embedding 2 API
 	// (google.golang.org/genai through the Genkit googlegenai plugin), replacing
-	// the former self-hosted llama-embedserver sidecar. GeminiAPIKey is now a
+	// the former self-hosted embedding sidecar. GeminiAPIKey is now a
 	// first-boot seed source only (CON-104): it is migrated into the encrypted
 	// `secret` table on startup and thereafter read from — and rotated via — the
 	// secrets API (PUT /api/secrets/gemini_api_key), mirroring the Anthropic /

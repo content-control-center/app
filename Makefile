@@ -43,13 +43,6 @@ test: _ginkgo _pg-test-up
 
 test-integration:
 	docker compose -f docker-compose.integration.yml up -d
-	@printf "Waiting for llama-embedserver"; \
-	timeout=90; \
-	until curl -sf http://localhost:9003/health 2>/dev/null | grep -q ok; do \
-		timeout=$$((timeout - 2)); \
-		[ $$timeout -le 0 ] && { echo " timed out"; docker compose -f docker-compose.integration.yml down; exit 1; }; \
-		printf '.'; sleep 2; \
-	done; echo " ready"
 	@printf "Waiting for minio"; \
 	timeout=60; \
 	until curl -sf http://localhost:9100/minio/health/live >/dev/null 2>&1; do \
@@ -64,7 +57,10 @@ test-integration:
 		[ $$timeout -le 0 ] && { echo " timed out"; docker compose -f docker-compose.integration.yml down; exit 1; }; \
 		printf '.'; sleep 2; \
 	done; echo " ready"
+	@# The embedding + chunking suites hit the live Gemini Embedding API and Skip
+	@# unless GEMINI_API_KEY is set; it is inherited from the environment here.
 	TEST_DATABASE_DSN="postgres://ogen:ogen@localhost:5432/postgres?sslmode=disable" \
+	GEMINI_API_KEY="$$GEMINI_API_KEY" \
 		go test -tags integration -v -count=1 -timeout 180s ./src/integration/...; \
 	EXIT=$$?; \
 	docker compose -f docker-compose.integration.yml down; \
