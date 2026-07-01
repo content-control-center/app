@@ -81,7 +81,6 @@ React + Vite SPA lives in its own repository,
 
 ```
 cmd/server/        # main entrypoint; loads config, opens DB, runs server.New
-cmd/seed/          # one-off seed utility
 
 src/
   config/          # envconfig-loaded Config struct
@@ -244,14 +243,6 @@ curl -X PUT http://localhost:9001/api/secrets/zernio_api_key \
 
 Both keys are encrypted at rest with a per-secret DEK wrapped by the KEK. The Anthropic Genkit instance auto-rebuilds on the first call after the key is set; the Zernio client resolves the key per outbound request, so rotations land without restart.
 
-#### 8. (Optional) seed local fixture data
-
-```bash
-make seed
-```
-
-This populates a small set of campaigns, platforms, and assets useful for trying out the UI.
-
 ### Common Make targets
 
 ```bash
@@ -261,7 +252,6 @@ make genkit          # boot the API with Genkit dev UI on :4000
 make test            # ginkgo handler/unit suites with coverage
 make test-integration # spins up MinIO + llama-embedserver, runs `//go:build integration` specs
 make openapi         # regenerates docs/swagger.json from swag annotations
-make seed            # runs cmd/seed for local fixture data
 make tidy            # go mod tidy
 make docker          # build the API Docker image
 ```
