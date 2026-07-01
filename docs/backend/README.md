@@ -19,7 +19,7 @@
 | [`03-campaigns-posts-platforms.md`](./03-campaigns-posts-platforms.md) | Campaigns, campaign types & phases, **posts (status state machine)**, tags, platforms, platform/post-type validation |
 | [`04-publishing-zernio-jobs.md`](./04-publishing-zernio-jobs.md) | Zernio integration, auto-publish allowlist, post logs, SSE events, Backlite job queues, end-to-end publish flow |
 | [`05-ai-genkit-flows.md`](./05-ai-genkit-flows.md) | Genkit runtime split, content-plan flow, post-assistant flow, embedding + RAG, AI config |
-| [`06-data-layer-schema.md`](./06-data-layer-schema.md) | DB setup, **full SQL schema (all tables)**, IDs, password hashing, custom column types, repository catalog, dev seeding |
+| [`06-data-layer-schema.md`](./06-data-layer-schema.md) | DB setup, **full SQL schema (all tables)**, IDs, password hashing, custom column types, repository catalog |
 
 ---
 
@@ -201,6 +201,5 @@ All config is env-driven via `kelseyhightower/envconfig` (`src/config/config.go`
 - `make build` — build SPA → `web/dist`, then compile Go (`./server`). `web/dist` must exist (embedded).
 - `make run` — live-reload server via `air`.
 - `make test` — Ginkgo v2 + Gomega, `--randomize-all --randomize-suites -race -procs=2` (tests must be parallel-safe & order-independent).
-- `make seed` — dev seeding tool (`cmd/seed`) — **note: currently stale vs the `Campaign` model**, see [`06-data-layer-schema.md`](./06-data-layer-schema.md#dev-seeding).
 - `make openapi` — regenerate `docs/` from swag annotations.
 - Single package: `ginkgo ./src/handlers` or `go test ./src/handlers`.
