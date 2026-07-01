@@ -13,6 +13,7 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 	"path/filepath"
 
 	"github.com/uptrace/bun"
@@ -77,7 +78,10 @@ func main() {
 	bootResult, err := secrets.MigrateFromEnv(context.Background(), store, []secrets.EnvSource{
 		{Name: secrets.NameAnthropicAPIKey, EnvValue: cfg.AnthropicAPIKey},
 		{Name: secrets.NameZernioAPIKey, EnvValue: cfg.ZernioAPIKey},
-		{Name: secrets.NameGeminiAPIKey, EnvValue: cfg.GeminiAPIKey},
+		// GEMINI_API_KEY is read straight from the env (it is not a typed Config
+		// field) — first-boot seed only; thereafter set/rotated via the secrets
+		// API (CON-104).
+		{Name: secrets.NameGeminiAPIKey, EnvValue: os.Getenv("GEMINI_API_KEY")},
 	})
 	if err != nil {
 		log.Fatalf("migrate secrets from env: %v", err)

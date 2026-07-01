@@ -29,7 +29,7 @@ type Config struct {
 	// EmbedDimensions must match the assets_chunks.embedding halfvec(N) column —
 	// 3072 is Gemini's native size and is L2-normalized, so cosine search works
 	// without renormalization.
-	GeminiAPIKey    string `envconfig:"GEMINI_API_KEY"    default:""`
+	//GeminiAPIKey    string `envconfig:"GEMINI_API_KEY"    default:""`
 	EmbedModel      string `envconfig:"EMBED_MODEL"       default:"gemini-embedding-2"`
 	EmbedDimensions int    `envconfig:"EMBED_DIMENSIONS"  default:"3072"`
 
