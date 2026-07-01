@@ -160,6 +160,10 @@ func Init(
 			return nil
 		}
 		if err != nil {
+			// rebuild only fires on a gemini_api_key change, so a failure here is
+			// a failed rotation: invalidate rather than keep serving with the
+			// rotated-away (possibly revoked) key.
+			embedder.swap(nil)
 			return fmt.Errorf("embedding: read gemini_api_key: %w", err)
 		}
 
@@ -175,6 +179,10 @@ func Init(
 			Dimensions: cfg.EmbedDimensions,
 		})
 		if err != nil {
+			// Do not leave the previous embedder serving the old key after a
+			// failed rotation — drop to unavailable until a later change rebuilds
+			// successfully.
+			embedder.swap(nil)
 			return fmt.Errorf("embedding: init gemini embedder %q: %w", cfg.EmbedModel, err)
 		}
 		embedder.swap(newEmbedder)
