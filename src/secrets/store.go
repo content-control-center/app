@@ -28,11 +28,12 @@ import (
 const (
 	NameAnthropicAPIKey = "anthropic_api_key"
 	NameZernioAPIKey    = "zernio_api_key"
+	NameGeminiAPIKey    = "gemini_api_key"
 )
 
 // AllowedNames is the closed set of accepted secret names. Anything
 // else is rejected at the Store boundary with ErrUnknownName.
-var AllowedNames = []string{NameAnthropicAPIKey, NameZernioAPIKey}
+var AllowedNames = []string{NameAnthropicAPIKey, NameZernioAPIKey, NameGeminiAPIKey}
 
 // MaxValueLen is the inclusive upper bound on a plaintext secret. The
 // 4KB cap is a sanity ceiling — real Anthropic / Zernio keys are far

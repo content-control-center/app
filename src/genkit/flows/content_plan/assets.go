@@ -44,8 +44,10 @@ func resolveAssets(ctx context.Context, campaign *models.Campaign, cfg ContentPl
 		cfg.MaxContextChars = 10000
 	}
 
-	// With an embedder: rank chunks by semantic similarity and greedily pack.
-	if cfg.Embedder != nil {
+	// With an available embedder: rank chunks by semantic similarity and greedily
+	// pack. When gemini_api_key is unset (CON-104) the embedder is unavailable —
+	// fall through to creation order rather than failing every embed.
+	if embedopts.Available(cfg.Embedder) {
 		candidateSet := make(map[string]bool, len(candidateIDs))
 		for _, id := range candidateIDs {
 			candidateSet[id] = true

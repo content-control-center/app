@@ -69,6 +69,20 @@ func TestStoreSetGet(t *testing.T) {
 	}
 }
 
+// TestAllowlist pins the closed set of accepted secret names. gemini_api_key
+// joined it in CON-104; unlisted names must stay rejected. Pure (no DB) so it
+// documents the contract independently of the store's storage path.
+func TestAllowlist(t *testing.T) {
+	for _, name := range []string{NameAnthropicAPIKey, NameZernioAPIKey, NameGeminiAPIKey} {
+		if !IsAllowed(name) {
+			t.Errorf("IsAllowed(%q) = false; want true", name)
+		}
+	}
+	if IsAllowed("openai_api_key") {
+		t.Error("IsAllowed(openai_api_key) = true; want false")
+	}
+}
+
 func TestStoreRejectsUnknownName(t *testing.T) {
 	ctx := context.Background()
 	store := NewStore(repository.NewSecretRepository(mustOpenDB(t)), mustCipher(t))
