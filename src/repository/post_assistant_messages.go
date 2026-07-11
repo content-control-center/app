@@ -33,7 +33,11 @@ func (r *postAssistantMessageRepository) ListRecentByPostID(ctx context.Context,
 	err := r.db.NewSelect().
 		Model(&msgs).
 		Where("pam.post_id = ?", postID).
-		OrderExpr("pam.created_at DESC, pam.rowid DESC").
+		// id is a random Sqid, not temporal — it is only a deterministic
+		// tiebreak; Postgres timestamps are microsecond-resolution and each
+		// message is inserted separately, so real ties don't occur. (rowid
+		// was a SQLite-ism that made this query fail on Postgres.)
+		OrderExpr("pam.created_at DESC, pam.id DESC").
 		Limit(limit).
 		Scan(ctx)
 	if err != nil {
