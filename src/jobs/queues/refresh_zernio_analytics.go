@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/riverqueue/river"
 
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/jobs"
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/tenantctx"
@@ -67,6 +68,7 @@ type RefreshZernioAnalyticsProcessor struct {
 
 // Work is the River entrypoint; it delegates to Process.
 func (p *RefreshZernioAnalyticsProcessor) Work(ctx context.Context, job *river.Job[RefreshZernioAnalyticsTask]) error {
+	ctx = WithJobRequestID(ctx, job.JobRow)
 	// CON-97: background jobs span tenants (interim until per-tenant, PR4).
 	ctx = tenantctx.WithSystem(ctx)
 	return p.Process(ctx, job.Args)
@@ -101,13 +103,11 @@ func (p *RefreshZernioAnalyticsProcessor) Process(ctx context.Context, _ Refresh
 		// rather than via a River retry — see InsertOpts for why returning an
 		// error here would risk killing or fanning out the recurring chain.
 		jobs.ZernioAnalyticsRefreshFailed.Add(1)
-		log.Printf("zernio.analytics failed error=%q upserts=%d tick_ms=%d",
-			err.Error(), upserts, time.Since(tickStart).Milliseconds())
+		slog.ErrorContext(ctx, "analytics refresh failed", logging.AttrComponent, "jobs.refresh_analytics", "upserts", upserts, "tick_ms", time.Since(tickStart).Milliseconds(), logging.AttrError, err)
 	} else {
 		jobs.ZernioAnalyticsRefreshSucceeded.Add(1)
 		jobs.ZernioAnalyticsPostsUpserted.Add(int64(upserts))
-		log.Printf("zernio.analytics ok upserts=%d tick_ms=%d",
-			upserts, time.Since(tickStart).Milliseconds())
+		slog.InfoContext(ctx, "analytics refresh ok", logging.AttrComponent, "jobs.refresh_analytics", "upserts", upserts, "tick_ms", time.Since(tickStart).Milliseconds())
 	}
 	return nil
 }
@@ -164,7 +164,7 @@ func (p *RefreshZernioAnalyticsProcessor) refresh(ctx context.Context, now time.
 			pctx := tenantctx.With(ctx, tenantByPostID[postID])
 			snapshot := buildSnapshot(postID, publisherPostID, &items[i], now)
 			if uerr := p.Deps.AnalyticsRepo.Upsert(pctx, snapshot); uerr != nil {
-				log.Printf("zernio.analytics upsert post_id=%s error=%q", postID, uerr.Error())
+				slog.ErrorContext(pctx, "analytics upsert failed", logging.AttrComponent, "jobs.refresh_analytics", "post_id", postID, logging.AttrError, uerr)
 				continue
 			}
 			upserts++
@@ -274,7 +274,7 @@ func (p *RefreshZernioAnalyticsProcessor) publishUpdated(ctx context.Context, a 
 			"analytics":   a.Metrics(),
 		},
 	}); err != nil {
-		log.Printf("zernio.analytics publish event: %v", err)
+		slog.ErrorContext(ctx, "analytics publish event failed", logging.AttrComponent, "jobs.refresh_analytics", logging.AttrError, err)
 	}
 }
 
@@ -287,14 +287,14 @@ func (p *RefreshZernioAnalyticsProcessor) recordStatus(ctx context.Context, refr
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	if err := p.Settings.Set(ctx, zernio.SettingAnalyticsLastRefreshAt, now); err != nil {
-		log.Printf("zernio.analytics write %s: %v", zernio.SettingAnalyticsLastRefreshAt, err)
+		slog.ErrorContext(ctx, "analytics settings write failed", logging.AttrComponent, "jobs.refresh_analytics", "setting", zernio.SettingAnalyticsLastRefreshAt, logging.AttrError, err)
 	}
 	status := zernio.SyncStatusOK
 	if refreshErr != nil {
 		status = "error: " + truncateAnalyticsErr(refreshErr.Error())
 	}
 	if err := p.Settings.Set(ctx, zernio.SettingAnalyticsLastRefreshStatus, status); err != nil {
-		log.Printf("zernio.analytics write %s: %v", zernio.SettingAnalyticsLastRefreshStatus, err)
+		slog.ErrorContext(ctx, "analytics settings write failed", logging.AttrComponent, "jobs.refresh_analytics", "setting", zernio.SettingAnalyticsLastRefreshStatus, logging.AttrError, err)
 	}
 }
 

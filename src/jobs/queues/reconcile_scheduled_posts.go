@@ -3,12 +3,13 @@ package queues
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/riverqueue/river"
 
 	"github.com/ogen-app/ogen/src/jobs"
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/post_actions/logs"
 	"github.com/ogen-app/ogen/src/tenantctx"
@@ -57,6 +58,7 @@ type ReconcileScheduledPostsProcessor struct {
 
 // Work is the River entrypoint; it delegates to Process.
 func (p *ReconcileScheduledPostsProcessor) Work(ctx context.Context, job *river.Job[ReconcileScheduledPostsTask]) error {
+	ctx = WithJobRequestID(ctx, job.JobRow)
 	// CON-97: background jobs span tenants (interim until per-tenant, PR4).
 	ctx = tenantctx.WithSystem(ctx)
 	return p.Process(ctx, job.Args)
@@ -117,7 +119,7 @@ func (p *ReconcileScheduledPostsProcessor) Process(ctx context.Context, _ Reconc
 			post.PublisherStatus,
 		)
 		if err := p.Repo.UpdateStatusAndReason(pctx, post.ID, models.PostStatusFailed, reason); err != nil {
-			log.Printf("reconcile: failed to mark post %s Failed: %v", post.ID, err)
+			slog.ErrorContext(pctx, "failed to mark post failed", logging.AttrComponent, "jobs.reconcile", "post_id", post.ID, logging.AttrError, err)
 			continue
 		}
 		from := models.PostStatusScheduled
@@ -142,7 +144,7 @@ func (p *ReconcileScheduledPostsProcessor) Process(ctx context.Context, _ Reconc
 	}
 	if len(stuck) > 0 {
 		jobs.ReconciliationTimeouts.Add(int64(len(stuck)))
-		log.Printf("reconcile: forced %d post(s) Failed due to reconciliation timeout", len(stuck))
+		slog.InfoContext(ctx, "forced posts failed on reconciliation timeout", logging.AttrComponent, "jobs.reconcile", "count", len(stuck))
 	}
 	return nil
 }

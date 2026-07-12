@@ -13,6 +13,7 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -21,6 +22,7 @@ import (
 	_ "github.com/ogen-app/ogen/docs"
 	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/database"
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/secrets"
 	"github.com/ogen-app/ogen/src/server"
@@ -29,19 +31,25 @@ import (
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
+		// The logger needs cfg to build, so this one boot error necessarily
+		// predates it — fail fast on the stdlib logger.
 		log.Fatalf("load config: %v", err)
 	}
 
+	// Install the structured logger before anything else logs, so even early
+	// boot errors are structured and any stray stdlib log.Print is bridged.
+	logging.New(cfg)
+
 	db, err := database.New(cfg.DSN, cfg.Debug)
 	if err != nil {
-		log.Fatalf("connect to database: %v", err)
+		fatal("connect to database", err)
 	}
 	db.DB.SetMaxOpenConns(cfg.DBMaxOpenConns)
 	db.DB.SetMaxIdleConns(cfg.DBMaxIdleConns)
 	defer db.Close()
 
 	if err := database.Migrate(context.Background(), db); err != nil {
-		log.Fatalf("run migrations: %v", err)
+		fatal("run migrations", err)
 	}
 
 	// CON-86: the isolated analytics (TimescaleDB) pool for usage_events. When
@@ -53,10 +61,12 @@ func main() {
 		adb, aerr := database.NewAnalytics(cfg.AnalyticsDSN, cfg.Debug)
 		switch {
 		case aerr != nil:
-			log.Printf("usage analytics: connect failed, disabling (fail-open): %v", aerr)
+			slog.Warn("usage analytics connect failed, disabling (fail-open)",
+				logging.AttrComponent, "boot", logging.AttrError, aerr)
 		default:
 			if merr := database.MigrateAnalytics(context.Background(), adb); merr != nil {
-				log.Printf("usage analytics: migrate failed, disabling (fail-open): %v", merr)
+				slog.Warn("usage analytics migrate failed, disabling (fail-open)",
+					logging.AttrComponent, "boot", logging.AttrError, merr)
 				_ = adb.Close()
 			} else {
 				analyticsDB = adb
@@ -71,7 +81,7 @@ func main() {
 	// not booting because rotated keys would silently be unrecoverable.
 	cipher, kekSrc, err := secrets.InitCipher(cfg.KEKPath)
 	if err != nil {
-		log.Fatalf("init secret cipher: %v", err)
+		fatal("init secret cipher", err)
 	}
 	store := secrets.NewStore(repository.NewSecretRepository(db), cipher)
 
@@ -84,17 +94,25 @@ func main() {
 		{Name: secrets.NameGeminiAPIKey, EnvValue: os.Getenv("GEMINI_API_KEY")},
 	})
 	if err != nil {
-		log.Fatalf("migrate secrets from env: %v", err)
+		fatal("migrate secrets from env", err)
 	}
 	secrets.LogBootSummary(kekSrc, filepath.Join(cfg.KEKPath, secrets.KEKFilename), bootResult)
 
 	app, err := server.New(context.Background(), db, analyticsDB, cfg, store)
 	if err != nil {
-		log.Fatalf("init server: %v", err)
+		fatal("init server", err)
 	}
 
-	log.Printf("listening on %s", cfg.Addr)
+	slog.Info("server listening", logging.AttrComponent, "boot", "addr", cfg.Addr)
 	if err := app.Listen(cfg.Addr); err != nil {
-		log.Fatalf("server: %v", err)
+		fatal("server exited", err)
 	}
+}
+
+// fatal logs an unrecoverable boot error at ERROR level and exits non-zero.
+// slog has no Fatal; this is its idiomatic replacement and, like log.Fatal, it
+// intentionally skips deferred cleanup — acceptable for a boot failure.
+func fatal(msg string, err error) {
+	slog.Error(msg, logging.AttrComponent, "boot", logging.AttrError, err)
+	os.Exit(1)
 }

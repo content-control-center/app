@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 
 	"github.com/firebase/genkit/go/ai"
@@ -17,6 +17,7 @@ import (
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_quality"
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/post_actions/clone"
 	"github.com/ogen-app/ogen/src/post_actions/restore"
 	"github.com/ogen-app/ogen/src/post_actions/schedule"
@@ -111,7 +112,9 @@ func newGenkitRuntime(ctx context.Context, deps genkitDeps, store secrets.Store)
 
 	store.Subscribe(secrets.NameAnthropicAPIKey, func() {
 		if err := r.rebuild(context.Background(), store); err != nil {
-			log.Printf("genkit: rebuild after anthropic_api_key change failed: %v", err)
+			slog.Error("rebuild after anthropic_api_key change failed",
+				logging.AttrComponent, "genkit",
+				logging.AttrError, err)
 		}
 	})
 	return r, nil
@@ -183,7 +186,8 @@ func (r *genkitRuntime) rebuild(ctx context.Context, store secrets.Store) error 
 
 	key, err := store.Get(ctx, secrets.NameAnthropicAPIKey)
 	if errors.Is(err, secrets.ErrNotFound) {
-		log.Printf("genkit: anthropic_api_key not configured; flows disabled")
+		slog.WarnContext(ctx, "anthropic_api_key not configured; flows disabled",
+			logging.AttrComponent, "genkit")
 		r.contentPlanFn = nil
 		r.postAssistantFn = nil
 		r.postQualityFn = nil
@@ -226,6 +230,7 @@ func (r *genkitRuntime) rebuild(ctx context.Context, store secrets.Store) error 
 	r.postAssistantFn = postAssistantFn
 	r.postQualityFn = postQualityFn
 	r.enrichBriefFn = enrichBriefFn
-	log.Printf("genkit: anthropic flows rebuilt")
+	slog.InfoContext(ctx, "anthropic flows rebuilt",
+		logging.AttrComponent, "genkit")
 	return nil
 }

@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"path/filepath"
 
 	"github.com/ogen-app/ogen/src/crypto/envelope"
+	"github.com/ogen-app/ogen/src/logging"
 )
 
 // KEKFilename is the on-disk name of the active KEK file inside the
@@ -38,9 +39,9 @@ func InitCipher(kekDir string) (*envelope.Cipher, envelope.KEKSource, error) {
 
 // BootstrapResult is the boot-log payload — counts only, no values.
 type BootstrapResult struct {
-	SecretsInDB      int
-	MigratedFromEnv  int
-	IgnoredEnvVars   int
+	SecretsInDB     int
+	MigratedFromEnv int
+	IgnoredEnvVars  int
 }
 
 // EnvSource is the input shape for MigrateFromEnv: a list of (name, env-value)
@@ -78,18 +79,18 @@ func MigrateFromEnv(ctx context.Context, store Store, sources []EnvSource) (Boot
 		if !IsAllowed(src.Name) {
 			// The bootstrap wiring is a closed list; an unknown name
 			// here means the caller miswired the seed. Log and skip.
-			log.Printf("secrets: bootstrap skipped unknown name %q", src.Name)
+			slog.WarnContext(ctx, "bootstrap skipped unknown name", logging.AttrComponent, "secrets", "name", src.Name)
 			continue
 		}
 		switch {
 		case have[src.Name] && src.EnvValue != "":
-			log.Printf("secrets: %s present in DB; ignoring env var (DB wins)", src.Name)
+			slog.WarnContext(ctx, "present in DB; ignoring env var (DB wins)", logging.AttrComponent, "secrets", "name", src.Name)
 			out.IgnoredEnvVars++
 		case !have[src.Name] && src.EnvValue != "":
 			if _, _, err := store.Set(ctx, src.Name, src.EnvValue); err != nil {
 				return out, fmt.Errorf("secrets: migrate %s from env: %w", src.Name, err)
 			}
-			log.Printf("secrets: %s migrated from env var", src.Name)
+			slog.InfoContext(ctx, "migrated from env var", logging.AttrComponent, "secrets", "name", src.Name)
 			out.MigratedFromEnv++
 			out.SecretsInDB++
 		}
@@ -100,6 +101,5 @@ func MigrateFromEnv(ctx context.Context, store Store, sources []EnvSource) (Boot
 // LogBootSummary emits the single boot-time summary line. Counts only,
 // no fingerprints, no values.
 func LogBootSummary(kekSource envelope.KEKSource, kekPath string, r BootstrapResult) {
-	log.Printf("secrets: boot kek_source=%s kek_path=%s secrets_in_db=%d migrated_from_env=%d ignored_env_vars=%d",
-		kekSource, kekPath, r.SecretsInDB, r.MigratedFromEnv, r.IgnoredEnvVars)
+	slog.Info("boot summary", logging.AttrComponent, "secrets", "kek_source", kekSource, "kek_path", kekPath, "secrets_in_db", r.SecretsInDB, "migrated_from_env", r.MigratedFromEnv, "ignored_env_vars", r.IgnoredEnvVars)
 }

@@ -4,10 +4,12 @@ import (
 	"context"
 	"embed"
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/migrate"
+
+	"github.com/ogen-app/ogen/src/logging"
 )
 
 //go:embed migrations/*.sql
@@ -33,10 +35,10 @@ func Migrate(ctx context.Context, db *bun.DB) error {
 	}
 
 	if group.IsZero() {
-		log.Println("migrations: no new migrations to apply")
+		slog.InfoContext(ctx, "no new migrations to apply", logging.AttrComponent, "db.migrate")
 		return nil
 	}
 
-	log.Printf("migrations: applied migration group %s", group)
+	slog.InfoContext(ctx, "applied migration group", logging.AttrComponent, "db.migrate", "group", group)
 	return nil
 }

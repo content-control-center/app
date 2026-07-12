@@ -4,13 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"sync/atomic"
 	"time"
 
 	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
@@ -131,7 +132,8 @@ func (r zernioRuntime) shutdown() {
 	select {
 	case <-r.Worker.Done():
 	case <-time.After(2 * time.Second):
-		log.Printf("zernio: worker did not exit within 2s — leaving it to the process")
+		slog.Warn("worker did not exit within 2s; leaving it to the process",
+			logging.AttrComponent, "zernio")
 	}
 }
 
@@ -156,26 +158,36 @@ func warmupZernio(ctx context.Context, integ *zernio.Integration, secretStore se
 func resolveZernioState(ctx context.Context, integ *zernio.Integration, secretStore secrets.Store) zernio.State {
 	if _, err := secretStore.Get(ctx, secrets.NameZernioAPIKey); err != nil {
 		if errors.Is(err, secrets.ErrNotFound) {
-			log.Printf("zernio: integration disabled — zernio_api_key not set")
+			slog.WarnContext(ctx, "integration disabled; zernio_api_key not set",
+				logging.AttrComponent, "zernio")
 			return zernio.StateDisabled
 		}
-		log.Printf("zernio: read zernio_api_key failed (%v) — staying degraded", err)
+		slog.WarnContext(ctx, "read zernio_api_key failed; staying degraded",
+			logging.AttrComponent, "zernio",
+			logging.AttrError, err)
 		return zernio.StateDegraded
 	}
 	if err := integ.Client.Ping(ctx); err != nil {
 		if zernio.IsStatus(err, http.StatusUnauthorized) {
-			log.Printf("zernio: API key rejected (401) — integration disabled until repaired")
+			slog.WarnContext(ctx, "api key rejected (401); integration disabled until repaired",
+				logging.AttrComponent, "zernio")
 			return zernio.StateDisabled
 		}
 		var apiErr *zernio.APIError
 		if errors.As(err, &apiErr) {
-			log.Printf("zernio: ping failed with HTTP %d — staying degraded", apiErr.Status)
+			slog.WarnContext(ctx, "ping failed; staying degraded",
+				logging.AttrComponent, "zernio",
+				"status", apiErr.Status)
 		} else {
-			log.Printf("zernio: ping failed (%v) — staying degraded", err)
+			slog.WarnContext(ctx, "ping failed; staying degraded",
+				logging.AttrComponent, "zernio",
+				logging.AttrError, err)
 		}
 		return zernio.StateDegraded
 	}
-	log.Printf("zernio: API key validated — base=%s", integ.Client.BaseURL())
+	slog.InfoContext(ctx, "api key validated",
+		logging.AttrComponent, "zernio",
+		"base", integ.Client.BaseURL())
 	return zernio.StateOK
 }
 

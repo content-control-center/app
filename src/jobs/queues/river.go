@@ -3,6 +3,7 @@ package queues
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/riverqueue/river/rivertype"
 
 	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 )
 
@@ -118,13 +120,64 @@ type Enqueuer struct {
 	Client *river.Client[*sql.Tx]
 }
 
+// requestIDMetadata returns River job metadata carrying the originating request
+// id (CON-107) when one is present on ctx, so a job's logs correlate back to the
+// HTTP request that enqueued it. Returns nil for system/periodic enqueues that
+// have no request id (River treats nil as empty metadata).
+func requestIDMetadata(ctx context.Context) []byte {
+	rid, ok := logging.RequestIDFrom(ctx)
+	if !ok {
+		return nil
+	}
+	b, err := json.Marshal(map[string]string{logging.AttrRequestID: rid})
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
+// insertOptsWithRequestID merges the originating request id into opts as job
+// metadata (creating opts if nil). When ctx carries no request id, opts is
+// returned unchanged.
+func insertOptsWithRequestID(ctx context.Context, opts *river.InsertOpts) *river.InsertOpts {
+	meta := requestIDMetadata(ctx)
+	if meta == nil {
+		return opts
+	}
+	if opts == nil {
+		opts = &river.InsertOpts{}
+	}
+	opts.Metadata = meta
+	return opts
+}
+
+// WithJobRequestID re-attaches the originating request id (from the job row's
+// metadata) to a worker context so the job's log lines carry the same
+// request_id as the enqueuing request. Tenant attachment stays the worker's
+// responsibility (tenantctx.With). Takes the *rivertype.JobRow (not the
+// promoted job.Metadata field) so it is nil-safe: unit tests that construct a
+// river.Job without a JobRow, and jobs enqueued without metadata, both return
+// ctx unchanged rather than panicking.
+func WithJobRequestID(ctx context.Context, jr *rivertype.JobRow) context.Context {
+	if jr == nil || len(jr.Metadata) == 0 {
+		return ctx
+	}
+	var m struct {
+		RequestID string `json:"request_id"`
+	}
+	if err := json.Unmarshal(jr.Metadata, &m); err == nil && m.RequestID != "" {
+		ctx = logging.WithRequestID(ctx, m.RequestID)
+	}
+	return ctx
+}
+
 // EnqueueSubmitTx enqueues a submit task inside the given transaction, so
 // the enqueue commits atomically with the post status change (CON-78 §9).
 func (e *Enqueuer) EnqueueSubmitTx(ctx context.Context, tx *sql.Tx, postID string) error {
 	if e == nil || e.Client == nil {
 		return nil
 	}
-	_, err := e.Client.InsertTx(ctx, tx, SubmitPostTask{PostID: postID}, nil)
+	_, err := e.Client.InsertTx(ctx, tx, SubmitPostTask{PostID: postID}, insertOptsWithRequestID(ctx, nil))
 	return err
 }
 
@@ -137,7 +190,7 @@ func (e *Enqueuer) EnqueueBootstrapProfileTx(ctx context.Context, tx *sql.Tx, te
 	if e == nil || e.Client == nil {
 		return nil
 	}
-	_, err := e.Client.InsertTx(ctx, tx, BootstrapZernioProfileTask{TenantID: tenantID}, nil)
+	_, err := e.Client.InsertTx(ctx, tx, BootstrapZernioProfileTask{TenantID: tenantID}, insertOptsWithRequestID(ctx, nil))
 	return err
 }
 
@@ -155,7 +208,7 @@ func (e *Enqueuer) EnqueueProcessPDFTx(ctx context.Context, tx *sql.Tx, assetID,
 		TenantID:     tenantID,
 		OriginalName: originalName,
 		MimeType:     mimeType,
-	}, nil)
+	}, insertOptsWithRequestID(ctx, nil))
 	return err
 }
 
@@ -164,6 +217,6 @@ func (e *Enqueuer) EnqueueCancel(ctx context.Context, postID string, target Canc
 	if e == nil || e.Client == nil {
 		return fmt.Errorf("jobs: enqueuer not configured")
 	}
-	_, err := e.Client.Insert(ctx, CancelZernioJobTask{PostID: postID, Target: target, Actor: actor}, nil)
+	_, err := e.Client.Insert(ctx, CancelZernioJobTask{PostID: postID, Target: target, Actor: actor}, insertOptsWithRequestID(ctx, nil))
 	return err
 }

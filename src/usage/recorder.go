@@ -2,10 +2,11 @@ package usage
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/tenantctx"
 	"github.com/ogen-app/ogen/src/vendors"
@@ -221,7 +222,7 @@ func (r *Recorder) flush(batch []*models.UsageEvent) {
 	// a system context (models/tenant_scoped.go).
 	if err := r.writer.Insert(tenantctx.WithSystem(ctx), batch); err != nil {
 		r.metrics.WriteErrors.Add(1)
-		log.Printf("usage: write batch of %d events failed: %v", len(batch), err)
+		slog.ErrorContext(ctx, "write batch failed", logging.AttrComponent, "usage", "count", len(batch), logging.AttrError, err)
 		return
 	}
 	r.metrics.EventsRecorded.Add(int64(len(batch)))

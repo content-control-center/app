@@ -11,6 +11,15 @@ type Config struct {
 	DSN   string `envconfig:"DATABASE_DSN"        default:"postgres://ogen:ogen@localhost:5432/ogen?sslmode=disable"`
 	Debug bool   `envconfig:"DEBUG"               default:"false"`
 
+	// Structured logging (CON-107). LogLevel is the minimum emitted level
+	// (debug|info|warn|error; unknown/empty ⇒ info). LogFormat selects the
+	// slog handler: json|text. LogFormat is intentionally left empty by
+	// default so it can resolve per-environment — empty means "text when
+	// DEBUG=true (local ergonomics), JSON otherwise"; an explicit value always
+	// wins. See src/logging.
+	LogLevel  string `envconfig:"LOG_LEVEL"  default:"info"`
+	LogFormat string `envconfig:"LOG_FORMAT" default:""`
+
 	// Connection-pool sizing. Postgres lifts SQLite's single-writer
 	// ceiling, so the API runs a real pool shared by bun and the River
 	// job queue. Size MaxOpen for combined HTTP + worker load.

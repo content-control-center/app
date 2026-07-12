@@ -5,15 +5,15 @@ import (
 	"database/sql"
 	"errors"
 	"expvar"
-	"log"
+	"log/slog"
 	"os"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/adaptor"
 	"github.com/gofiber/fiber/v2/middleware/cors"
-	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/gofiber/fiber/v2/middleware/requestid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/uptrace/bun"
@@ -27,6 +27,7 @@ import (
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/jobs/queues"
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/pdfclient"
 	"github.com/ogen-app/ogen/src/post_actions/clone"
 	"github.com/ogen-app/ogen/src/post_actions/restore"
@@ -51,7 +52,12 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	})
 
 	app.Use(recover.New())
-	app.Use(logger.New())
+	// Per-request correlation id (CON-107): honours an inbound X-Request-ID,
+	// otherwise generates one, echoes it on the response, and stores it under
+	// logging.RequestIDKey so the slog ContextHandler attaches it to every line
+	// made with c.Context().
+	app.Use(requestid.New(requestid.Config{ContextKey: logging.RequestIDKey}))
+	app.Use(accessLog())
 
 	// CORS for the decoupled UI (CON-98). When the SPA is served from a
 	// different origin, the configured UI origin(s) must be allowed to call
@@ -179,7 +185,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// gemini_api_key is unset it reports unavailable, so PDF ingestion + semantic
 	// search are dormant until a key is added via the secrets API (CON-104), with
 	// no restart; markdown/JSON saves still succeed meanwhile.
-	log.Printf("genkit: initialising (GENKIT_ENV=%s)", os.Getenv("GENKIT_ENV"))
+	slog.Info("genkit initialising", logging.AttrComponent, "genkit", "genkit_env", os.Getenv("GENKIT_ENV"))
 	embedCallbacks, embedder, err := initEmbedding(ctx, cfg, chunksRepo, pieceRepo, assetFileRepo, store, secretStore, usageWiring.recorder)
 	if err != nil {
 		return nil, err
@@ -252,6 +258,9 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		return nil, err
 	}
 	riverClient, err := river.NewClient[*sql.Tx](riverdatabasesql.New(db.DB), &river.Config{
+		// Route River's internal logging through the shared structured logger
+		// (CON-107) so job-queue lines join the same stream and format.
+		Logger:  slog.Default(),
 		Queues:  map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: cfg.JobWorkers}},
 		Workers: workers,
 		PeriodicJobs: queues.PeriodicConfig{
@@ -373,7 +382,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	if err != nil {
 		return nil, err
 	}
-	log.Println("genkit: all flows registered")
+	slog.Info("genkit flows registered", logging.AttrComponent, "genkit")
 
 	handlers.NewCampaignTypesHandler(campaignTypeRepo, auth).Register(app)
 	handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, gkRuntime.GenerateDraft, gkRuntime.IsAnthropicAvailable, gkRuntime.EnrichBrief).Register(app)
@@ -450,5 +459,51 @@ func defaultErrorHandler(c *fiber.Ctx, err error) error {
 	if e, ok := errors.AsType[*fiber.Error](err); ok {
 		code = e.Code
 	}
+	// Server errors were previously swallowed — only a JSON body reached the
+	// client, nothing was logged (CON-107). Log 5xx at ERROR with request
+	// context; 4xx is a client problem, not a server fault, so it is not logged
+	// as an error here (it still appears in the access log).
+	if code >= 500 {
+		slog.ErrorContext(c.Context(), "request failed",
+			logging.AttrComponent, "http",
+			"method", c.Method(),
+			"path", c.Path(),
+			"status", code,
+			logging.AttrError, err)
+	}
 	return c.Status(code).JSON(fiber.Map{"error": err.Error()})
+}
+
+// accessLog emits exactly one structured line per request, replacing Fiber's
+// default text logger (CON-107). It runs after the handler so the request,
+// tenant, and user ids set by downstream middleware are attached by the slog
+// ContextHandler via c.Context(). Like Fiber's own logger middleware it invokes
+// the app ErrorHandler when the chain returns an error, so the logged status
+// reflects the final response (e.g. 5xx) rather than the pre-handler default.
+func accessLog() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		start := time.Now()
+		chainErr := c.Next()
+		if chainErr != nil {
+			if herr := c.App().ErrorHandler(c, chainErr); herr != nil {
+				_ = c.SendStatus(fiber.StatusInternalServerError)
+			}
+		}
+
+		status := c.Response().StatusCode()
+		level := slog.LevelInfo
+		if status >= 500 {
+			level = slog.LevelError
+		}
+		slog.Default().LogAttrs(c.Context(), level, "request",
+			slog.String(logging.AttrComponent, "http"),
+			slog.String("method", c.Method()),
+			slog.String("path", c.Path()),
+			slog.Int("status", status),
+			slog.Int64("latency_ms", time.Since(start).Milliseconds()),
+			slog.Int("bytes", len(c.Response().Body())),
+			slog.String("ip", c.IP()),
+		)
+		return nil
+	}
 }

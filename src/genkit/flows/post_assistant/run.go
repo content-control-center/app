@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"text/template"
@@ -15,6 +15,7 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/vendors/llm"
 )
@@ -30,7 +31,7 @@ func runPostAssistant(
 	onEvent OnEventFunc,
 ) (out *PostAssistantResponse, retErr error) {
 	start := time.Now()
-	log.Printf("post_assistant[%s]: starting instruction=%.80s", req.PostID, req.Instruction)
+	slog.InfoContext(ctx, "starting", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID, "instruction", req.Instruction)
 
 	// Enforcement gate (CON-86 FR9): block before any provider call when the
 	// tenant is already over a cap in enforce mode. Nil checker = no gate.
@@ -84,7 +85,7 @@ func runPostAssistant(
 		}); err != nil {
 			return nil, fmt.Errorf("create initial version: %w", err)
 		}
-		log.Printf("post_assistant[%s]: created initial version snapshot", req.PostID)
+		slog.InfoContext(ctx, "created initial version snapshot", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID)
 	}
 
 	// ── Assemble context + load history in parallel ─────────────────────────
@@ -133,7 +134,7 @@ func runPostAssistant(
 		if ps, perr := repos.Platforms.List(ctx); perr == nil {
 			platforms = ps
 		} else {
-			log.Printf("post_assistant[%s]: load platforms failed (clone name-resolution degraded): %v", req.PostID, perr)
+			slog.WarnContext(ctx, "load platforms failed, clone name-resolution degraded", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID, logging.AttrError, perr)
 		}
 	}
 	st := &requestState{
@@ -260,7 +261,7 @@ func runPostAssistant(
 		cfg.Provider.CallConfig(maxTokens),
 	)
 	if err != nil {
-		log.Printf("post_assistant[%s]: model call failed after %s: %v", req.PostID, time.Since(start).Round(time.Millisecond), err)
+		slog.ErrorContext(ctx, "model call failed", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID, "duration_ms", time.Since(start).Milliseconds(), logging.AttrError, err)
 		return nil, &AIError{Msg: fmt.Sprintf("model call failed: %v", err)}
 	}
 
@@ -273,14 +274,11 @@ func runPostAssistant(
 		if resp.Usage != nil {
 			outputTokens = int64(resp.Usage.OutputTokens)
 		}
-		log.Printf("post_assistant[%s]: TRUNCATED — finish_reason=length, output_tokens=%d, cap=%d. Bump MAX_OUTPUT_TOKENS or shorten the post/instruction.",
-			req.PostID, outputTokens, maxTokens)
+		slog.WarnContext(ctx, "response truncated at max tokens", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID, "output_tokens", outputTokens, "cap", maxTokens)
 	}
 
 	if resp.Usage != nil {
-		log.Printf("post_assistant[%s]: tokens — input=%d output=%d total=%d",
-			req.PostID, resp.Usage.InputTokens, resp.Usage.OutputTokens,
-			resp.Usage.InputTokens+resp.Usage.OutputTokens)
+		slog.InfoContext(ctx, "tokens", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID, "input", resp.Usage.InputTokens, "output", resp.Usage.OutputTokens, "total", resp.Usage.InputTokens+resp.Usage.OutputTokens)
 	}
 	cfg.Recorder.RecordResp(ctx, cfg.Provider.Vendor(), cfg.Provider.Model(llm.RoleGeneration), "post_assistant", resp)
 
@@ -388,7 +386,7 @@ func runPostAssistant(
 	if result.Explanation == "" && result.UpdatedContent == "" {
 		raw := strings.TrimSpace(scanner.FullText())
 		if raw != "" && !strings.Contains(raw, "{") {
-			log.Printf("post_assistant[%s]: model emitted prose-only response (len=%d) — treating as informational/declined", req.PostID, len(raw))
+			slog.WarnContext(ctx, "model emitted prose-only response, treating as informational/declined", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID, "len", len(raw))
 			result.Explanation = raw
 			result.Action = "declined"
 		}
@@ -405,14 +403,13 @@ func runPostAssistant(
 	case result.Explanation == "" && result.UpdatedContent == "":
 		// Genuinely unusable — neither field came through.
 		raw := scanner.FullText()
-		log.Printf("post_assistant[%s]: scanner found no usable fields (len=%d): %.500s",
-			req.PostID, len(raw), raw)
+		slog.ErrorContext(ctx, "scanner found no usable fields", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID, "len", len(raw), "raw", raw)
 		return nil, &AIError{Msg: "model response did not contain the expected fields"}
 
 	case result.Action == "" && result.UpdatedContent != "":
 		// The model wouldn't have emitted updatedContent if it had
 		// decided to decline; infer "edited".
-		log.Printf("post_assistant[%s]: action missing — inferring 'edited' from non-empty updatedContent (likely max_tokens truncation)", req.PostID)
+		slog.WarnContext(ctx, "action missing, inferring edited from non-empty updatedContent (likely max_tokens truncation)", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID)
 		result.Action = "edited"
 	}
 
@@ -497,7 +494,7 @@ func runPostAssistant(
 		}); err != nil {
 			return nil, fmt.Errorf("create version: %w", err)
 		}
-		log.Printf("post_assistant[%s]: created version %d — %s", req.PostID, nextNum, result.VersionNote)
+		slog.InfoContext(ctx, "created version", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID, "version", nextNum, "note", result.VersionNote)
 	}
 
 	// ── Update post content ──────────────────────────────────────────────────
@@ -509,8 +506,7 @@ func runPostAssistant(
 		}
 	}
 
-	log.Printf("post_assistant[%s]: done in %s action=%s saveVersion=%v",
-		req.PostID, time.Since(start).Round(time.Millisecond), result.Action, result.SaveVersion)
+	slog.InfoContext(ctx, "done", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID, "duration_ms", time.Since(start).Milliseconds(), "action", result.Action, "save_version", result.SaveVersion)
 
 	// Surface the clone before the canonical "complete" so the UI can
 	// link to the new draft as soon as it exists.

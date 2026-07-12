@@ -3,7 +3,7 @@ package post_quality
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -11,6 +11,7 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/vendors/llm"
 )
@@ -138,12 +139,11 @@ func evaluateDimension(
 			if resp.Usage != nil {
 				outputTokens = int64(resp.Usage.OutputTokens)
 			}
-			log.Printf("post_quality[%s]: TRUNCATED — finish_reason=length, output_tokens=%d, cap=%d",
-				label, outputTokens, maxTokens)
+			slog.WarnContext(ctx, "response truncated at max tokens", logging.AttrComponent, "genkit.post_quality", "dimension", label, "output_tokens", outputTokens, "cap", maxTokens)
 		}
 		if err != nil {
 			lastErr = fmt.Errorf("model call: %w", err)
-			log.Printf("post_quality[%s]: attempt %d failed: %v", label, attempt+1, lastErr)
+			slog.ErrorContext(ctx, "attempt failed", logging.AttrComponent, "genkit.post_quality", "dimension", label, "attempt", attempt+1, logging.AttrError, lastErr)
 			continue
 		}
 		// Record every completed call (one per dimension, plus any empty-rationale
@@ -151,7 +151,7 @@ func evaluateDimension(
 		cfg.Recorder.RecordResp(ctx, cfg.Provider.Vendor(), cfg.Provider.Model(llm.RoleQuality), "post_quality", resp)
 		if strings.TrimSpace(out.Rationale) == "" {
 			lastErr = fmt.Errorf("empty rationale")
-			log.Printf("post_quality[%s]: attempt %d returned empty rationale", label, attempt+1)
+			slog.WarnContext(ctx, "attempt returned empty rationale", logging.AttrComponent, "genkit.post_quality", "dimension", label, "attempt", attempt+1)
 			continue
 		}
 		return *out, nil

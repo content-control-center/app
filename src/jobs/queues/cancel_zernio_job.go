@@ -56,6 +56,7 @@ type CancelZernioJobProcessor struct {
 
 // Work is the River entrypoint; it delegates to Process.
 func (p *CancelZernioJobProcessor) Work(ctx context.Context, job *river.Job[CancelZernioJobTask]) error {
+	ctx = WithJobRequestID(ctx, job.JobRow)
 	// CON-97: background jobs span tenants (interim until per-tenant, PR4).
 	ctx = tenantctx.WithSystem(ctx)
 	return p.Process(ctx, job.Args)

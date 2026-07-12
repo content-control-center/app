@@ -2,11 +2,12 @@ package handlers
 
 import (
 	"errors"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/secrets"
 )
 
@@ -182,10 +183,10 @@ func logRequest(c *fiber.Ctx, name string, start time.Time, err error) {
 		status = errStatus(err)
 	}
 	if name == "" {
-		log.Printf("secrets: method=%s path=%s status=%d duration_ms=%d", c.Method(), c.Path(), status, dur.Milliseconds())
+		slog.InfoContext(c.Context(), "secrets request", logging.AttrComponent, "secrets", "method", c.Method(), "path", c.Path(), "status", status, "duration_ms", dur.Milliseconds())
 		return
 	}
-	log.Printf("secrets: method=%s path=%s name=%s status=%d duration_ms=%d", c.Method(), c.Path(), name, status, dur.Milliseconds())
+	slog.InfoContext(c.Context(), "secrets request", logging.AttrComponent, "secrets", "method", c.Method(), "path", c.Path(), "name", name, "status", status, "duration_ms", dur.Milliseconds())
 }
 
 func errStatus(err error) int {

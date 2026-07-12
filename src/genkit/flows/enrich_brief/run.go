@@ -5,13 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"text/template"
 	"time"
 
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
@@ -31,7 +32,7 @@ func runEnrichBrief(
 	start := time.Now()
 	// Log the instruction length, not its content — it is user-provided
 	// free text and has no place in operational logs.
-	log.Printf("enrich_brief[%s]: starting (instruction_len=%d)", req.CampaignID, len(req.Instruction))
+	slog.InfoContext(ctx, "starting", logging.AttrComponent, "genkit.enrich_brief", "campaign_id", req.CampaignID, "instruction_len", len(req.Instruction))
 
 	// Enforcement gate (CON-86 FR9): in enforce mode, block before any provider
 	// call when the tenant is already over a cap. Nil checker = no gate.
@@ -113,8 +114,7 @@ func runEnrichBrief(
 		cfg.Provider.CallConfig(maxTokens),
 	)
 	if err != nil {
-		log.Printf("enrich_brief[%s]: model call failed after %s: %v",
-			req.CampaignID, time.Since(start).Round(time.Millisecond), err)
+		slog.ErrorContext(ctx, "model call failed", logging.AttrComponent, "genkit.enrich_brief", "campaign_id", req.CampaignID, "duration_ms", time.Since(start).Milliseconds(), logging.AttrError, err)
 		return nil, &AIError{Msg: fmt.Sprintf("model call failed: %v", err)}
 	}
 
@@ -123,13 +123,10 @@ func runEnrichBrief(
 		if resp.Usage != nil {
 			outputTokens = int64(resp.Usage.OutputTokens)
 		}
-		log.Printf("enrich_brief[%s]: TRUNCATED — finish_reason=length, output_tokens=%d, cap=%d. Bump MAX_OUTPUT_TOKENS if briefs are getting cut off.",
-			req.CampaignID, outputTokens, maxTokens)
+		slog.WarnContext(ctx, "response truncated at max tokens", logging.AttrComponent, "genkit.enrich_brief", "campaign_id", req.CampaignID, "output_tokens", outputTokens, "cap", maxTokens)
 	}
 	if resp.Usage != nil {
-		log.Printf("enrich_brief[%s]: tokens — input=%d output=%d total=%d",
-			req.CampaignID, resp.Usage.InputTokens, resp.Usage.OutputTokens,
-			resp.Usage.InputTokens+resp.Usage.OutputTokens)
+		slog.InfoContext(ctx, "tokens", logging.AttrComponent, "genkit.enrich_brief", "campaign_id", req.CampaignID, "input", resp.Usage.InputTokens, "output", resp.Usage.OutputTokens, "total", resp.Usage.InputTokens+resp.Usage.OutputTokens)
 	}
 	cfg.Recorder.RecordResp(ctx, cfg.Provider.Vendor(), cfg.Provider.Model(llm.RoleGeneration), "enrich_brief", resp)
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "generate", Status: "done"})
@@ -159,12 +156,11 @@ func runEnrichBrief(
 	if result.Description == "" && result.TargetPersona == "" &&
 		result.KeyMessages == "" && result.ToneGuidelines == "" {
 		raw := scanner.FullText()
-		log.Printf("enrich_brief[%s]: scanner found no usable fields (len=%d): %.500s",
-			req.CampaignID, len(raw), raw)
+		slog.ErrorContext(ctx, "scanner found no usable fields", logging.AttrComponent, "genkit.enrich_brief", "campaign_id", req.CampaignID, "len", len(raw), "raw", raw)
 		return nil, &AIError{Msg: "model response did not contain the expected fields"}
 	}
 
-	log.Printf("enrich_brief[%s]: done in %s", req.CampaignID, time.Since(start).Round(time.Millisecond))
+	slog.InfoContext(ctx, "done", logging.AttrComponent, "genkit.enrich_brief", "campaign_id", req.CampaignID, "duration_ms", time.Since(start).Milliseconds())
 
 	// The caller emits the single canonical `complete` event from this
 	// returned value (mirroring content_plan's GenerateDraft handler). The

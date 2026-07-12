@@ -7,12 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/pdfclient"
 	"github.com/ogen-app/ogen/src/platforms"
@@ -343,7 +344,7 @@ func (h *PostAttachmentsHandler) Upload(c *fiber.Ctx) error {
 				if pdfclient.IsInvalidPDF(rerr) {
 					return fiber.NewError(fiber.StatusBadRequest, "uploaded file is not a readable PDF")
 				}
-				log.Printf("post_attachments: pdf render failed (%s): %v", fh.Filename, rerr)
+				slog.WarnContext(c.Context(), "pdf render failed", logging.AttrComponent, "post_attachments", "name", fh.Filename, logging.AttrError, rerr)
 			} else {
 				att.PageCount = render.PageCount
 				pendingThumbnail = render.ThumbnailPNG

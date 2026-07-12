@@ -3,11 +3,12 @@ package queues
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/riverqueue/river"
 
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/tenantctx"
 )
@@ -52,13 +53,14 @@ type BootstrapZernioProfileProcessor struct {
 // Bootstrapper reads/writes tenant-scoped settings and names the profile after
 // the context's tenant).
 func (p *BootstrapZernioProfileProcessor) Work(ctx context.Context, job *river.Job[BootstrapZernioProfileTask]) error {
+	ctx = WithJobRequestID(ctx, job.JobRow)
 	tid := job.Args.TenantID
 	if tid == "" {
-		log.Printf("zernio: eager profile bootstrap skipped — empty tenant_id")
+		slog.WarnContext(ctx, "bootstrap skipped: empty tenant_id", logging.AttrComponent, "jobs.bootstrap_zernio_profile")
 		return nil
 	}
 	if p.Bootstrapper == nil || p.Integration == nil {
-		log.Printf("zernio: eager profile bootstrap skipped — integration not wired (tenant=%s)", tid)
+		slog.WarnContext(ctx, "bootstrap skipped: integration not wired", logging.AttrComponent, "jobs.bootstrap_zernio_profile", "tenant", tid)
 		return nil
 	}
 
@@ -67,7 +69,7 @@ func (p *BootstrapZernioProfileProcessor) Work(ctx context.Context, job *river.J
 	// No key / permanently disabled: the lazy on-connect path is the guaranteed
 	// fallback, so don't burn retries waiting for a key that may never arrive.
 	if !p.Integration.Enabled() {
-		log.Printf("zernio: eager profile bootstrap skipped — integration disabled (tenant=%s); lazy path will provision on first connect", tid)
+		slog.WarnContext(ctx, "bootstrap skipped: integration disabled", logging.AttrComponent, "jobs.bootstrap_zernio_profile", "tenant", tid)
 		return nil
 	}
 
@@ -76,7 +78,7 @@ func (p *BootstrapZernioProfileProcessor) Work(ctx context.Context, job *river.J
 		// tight loop won't recover it, and the lazy path still covers first
 		// connect — so give up cleanly.
 		if p.Integration.State() == zernio.StateDisabled {
-			log.Printf("zernio: eager profile bootstrap gave up — integration disabled (tenant=%s): %v", tid, err)
+			slog.WarnContext(ctx, "bootstrap gave up: integration disabled", logging.AttrComponent, "jobs.bootstrap_zernio_profile", "tenant", tid, logging.AttrError, err)
 			return nil
 		}
 		// Transient / degraded (network, 5xx, 429): let River retry with backoff.

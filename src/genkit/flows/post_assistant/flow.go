@@ -4,13 +4,14 @@ import (
 	"context"
 	"embed"
 	"fmt"
-	"log"
+	"log/slog"
 	"text/template"
 
 	"github.com/firebase/genkit/go/core"
 	"github.com/firebase/genkit/go/genkit"
 
 	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 )
 
@@ -90,7 +91,7 @@ func publishAssistantFinalised(
 	}
 	id, idErr := models.NewID()
 	if idErr != nil {
-		log.Printf("post_assistant: cannot mint event id: %v", idErr)
+		slog.Error("cannot mint event id", logging.AttrComponent, "genkit.post_assistant", logging.AttrError, idErr)
 		return
 	}
 	ev := eventhub.Event{
@@ -119,6 +120,6 @@ func publishAssistantFinalised(
 		}
 	}
 	if pubErr := hub.Publish(context.Background(), ev); pubErr != nil {
-		log.Printf("post_assistant[%s]: hub publish failed: %v", postID, pubErr)
+		slog.Error("hub publish failed", logging.AttrComponent, "genkit.post_assistant", "post_id", postID, logging.AttrError, pubErr)
 	}
 }

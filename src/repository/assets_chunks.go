@@ -3,11 +3,12 @@ package repository
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/pgvector/pgvector-go"
 	"github.com/uptrace/bun"
 
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 )
 
@@ -55,7 +56,7 @@ func (r *assetChunksRepository) UpsertChunks(ctx context.Context, assetID string
 		delN, _ := delRes.RowsAffected()
 
 		if len(ptrs) == 0 {
-			log.Printf("UpsertChunks %s: deleted %d, nothing to insert", assetID, delN)
+			slog.InfoContext(ctx, "upserted chunks, nothing to insert", logging.AttrComponent, "repository.assets_chunks", "asset_id", assetID, "deleted", delN)
 			return nil
 		}
 
@@ -64,7 +65,7 @@ func (r *assetChunksRepository) UpsertChunks(ctx context.Context, assetID string
 			return fmt.Errorf("insert chunks: %w", err)
 		}
 		insN, _ := insRes.RowsAffected()
-		log.Printf("UpsertChunks %s: deleted %d, inserted %d (wanted %d)", assetID, delN, insN, len(ptrs))
+		slog.InfoContext(ctx, "upserted chunks", logging.AttrComponent, "repository.assets_chunks", "asset_id", assetID, "deleted", delN, "inserted", insN, "wanted", len(ptrs))
 		return nil
 	})
 }

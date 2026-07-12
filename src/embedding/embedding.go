@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 
 	"github.com/firebase/genkit/go/ai"
@@ -15,6 +15,7 @@ import (
 	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/genkit/embedopts"
 	"github.com/ogen-app/ogen/src/genkit/flows"
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/secrets"
 	"github.com/ogen-app/ogen/src/storage"
@@ -156,7 +157,7 @@ func Init(
 		key, err := secretStore.Get(ctx, secrets.NameGeminiAPIKey)
 		if errors.Is(err, secrets.ErrNotFound) {
 			embedder.swap(nil)
-			log.Printf("embedding: gemini_api_key not configured; embedding disabled")
+			slog.WarnContext(ctx, "gemini_api_key not configured; embedding disabled", logging.AttrComponent, "embedding")
 			return nil
 		}
 		if err != nil {
@@ -186,7 +187,7 @@ func Init(
 			return fmt.Errorf("embedding: init gemini embedder %q: %w", cfg.EmbedModel, err)
 		}
 		embedder.swap(newEmbedder)
-		log.Printf("embedding: gemini embedder ready (model %q)", cfg.EmbedModel)
+		slog.InfoContext(ctx, "gemini embedder ready", logging.AttrComponent, "embedding", "model", cfg.EmbedModel)
 		return nil
 	}
 
@@ -198,7 +199,7 @@ func Init(
 	// API rebuilds the backing embedder with no reboot.
 	secretStore.Subscribe(secrets.NameGeminiAPIKey, func() {
 		if err := rebuild(context.Background()); err != nil {
-			log.Printf("embedding: rebuild after gemini_api_key change failed: %v", err)
+			slog.Error("rebuild after gemini_api_key change failed", logging.AttrComponent, "embedding", logging.AttrError, err)
 		}
 	})
 

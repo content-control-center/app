@@ -2,12 +2,13 @@ package queues
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/riverqueue/river"
 
 	"github.com/ogen-app/ogen/src/jobs"
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/tenantctx"
 )
@@ -45,6 +46,7 @@ type CleanupPostLogsProcessor struct {
 
 // Work is the River entrypoint; it delegates to Process.
 func (p *CleanupPostLogsProcessor) Work(ctx context.Context, job *river.Job[CleanupPostLogsTask]) error {
+	ctx = WithJobRequestID(ctx, job.JobRow)
 	// CON-97: background jobs span tenants (interim until per-tenant, PR4).
 	ctx = tenantctx.WithSystem(ctx)
 	return p.Process(ctx, job.Args)
@@ -71,7 +73,7 @@ func (p *CleanupPostLogsProcessor) Process(ctx context.Context, _ CleanupPostLog
 		}
 		if n > 0 {
 			jobs.PostLogCleaned.Add(n)
-			log.Printf("post_logs: cleanup removed %d entries older than %s", n, cutoff.Format(time.RFC3339))
+			slog.InfoContext(ctx, "cleanup removed entries", logging.AttrComponent, "jobs.cleanup_post_logs", "count", n, "cutoff", cutoff.Format(time.RFC3339))
 		}
 	}
 	return nil

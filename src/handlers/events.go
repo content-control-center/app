@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -14,6 +14,7 @@ import (
 	"github.com/valyala/fasthttp"
 
 	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
 )
@@ -150,7 +151,7 @@ func (h *EventsHandler) Stream(c *fiber.Ctx) error {
 					return
 				}
 				if err := writeSSEEvent(w, ev); err != nil {
-					log.Printf("events: write failed for user=%s: %v", sessionID, err)
+					slog.ErrorContext(c.Context(), "sse write failed", logging.AttrComponent, "events", "user", sessionID, logging.AttrError, err)
 					return
 				}
 			case <-ticker.C:
@@ -161,7 +162,7 @@ func (h *EventsHandler) Stream(c *fiber.Ctx) error {
 				// (logout, expiry, deletion) we drop the stream now rather
 				// than keep delivering events to an unauthenticated client.
 				if !sessionStillValid(sessionRepo, sessionID) {
-					log.Printf("events: session %s no longer valid; closing stream", sessionID)
+					slog.InfoContext(c.Context(), "session no longer valid; closing stream", logging.AttrComponent, "events", "user", sessionID)
 					return
 				}
 			}

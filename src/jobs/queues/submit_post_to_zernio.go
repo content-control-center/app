@@ -51,6 +51,7 @@ type SubmitPostProcessor struct {
 
 // Work is the River entrypoint; it delegates to Process.
 func (p *SubmitPostProcessor) Work(ctx context.Context, job *river.Job[SubmitPostTask]) error {
+	ctx = WithJobRequestID(ctx, job.JobRow)
 	// CON-97: background jobs span tenants (interim until per-tenant, PR4).
 	ctx = tenantctx.WithSystem(ctx)
 	return p.Process(ctx, job.Args)
@@ -244,7 +245,7 @@ func (p *SubmitPostProcessor) enqueuePoll(ctx context.Context, post *models.Post
 	if post.ScheduledAt != nil && post.ScheduledAt.After(time.Now()) {
 		when = post.ScheduledAt.Add(p.pollLead())
 	}
-	if _, err := client.Insert(ctx, PollZernioStatusTask{PostID: post.ID}, &river.InsertOpts{ScheduledAt: when}); err != nil {
+	if _, err := client.Insert(ctx, PollZernioStatusTask{PostID: post.ID}, insertOptsWithRequestID(ctx, &river.InsertOpts{ScheduledAt: when})); err != nil {
 		appendLog(ctx, p.Deps, post.ID, models.PostLogEventTaskFailed, post.Status, post.Status,
 			"failed to enqueue poll_zernio_status", `{"error":"`+err.Error()+`"}`)
 	}
