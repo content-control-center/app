@@ -1,0 +1,19 @@
+You are generating a branded social image for {{.Platform}}.
+{{if or (gt .BrandCount 0) .HasSubject}}
+Reference images are provided in this order:
+{{- if gt .BrandCount 0}}
+- BRAND STYLE (images 1{{if gt .BrandCount 1}}–{{.BrandCount}}{{end}}): the visual identity to
+  emulate — color palette, texture, lighting, typography feel, overall
+  aesthetic. Do NOT reuse their subject matter or composition.
+{{- end}}
+{{- if .HasSubject}}
+- POST SUBJECT (final image): the subject of this post{{if .SubjectDesc}} — {{.SubjectDesc}}{{end}}.
+  Preserve its identity and defining details.
+{{- end}}
+{{end}}
+Task: {{if .HasSubject}}Create a new image depicting the POST SUBJECT, rendered{{else}}Create a new image rendered{{end}}
+{{- if gt .BrandCount 0}} entirely in the visual style of the BRAND STYLE references.{{else}}.{{end}}
+{{- if .Instruction}} {{.Instruction}}{{end}}
+
+Constraints: aspect ratio {{.AspectRatio}}, resolution {{.Resolution}}, high
+fidelity{{if gt .BrandCount 0}}, faithful brand color. Do not add logos or watermarks not present in the references.{{else}}.{{end}}
