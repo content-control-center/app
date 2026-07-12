@@ -191,6 +191,14 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		return nil, err
 	}
 
+	// CON-105: image generation. The reloadable Gemini model shares the
+	// gemini_api_key with embeddings; when unset the model is dormant and
+	// POST /api/posts/:id/imagine returns 503 until a key is added (no restart).
+	imagineCB, imageModel, err := initImageGen(ctx, cfg, secretStore, usageWiring.recorder, usageWiring.checker)
+	if err != nil {
+		return nil, err
+	}
+
 	// PDF ingestion is live when the parser and storage are present; embedder
 	// availability is checked per-run by the worker (a key set later re-enables
 	// it without a restart), not gated at boot. The Client field is left nil
@@ -252,6 +260,15 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		Integration:         zernioRT.Integration,
 		// CON-103: PDF ingestion worker deps.
 		PDF: pdfDeps,
+		// CON-105: image_generate worker deps. A nil Generate (no imagine
+		// callback) makes the job a no-op.
+		ImageGen: queues.ImageGenDeps{
+			Generate: imagineCB,
+			Storage:  store,
+			Assets:   pieceRepo,
+			Files:    assetFileRepo,
+			Posts:    postRepo,
+		},
 	})
 
 	if err := jobs.MigrateRiver(ctx, db.DB); err != nil {
@@ -396,6 +413,10 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// allowlist and (for allowlisted platforms) enqueues a submit task
 	// transactionally with the status change + log write.
 	postsHandler.SetSchedulingDeps(autoPublishAllowlistRepo, enqueuer, db)
+	// CON-105: async branded image generation behind POST /api/posts/:id/imagine.
+	// The enqueuer commits the job with the pending-asset insert; imageModel.Available
+	// gates the endpoint (503 until a gemini_api_key is configured).
+	postsHandler.SetImageGenerator(enqueuer, imageModel.Available)
 	// CON-59: same clone service the assistant uses, behind the REST
 	// endpoint that backs the (future) Duplicate button.
 	postsHandler.SetCloneService(cloneSvc)

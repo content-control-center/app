@@ -100,6 +100,13 @@ type PostsHandler struct {
 	// schedule endpoint (503) and makes the PUT branch fall back to a
 	// plain status update (test fixtures that don't wire scheduling).
 	scheduleSvc *schedule.Service
+	// imageEnq enqueues the image_generate job transactionally with the
+	// pending Asset insert (CON-105). nil disables POST /:id/imagine (503).
+	// Wired via SetImageGenerator; the transaction runs on h.db.
+	imageEnq ImageGenEnqueuer
+	// imageReady reports whether image generation is currently available
+	// (a gemini_api_key is configured). nil is treated as "always ready".
+	imageReady func() bool
 }
 
 // SetOnBeforeDelete registers a hook that runs before a post is
@@ -508,6 +515,7 @@ func (h *PostsHandler) Register(app *fiber.App) {
 	g.Post("/:id/restore", h.auth, h.Restore)
 	g.Post("/:id/schedule", h.auth, h.Schedule)
 	g.Post("/:id/cancel", h.auth, h.Cancel)
+	g.Post("/:id/imagine", h.auth, h.Imagine)
 
 	app.Get("/api/campaigns/:campaign_id/posts", h.auth, h.ListByCampaign)
 }
