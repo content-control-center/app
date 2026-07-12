@@ -178,14 +178,16 @@ func (p *ImageGenerateProcessor) process(ctx context.Context, in ImageGenerateTa
 		return fmt.Errorf("image_generate %s: generate: %w", in.AssetID, err)
 	}
 
-	// 3. Store the image + its asset_file row.
+	// 3. Store the image + its asset_file row. These are infra failures: retry,
+	//    but flip the asset to failed on the final attempt so it never stays
+	//    stuck in "processing" (mirrors the generate path above).
 	ext := extForImageMIME(res.MIMEType)
 	key := storage.TenantKey(ctx, fmt.Sprintf("assets/%s/generated.%s", in.AssetID, ext))
 	if _, err := p.Deps.Storage.Upload(ctx, key, bytes.NewReader(res.Image), int64(len(res.Image)), res.MIMEType); err != nil {
-		return fmt.Errorf("image_generate %s: upload image: %w", in.AssetID, err)
+		return p.retryOrFail(ctx, in.AssetID, lastAttempt, fmt.Errorf("image_generate %s: upload image: %w", in.AssetID, err))
 	}
 	if err := p.persistFile(ctx, in.AssetID, key, res.MIMEType, len(res.Image), ext); err != nil {
-		return err
+		return p.retryOrFail(ctx, in.AssetID, lastAttempt, err)
 	}
 
 	// 4. Flip the Asset to ready with its generation provenance (§5/§7/§10).
@@ -202,7 +204,7 @@ func (p *ImageGenerateProcessor) process(ctx context.Context, in ImageGenerateTa
 		C2PA:    true,
 	}
 	if err := p.Deps.Assets.Update(ctx, asset); err != nil {
-		return fmt.Errorf("image_generate %s: mark ready: %w", in.AssetID, err)
+		return p.retryOrFail(ctx, in.AssetID, lastAttempt, fmt.Errorf("image_generate %s: mark ready: %w", in.AssetID, err))
 	}
 
 	// 5. Link the result to the Post (best-effort — the asset is already ready
@@ -305,6 +307,16 @@ func (p *ImageGenerateProcessor) linkPost(ctx context.Context, postID, assetID s
 	if err := p.Deps.Posts.Update(ctx, post); err != nil {
 		slog.WarnContext(ctx, "link post: update failed", logging.AttrComponent, "jobs.image_generate", "post_id", postID, logging.AttrError, err)
 	}
+}
+
+// retryOrFail returns err to trigger a River retry, or — on the final attempt —
+// flips the asset to "failed" so an exhausted infra failure never leaves it
+// stuck in "processing". The wrapped error is preserved as the failure reason.
+func (p *ImageGenerateProcessor) retryOrFail(ctx context.Context, assetID string, lastAttempt bool, err error) error {
+	if lastAttempt {
+		return p.fail(ctx, assetID, err.Error())
+	}
+	return err
 }
 
 // fail marks the asset failed (reason logged; the Asset has no error column yet,

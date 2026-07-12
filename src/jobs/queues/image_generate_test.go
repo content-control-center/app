@@ -67,8 +67,9 @@ func (p *igPosts) GetByID(_ context.Context, id string) (*models.Post, error) { 
 func (p *igPosts) Update(_ context.Context, post *models.Post) error          { p.updated = post; return nil }
 
 type igBlob struct {
-	downloads map[string][]byte
-	uploads   map[string][]byte
+	downloads  map[string][]byte
+	uploads    map[string][]byte
+	failUpload bool
 }
 
 func (b *igBlob) Download(_ context.Context, key string) (io.ReadCloser, error) {
@@ -79,6 +80,9 @@ func (b *igBlob) Download(_ context.Context, key string) (io.ReadCloser, error) 
 	return io.NopCloser(bytes.NewReader(d)), nil
 }
 func (b *igBlob) Upload(_ context.Context, key string, r io.Reader, _ int64, _ string) (string, error) {
+	if b.failUpload {
+		return "", fmt.Errorf("storage unavailable")
+	}
 	data, _ := io.ReadAll(r)
 	if b.uploads == nil {
 		b.uploads = map[string][]byte{}
@@ -166,6 +170,38 @@ func TestImageGenerate_ValidationErrorIsTerminal(t *testing.T) {
 	// Terminal: process returns nil (no retry) but the asset lands "failed".
 	if err := p.process(context.Background(), ImageGenerateTask{AssetID: "a1", AspectRatio: "16:9", Resolution: "4K"}, false); err != nil {
 		t.Fatalf("process returned error, want nil terminal: %v", err)
+	}
+	if got := assets.byID["a1"].Status; got != models.AssetStatusFailed {
+		t.Fatalf("status = %q, want failed", got)
+	}
+}
+
+func TestImageGenerate_LastAttemptStorageFailureMarksFailed(t *testing.T) {
+	newDeps := func() (*igAssets, ImageGenDeps) {
+		assets := &igAssets{byID: map[string]*models.Asset{"a1": {ID: "a1", Status: models.AssetStatusPending}}}
+		gen := func(_ context.Context, _ imagegen.ImagineRequest) (*imagegen.ImagineResponse, error) {
+			return &imagegen.ImagineResponse{Image: []byte("PNG"), MIMEType: "image/png", Model: "m", AspectRatio: "1:1", Resolution: "1K"}, nil
+		}
+		return assets, ImageGenDeps{Generate: gen, Storage: &igBlob{failUpload: true}, Assets: assets, Files: &igFiles{byAsset: map[string]*models.AssetFile{}}}
+	}
+
+	// Earlier attempt: a storage failure retries (error returned) and the asset
+	// stays "processing" — not prematurely failed.
+	assets, deps := newDeps()
+	p := &ImageGenerateProcessor{Deps: deps}
+	if err := p.process(context.Background(), ImageGenerateTask{AssetID: "a1", AspectRatio: "1:1"}, false); err == nil {
+		t.Fatal("expected a retryable error on a non-final attempt")
+	}
+	if got := assets.byID["a1"].Status; got != models.AssetStatusProcessing {
+		t.Fatalf("status = %q, want processing on a retryable attempt", got)
+	}
+
+	// Final attempt: the exhausted infra failure flips the asset to "failed"
+	// (nil returned) so it never stays stuck in "processing".
+	assets, deps = newDeps()
+	p = &ImageGenerateProcessor{Deps: deps}
+	if err := p.process(context.Background(), ImageGenerateTask{AssetID: "a1", AspectRatio: "1:1"}, true); err != nil {
+		t.Fatalf("process returned error on last attempt, want nil terminal: %v", err)
 	}
 	if got := assets.byID["a1"].Status; got != models.AssetStatusFailed {
 		t.Fatalf("status = %q, want failed", got)
