@@ -156,7 +156,7 @@ func runEnrichBrief(
 	if result.Description == "" && result.TargetPersona == "" &&
 		result.KeyMessages == "" && result.ToneGuidelines == "" {
 		raw := scanner.FullText()
-		slog.ErrorContext(ctx, "scanner found no usable fields", logging.AttrComponent, "genkit.enrich_brief", "campaign_id", req.CampaignID, "len", len(raw), "raw", raw)
+		slog.ErrorContext(ctx, "scanner found no usable fields", logging.AttrComponent, "genkit.enrich_brief", "campaign_id", req.CampaignID, "len", len(raw), "raw_preview", logging.Preview(raw, 500))
 		return nil, &AIError{Msg: "model response did not contain the expected fields"}
 	}
 

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/ogen-app/ogen/src/tenantctx"
 )
@@ -100,6 +101,23 @@ func TestParseLevel(t *testing.T) {
 	}
 }
 
+func TestPreview(t *testing.T) {
+	if got := Preview("short", 100); got != "short" {
+		t.Errorf("under cap: got %q, want %q", got, "short")
+	}
+	if got := Preview("hello world", 5); got != "hello…" {
+		t.Errorf("over cap: got %q, want %q", got, "hello…")
+	}
+	// Truncation must not split a multi-byte rune. "aé" is 3 bytes (a + é);
+	// a cap of 2 lands inside é and must trim back to the valid boundary.
+	if got := Preview("aé", 2); got != "a…" {
+		t.Errorf("utf8 boundary: got %q, want %q", got, "a…")
+	}
+	if !utf8.ValidString(Preview("日本語テスト", 4)) {
+		t.Errorf("Preview produced invalid UTF-8")
+	}
+}
+
 func TestUseJSON(t *testing.T) {
 	cases := []struct {
 		format string
@@ -110,8 +128,8 @@ func TestUseJSON(t *testing.T) {
 		{"json", true, true},   // explicit wins over debug
 		{"text", false, false}, // explicit wins
 		{"text", true, false},
-		{"", false, true},   // unset, prod → JSON
-		{"", true, false},   // unset, debug → text
+		{"", false, true}, // unset, prod → JSON
+		{"", true, false}, // unset, debug → text
 		{"JSON", false, true},
 	}
 	for _, c := range cases {

@@ -31,7 +31,7 @@ func runPostAssistant(
 	onEvent OnEventFunc,
 ) (out *PostAssistantResponse, retErr error) {
 	start := time.Now()
-	slog.InfoContext(ctx, "starting", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID, "instruction", req.Instruction)
+	slog.InfoContext(ctx, "starting", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID, "instruction_len", len(req.Instruction))
 
 	// Enforcement gate (CON-86 FR9): block before any provider call when the
 	// tenant is already over a cap in enforce mode. Nil checker = no gate.
@@ -403,7 +403,7 @@ func runPostAssistant(
 	case result.Explanation == "" && result.UpdatedContent == "":
 		// Genuinely unusable — neither field came through.
 		raw := scanner.FullText()
-		slog.ErrorContext(ctx, "scanner found no usable fields", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID, "len", len(raw), "raw", raw)
+		slog.ErrorContext(ctx, "scanner found no usable fields", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID, "len", len(raw), "raw_preview", logging.Preview(raw, 500))
 		return nil, &AIError{Msg: "model response did not contain the expected fields"}
 
 	case result.Action == "" && result.UpdatedContent != "":

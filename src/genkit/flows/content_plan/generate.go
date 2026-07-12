@@ -390,7 +390,7 @@ func generatePostsStreaming(
 			parsedPosition++
 			post, ok := parseAndTrimPost(raw)
 			if !ok {
-				slog.WarnContext(ctx, "malformed post chunk", logging.AttrComponent, "genkit.content_plan", "raw", raw)
+				slog.WarnContext(ctx, "malformed post chunk", logging.AttrComponent, "genkit.content_plan", "len", len(raw), "raw_preview", logging.Preview(raw, 100))
 				emit(onEvent, SSEEventWarning, WarningPayload{
 					Message: fmt.Sprintf("malformed post chunk: %.80s", raw),
 				})
