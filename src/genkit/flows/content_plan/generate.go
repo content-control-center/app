@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"text/template"
@@ -14,6 +14,7 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/vendors/llm"
@@ -124,7 +125,7 @@ func generatePosts(
 	if err != nil {
 		return nil, nil, fmt.Errorf("render system prompt: %w", err)
 	}
-	log.Printf("content_plan: system prompt:\n%s", systemPrompt)
+	slog.DebugContext(ctx, "system prompt", logging.AttrComponent, "genkit.content_plan", "prompt", systemPrompt)
 
 	maxTokens := cfg.MaxOutputTokens
 	if maxTokens == 0 {
@@ -171,7 +172,7 @@ func generatePosts(
 		if err != nil {
 			return nil, nil, fmt.Errorf("render user prompt: %w", err)
 		}
-		log.Printf("content_plan: user prompt (no batch plan):\n%s", userPrompt)
+		slog.DebugContext(ctx, "user prompt (no batch plan)", logging.AttrComponent, "genkit.content_plan", "prompt", userPrompt)
 		posts, genErr := generatePostsStreaming(ctx, g, modelName, systemPrompt, userPrompt, modelCfg, recordUsage, 0, validate, persistFn, onEvent)
 		if genErr != nil {
 			// Even on hard failure, return what was persisted so the
@@ -181,8 +182,7 @@ func generatePosts(
 		return posts, nil, nil
 	}
 
-	log.Printf("content_plan: planned %d batches (totalPosts=%d, K=%d, parallel=%d)",
-		len(batches), estCount, maxPostsPerBatch, maxParallel)
+	slog.InfoContext(ctx, "planned batches", logging.AttrComponent, "genkit.content_plan", "batches", len(batches), "total_posts", estCount, "posts_per_batch", maxPostsPerBatch, "parallel", maxParallel)
 
 	gen := func(ctx context.Context, spec batchSpec, emit OnEventFunc) ([]DraftPost, error) {
 		batchData := data
@@ -191,8 +191,7 @@ func generatePosts(
 		if err != nil {
 			return nil, fmt.Errorf("render user prompt for batch %d: %w", spec.Index, err)
 		}
-		log.Printf("content_plan: batch %d/%d (posts=%d window=%s..%s) user prompt:\n%s",
-			spec.Index+1, len(batches), spec.PostCount, spec.DateWindow.Start, spec.DateWindow.End, userPrompt)
+		slog.DebugContext(ctx, "batch user prompt", logging.AttrComponent, "genkit.content_plan", "batch", spec.Index+1, "total", len(batches), "posts", spec.PostCount, "window_start", spec.DateWindow.Start, "window_end", spec.DateWindow.End, "prompt", userPrompt)
 		return generatePostsStreaming(ctx, g, modelName, systemPrompt, userPrompt, modelCfg, recordUsage, spec.GlobalStartIndex, validate, persistFn, emit)
 	}
 	return runBatchesParallel(ctx, batches, maxParallel, gen, onEvent)
@@ -257,9 +256,9 @@ func runBatchesParallel(
 			// response.
 			posts, err := gen(ctx, spec, safeEmit)
 			if err != nil {
-				log.Printf("content_plan: batch %d/%d failed: %v (%d persisted before failure)", i+1, len(batches), err, len(posts))
+				slog.ErrorContext(ctx, "batch failed", logging.AttrComponent, "genkit.content_plan", "batch", i+1, "total", len(batches), "persisted", len(posts), logging.AttrError, err)
 			} else {
-				log.Printf("content_plan: batch %d/%d done (%d posts)", i+1, len(batches), len(posts))
+				slog.InfoContext(ctx, "batch done", logging.AttrComponent, "genkit.content_plan", "batch", i+1, "total", len(batches), "posts", len(posts))
 			}
 			results[i] = batchResult{posts: posts, err: err}
 		}()
@@ -345,7 +344,7 @@ func generatePostsStreaming(
 		}
 		id, err := persistFn(ctx, post)
 		if err != nil {
-			log.Printf("content_plan: persist failed for post %q: %v", post.Title, err)
+			slog.ErrorContext(ctx, "persist failed for post", logging.AttrComponent, "genkit.content_plan", "title", post.Title, logging.AttrError, err)
 			emit(onEvent, SSEEventWarning, WarningPayload{
 				Message: fmt.Sprintf("post %q persist failed: %v", post.Title, err),
 			})
@@ -374,12 +373,10 @@ func generatePostsStreaming(
 			if result.Response != nil {
 				if result.Response.Usage != nil {
 					u := result.Response.Usage
-					log.Printf("content_plan: tokens — input=%d output=%d total=%d",
-						u.InputTokens, u.OutputTokens, u.InputTokens+u.OutputTokens)
+					slog.InfoContext(ctx, "tokens", logging.AttrComponent, "genkit.content_plan", "input", u.InputTokens, "output", u.OutputTokens, "total", u.InputTokens+u.OutputTokens)
 				}
 				respText := result.Response.Text()
-				log.Printf("content_plan: stream finish_reason=%q posts_persisted=%d parsed=%d chunks=%d bytes=%d response_len=%d response_tail=%s",
-					result.Response.FinishReason, len(posts), parsedPosition, chunkCount, totalBytes, len(respText), tailOf(respText, 200))
+				slog.InfoContext(ctx, "stream finished", logging.AttrComponent, "genkit.content_plan", "finish_reason", result.Response.FinishReason, "posts_persisted", len(posts), "parsed", parsedPosition, "chunks", chunkCount, "bytes", totalBytes, "response_len", len(respText), "response_tail", tailOf(respText, 200))
 				recordUsage(ctx, result.Response)
 			}
 			break
@@ -393,7 +390,7 @@ func generatePostsStreaming(
 			parsedPosition++
 			post, ok := parseAndTrimPost(raw)
 			if !ok {
-				log.Printf("content_plan: malformed post chunk (raw=%.100s)", raw)
+				slog.WarnContext(ctx, "malformed post chunk", logging.AttrComponent, "genkit.content_plan", "len", len(raw), "raw_preview", logging.Preview(raw, 100))
 				emit(onEvent, SSEEventWarning, WarningPayload{
 					Message: fmt.Sprintf("malformed post chunk: %.80s", raw),
 				})
@@ -410,7 +407,7 @@ func generatePostsStreaming(
 	// Stream failed (connection dropped mid-generation). Re-issue as a
 	// blocking call to recover the rest of the batch; deduplicate against
 	// what the streaming path already persisted so we never double-insert.
-	log.Printf("content_plan: stream error after %d persisted (parsed=%d) — falling back to blocking Generate: %v", len(posts), parsedPosition, streamErr)
+	slog.WarnContext(ctx, "stream error, falling back to blocking Generate", logging.AttrComponent, "genkit.content_plan", "persisted", len(posts), "parsed", parsedPosition, logging.AttrError, streamErr)
 	resp, err := genkit.Generate(ctx, g,
 		ai.WithModelName(modelName),
 		ai.WithSystem(systemPrompt),
@@ -424,9 +421,7 @@ func generatePostsStreaming(
 	}
 
 	if resp.Usage != nil {
-		log.Printf("content_plan: tokens (fallback) — input=%d output=%d total=%d",
-			resp.Usage.InputTokens, resp.Usage.OutputTokens,
-			resp.Usage.InputTokens+resp.Usage.OutputTokens)
+		slog.InfoContext(ctx, "tokens (fallback)", logging.AttrComponent, "genkit.content_plan", "input", resp.Usage.InputTokens, "output", resp.Usage.OutputTokens, "total", resp.Usage.InputTokens+resp.Usage.OutputTokens)
 	}
 	recordUsage(ctx, resp)
 
@@ -463,7 +458,7 @@ func generatePostsStreaming(
 func parseAndTrimPost(raw string) (DraftPost, bool) {
 	var post DraftPost
 	if err := json.Unmarshal([]byte(raw), &post); err != nil {
-		log.Printf("content_plan: skipping malformed post chunk: %v", err)
+		slog.Warn("skipping malformed post chunk", logging.AttrComponent, "genkit.content_plan", logging.AttrError, err)
 		return DraftPost{}, false
 	}
 	post.Body = trimBody(post.Body)

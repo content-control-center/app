@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -16,6 +16,7 @@ import (
 	grpcstatus "google.golang.org/grpc/status"
 
 	"github.com/ogen-app/ogen/src/genkit/embedopts"
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/pdfclient"
 	"github.com/ogen-app/ogen/src/storage"
@@ -113,6 +114,7 @@ func init() {
 // process() flip an otherwise-retryable embedder outage to a terminal "failed"
 // instead of abandoning the asset in "processing".
 func (p *ProcessPDFProcessor) Work(ctx context.Context, job *river.Job[ProcessPDFTask]) error {
+	ctx = WithJobRequestID(ctx, job.JobRow)
 	ctx = tenantctx.With(ctx, job.Args.TenantID)
 	return p.process(ctx, job.Args, job.Attempt >= job.MaxAttempts)
 }
@@ -124,7 +126,7 @@ func (p *ProcessPDFProcessor) Timeout(*river.Job[ProcessPDFTask]) time.Duration 
 
 func (p *ProcessPDFProcessor) process(ctx context.Context, in ProcessPDFTask, lastAttempt bool) error {
 	if p.Deps.Client == nil {
-		log.Printf("process_pdf %s: pdf-service not configured; leaving asset pending", in.AssetID)
+		slog.WarnContext(ctx, "pdf-service not configured", logging.AttrComponent, "jobs.process_pdf", "asset_id", in.AssetID)
 		return nil
 	}
 	if p.Deps.Storage == nil {
@@ -143,7 +145,7 @@ func (p *ProcessPDFProcessor) process(ctx context.Context, in ProcessPDFTask, la
 		if lastAttempt {
 			return p.setStatus(ctx, in.AssetID, models.AssetStatusFailed)
 		}
-		log.Printf("process_pdf %s: embedder unavailable (no gemini_api_key) — will retry", in.AssetID)
+		slog.WarnContext(ctx, "embedder unavailable will retry", logging.AttrComponent, "jobs.process_pdf", "asset_id", in.AssetID)
 		return fmt.Errorf("process_pdf %s: embedder unavailable", in.AssetID)
 	}
 
@@ -172,7 +174,7 @@ func (p *ProcessPDFProcessor) process(ctx context.Context, in ProcessPDFTask, la
 	})
 	if err != nil {
 		if isTerminalParseErr(err) {
-			log.Printf("process_pdf %s: unparseable pdf: %v", in.AssetID, err)
+			slog.WarnContext(ctx, "unparseable pdf", logging.AttrComponent, "jobs.process_pdf", "asset_id", in.AssetID, logging.AttrError, err)
 			return p.setStatus(ctx, in.AssetID, models.AssetStatusFailed)
 		}
 		return fmt.Errorf("process_pdf %s: parse: %w", in.AssetID, err)
@@ -283,7 +285,7 @@ func (p *ProcessPDFProcessor) uploadThumbnail(ctx context.Context, assetID strin
 	}
 	k := storage.TenantKey(ctx, fmt.Sprintf("assets/%s/thumbnail.png", assetID))
 	if _, err := p.Deps.Storage.Upload(ctx, k, bytes.NewReader(png), int64(len(png)), "image/png"); err != nil {
-		log.Printf("process_pdf %s: thumbnail upload: %v", assetID, err)
+		slog.WarnContext(ctx, "thumbnail upload failed", logging.AttrComponent, "jobs.process_pdf", "asset_id", assetID, logging.AttrError, err)
 		return nil
 	}
 	return &k

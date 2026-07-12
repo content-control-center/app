@@ -3,7 +3,7 @@ package flows
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +14,7 @@ import (
 	"github.com/pgvector/pgvector-go"
 
 	"github.com/ogen-app/ogen/src/genkit/embedopts"
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/tenantctx"
@@ -66,7 +67,7 @@ func (s *embedScheduler) Schedule(in EmbedAssetInput) {
 
 	s.pending[in.AssetID] = in
 	if s.running[in.AssetID] {
-		log.Printf("embed asset %s: coalesced with in-flight embed", in.AssetID)
+		slog.Info("coalesced with in-flight embed", logging.AttrComponent, "genkit.embed_asset", "asset_id", in.AssetID)
 		return
 	}
 	s.running[in.AssetID] = true
@@ -91,7 +92,7 @@ func (s *embedScheduler) run(assetID string) {
 		// job, the markdown embed is fire-and-forget with no retry, so skip is the
 		// only sane no-key behaviour.
 		if !embedopts.Available(s.embedder) {
-			log.Printf("embed asset %s: skipped — no gemini_api_key configured", in.AssetID)
+			slog.Warn("embed skipped, no gemini_api_key configured", logging.AttrComponent, "genkit.embed_asset", "asset_id", in.AssetID)
 			continue
 		}
 
@@ -102,7 +103,7 @@ func (s *embedScheduler) run(assetID string) {
 		s.setStatus(ctx, in.AssetID, models.AssetStatusProcessing)
 		_, err := EmbedAssetFlow.Run(ctx, in)
 		if err != nil {
-			log.Printf("embed asset %s: %v", in.AssetID, err)
+			slog.ErrorContext(ctx, "embed failed", logging.AttrComponent, "genkit.embed_asset", "asset_id", in.AssetID, logging.AttrError, err)
 			s.setStatus(ctx, in.AssetID, models.AssetStatusFailed)
 		} else {
 			s.setStatus(ctx, in.AssetID, models.AssetStatusReady)
@@ -116,7 +117,7 @@ func (s *embedScheduler) setStatus(ctx context.Context, assetID, status string) 
 		return
 	}
 	if err := s.assetRepo.UpdateStatus(ctx, assetID, status); err != nil {
-		log.Printf("embed asset %s: update status %s: %v", assetID, status, err)
+		slog.ErrorContext(ctx, "update status failed", logging.AttrComponent, "genkit.embed_asset", "asset_id", assetID, "status", status, logging.AttrError, err)
 	}
 }
 
@@ -164,10 +165,10 @@ func embedAsset(ctx context.Context, embedder ai.Embedder, repo repository.Asset
 
 	chunkTexts := ChunkText(fullText)
 	if len(chunkTexts) == 0 {
-		log.Printf("embed asset %s: no text content to embed — skipping", in.AssetID)
+		slog.WarnContext(ctx, "no text content to embed, skipping", logging.AttrComponent, "genkit.embed_asset", "asset_id", in.AssetID)
 		return nil
 	}
-	log.Printf("embed asset %s: %d chunk(s) from %d chars", in.AssetID, len(chunkTexts), len(fullText))
+	slog.InfoContext(ctx, "chunked asset", logging.AttrComponent, "genkit.embed_asset", "asset_id", in.AssetID, "chunks", len(chunkTexts), "chars", len(fullText))
 
 	// Embed each chunk individually. Gemini's EmbedContent can batch multiple
 	// documents per request, but per-chunk calls keep the scheduler simple and
@@ -176,12 +177,10 @@ func embedAsset(ctx context.Context, embedder ai.Embedder, repo repository.Asset
 	var totalTokens int64
 	for i, text := range chunkTexts {
 		if !hasWords(text) {
-			log.Printf("embed asset %s: chunk %d/%d SKIPPED (no words) len=%d repr=%q",
-				in.AssetID, i, len(chunkTexts)-1, len(text), truncate(text, 80))
+			slog.WarnContext(ctx, "chunk skipped, no words", logging.AttrComponent, "genkit.embed_asset", "asset_id", in.AssetID, "chunk", i, "total", len(chunkTexts)-1, "len", len(text), "repr", truncate(text, 80))
 			continue
 		}
-		log.Printf("embed asset %s: chunk %d/%d len=%d preview=%q",
-			in.AssetID, i, len(chunkTexts)-1, len(text), truncate(text, 80))
+		slog.DebugContext(ctx, "embedding chunk", logging.AttrComponent, "genkit.embed_asset", "asset_id", in.AssetID, "chunk", i, "total", len(chunkTexts)-1, "len", len(text), "preview", truncate(text, 80))
 
 		resp, err := embedder.Embed(ctx, &ai.EmbedRequest{
 			Input:   []*ai.Document{ai.DocumentFromText(text, nil)},
@@ -215,7 +214,7 @@ func embedAsset(ctx context.Context, embedder ai.Embedder, repo repository.Asset
 	// no token usage, so we meter the chunker's estimate. Nil recorder = no-op.
 	recorder.RecordResp(ctx, llm.VendorGemini, embedModel, "asset_embed", llm.EmbedUsage{Tokens: totalTokens})
 
-	log.Printf("embed asset %s: stored %d chunk(s)", in.AssetID, len(chunks))
+	slog.InfoContext(ctx, "stored chunks", logging.AttrComponent, "genkit.embed_asset", "asset_id", in.AssetID, "chunks", len(chunks))
 	return nil
 }
 

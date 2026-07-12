@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/tenantctx"
@@ -129,11 +130,15 @@ func NewWorker(
 // cadence. Safe to call from a goroutine.
 func (w *Worker) Run(ctx context.Context) {
 	defer close(w.done)
-	log.Printf("zernio: sync worker started (interval=%s fast=%s)", w.interval, w.fastInterval)
+	slog.InfoContext(ctx, "sync worker started",
+		logging.AttrComponent, "zernio.worker",
+		"interval", w.interval,
+		"fast_interval", w.fastInterval)
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("zernio: sync worker stopped")
+			slog.InfoContext(ctx, "sync worker stopped",
+				logging.AttrComponent, "zernio.worker")
 			return
 		default:
 		}
@@ -149,11 +154,14 @@ func (w *Worker) Run(ctx context.Context) {
 
 		if err := w.syncAllTenants(ctx); err != nil {
 			if IsStatus(err, http.StatusUnauthorized) {
-				log.Printf("zernio: 401 from Zernio — disabling integration")
+				slog.WarnContext(ctx, "401 from zernio; disabling integration",
+					logging.AttrComponent, "zernio.worker")
 				w.integ.SetState(StateDisabled)
 				return
 			}
-			log.Printf("zernio: sync sweep failed: %v", err)
+			slog.ErrorContext(ctx, "sync sweep failed",
+				logging.AttrComponent, "zernio.worker",
+				logging.AttrError, err)
 		}
 
 		if !w.sleep(ctx, w.nextInterval()) {
@@ -214,7 +222,10 @@ func (w *Worker) syncAllTenants(ctx context.Context) error {
 			if IsStatus(err, http.StatusUnauthorized) {
 				return err // bad shared key — disable instance-wide
 			}
-			log.Printf("zernio: sync tenant=%s failed: %v", tid, err)
+			slog.ErrorContext(ctx, "sync tenant failed",
+				logging.AttrComponent, "zernio.worker",
+				"tenant_id", tid,
+				logging.AttrError, err)
 		}
 	}
 	return nil
@@ -290,8 +301,11 @@ func (w *Worker) tick(ctx context.Context) error {
 		}
 		w.recordSyncStatus(ctx, err)
 		w.publishSyncEvent(ctx, EventTypeSyncFailed, fmt.Sprintf("list_accounts: %v", err))
-		log.Printf("zernio.sync failed zernio.profile_id=%s zernio.sync_tick_ms=%d error=%q",
-			profileID, time.Since(tickStart).Milliseconds(), err.Error())
+		slog.ErrorContext(ctx, "sync failed",
+			logging.AttrComponent, "zernio.worker",
+			"profile_id", profileID,
+			"sync_tick_ms", time.Since(tickStart).Milliseconds(),
+			logging.AttrError, err)
 		return err
 	}
 
@@ -303,7 +317,9 @@ func (w *Worker) tick(ctx context.Context) error {
 	// the life of the process). PromoteOK is a no-op unless degraded, so it never
 	// resurrects a disabled (401) integration.
 	if w.integ.PromoteOK() {
-		log.Printf("zernio.sync recovered zernio.profile_id=%s — integration promoted degraded→ok", profileID)
+		slog.InfoContext(ctx, "sync recovered; integration promoted degraded to ok",
+			logging.AttrComponent, "zernio.worker",
+			"profile_id", profileID)
 	}
 
 	local, err := w.accounts.ListAll(ctx, profileID)
@@ -322,8 +338,11 @@ func (w *Worker) tick(ctx context.Context) error {
 				w.publishAccountEvent(ctx, EventTypeAttachFailed, ch.Account, fmt.Sprintf("apply_plan: %v", err))
 			}
 		}
-		log.Printf("zernio.sync failed zernio.profile_id=%s zernio.sync_tick_ms=%d error=%q",
-			profileID, time.Since(tickStart).Milliseconds(), err.Error())
+		slog.ErrorContext(ctx, "sync failed",
+			logging.AttrComponent, "zernio.worker",
+			"profile_id", profileID,
+			"sync_tick_ms", time.Since(tickStart).Milliseconds(),
+			logging.AttrError, err)
 		return err
 	}
 
@@ -334,16 +353,22 @@ func (w *Worker) tick(ctx context.Context) error {
 			added++
 			w.publishAccountEvent(ctx, EventTypeAttached, ch.Account, "")
 			w.recordAccountConnect(ctx, ch.Account)
-			log.Printf("zernio.account.attached zernio.profile_id=%s zernio.platform=%s zernio.account_id=%s",
-				profileID, ch.Account.Platform, ch.Account.ID)
+			slog.InfoContext(ctx, "account attached",
+				logging.AttrComponent, "zernio.worker",
+				"profile_id", profileID,
+				"platform", ch.Account.Platform,
+				"account_id", ch.Account.ID)
 		case ChangeUpdated:
 			updated++
 			w.publishAccountEvent(ctx, EventTypeUpdated, ch.Account, "")
 		case ChangeDisconnected:
 			removed++
 			w.publishAccountEvent(ctx, EventTypeDisconnected, ch.Account, "")
-			log.Printf("zernio.account.disconnected zernio.profile_id=%s zernio.platform=%s zernio.account_id=%s",
-				profileID, ch.Account.Platform, ch.Account.ID)
+			slog.InfoContext(ctx, "account disconnected",
+				logging.AttrComponent, "zernio.worker",
+				"profile_id", profileID,
+				"platform", ch.Account.Platform,
+				"account_id", ch.Account.ID)
 		case ChangeRevived:
 			added++
 			w.publishAccountEvent(ctx, EventTypeRevived, ch.Account, "")
@@ -355,8 +380,13 @@ func (w *Worker) tick(ctx context.Context) error {
 
 	w.recordSyncStatus(ctx, nil)
 	w.publishSyncEvent(ctx, EventTypeSyncOK, fmt.Sprintf("upserts=%d soft_deletes=%d", len(plan.Upserts), len(plan.SoftDeleteIDs)))
-	log.Printf("zernio.sync ok zernio.profile_id=%s zernio.sync_tick_ms=%d zernio.accounts_added=%d zernio.accounts_updated=%d zernio.accounts_removed=%d",
-		profileID, time.Since(tickStart).Milliseconds(), added, updated, removed)
+	slog.InfoContext(ctx, "sync ok",
+		logging.AttrComponent, "zernio.worker",
+		"profile_id", profileID,
+		"sync_tick_ms", time.Since(tickStart).Milliseconds(),
+		"accounts_added", added,
+		"accounts_updated", updated,
+		"accounts_removed", removed)
 	return nil
 }
 
@@ -367,7 +397,9 @@ func (w *Worker) handleRateLimit() {
 		delay = rateLimitBackoffCap
 	}
 	w.rateLimitUntil = time.Now().Add(delay)
-	log.Printf("zernio: rate-limited; backing off %s", delay)
+	slog.Warn("rate-limited; backing off",
+		logging.AttrComponent, "zernio.worker",
+		"backoff", delay)
 }
 
 // recordSyncStatus writes the documented last_sync_at / last_sync_status
@@ -376,14 +408,20 @@ func (w *Worker) handleRateLimit() {
 func (w *Worker) recordSyncStatus(ctx context.Context, syncErr error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	if err := w.settings.Set(ctx, SettingLastSyncAt, now); err != nil {
-		log.Printf("zernio: write %s: %v", SettingLastSyncAt, err)
+		slog.WarnContext(ctx, "write setting failed",
+			logging.AttrComponent, "zernio.worker",
+			"setting", SettingLastSyncAt,
+			logging.AttrError, err)
 	}
 	status := SyncStatusOK
 	if syncErr != nil {
 		status = syncErrorPrefix + truncate(syncErr.Error(), 200)
 	}
 	if err := w.settings.Set(ctx, SettingLastSyncStatus, status); err != nil {
-		log.Printf("zernio: write %s: %v", SettingLastSyncStatus, err)
+		slog.WarnContext(ctx, "write setting failed",
+			logging.AttrComponent, "zernio.worker",
+			"setting", SettingLastSyncStatus,
+			logging.AttrError, err)
 	}
 }
 
@@ -392,22 +430,32 @@ func (w *Worker) recordSyncStatus(ctx context.Context, syncErr error) {
 func (w *Worker) refreshProfileMeta(ctx context.Context, profileID string) {
 	profile, err := w.integ.Client.GetProfile(ctx, profileID)
 	if err != nil {
-		log.Printf("zernio: refresh profile meta: %v", err)
+		slog.WarnContext(ctx, "refresh profile meta failed",
+			logging.AttrComponent, "zernio.worker",
+			logging.AttrError, err)
 		return
 	}
 	raw := profile.Raw
 	if len(raw) == 0 {
 		var mErr error
 		if raw, mErr = json.Marshal(profile); mErr != nil {
-			log.Printf("zernio: marshal profile meta: %v", mErr)
+			slog.WarnContext(ctx, "marshal profile meta failed",
+				logging.AttrComponent, "zernio.worker",
+				logging.AttrError, mErr)
 			return
 		}
 	}
 	if err := w.settings.Set(ctx, SettingProfileMeta, string(raw)); err != nil {
-		log.Printf("zernio: write %s: %v", SettingProfileMeta, err)
+		slog.WarnContext(ctx, "write setting failed",
+			logging.AttrComponent, "zernio.worker",
+			"setting", SettingProfileMeta,
+			logging.AttrError, err)
 	}
 	if err := w.settings.Set(ctx, SettingProfileName, profile.Name); err != nil {
-		log.Printf("zernio: write %s: %v", SettingProfileName, err)
+		slog.WarnContext(ctx, "write setting failed",
+			logging.AttrComponent, "zernio.worker",
+			"setting", SettingProfileName,
+			logging.AttrError, err)
 	}
 }
 
@@ -450,7 +498,10 @@ func (w *Worker) publishAccountEvent(ctx context.Context, eventType string, acco
 		Type:    eventType,
 		Payload: payload,
 	}); err != nil {
-		log.Printf("zernio: publish event %s: %v", eventType, err)
+		slog.WarnContext(ctx, "publish event failed",
+			logging.AttrComponent, "zernio.worker",
+			"event_type", eventType,
+			logging.AttrError, err)
 	}
 }
 
@@ -461,7 +512,10 @@ func (w *Worker) publishSyncEvent(ctx context.Context, eventType, summary string
 		Type:    eventType,
 		Payload: map[string]any{"summary": summary},
 	}); err != nil {
-		log.Printf("zernio: publish event %s: %v", eventType, err)
+		slog.WarnContext(ctx, "publish event failed",
+			logging.AttrComponent, "zernio.worker",
+			"event_type", eventType,
+			logging.AttrError, err)
 	}
 }
 

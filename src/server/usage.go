@@ -1,12 +1,13 @@
 package server
 
 import (
-	"log"
+	"log/slog"
 	"sync"
 
 	"github.com/uptrace/bun"
 
 	"github.com/ogen-app/ogen/src/config"
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/usage"
 )
@@ -54,7 +55,8 @@ func initUsage(cfg *config.Config, db, analyticsDB *bun.DB) usageDeps {
 	}
 
 	if analyticsDB == nil {
-		log.Println("usage analytics disabled (ANALYTICS_DSN empty)")
+		slog.Warn("usage analytics disabled (ANALYTICS_DSN empty)",
+			logging.AttrComponent, "usage")
 		return deps
 	}
 
@@ -63,6 +65,7 @@ func initUsage(cfg *config.Config, db, analyticsDB *bun.DB) usageDeps {
 	deps.recorder = usage.NewRecorder(deps.events, metrics, usage.Config{})
 	deps.checker = usage.NewChecker(deps.limits, deps.events, deps.defaults, metrics, 0)
 
-	log.Println("usage analytics enabled")
+	slog.Info("usage analytics enabled",
+		logging.AttrComponent, "usage")
 	return deps
 }

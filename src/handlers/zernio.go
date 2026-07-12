@@ -3,7 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"errors"
-	"log"
+	"log/slog"
 	"math"
 	"net/http"
 	"net/url"
@@ -12,6 +12,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/tenantctx"
@@ -305,8 +306,7 @@ func (h *ZernioHandler) CreateConnectLink(c *fiber.Ctx) error {
 
 	// Log redacted URL only — the query string contains a short-lived
 	// token that must not appear in log lines.
-	log.Printf("zernio: connect link issued (platform=%s profile=%s url=%s)",
-		req.Platform, profileID, redactConnectURL(connectURL))
+	slog.InfoContext(c.Context(), "connect link issued", logging.AttrComponent, "zernio", "platform", req.Platform, "profile", profileID, "url", redactConnectURL(connectURL))
 
 	return c.JSON(connectLinkResponse{
 		Platform:   req.Platform,

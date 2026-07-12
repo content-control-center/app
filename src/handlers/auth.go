@@ -7,6 +7,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/tenantctx"
 )
@@ -40,6 +41,9 @@ func RequireAuth(sessionRepo repository.SessionRepository, cookieName string) fi
 		// through (*RequestCtx).Value, so the same key reads back as a
 		// context value.
 		c.Locals(tenantctx.Key, session.TenantID)
+		// Carry the user id the same way (CON-107) so the slog ContextHandler
+		// attaches user_id to every log line made with c.Context().
+		c.Locals(logging.UserIDKey, session.UserID)
 		return c.Next()
 	}
 }

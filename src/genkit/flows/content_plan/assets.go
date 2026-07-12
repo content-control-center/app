@@ -3,13 +3,14 @@ package content_plan
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 
 	"github.com/firebase/genkit/go/ai"
 	"github.com/pgvector/pgvector-go"
 
 	"github.com/ogen-app/ogen/src/genkit/embedopts"
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 )
 
@@ -55,7 +56,7 @@ func resolveAssets(ctx context.Context, campaign *models.Campaign, cfg ContentPl
 
 		ranked, w, err := rankAndPackChunks(ctx, campaign, candidateSet, cfg, repos)
 		if err != nil {
-			log.Printf("content_plan: chunk ranking failed (%v) — falling back to creation order", err)
+			slog.WarnContext(ctx, "chunk ranking failed, falling back to creation order", logging.AttrComponent, "genkit.content_plan", logging.AttrError, err)
 			warnings = append(warnings, "chunk ranking unavailable; using creation order for asset selection")
 		} else {
 			warnings = append(warnings, w...)
@@ -167,7 +168,7 @@ func rankAndPackChunks(
 	if err != nil {
 		return nil, nil, fmt.Errorf("search similar chunks: %w", err)
 	}
-	log.Printf("content_plan: pgvector search returned %d chunk(s) at similarity >= %.2f", len(ranked), minAssetSimilarity)
+	slog.InfoContext(ctx, "pgvector search returned chunks", logging.AttrComponent, "genkit.content_plan", "chunks", len(ranked), "min_similarity", minAssetSimilarity)
 
 	// Greedy packing: accumulate chunks (closest-first) until the context
 	// budget is exhausted.

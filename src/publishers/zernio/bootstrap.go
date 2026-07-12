@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
 
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
@@ -114,7 +115,10 @@ func (b *Bootstrapper) Run(ctx context.Context) error {
 	}
 
 	b.integ.SetState(StateOK)
-	log.Printf("zernio: bootstrap ok — profile=%s name=%q", profile.ID, profile.Name)
+	slog.InfoContext(ctx, "bootstrap ok",
+		logging.AttrComponent, "zernio.bootstrap",
+		"profile_id", profile.ID,
+		"profile_name", profile.Name)
 	return nil
 }
 
@@ -146,7 +150,11 @@ func (b *Bootstrapper) runWithBackoff(ctx context.Context) (*Profile, error) {
 				return nil, err
 			}
 		}
-		log.Printf("zernio: bootstrap attempt %d/%d failed: %v", attempt+1, len(delays), err)
+		slog.WarnContext(ctx, "bootstrap attempt failed",
+			logging.AttrComponent, "zernio.bootstrap",
+			"attempt", attempt+1,
+			"max_attempts", len(delays),
+			logging.AttrError, err)
 	}
 	return nil, lastErr
 }
@@ -169,7 +177,9 @@ func (b *Bootstrapper) tick(ctx context.Context) (*Profile, error) {
 		if delErr := b.store.Delete(ctx, SettingProfileID); delErr != nil {
 			return nil, fmt.Errorf("clear stale profile_id: %w", delErr)
 		}
-		log.Printf("zernio: stored profile_id=%s no longer exists; will recreate", storedID)
+		slog.WarnContext(ctx, "stored profile_id no longer exists; will recreate",
+			logging.AttrComponent, "zernio.bootstrap",
+			"profile_id", storedID)
 	}
 
 	name := b.profileName(ctx)
@@ -193,8 +203,10 @@ func (b *Bootstrapper) tick(ctx context.Context) (*Profile, error) {
 	if profiles, listErr := b.integ.Client.ListProfiles(ctx); listErr == nil {
 		matches := matchesByName(profiles, name)
 		if len(matches) > 1 {
-			log.Printf("zernio: WARN %d profiles named %q exist on Zernio; adopting oldest. Manually clean up duplicates.",
-				len(matches), name)
+			slog.WarnContext(ctx, "duplicate profiles on zernio; adopting oldest, manual cleanup needed",
+				logging.AttrComponent, "zernio.bootstrap",
+				"match_count", len(matches),
+				"profile_name", name)
 		}
 		if oldest := pickOldestByName(profiles, name); oldest != nil {
 			return oldest, nil

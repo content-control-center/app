@@ -8,13 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/firebase/genkit/go/core"
 	"github.com/firebase/genkit/go/genkit"
 
 	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/post_actions/logs"
 	"github.com/ogen-app/ogen/src/repository"
@@ -122,7 +123,7 @@ func runPostQuality(
 	onEvent OnEventFunc,
 ) (out *PostQualityResponse, retErr error) {
 	start := time.Now()
-	log.Printf("post_quality[%s]: starting", req.PostID)
+	slog.InfoContext(ctx, "starting", logging.AttrComponent, "genkit.post_quality", "post_id", req.PostID)
 
 	// Captured once the post is loaded, so the finalisation event is scoped
 	// to the post owner. Empty before validateInput → very-early failures
@@ -165,7 +166,7 @@ func runPostQuality(
 	// score changed.
 	hash := inputHash(prompts, cfg.ModelID, cfg.Weights.For(post.PlatformPostType))
 	if cached, cerr := repos.Evaluations.GetByPostID(ctx, post.ID); cerr == nil && cached != nil && cached.InputHash == hash {
-		log.Printf("post_quality[%s]: inputs unchanged — returning cached evaluation", req.PostID)
+		slog.InfoContext(ctx, "inputs unchanged, returning cached evaluation", logging.AttrComponent, "genkit.post_quality", "post_id", req.PostID)
 		resp := &PostQualityResponse{
 			PostID:      post.ID,
 			GeneratedAt: time.Now().UTC(),
@@ -205,8 +206,7 @@ func runPostQuality(
 	}
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "persist", Status: "done"})
 
-	log.Printf("post_quality[%s]: done in %s (overall=%.1f%%, type=%s)",
-		req.PostID, time.Since(start).Round(time.Millisecond), overall, post.PlatformPostType)
+	slog.InfoContext(ctx, "done", logging.AttrComponent, "genkit.post_quality", "post_id", req.PostID, "duration_ms", time.Since(start).Milliseconds(), "overall_pct", overall, "type", post.PlatformPostType)
 
 	resp := &PostQualityResponse{
 		PostID:      post.ID,
@@ -281,7 +281,7 @@ func appendQualityLog(ctx context.Context, repos PostQualityRepos, postID string
 	}
 	logID, err := models.NewID()
 	if err != nil {
-		log.Printf("post_quality[%s]: cannot mint log id: %v", postID, err)
+		slog.ErrorContext(ctx, "cannot mint log id", logging.AttrComponent, "genkit.post_quality", "post_id", postID, logging.AttrError, err)
 		return
 	}
 	payload, _ := json.Marshal(map[string]any{
@@ -300,7 +300,7 @@ func appendQualityLog(ctx context.Context, repos PostQualityRepos, postID string
 		Summary:   fmt.Sprintf("quality assessed: %.0f%%", eval.OverallPct),
 		Payload:   logs.SanitizeAndCap(string(payload)),
 	}); err != nil {
-		log.Printf("post_quality[%s]: logs append failed: %v", postID, err)
+		slog.ErrorContext(ctx, "logs append failed", logging.AttrComponent, "genkit.post_quality", "post_id", postID, logging.AttrError, err)
 	}
 }
 
@@ -318,7 +318,7 @@ func publishAssessmentFinalised(
 	}
 	id, idErr := models.NewID()
 	if idErr != nil {
-		log.Printf("post_quality: cannot mint event id: %v", idErr)
+		slog.Error("cannot mint event id", logging.AttrComponent, "genkit.post_quality", logging.AttrError, idErr)
 		return
 	}
 	ev := eventhub.Event{
@@ -338,6 +338,6 @@ func publishAssessmentFinalised(
 		ev.Payload = map[string]any{"postId": postID, "overallPct": overall}
 	}
 	if pubErr := hub.Publish(context.Background(), ev); pubErr != nil {
-		log.Printf("post_quality[%s]: hub publish failed: %v", postID, pubErr)
+		slog.Error("hub publish failed", logging.AttrComponent, "genkit.post_quality", "post_id", postID, logging.AttrError, pubErr)
 	}
 }

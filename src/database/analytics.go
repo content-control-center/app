@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 	"github.com/uptrace/bun/extra/bundebug"
 	"github.com/uptrace/bun/migrate"
+
+	"github.com/ogen-app/ogen/src/logging"
 )
 
 //go:embed migrations_analytics/*.sql
@@ -86,10 +88,10 @@ func MigrateAnalytics(ctx context.Context, db *bun.DB) error {
 	}
 
 	if group.IsZero() {
-		log.Println("analytics migrations: no new migrations to apply")
+		slog.InfoContext(ctx, "no new migrations to apply", logging.AttrComponent, "db.analytics")
 		return nil
 	}
 
-	log.Printf("analytics migrations: applied migration group %s", group)
+	slog.InfoContext(ctx, "applied migration group", logging.AttrComponent, "db.analytics", "group", group)
 	return nil
 }

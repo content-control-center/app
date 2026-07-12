@@ -4,7 +4,7 @@ import (
 	"context"
 	"embed"
 	"fmt"
-	"log"
+	"log/slog"
 	"text/template"
 	"time"
 
@@ -13,6 +13,7 @@ import (
 	"github.com/firebase/genkit/go/genkit"
 
 	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/usage"
@@ -134,7 +135,7 @@ func publishContentPlanFinalised(
 	}
 	id, idErr := models.NewID()
 	if idErr != nil {
-		log.Printf("content_plan: cannot mint event id: %v", idErr)
+		slog.Error("cannot mint event id", logging.AttrComponent, "genkit.content_plan", logging.AttrError, idErr)
 		return
 	}
 	ev := eventhub.Event{
@@ -163,7 +164,7 @@ func publishContentPlanFinalised(
 		}
 	}
 	if pubErr := hub.Publish(context.Background(), ev); pubErr != nil {
-		log.Printf("content_plan[%s]: hub publish failed: %v", campaignID, pubErr)
+		slog.Error("hub publish failed", logging.AttrComponent, "genkit.content_plan", "campaign_id", campaignID, logging.AttrError, pubErr)
 	}
 }
 
@@ -177,7 +178,7 @@ func runContentPlan(
 	onEvent OnEventFunc,
 ) (out *ContentPlanResponse, retErr error) {
 	start := time.Now()
-	log.Printf("content_plan[%s]: starting", req.CampaignID)
+	slog.InfoContext(ctx, "starting", logging.AttrComponent, "genkit.content_plan", "campaign_id", req.CampaignID)
 
 	// Enforcement gate (CON-86 FR9): block before any provider call when the
 	// tenant is already over a cap in enforce mode. Nil checker = no gate.
@@ -199,41 +200,41 @@ func runContentPlan(
 	}()
 
 	// ── Step 1: validateInput ─────────────────────────────────────────────────
-	log.Printf("content_plan[%s]: step 1/6 validateInput", req.CampaignID)
+	slog.InfoContext(ctx, "step 1/6 validateInput", logging.AttrComponent, "genkit.content_plan", "campaign_id", req.CampaignID)
 	campaign, err := validateInput(ctx, req.CampaignID, repos.Campaigns, repos.Assets)
 	if err != nil {
-		log.Printf("content_plan[%s]: validateInput failed after %s: %v", req.CampaignID, time.Since(start).Round(time.Millisecond), err)
+		slog.ErrorContext(ctx, "validateInput failed", logging.AttrComponent, "genkit.content_plan", "campaign_id", req.CampaignID, "duration_ms", time.Since(start).Milliseconds(), logging.AttrError, err)
 		return nil, err
 	}
 	finaliseOwnerID = campaign.CreatedBy
-	log.Printf("content_plan[%s]: validateInput done (campaign=%q platforms=%d)", req.CampaignID, campaign.Name, len(campaign.TargetPlatforms))
+	slog.InfoContext(ctx, "validateInput done", logging.AttrComponent, "genkit.content_plan", "campaign_id", req.CampaignID, "campaign", campaign.Name, "platforms", len(campaign.TargetPlatforms))
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "validateInput", Status: "done"})
 
 	// ── Step 2: resolveAssets ─────────────────────────────────────────────────
-	log.Printf("content_plan[%s]: step 2/6 resolveAssets (useAssets=%v)", req.CampaignID, campaign.UseAssets)
+	slog.InfoContext(ctx, "step 2/6 resolveAssets", logging.AttrComponent, "genkit.content_plan", "campaign_id", req.CampaignID, "use_assets", campaign.UseAssets)
 	assets, assetWarnings, err := resolveAssets(ctx, campaign, cfg, repos)
 	if err != nil {
-		log.Printf("content_plan[%s]: resolveAssets failed after %s: %v", req.CampaignID, time.Since(start).Round(time.Millisecond), err)
+		slog.ErrorContext(ctx, "resolveAssets failed", logging.AttrComponent, "genkit.content_plan", "campaign_id", req.CampaignID, "duration_ms", time.Since(start).Milliseconds(), logging.AttrError, err)
 		return nil, err
 	}
-	log.Printf("content_plan[%s]: resolveAssets done (%d assets, %d warnings)", req.CampaignID, len(assets), len(assetWarnings))
+	slog.InfoContext(ctx, "resolveAssets done", logging.AttrComponent, "genkit.content_plan", "campaign_id", req.CampaignID, "assets", len(assets), "warnings", len(assetWarnings))
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "resolveAssets", Status: "done"})
 	warnings := assetWarnings
 
 	// ── Step 3: resolvePlatforms ──────────────────────────────────────────────
-	log.Printf("content_plan[%s]: step 3/6 resolvePlatforms", req.CampaignID)
+	slog.InfoContext(ctx, "step 3/6 resolvePlatforms", logging.AttrComponent, "genkit.content_plan", "campaign_id", req.CampaignID)
 	platforms, err := resolvePlatforms(ctx, campaign.TargetPlatforms, repos.Platforms)
 	if err != nil {
-		log.Printf("content_plan[%s]: resolvePlatforms failed after %s: %v", req.CampaignID, time.Since(start).Round(time.Millisecond), err)
+		slog.ErrorContext(ctx, "resolvePlatforms failed", logging.AttrComponent, "genkit.content_plan", "campaign_id", req.CampaignID, "duration_ms", time.Since(start).Milliseconds(), logging.AttrError, err)
 		return nil, err
 	}
 	if len(platforms) == 0 {
 		return nil, &ValidationError{Msg: "none of the campaign's target platforms could be resolved — check that platform IDs are valid"}
 	}
 	if len(platforms) < len(campaign.TargetPlatforms) {
-		log.Printf("content_plan[%s]: WARNING resolvePlatforms resolved %d/%d platforms — some IDs may be stale", req.CampaignID, len(platforms), len(campaign.TargetPlatforms))
+		slog.WarnContext(ctx, "resolvePlatforms resolved fewer platforms than targeted, some IDs may be stale", logging.AttrComponent, "genkit.content_plan", "campaign_id", req.CampaignID, "resolved", len(platforms), "targeted", len(campaign.TargetPlatforms))
 	}
-	log.Printf("content_plan[%s]: resolvePlatforms done (%d platforms)", req.CampaignID, len(platforms))
+	slog.InfoContext(ctx, "resolvePlatforms done", logging.AttrComponent, "genkit.content_plan", "campaign_id", req.CampaignID, "platforms", len(platforms))
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "resolvePlatforms", Status: "done"})
 
 	// ── Step 4: generatePosts (now: parse → validate → persist → emit) ───────
@@ -243,13 +244,13 @@ func runContentPlan(
 	// "validateOutput" / "persistDraftPosts" SSE step events still fire as
 	// no-ops below for client compatibility; the substantive work all
 	// happens inside generatePosts.
-	log.Printf("content_plan[%s]: step 4/6 generatePosts (model=%s estimatedCount=%d)", req.CampaignID, cfg.ModelID, campaign.EstimatedPostCount)
+	slog.InfoContext(ctx, "step 4/6 generatePosts", logging.AttrComponent, "genkit.content_plan", "campaign_id", req.CampaignID, "model", cfg.ModelID, "estimated_count", campaign.EstimatedPostCount)
 	posts, genWarnings, err := generatePosts(ctx, g, campaign, platforms, assets, cfg, repos, onEvent)
 	if err != nil {
-		log.Printf("content_plan[%s]: generatePosts failed after %s: %v (persisted=%d before failure)", req.CampaignID, time.Since(start).Round(time.Millisecond), err, len(posts))
+		slog.ErrorContext(ctx, "generatePosts failed", logging.AttrComponent, "genkit.content_plan", "campaign_id", req.CampaignID, "duration_ms", time.Since(start).Milliseconds(), "persisted", len(posts), logging.AttrError, err)
 		return nil, err
 	}
-	log.Printf("content_plan[%s]: generatePosts done (%d posts persisted, %d warnings)", req.CampaignID, len(posts), len(genWarnings))
+	slog.InfoContext(ctx, "generatePosts done", logging.AttrComponent, "genkit.content_plan", "campaign_id", req.CampaignID, "posts", len(posts), "warnings", len(genWarnings))
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "generatePosts", Status: "done"})
 	warnings = append(warnings, genWarnings...)
 
@@ -259,7 +260,7 @@ func runContentPlan(
 	// ── Step 6: persistDraftPosts (no-op — persistence is inline) ─────────────
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "persistDraftPosts", Status: "done"})
 
-	log.Printf("content_plan[%s]: done in %s (%d posts, %d total warnings)", req.CampaignID, time.Since(start).Round(time.Millisecond), len(posts), len(warnings))
+	slog.InfoContext(ctx, "done", logging.AttrComponent, "genkit.content_plan", "campaign_id", req.CampaignID, "duration_ms", time.Since(start).Milliseconds(), "posts", len(posts), "warnings", len(warnings))
 	return &ContentPlanResponse{
 		CampaignID:  campaign.ID,
 		GeneratedAt: time.Now().UTC(),

@@ -2,11 +2,12 @@ package eventhub
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
@@ -105,8 +106,7 @@ func (h *inProcHub) disconnect(ids []uint64, reason string) {
 		delete(h.subs, id)
 		close(sub.ch)
 		h.active.Add(-1)
-		log.Printf("eventhub: subscriber disconnected (id=%d user=%s reason=%s topics=%v)",
-			sub.id, sub.userID, reason, sub.topics)
+		slog.Info("subscriber disconnected", logging.AttrComponent, "eventhub", "id", sub.id, "user", sub.userID, "reason", reason, "topics", sub.topics)
 	}
 }
 
@@ -147,8 +147,7 @@ func (h *inProcHub) Subscribe(_ context.Context, opts SubscribeOpts) (<-chan Eve
 	h.active.Add(1)
 	h.mu.Unlock()
 
-	log.Printf("eventhub: subscriber connected (id=%d user=%s topics=%v buffer=%d)",
-		sub.id, sub.userID, sub.topics, bufferSize)
+	slog.Info("subscriber connected", logging.AttrComponent, "eventhub", "id", sub.id, "user", sub.userID, "topics", sub.topics, "buffer", bufferSize)
 
 	unsubscribe := func() {
 		h.disconnect([]uint64{id}, "unsubscribed")
