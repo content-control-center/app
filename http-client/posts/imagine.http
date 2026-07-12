@@ -1,0 +1,133 @@
+@baseUrl = http://localhost:9001
+
+# Generate a branded image for a Post — CON-105 (Nano Banana).
+# POST /api/posts/:id/imagine creates a PENDING image Asset and enqueues async
+# generation (River image_generate job), then returns 202 with the pending
+# asset. Poll the asset until its status is "ready" (or "failed").
+#
+# All endpoints require authentication. Run "Login" from sessions/sessions.http
+# first — the HTTP client stores and replays the cookie automatically.
+#
+# Availability:
+#   - Returns 503 until a gemini_api_key is configured (secrets/secrets.http →
+#     set GEMINI_API_KEY). The key is picked up live, no restart.
+#   - v1 runs on the Gemini Developer API; EU-residency (Vertex) is CON-109.
+#
+# Prerequisites:
+#   - {{campaignId}} set (run campaigns/campaigns.http → createCampaign)
+#
+# Sizing (§7): the aspect ratio defaults from the post's platform + post type
+# (overridable via "aspectRatio"); resolution defaults to 1K. The worker
+# validates the resolved size against the selected model and fails the asset
+# (status "failed") if the ratio/resolution is unsupported — the POST itself
+# still returns 202.
+#
+# Reference images (§6): "brandRefAssetIds" (style, ordered first) and
+# "subjectAssetId" (content) are ids of IMAGE assets — e.g. a previously
+# generated image (capture {{imagineAssetId}} below) or a brand asset flagged
+# brand_style. Omit them for a prompt-only generation.
+
+###
+# ── Helper: a post to generate for ────────────────────────────────────────────
+###
+
+### Helper — create a draft post  [protected]
+# @name createImaginePost
+POST {{baseUrl}}/api/posts
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "rzgpTkARLH0L",
+  "platform_post_type": "image-post",
+  "title": "Post that needs a hero image",
+  "status": "draft",
+  "cta_type": "none"
+}
+
+> {% client.global.set("imaginePostId", response.body.id) %}
+
+###
+# ── Generate ──────────────────────────────────────────────────────────────────
+###
+
+### 1. Prompt-only generation (aspect ratio from the platform)  [protected]
+# → 202 { id, status: "pending", type: "IMG", ai_generated: true }
+# Instagram image-post resolves to 4:5 by default; resolution defaults to 1K.
+# @name imagine
+POST {{baseUrl}}/api/posts/{{imaginePostId}}/imagine
+Content-Type: application/json
+
+{
+  "subjectDesc": "a ceramic coffee mug on a light wooden table",
+  "instruction": "warm morning light, minimalist, lots of negative space"
+}
+
+> {% client.global.set("imagineAssetId", response.body.id) %}
+
+### 2. Poll the generated asset until ready  [protected]
+# Repeat until status is "ready" (then `file.thumbnail_url` / the stored image
+# is available) or "failed". Generation is async; premium can take many seconds.
+GET {{baseUrl}}/api/content-bank/assets/{{imagineAssetId}}
+
+### 3. Explicit size override + premium (Pro) tier  [protected]
+# 4K is Pro-only; the Pro model accepts it. Overrides the platform default.
+POST {{baseUrl}}/api/posts/{{imaginePostId}}/imagine
+Content-Type: application/json
+
+{
+  "subjectDesc": "a hero product shot of noise-cancelling headphones",
+  "instruction": "studio lighting on a seamless charcoal backdrop",
+  "aspectRatio": "16:9",
+  "resolution": "4K",
+  "premium": true
+}
+
+### 4. With brand-kit + subject references  [protected]
+# Brand refs supply the STYLE (ordered first, cacheable prefix); the subject
+# supplies the CONTENT. Here we reuse the image generated in step 1 as the
+# subject — swap in your own brand/subject image-asset ids.
+POST {{baseUrl}}/api/posts/{{imaginePostId}}/imagine
+Content-Type: application/json
+
+{
+  "subjectDesc": "the same mug, re-styled for the brand",
+  "instruction": "render the subject entirely in the brand's visual style",
+  "aspectRatio": "1:1",
+  "brandRefAssetIds": ["{{imagineAssetId}}"],
+  "subjectAssetId": "{{imagineAssetId}}"
+}
+
+### 5. Draft-size override that the model rejects (async "failed")  [protected]
+# 4K on the default (flash) tier is Pro-only. The POST returns 202, then the
+# worker rejects the size and the asset lands status "failed" — poll it (as in
+# step 2) to observe the terminal state.
+POST {{baseUrl}}/api/posts/{{imaginePostId}}/imagine
+Content-Type: application/json
+
+{
+  "subjectDesc": "a wide banner illustration",
+  "aspectRatio": "16:9",
+  "resolution": "4K"
+}
+
+###
+# ── Error cases ───────────────────────────────────────────────────────────────
+###
+
+### 6. Non-existent post (expects 404)  [protected]
+POST {{baseUrl}}/api/posts/nonexistent/imagine
+Content-Type: application/json
+
+{
+  "subjectDesc": "anything"
+}
+
+### 7. Unauthenticated (expects 401)
+# Run without logging in (or after logout).
+POST {{baseUrl}}/api/posts/{{imaginePostId}}/imagine
+Content-Type: application/json
+
+{
+  "subjectDesc": "anything"
+}
