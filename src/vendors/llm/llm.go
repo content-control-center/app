@@ -59,11 +59,19 @@ func init() {
 		Family:    vendors.FamilyModel,
 		SecretKey: "gemini_api_key", // must match secrets.NameGeminiAPIKey (CON-104)
 		Metered:   true,
-		Meter:     embedMeter{},
+		Meter:     geminiMeter{},
 		Prices: vendors.PriceTable{
 			Version: priceVersion,
 			Models: map[string]vendors.Rates{
 				"gemini-embedding-2": {vendors.KindEmbedInput: 150_000},
+
+				// Image models (Nano Banana, CON-105). Rates are TBD pending the
+				// §9 credit-unit work and confirmed provider pricing; left
+				// count-only (usage tokens are still recorded, cost_micros=0) so
+				// we never snapshot a fabricated price. Bump priceVersion when
+				// real rates land.
+				"gemini-3.1-flash-image": {}, // Nano Banana 2 (default)
+				"gemini-3-pro-image":     {}, // Nano Banana Pro (premium)
 			},
 		},
 	})
@@ -102,14 +110,37 @@ type EmbedUsage struct {
 	Tokens int64
 }
 
-type embedMeter struct{}
+// geminiMeter handles both call shapes that reach the shared "gemini" vendor
+// descriptor. Embedding call sites hand it an EmbedUsage; Nano Banana image
+// generation (CON-105) hands it a genkit *ai.ModelResponse. The two are told
+// apart by response type and tagged with distinct operation_types ("embed" vs
+// "generate_image") for §9 accounting. Text generation never reaches here — it
+// runs on the anthropic descriptor's genkitGenerateMeter.
+type geminiMeter struct{}
 
-func (embedMeter) Extract(resp any) (string, vendors.Usage, bool) {
-	e, ok := resp.(EmbedUsage)
-	if !ok || e.Tokens <= 0 {
+func (geminiMeter) Extract(resp any) (string, vendors.Usage, bool) {
+	switch v := resp.(type) {
+	case EmbedUsage:
+		if v.Tokens <= 0 {
+			return "", nil, false
+		}
+		return "embed", vendors.Usage{vendors.KindEmbedInput: v.Tokens}, true
+	case *ai.ModelResponse:
+		// Reference-image + prompt input tokens count on input (§9); the
+		// generated image is billed as output tokens (larger sizes emit more).
+		if v == nil || v.Usage == nil {
+			return "", nil, false
+		}
+		u := vendors.Usage{}
+		addToken(u, vendors.KindInput, v.Usage.InputTokens)
+		addToken(u, vendors.KindOutput, v.Usage.OutputTokens)
+		if len(u) == 0 {
+			return "", nil, false
+		}
+		return "generate_image", u, true
+	default:
 		return "", nil, false
 	}
-	return "embed", vendors.Usage{vendors.KindEmbedInput: e.Tokens}, true
 }
 
 func addToken(u vendors.Usage, k vendors.Kind, n int) {
