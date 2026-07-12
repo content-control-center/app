@@ -71,6 +71,13 @@ func (h *PostsHandler) Imagine(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
+	// Reject a contentless request before any enqueue / paid generation: at
+	// least one signal must drive the image (a text instruction/subject, or a
+	// brand/subject reference image).
+	if strings.TrimSpace(req.Instruction) == "" && strings.TrimSpace(req.SubjectDesc) == "" &&
+		len(req.BrandRefAssetIDs) == 0 && strings.TrimSpace(req.SubjectAssetID) == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "provide an instruction, a subject description, or a reference image")
+	}
 
 	postID := c.Params("id")
 	post, err := h.repo.GetByID(c.Context(), postID)
