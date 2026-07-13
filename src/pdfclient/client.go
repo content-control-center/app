@@ -90,7 +90,14 @@ func New(cfg Config) (*Client, error) {
 	if cfg.Addr == "" {
 		return nil, nil
 	}
-	dialOpts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	// The correlation interceptors copy request_id/tenant_id from the call
+	// context into outgoing gRPC metadata so pdf-service's logs join the API's
+	// (CON-111).
+	dialOpts := []grpc.DialOption{
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithChainStreamInterceptor(correlationStreamInterceptor),
+		grpc.WithChainUnaryInterceptor(correlationUnaryInterceptor),
+	}
 	if cfg.MaxRecvBytes > 0 {
 		dialOpts = append(dialOpts, grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(cfg.MaxRecvBytes)))
 	}

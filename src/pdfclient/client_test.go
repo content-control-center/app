@@ -9,9 +9,12 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 
 	pdfv1 "github.com/ogen-app/ogen/gen/pdf/v1"
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/pdfclient"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // stubServer records the streamed request and returns a canned response.
@@ -19,6 +22,7 @@ type stubServer struct {
 	pdfv1.UnimplementedPdfServiceServer
 	gotOptions *pdfv1.ParseOptions
 	gotBytes   []byte
+	gotMD      metadata.MD // inbound gRPC metadata seen on the Parse stream
 	resp       *pdfv1.ParseResponse
 
 	gotRenderOpts  *pdfv1.RenderOptions
@@ -46,6 +50,7 @@ func (s *stubServer) Render(stream grpc.ClientStreamingServer[pdfv1.RenderReques
 }
 
 func (s *stubServer) Parse(stream grpc.ClientStreamingServer[pdfv1.ParseRequest, pdfv1.ParseResponse]) error {
+	s.gotMD, _ = metadata.FromIncomingContext(stream.Context())
 	for {
 		req, err := stream.Recv()
 		if err == io.EOF {
@@ -116,6 +121,65 @@ func TestParseStreamsBytesAndReturnsResult(t *testing.T) {
 	}
 	if !bytes.Equal(res.ThumbnailPNG, []byte{0x89, 'P', 'N', 'G'}) {
 		t.Fatalf("thumbnail mismatch: %v", res.ThumbnailPNG)
+	}
+}
+
+// mdValue returns the single metadata value for key, or "" if absent.
+func mdValue(md metadata.MD, key string) string {
+	if v := md.Get(key); len(v) > 0 {
+		return v[0]
+	}
+	return ""
+}
+
+// TestParsePropagatesCorrelationMetadata asserts the client interceptor copies
+// request_id/tenant_id from the call context into outgoing gRPC metadata under
+// the exact header keys pdf-service reads (CON-111).
+func TestParsePropagatesCorrelationMetadata(t *testing.T) {
+	stub := &stubServer{resp: &pdfv1.ParseResponse{PageCount: 1}}
+	addr := serveStub(t, stub)
+
+	client, err := pdfclient.New(pdfclient.Config{Addr: addr, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer client.Close()
+
+	ctx := logging.WithRequestID(context.Background(), "rid")
+	ctx = tenantctx.With(ctx, "ten")
+	if _, err := client.Parse(ctx, bytes.NewReader([]byte("%PDF-1.7")), pdfclient.Options{}); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	if got := mdValue(stub.gotMD, "x-request-id"); got != "rid" {
+		t.Fatalf("x-request-id = %q, want %q", got, "rid")
+	}
+	if got := mdValue(stub.gotMD, "x-tenant-id"); got != "ten" {
+		t.Fatalf("x-tenant-id = %q, want %q", got, "ten")
+	}
+}
+
+// TestParseWithoutCorrelationSendsNoHeaders asserts an id-less context sends no
+// correlation headers, so pdf-service falls back to generating its own id.
+func TestParseWithoutCorrelationSendsNoHeaders(t *testing.T) {
+	stub := &stubServer{resp: &pdfv1.ParseResponse{PageCount: 1}}
+	addr := serveStub(t, stub)
+
+	client, err := pdfclient.New(pdfclient.Config{Addr: addr, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer client.Close()
+
+	if _, err := client.Parse(context.Background(), bytes.NewReader([]byte("%PDF-1.7")), pdfclient.Options{}); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	if got := mdValue(stub.gotMD, "x-request-id"); got != "" {
+		t.Fatalf("x-request-id = %q, want none", got)
+	}
+	if got := mdValue(stub.gotMD, "x-tenant-id"); got != "" {
+		t.Fatalf("x-tenant-id = %q, want none", got)
 	}
 }
 
