@@ -89,6 +89,41 @@ func TestCampaignAssistantMessagesLimit(t *testing.T) {
 	}
 }
 
+// TestCampaignAssistantMessagesCreateBatch verifies both turns of a conversation
+// are written atomically by CreateBatch and are tenant-stamped from context.
+func TestCampaignAssistantMessagesCreateBatch(t *testing.T) {
+	db := openMigratedDB(t)
+	ctx := tenantCtx()
+	repo := repository.NewCampaignAssistantMessageRepository(db)
+
+	uID, err := models.NewID()
+	if err != nil {
+		t.Fatalf("mint id: %v", err)
+	}
+	mID, err := models.NewID()
+	if err != nil {
+		t.Fatalf("mint id: %v", err)
+	}
+	base := time.Now().UTC().Truncate(time.Second)
+	if err := repo.CreateBatch(ctx, []*models.CampaignAssistantMessage{
+		{ID: uID, CampaignID: "camp-batch", Role: "user", Content: "hi", CreatedAt: base},
+		{ID: mID, CampaignID: "camp-batch", Role: "model", Content: `{"action":"answered"}`, CreatedAt: base.Add(time.Second)},
+	}); err != nil {
+		t.Fatalf("create batch: %v", err)
+	}
+
+	msgs, err := repo.ListRecentByCampaignID(ctx, "camp-batch", 10)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("want 2 messages, got %d", len(msgs))
+	}
+	if msgs[0].Role != "user" || msgs[1].Role != "model" {
+		t.Fatalf("unexpected roles: %q, %q", msgs[0].Role, msgs[1].Role)
+	}
+}
+
 // TestCampaignAssistantMessagesTenantIsolation verifies the TenantScoped hooks
 // keep one tenant's conversation invisible to another, even on the same
 // campaign id.

@@ -12,6 +12,9 @@ import (
 // conversation history between the user and the Campaign Assistant (CON-112).
 type CampaignAssistantMessageRepository interface {
 	Create(ctx context.Context, msg *models.CampaignAssistantMessage) error
+	// CreateBatch inserts several messages atomically (all-or-nothing) within a
+	// single transaction, so a conversation turn never persists half-written.
+	CreateBatch(ctx context.Context, msgs []*models.CampaignAssistantMessage) error
 	ListRecentByCampaignID(ctx context.Context, campaignID string, limit int) ([]models.CampaignAssistantMessage, error)
 }
 
@@ -26,6 +29,16 @@ func NewCampaignAssistantMessageRepository(db *bun.DB) CampaignAssistantMessageR
 func (r *campaignAssistantMessageRepository) Create(ctx context.Context, msg *models.CampaignAssistantMessage) error {
 	_, err := r.db.NewInsert().Model(msg).Exec(ctx)
 	return err
+}
+
+func (r *campaignAssistantMessageRepository) CreateBatch(ctx context.Context, msgs []*models.CampaignAssistantMessage) error {
+	if len(msgs) == 0 {
+		return nil
+	}
+	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		_, err := tx.NewInsert().Model(&msgs).Exec(ctx)
+		return err
+	})
 }
 
 func (r *campaignAssistantMessageRepository) ListRecentByCampaignID(ctx context.Context, campaignID string, limit int) ([]models.CampaignAssistantMessage, error) {

@@ -235,8 +235,11 @@ func runCampaignAssistant(
 	}
 
 	// ── Persist conversation turn ────────────────────────────────────────────
+	// A history-write failure must not fail the turn: any tool side effects
+	// (posts persisted, brief applied) have already committed, so we log and
+	// still emit the completion events below rather than reporting an error.
 	if err := persistTurn(ctx, repos, req, &result); err != nil {
-		return nil, err
+		slog.ErrorContext(ctx, "persist conversation turn failed", logging.AttrComponent, "genkit.campaign_assistant", "campaign_id", req.CampaignID, logging.AttrError, err)
 	}
 
 	slog.InfoContext(ctx, "done", logging.AttrComponent, "genkit.campaign_assistant", "campaign_id", req.CampaignID, "duration_ms", time.Since(start).Milliseconds(), "action", result.Action)
@@ -262,18 +265,16 @@ func runCampaignAssistant(
 
 // persistTurn stores the user instruction verbatim and the model turn as a
 // compact JSON envelope (no bulky generated content) so history stays small.
+// Both messages are written in a single transaction so a turn never persists
+// half-written.
 func persistTurn(ctx context.Context, repos CampaignAssistantRepos, req CampaignAssistantRequest, result *CampaignAssistantResponse) error {
 	userMsgID, err := models.NewID()
 	if err != nil {
 		return err
 	}
-	if err := repos.Messages.Create(ctx, &models.CampaignAssistantMessage{
-		ID:         userMsgID,
-		CampaignID: req.CampaignID,
-		Role:       "user",
-		Content:    req.Instruction,
-	}); err != nil {
-		return fmt.Errorf("persist user message: %w", err)
+	modelMsgID, err := models.NewID()
+	if err != nil {
+		return err
 	}
 
 	postCount := 0
@@ -295,17 +296,12 @@ func persistTurn(ctx context.Context, repos CampaignAssistantRepos, req Campaign
 	if err != nil {
 		return fmt.Errorf("marshal model history: %w", err)
 	}
-	modelMsgID, err := models.NewID()
-	if err != nil {
-		return err
-	}
-	if err := repos.Messages.Create(ctx, &models.CampaignAssistantMessage{
-		ID:         modelMsgID,
-		CampaignID: req.CampaignID,
-		Role:       "model",
-		Content:    string(historyJSON),
+
+	if err := repos.Messages.CreateBatch(ctx, []*models.CampaignAssistantMessage{
+		{ID: userMsgID, CampaignID: req.CampaignID, Role: "user", Content: req.Instruction},
+		{ID: modelMsgID, CampaignID: req.CampaignID, Role: "model", Content: string(historyJSON)},
 	}); err != nil {
-		return fmt.Errorf("persist model message: %w", err)
+		return fmt.Errorf("persist conversation turn: %w", err)
 	}
 	return nil
 }
