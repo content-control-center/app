@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1261,8 +1262,13 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				resp, err := a.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(200))
+				// Must be a JSON array, not null (decoding null also yields an
+				// empty slice, so assert the raw body to guard the contract).
+				body, err := io.ReadAll(resp.Body)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(strings.TrimSpace(string(body))).To(Equal("[]"))
 				var msgs []models.CampaignAssistantMessage
-				Expect(json.NewDecoder(resp.Body).Decode(&msgs)).To(Succeed())
+				Expect(json.Unmarshal(body, &msgs)).To(Succeed())
 				Expect(msgs).To(BeEmpty())
 			})
 
