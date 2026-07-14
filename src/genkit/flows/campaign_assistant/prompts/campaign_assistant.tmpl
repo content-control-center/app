@@ -10,8 +10,9 @@ You can do three things:
 - runContentPlan: Call this when the user asks to generate, create, build, or regenerate a content plan (e.g. "generate a content plan", "make me some posts for this campaign"). It creates and saves the draft posts. Takes no arguments.
 - enrichBrief: Call this when the user asks to enrich, improve, refine, sharpen, or rewrite the brief (e.g. "enrich the brief", "improve the brief", "make the brief more B2B"). Pass the user's steering as the `instruction` argument when they give any. The enriched brief is saved to the campaign automatically — you do not need to ask for confirmation.
 - listCampaignPosts: Call this when you need to know what posts already exist in the campaign to answer a question. Takes no arguments.
+- getCampaignOverview: Call this for a quick overview or status of the campaign, or for how content is distributed — e.g. "give me an overview", "how is content spread across phases", "which phase has the least content", "how many posts per platform / status / content type". It returns the phases with per-phase post counts and the distribution by status, platform, and content type. Takes no arguments.
 
-Use a tool only when the user's request clearly matches it. For a general question you can answer from the campaign brief already shown below, answer directly without a tool.
+Use a tool only when the user's request clearly matches it. For a general question you can answer from the campaign brief and phases already shown below, answer directly without a tool. In particular, questions about the phases themselves (their names or purpose) can be answered from the context below without a tool; only call getCampaignOverview when you need the post counts / distribution.
 
 ## Response format
 After any tool calls, reply with a SINGLE JSON object and nothing else — no markdown fences, no prose before or after:
@@ -41,4 +42,7 @@ Description: {{.Description}}
 Target persona: {{.TargetPersona}}
 Key messages: {{.KeyMessages}}
 Tone guidelines: {{.ToneGuidelines}}
-{{end}}
+{{if .Phases}}
+## Phases (in order)
+{{range .Phases}}- {{.Name}}: {{.Purpose}}
+{{end}}{{end}}{{end}}

@@ -14,6 +14,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
 
+	"github.com/ogen-app/ogen/src/campaignoverview"
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
@@ -118,10 +119,13 @@ var _ = Describe("Campaign assistant flow", Ordered, func() {
 		})).To(Succeed())
 		enrichBriefCb := enrich_brief.NewEnrichBriefCallback()
 
+		overviewSvc := campaignoverview.New(campaignRepo, postRepo, platformRepo)
+
 		Expect(campaign_assistant.InitCampaignAssistant(g, campaign_assistant.CampaignAssistantFlowConfig{
 			Provider:    provider,
 			ContentPlan: contentPlanCb,
 			EnrichBrief: enrichBriefCb,
+			Overview:    overviewSvc,
 		}, campaign_assistant.CampaignAssistantRepos{
 			Messages:  messageRepo,
 			Campaigns: campaignRepo,
@@ -252,6 +256,23 @@ var _ = Describe("Campaign assistant flow", Ordered, func() {
 			}
 			Expect(sawUser).To(BeTrue())
 			Expect(sawModel).To(BeTrue())
+		})
+	})
+
+	Describe("campaign overview", func() {
+		It("answers an overview question grounded in the getCampaignOverview tool", func() {
+			resp, err := callback(ctx, campaign_assistant.CampaignAssistantRequest{
+				CampaignID:  campaignID,
+				Instruction: "Give me a quick overview of this campaign and how the content is distributed across its phases.",
+			}, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp).NotTo(BeNil())
+
+			Expect(resp.Action).To(Equal("answered"))
+			Expect(resp.Explanation).NotTo(BeEmpty())
+			// Read-only: no content plan or brief mutation.
+			Expect(resp.ContentPlan).To(BeNil())
+			Expect(resp.Brief).To(BeNil())
 		})
 	})
 })

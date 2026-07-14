@@ -6,6 +6,7 @@ import (
 
 	"github.com/firebase/genkit/go/genkit"
 
+	"github.com/ogen-app/ogen/src/campaignoverview"
 	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
@@ -29,6 +30,7 @@ func initCampaignAssistant(
 	repos campaign_assistant.CampaignAssistantRepos,
 	contentPlanFn func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error),
 	enrichBriefFn func(ctx context.Context, req enrich_brief.EnrichBriefRequest, onEvent enrich_brief.OnEventFunc) (*enrich_brief.EnrichBriefResponse, error),
+	overviewSvc *campaignoverview.Service,
 ) (func(ctx context.Context, req campaign_assistant.CampaignAssistantRequest, onEvent campaign_assistant.OnEventFunc) (*campaign_assistant.CampaignAssistantResponse, error), error) {
 	flowCfg := campaign_assistant.CampaignAssistantFlowConfig{
 		Provider:        provider,
@@ -39,6 +41,7 @@ func initCampaignAssistant(
 		Hub:             hub,
 		ContentPlan:     contentPlanFn,
 		EnrichBrief:     enrichBriefFn,
+		Overview:        overviewSvc,
 	}
 	if err := campaign_assistant.InitCampaignAssistant(g, flowCfg, repos); err != nil {
 		return nil, fmt.Errorf("init campaign assistant flow: %w", err)

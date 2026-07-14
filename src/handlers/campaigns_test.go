@@ -16,6 +16,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
 
+	"github.com/ogen-app/ogen/src/campaignoverview"
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
@@ -1301,6 +1302,162 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				Expect(msgs[0].Role).To(Equal("user"))
 				Expect(msgs[0].Content).To(Equal("generate a plan"))
 				Expect(msgs[1].Role).To(Equal("model"))
+			})
+		})
+	})
+
+	// ── Campaign overview (CON-113) ────────────────────────────────────────────
+
+	Describe("GET /api/campaigns/:id/overview", func() {
+		errorHandler := func(c *fiber.Ctx, err error) error {
+			code := fiber.StatusInternalServerError
+			if e, ok := err.(*fiber.Error); ok {
+				code = e.Code
+			}
+			return c.Status(code).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		// buildOverviewApp wires an app whose campaigns handler has the overview
+		// service set, and returns a post repository for seeding.
+		buildOverviewApp := func() (*fiber.App, repository.PostRepository) {
+			a := fiber.New(fiber.Config{ErrorHandler: errorHandler})
+			ctRepo := repository.NewCampaignTypeRepository(db)
+			cRepo := repository.NewCampaignRepository(db, repository.NewTagRepository(db), repository.NewPlatformRepository(db), ctRepo)
+			pRepo := repository.NewPlatformRepository(db)
+			postRepo := repository.NewPostRepository(db)
+			sRepo := repository.NewSessionRepository(db)
+			setRepo := repository.NewSettingRepository(db)
+			uRepo := repository.NewUserRepository(db)
+			a2 := handlers.RequireAuth(sRepo, testCookieName)
+			handlers.NewUsersHandler(uRepo, setRepo, a2).Register(a)
+			handlers.NewSessionsHandler(uRepo, sRepo, testCookieName, false).Register(a)
+			ch := handlers.NewCampaignsHandler(cRepo, ctRepo, a2, nil, nil, nil, nil, nil)
+			ch.SetOverviewService(campaignoverview.New(cRepo, postRepo, pRepo))
+			ch.Register(a)
+			return a, postRepo
+		}
+
+		seedCookie := func(a *fiber.App, email string) *http.Cookie {
+			seedTenantUser(db, "Overview User", email, "overview-password")
+			loginBody, _ := json.Marshal(fiber.Map{"email": email, "password": "overview-password"})
+			loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
+			loginReq.Header.Set("Content-Type", "application/json")
+			loginResp, err := a.Test(loginReq)
+			Expect(err).NotTo(HaveOccurred())
+			var ck *http.Cookie
+			for _, c := range loginResp.Cookies() {
+				ck = c
+			}
+			return ck
+		}
+
+		createCampaignOn := func(a *fiber.App, ck *http.Cookie, name, typeID string) models.Campaign {
+			body, _ := json.Marshal(fiber.Map{"name": name, "campaign_type_id": typeID})
+			req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(ck)
+			resp, err := a.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+			var c models.Campaign
+			Expect(json.NewDecoder(resp.Body).Decode(&c)).To(Succeed())
+			return c
+		}
+
+		Context("when not authenticated", func() {
+			It("returns 401", func() {
+				req := httptest.NewRequest("GET", "/api/campaigns/someid/overview", nil)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+		})
+
+		Context("when authenticated", func() {
+			It("returns 503 when the overview service is unset", func() {
+				// The default app never calls SetOverviewService.
+				c := createCampaign("No Overview", "Uk")
+				req := httptest.NewRequest("GET", "/api/campaigns/"+c.ID+"/overview", nil)
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(503))
+			})
+
+			It("returns 404 for an unknown campaign", func() {
+				a, _ := buildOverviewApp()
+				ck := seedCookie(a, "ov404@example.com")
+				req := httptest.NewRequest("GET", "/api/campaigns/nonexistent/overview", nil)
+				req.AddCookie(ck)
+				resp, err := a.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(404))
+			})
+
+			It("returns the brief, phases with per-phase counts, and distribution", func() {
+				a, postRepo := buildOverviewApp()
+				ck := seedCookie(a, "ovok@example.com")
+				camp := createCampaignOn(a, ck, "Overview Campaign", "Uk")
+
+				// Resolve a real phase id from the campaign's (hydrated) type.
+				tctx := tenantctx.With(context.Background(), models.DefaultTenantID)
+				full, err := repository.NewCampaignRepository(db, repository.NewTagRepository(db), repository.NewPlatformRepository(db), repository.NewCampaignTypeRepository(db)).GetByID(tctx, camp.ID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(full.CampaignType).NotTo(BeNil())
+				Expect(full.CampaignType.Phases).NotTo(BeEmpty())
+				phaseID := full.CampaignType.Phases[0].ID
+
+				seedPost := func(id, phase, ptype string, status models.PostStatus) {
+					var ph *string
+					if phase != "" {
+						ph = &phase
+					}
+					Expect(postRepo.Create(tctx, &models.Post{
+						ID:                  id,
+						CampaignID:          camp.ID,
+						CampaignTypePhaseID: ph,
+						PlatformID:          "AXqWG7U2qnpt", // seeded platform (Sqid)
+						PlatformPostType:    ptype,
+						Title:               "t " + id,
+						Content:             "c",
+						Status:              status,
+						MediaURLs:           models.StringSlice{},
+						UsedAssetIDs:        models.StringSlice{},
+						CTAType:             models.CTATypeNone,
+						CreatedBy:           camp.CreatedBy,
+					})).To(Succeed())
+				}
+				seedPost("ov-a", phaseID, "text-post", models.PostStatusDraft)
+				seedPost("ov-b", phaseID, "article", models.PostStatusPublished)
+				seedPost("ov-c", "", "text-post", models.PostStatusDraft) // no phase → unassigned
+
+				req := httptest.NewRequest("GET", "/api/campaigns/"+camp.ID+"/overview", nil)
+				req.AddCookie(ck)
+				resp, err := a.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+
+				var ov campaignoverview.Overview
+				Expect(json.NewDecoder(resp.Body).Decode(&ov)).To(Succeed())
+				Expect(ov.CampaignID).To(Equal(camp.ID))
+				Expect(ov.Brief.Description).To(Equal(full.Description))
+				Expect(ov.Phases).NotTo(BeEmpty(), "campaign type phases should be surfaced")
+				Expect(ov.TotalPosts).To(Equal(3))
+				Expect(ov.Distribution.UnassignedPhasePostCount).To(Equal(1))
+
+				var chosen int
+				for _, p := range ov.Phases {
+					if p.ID == phaseID {
+						chosen = p.PostCount
+					}
+				}
+				Expect(chosen).To(Equal(2), "the seeded phase should hold 2 posts")
+
+				statusTotal := 0
+				for _, b := range ov.Distribution.ByStatus {
+					statusTotal += b.Count
+				}
+				Expect(statusTotal).To(Equal(3), "byStatus should reconcile with totalPosts")
 			})
 		})
 	})

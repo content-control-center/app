@@ -8,6 +8,7 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
+	"github.com/ogen-app/ogen/src/campaignoverview"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/models"
@@ -31,6 +32,8 @@ type requestState struct {
 	// Injected sub-flow callbacks, invoked as tools.
 	contentPlan func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)
 	enrichBrief func(ctx context.Context, req enrich_brief.EnrichBriefRequest, onEvent enrich_brief.OnEventFunc) (*enrich_brief.EnrichBriefResponse, error)
+	// overview backs the getCampaignOverview read tool (CON-113).
+	overview *campaignoverview.Service
 
 	// Results set by tools, read by the runner after generation.
 	contentPlanResult *ContentPlanResult
@@ -78,9 +81,10 @@ type CampaignPostInfo struct {
 // ── Tool registration ────────────────────────────────────────────────────────
 
 type toolSet struct {
-	runContentPlan    ai.ToolRef
-	enrichBrief       ai.ToolRef
-	listCampaignPosts ai.ToolRef
+	runContentPlan      ai.ToolRef
+	enrichBrief         ai.ToolRef
+	listCampaignPosts   ai.ToolRef
+	getCampaignOverview ai.ToolRef
 }
 
 func defineTools(g *genkit.Genkit) *toolSet {
@@ -107,10 +111,19 @@ func defineTools(g *genkit.Genkit) *toolSet {
 		},
 	)
 
+	getCampaignOverview := genkit.DefineTool(g, "getCampaignOverview",
+		"Returns a quick overview of the campaign: its phases (with per-phase post counts) and how the content is distributed by status, platform, and content type. "+
+			"Use it for questions like 'give me a quick overview', 'how is the content distributed', 'which phase has the most/least content', or 'what's the state of this campaign'. Takes no arguments.",
+		func(ctx *ai.ToolContext, _ struct{}) (*campaignoverview.Overview, error) {
+			return toolGetCampaignOverview(ctx)
+		},
+	)
+
 	return &toolSet{
-		runContentPlan:    runContentPlan,
-		enrichBrief:       enrichBrief,
-		listCampaignPosts: listCampaignPosts,
+		runContentPlan:      runContentPlan,
+		enrichBrief:         enrichBrief,
+		listCampaignPosts:   listCampaignPosts,
+		getCampaignOverview: getCampaignOverview,
 	}
 }
 
@@ -216,4 +229,12 @@ func toolListCampaignPosts(ctx context.Context) ([]CampaignPostInfo, error) {
 		})
 	}
 	return out, nil
+}
+
+func toolGetCampaignOverview(ctx context.Context) (*campaignoverview.Overview, error) {
+	st := getRequestState(ctx)
+	if st.overview == nil {
+		return nil, fmt.Errorf("campaign overview is not available")
+	}
+	return st.overview.Overview(ctx, st.campaignID)
 }

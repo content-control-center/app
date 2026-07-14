@@ -11,6 +11,7 @@ import (
 	"github.com/firebase/genkit/go/genkit"
 	"github.com/firebase/genkit/go/plugins/anthropic"
 
+	"github.com/ogen-app/ogen/src/campaignoverview"
 	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
@@ -63,6 +64,7 @@ type genkitRuntime struct {
 	postQualityRepos    post_quality.PostQualityRepos
 	enrichBriefRepos    enrich_brief.EnrichBriefRepos
 	campaignAssistRepos campaign_assistant.CampaignAssistantRepos
+	campaignOverviewSvc *campaignoverview.Service
 	cloneSvc            *clone.Service
 	restoreSvc          *restore.Service
 	scheduleSvc         *schedule.Service
@@ -81,6 +83,7 @@ type genkitDeps struct {
 	postQualityRepos    post_quality.PostQualityRepos
 	enrichBriefRepos    enrich_brief.EnrichBriefRepos
 	campaignAssistRepos campaign_assistant.CampaignAssistantRepos
+	campaignOverviewSvc *campaignoverview.Service
 	cloneSvc            *clone.Service
 	restoreSvc          *restore.Service
 	scheduleSvc         *schedule.Service
@@ -104,6 +107,7 @@ func newGenkitRuntime(ctx context.Context, deps genkitDeps, store secrets.Store)
 		postQualityRepos:    deps.postQualityRepos,
 		enrichBriefRepos:    deps.enrichBriefRepos,
 		campaignAssistRepos: deps.campaignAssistRepos,
+		campaignOverviewSvc: deps.campaignOverviewSvc,
 		cloneSvc:            deps.cloneSvc,
 		restoreSvc:          deps.restoreSvc,
 		scheduleSvc:         deps.scheduleSvc,
@@ -242,7 +246,7 @@ func (r *genkitRuntime) rebuild(ctx context.Context, store secrets.Store) error 
 	}
 	// CON-112: the campaign assistant reuses the content_plan + enrich_brief
 	// callbacks as tools, so it is initialised after them.
-	campaignAssistantFn, err := initCampaignAssistant(g, r.cfg, provider, r.recorder, r.checker, r.hub, r.campaignAssistRepos, contentPlanFn, enrichBriefFn)
+	campaignAssistantFn, err := initCampaignAssistant(g, r.cfg, provider, r.recorder, r.checker, r.hub, r.campaignAssistRepos, contentPlanFn, enrichBriefFn, r.campaignOverviewSvc)
 	if err != nil {
 		return fmt.Errorf("init campaign assistant: %w", err)
 	}

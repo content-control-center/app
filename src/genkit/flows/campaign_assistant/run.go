@@ -93,6 +93,7 @@ func runCampaignAssistant(
 		onEvent:     onEvent,
 		contentPlan: cfg.ContentPlan,
 		enrichBrief: cfg.EnrichBrief,
+		overview:    cfg.Overview,
 	}
 	ctx = withRequestState(ctx, st)
 
@@ -156,7 +157,7 @@ func runCampaignAssistant(
 		ai.WithSystem(systemBlock),
 		ai.WithMessages(history...),
 		ai.WithPrompt(req.Instruction),
-		ai.WithTools(tools.runContentPlan, tools.enrichBrief, tools.listCampaignPosts),
+		ai.WithTools(tools.runContentPlan, tools.enrichBrief, tools.listCampaignPosts, tools.getCampaignOverview),
 		ai.WithMaxTurns(maxTurns),
 		ai.WithStreaming(streamCb),
 		cfg.Provider.CallConfig(maxTokens),

@@ -270,3 +270,11 @@ Content-Type: application/json
 # Returns up to the 50 most-recent conversation turns (oldest-first).
 GET {{baseUrl}}/api/campaigns/{{campaignId}}/messages
 Accept: application/json
+
+### Campaign overview — brief, phases, content distribution  [protected]  (CON-113)
+# Synchronous JSON (not SSE). Returns the brief recap, the campaign's phases with
+# per-phase post counts, and content distribution by status, platform, and
+# content type. Available to any user in the campaign's tenant.
+# 404 if the campaign does not exist (or belongs to another tenant).
+GET {{baseUrl}}/api/campaigns/{{campaignId}}/overview
+Accept: application/json

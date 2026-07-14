@@ -25,6 +25,15 @@ type contextTemplateData struct {
 	TargetPersona  string
 	KeyMessages    string
 	ToneGuidelines string
+	// Phases lists the campaign type's phases (CON-113). Already hydrated on
+	// the campaign, so surfacing them here costs no extra query.
+	Phases []phaseContext
+}
+
+// phaseContext is one campaign phase surfaced to the planner.
+type phaseContext struct {
+	Name    string
+	Purpose string
 }
 
 // assembleContext renders the system + context blocks from the campaign. The
@@ -34,8 +43,16 @@ type contextTemplateData struct {
 // still applies without an in-process cache.
 func assembleContext(campaign *models.Campaign, systemTmpl, contextTmpl *template.Template) (*assistantContext, error) {
 	campaignType := campaign.CampaignTypeID
-	if campaign.CampaignType != nil && campaign.CampaignType.Name != "" {
-		campaignType = campaign.CampaignType.Name
+	var phases []phaseContext
+	if campaign.CampaignType != nil {
+		if campaign.CampaignType.Name != "" {
+			campaignType = campaign.CampaignType.Name
+		}
+		// Phases are hydrated in sequence order (repository/campaign_types.go).
+		phases = make([]phaseContext, 0, len(campaign.CampaignType.Phases))
+		for _, ph := range campaign.CampaignType.Phases {
+			phases = append(phases, phaseContext{Name: ph.Name, Purpose: ph.Purpose})
+		}
 	}
 
 	data := contextTemplateData{
@@ -47,6 +64,7 @@ func assembleContext(campaign *models.Campaign, systemTmpl, contextTmpl *templat
 		TargetPersona:  campaign.TargetPersona,
 		KeyMessages:    campaign.KeyMessages,
 		ToneGuidelines: campaign.ToneGuidelines,
+		Phases:         phases,
 	}
 
 	systemPrompt, err := renderTemplate(systemTmpl, data)

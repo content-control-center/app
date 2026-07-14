@@ -18,6 +18,7 @@ import (
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/uptrace/bun"
 
+	"github.com/ogen-app/ogen/src/campaignoverview"
 	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
@@ -90,6 +91,10 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	postVersionRepo := repository.NewPostVersionRepository(db)
 	postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 	campaignMessageRepo := repository.NewCampaignAssistantMessageRepository(db)
+	// CON-113: one overview service, shared by the REST endpoint and the
+	// Campaign Assistant's getCampaignOverview tool. Not gated by the Anthropic
+	// key — it's a plain tenant-scoped DB read.
+	campaignOverviewSvc := campaignoverview.New(campaignRepo, postRepo, platformRepo)
 	postAttachmentRepo := repository.NewPostAttachmentRepository(db)
 	postLogRepo := repository.NewPostLogRepository(db)
 	postEvaluationRepo := repository.NewPostEvaluationRepository(db)
@@ -380,11 +385,12 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 			Campaigns: campaignRepo,
 			Posts:     postRepo,
 		},
-		cloneSvc:    cloneSvc,
-		restoreSvc:  restoreSvc,
-		scheduleSvc: scheduleSvc,
-		recorder:    usageWiring.recorder,
-		checker:     usageWiring.checker,
+		campaignOverviewSvc: campaignOverviewSvc,
+		cloneSvc:            cloneSvc,
+		restoreSvc:          restoreSvc,
+		scheduleSvc:         scheduleSvc,
+		recorder:            usageWiring.recorder,
+		checker:             usageWiring.checker,
 	}, secretStore)
 	if err != nil {
 		return nil, err
@@ -392,7 +398,9 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	slog.Info("genkit flows registered", logging.AttrComponent, "genkit")
 
 	handlers.NewCampaignTypesHandler(campaignTypeRepo, auth).Register(app)
-	handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, gkRuntime.GenerateDraft, gkRuntime.IsAnthropicAvailable, gkRuntime.EnrichBrief, campaignMessageRepo, gkRuntime.RunCampaignAssistant).Register(app)
+	campaignsHandler := handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, gkRuntime.GenerateDraft, gkRuntime.IsAnthropicAvailable, gkRuntime.EnrichBrief, campaignMessageRepo, gkRuntime.RunCampaignAssistant)
+	campaignsHandler.SetOverviewService(campaignOverviewSvc)
+	campaignsHandler.Register(app)
 	handlers.NewPlatformsHandler(platformRepo, pubs, autoPublishAllowlistRepo, auth).Register(app)
 	handlers.NewTagsHandler(tagRepo, auth).Register(app)
 	postsHandler := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, platformRepo, postAttachmentRepo, auth, gkRuntime.RunPostAssistant, gkRuntime.IsAnthropicAvailable)
