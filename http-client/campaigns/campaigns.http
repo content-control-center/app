@@ -278,3 +278,29 @@ Accept: application/json
 # 404 if the campaign does not exist (or belongs to another tenant).
 GET {{baseUrl}}/api/campaigns/{{campaignId}}/overview
 Accept: application/json
+
+### Generate targeted posts — add a few posts for a platform/phase/window  [protected]  (CON-114)
+# Adds NEW draft posts for a platform subset, a single phase, and a publish-date
+# window (deterministic params — the assistant tool resolves natural language,
+# this endpoint takes concrete ids/dates). Count is clamped to GENERATE_POSTS_MAX.
+# Requires ANTHROPIC_API_KEY; 503 when unwired. 400 on bad params (unknown/foreign
+# platform, unknown phase, count < 1, bad window); 404 if the campaign is missing.
+# Response is an SSE stream: step / post / warning / complete (ContentPlanResponse) / error.
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/generate-posts
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "platformIds": ["AXqWG7U2qnpt"],
+  "phaseId": "<phase-id-from-the-campaign-type>",
+  "count": 3,
+  "windowStart": "2026-07-20",
+  "windowEnd": "2026-08-03",
+  "postType": "text-post"
+}
+
+###
+# The natural-language equivalent goes through the Campaign Assistant:
+#   POST /api/campaigns/{{campaignId}}/assistant
+#   { "instruction": "Add a few Threads posts in the current phase for the upcoming weeks" }
+###

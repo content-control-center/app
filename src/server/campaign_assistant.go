@@ -31,17 +31,20 @@ func initCampaignAssistant(
 	contentPlanFn func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error),
 	enrichBriefFn func(ctx context.Context, req enrich_brief.EnrichBriefRequest, onEvent enrich_brief.OnEventFunc) (*enrich_brief.EnrichBriefResponse, error),
 	overviewSvc *overview.Service,
+	generatePostsFn func(ctx context.Context, req content_plan.GeneratePostsRequest, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error),
 ) (func(ctx context.Context, req campaign_assistant.CampaignAssistantRequest, onEvent campaign_assistant.OnEventFunc) (*campaign_assistant.CampaignAssistantResponse, error), error) {
 	flowCfg := campaign_assistant.CampaignAssistantFlowConfig{
-		Provider:        provider,
-		Recorder:        recorder,
-		Checker:         checker,
-		ModelID:         cfg.PlanningModelID,
-		MaxOutputTokens: 8192,
-		Hub:             hub,
-		ContentPlan:     contentPlanFn,
-		EnrichBrief:     enrichBriefFn,
-		Overview:        overviewSvc,
+		Provider:         provider,
+		Recorder:         recorder,
+		Checker:          checker,
+		ModelID:          cfg.PlanningModelID,
+		MaxOutputTokens:  8192,
+		Hub:              hub,
+		ContentPlan:      contentPlanFn,
+		EnrichBrief:      enrichBriefFn,
+		Overview:         overviewSvc,
+		GeneratePosts:    generatePostsFn,
+		MaxGeneratePosts: cfg.GeneratePostsMax,
 	}
 	if err := campaign_assistant.InitCampaignAssistant(g, flowCfg, repos); err != nil {
 		return nil, fmt.Errorf("init campaign assistant flow: %w", err)

@@ -55,6 +55,7 @@ type genkitRuntime struct {
 	postQualityFn       func(ctx context.Context, postID string, onEvent post_quality.OnEventFunc) (*post_quality.PostQualityResponse, error)
 	enrichBriefFn       func(ctx context.Context, req enrich_brief.EnrichBriefRequest, onEvent enrich_brief.OnEventFunc) (*enrich_brief.EnrichBriefResponse, error)
 	campaignAssistantFn func(ctx context.Context, req campaign_assistant.CampaignAssistantRequest, onEvent campaign_assistant.OnEventFunc) (*campaign_assistant.CampaignAssistantResponse, error)
+	generatePostsFn     func(ctx context.Context, req content_plan.GeneratePostsRequest, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)
 
 	cfg                 *config.Config
 	hub                 eventhub.Hub
@@ -188,6 +189,16 @@ func (r *genkitRuntime) RunCampaignAssistant(ctx context.Context, req campaign_a
 	return fn(ctx, req, onEvent)
 }
 
+func (r *genkitRuntime) GeneratePosts(ctx context.Context, req content_plan.GeneratePostsRequest, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error) {
+	r.mu.RLock()
+	fn := r.generatePostsFn
+	r.mu.RUnlock()
+	if fn == nil {
+		return nil, ErrAnthropicUnavailable
+	}
+	return fn(ctx, req, onEvent)
+}
+
 // rebuild fetches the current Anthropic key (if any), constructs a
 // fresh Genkit instance with a fresh Anthropic plugin, re-registers
 // the two flows, and atomically swaps the cached callbacks. Holding
@@ -212,6 +223,7 @@ func (r *genkitRuntime) rebuild(ctx context.Context, store secrets.Store) error 
 		r.postQualityFn = nil
 		r.enrichBriefFn = nil
 		r.campaignAssistantFn = nil
+		r.generatePostsFn = nil
 		r.g = nil
 		r.plugin = nil
 		return nil
@@ -244,9 +256,13 @@ func (r *genkitRuntime) rebuild(ctx context.Context, store secrets.Store) error 
 	if err != nil {
 		return fmt.Errorf("init enrich brief: %w", err)
 	}
+	// CON-114: the targeted generation callback shares the content_plan flow
+	// (already registered by initContentPlan above).
+	generatePostsFn := content_plan.NewGeneratePostsCallback()
 	// CON-112: the campaign assistant reuses the content_plan + enrich_brief
-	// callbacks as tools, so it is initialised after them.
-	campaignAssistantFn, err := initCampaignAssistant(g, r.cfg, provider, r.recorder, r.checker, r.hub, r.campaignAssistRepos, contentPlanFn, enrichBriefFn, r.campaignOverviewSvc)
+	// callbacks (and the CON-114 generatePosts callback) as tools, so it is
+	// initialised after them.
+	campaignAssistantFn, err := initCampaignAssistant(g, r.cfg, provider, r.recorder, r.checker, r.hub, r.campaignAssistRepos, contentPlanFn, enrichBriefFn, r.campaignOverviewSvc, generatePostsFn)
 	if err != nil {
 		return fmt.Errorf("init campaign assistant: %w", err)
 	}
@@ -258,6 +274,7 @@ func (r *genkitRuntime) rebuild(ctx context.Context, store secrets.Store) error 
 	r.postQualityFn = postQualityFn
 	r.enrichBriefFn = enrichBriefFn
 	r.campaignAssistantFn = campaignAssistantFn
+	r.generatePostsFn = generatePostsFn
 	slog.InfoContext(ctx, "anthropic flows rebuilt",
 		logging.AttrComponent, "genkit")
 	return nil

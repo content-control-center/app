@@ -1462,6 +1462,156 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 		})
 	})
 
+	// ── Targeted generation (CON-114) ──────────────────────────────────────────
+
+	Describe("POST /api/campaigns/:id/generate-posts", func() {
+		errorHandler := func(c *fiber.Ctx, err error) error {
+			code := fiber.StatusInternalServerError
+			if e, ok := err.(*fiber.Error); ok {
+				code = e.Code
+			}
+			return c.Status(code).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		buildGenApp := func(stub func(context.Context, content_plan.GeneratePostsRequest, content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)) *fiber.App {
+			a := fiber.New(fiber.Config{ErrorHandler: errorHandler})
+			ctRepo := repository.NewCampaignTypeRepository(db)
+			cRepo := repository.NewCampaignRepository(db, repository.NewTagRepository(db), repository.NewPlatformRepository(db), ctRepo)
+			sRepo := repository.NewSessionRepository(db)
+			setRepo := repository.NewSettingRepository(db)
+			uRepo := repository.NewUserRepository(db)
+			a2 := handlers.RequireAuth(sRepo, testCookieName)
+			handlers.NewUsersHandler(uRepo, setRepo, a2).Register(a)
+			handlers.NewSessionsHandler(uRepo, sRepo, testCookieName, false).Register(a)
+			ch := handlers.NewCampaignsHandler(cRepo, ctRepo, a2, nil, nil, nil, nil, nil)
+			ch.SetGeneratePosts(stub, 10)
+			ch.Register(a)
+			return a
+		}
+
+		seedCookie := func(a *fiber.App, email string) *http.Cookie {
+			seedTenantUser(db, "Gen User", email, "gen-password")
+			loginBody, _ := json.Marshal(fiber.Map{"email": email, "password": "gen-password"})
+			loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
+			loginReq.Header.Set("Content-Type", "application/json")
+			loginResp, err := a.Test(loginReq)
+			Expect(err).NotTo(HaveOccurred())
+			var ck *http.Cookie
+			for _, c := range loginResp.Cookies() {
+				ck = c
+			}
+			return ck
+		}
+
+		createCampaignOn := func(a *fiber.App, ck *http.Cookie, name, typeID string) models.Campaign {
+			body, _ := json.Marshal(fiber.Map{"name": name, "campaign_type_id": typeID})
+			req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(ck)
+			resp, err := a.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+			var c models.Campaign
+			Expect(json.NewDecoder(resp.Body).Decode(&c)).To(Succeed())
+			return c
+		}
+
+		type sseEvent struct{ event, data string }
+		parseSSE := func(r *bufio.Scanner) []sseEvent {
+			var events []sseEvent
+			var curEvent, curData string
+			for r.Scan() {
+				line := r.Text()
+				switch {
+				case strings.HasPrefix(line, "event: "):
+					curEvent = strings.TrimPrefix(line, "event: ")
+				case strings.HasPrefix(line, "data: "):
+					curData = strings.TrimPrefix(line, "data: ")
+				case line == "":
+					if curEvent != "" {
+						events = append(events, sseEvent{curEvent, curData})
+					}
+					curEvent, curData = "", ""
+				}
+			}
+			return events
+		}
+
+		okStub := func(_ context.Context, req content_plan.GeneratePostsRequest, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error) {
+			onEvent(content_plan.SSEEventStep, content_plan.StepEventPayload{Step: "resolveTargets", Status: "done"})
+			onEvent(content_plan.SSEEventPost, content_plan.PostEventPayload{Post: content_plan.DraftPost{Title: "Draft"}, Index: 0, ID: "post-1"})
+			return &content_plan.ContentPlanResponse{CampaignID: req.CampaignID, Posts: []content_plan.DraftPost{{Title: "Draft"}}}, nil
+		}
+
+		Context("when not authenticated", func() {
+			It("returns 401", func() {
+				req := httptest.NewRequest("POST", "/api/campaigns/someid/generate-posts", nil)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+		})
+
+		Context("when authenticated", func() {
+			It("returns 503 when targeted generation is unwired", func() {
+				c := createCampaign("No Gen", "Uk")
+				body, _ := json.Marshal(fiber.Map{"platformIds": []string{"x"}, "phaseId": "p", "count": 3})
+				req := httptest.NewRequest("POST", "/api/campaigns/"+c.ID+"/generate-posts", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(503))
+			})
+
+			It("returns 400 when count is below 1", func() {
+				a := buildGenApp(okStub)
+				ck := seedCookie(a, "gen400@example.com")
+				camp := createCampaignOn(a, ck, "Gen 400", "Uk")
+				body, _ := json.Marshal(fiber.Map{"platformIds": []string{"x"}, "phaseId": "p", "count": 0})
+				req := httptest.NewRequest("POST", "/api/campaigns/"+camp.ID+"/generate-posts", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(ck)
+				resp, err := a.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(400))
+			})
+
+			It("returns 404 for an unknown campaign", func() {
+				a := buildGenApp(okStub)
+				ck := seedCookie(a, "gen404@example.com")
+				body, _ := json.Marshal(fiber.Map{"platformIds": []string{"x"}, "phaseId": "p", "count": 3})
+				req := httptest.NewRequest("POST", "/api/campaigns/nonexistent/generate-posts", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(ck)
+				resp, err := a.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(404))
+			})
+
+			It("streams step, post, and complete on success", func() {
+				a := buildGenApp(okStub)
+				ck := seedCookie(a, "genok@example.com")
+				camp := createCampaignOn(a, ck, "Gen OK", "Uk")
+				body, _ := json.Marshal(fiber.Map{"platformIds": []string{"AXqWG7U2qnpt"}, "phaseId": "p", "count": 2})
+				req := httptest.NewRequest("POST", "/api/campaigns/"+camp.ID+"/generate-posts", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(ck)
+				resp, err := a.Test(req, 10000)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+				Expect(resp.Header.Get("Content-Type")).To(ContainSubstring("text/event-stream"))
+
+				events := parseSSE(bufio.NewScanner(resp.Body))
+				names := make([]string, len(events))
+				for i, e := range events {
+					names[i] = e.event
+				}
+				Expect(names).To(Equal([]string{"step", "post", "complete"}))
+			})
+		})
+	})
+
 	// ── Delete ───────────────────────────────────────────────────────────────
 
 	Describe("DELETE /api/campaigns/:id", func() {

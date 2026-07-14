@@ -3,6 +3,8 @@ package campaign_assistant
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/firebase/genkit/go/ai"
@@ -34,10 +36,15 @@ type requestState struct {
 	enrichBrief func(ctx context.Context, req enrich_brief.EnrichBriefRequest, onEvent enrich_brief.OnEventFunc) (*enrich_brief.EnrichBriefResponse, error)
 	// overview backs the getCampaignOverview read tool (CON-113).
 	overview *overview.Service
+	// generatePosts backs the generatePosts targeted-generation tool (CON-114);
+	// maxGeneratePosts caps a single call.
+	generatePosts    func(ctx context.Context, req content_plan.GeneratePostsRequest, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)
+	maxGeneratePosts int
 
 	// Results set by tools, read by the runner after generation.
-	contentPlanResult *ContentPlanResult
-	briefResult       *BriefResult
+	contentPlanResult    *ContentPlanResult
+	briefResult          *BriefResult
+	generatedPostsResult *GeneratedPostsResult
 }
 
 func withRequestState(ctx context.Context, s *requestState) context.Context {
@@ -78,6 +85,29 @@ type CampaignPostInfo struct {
 	Status     string `json:"status"`
 }
 
+// GeneratePostsInput is the input for the generatePosts tool (CON-114). The
+// model resolves the timeframe against today's date (shown in context) into an
+// ISO window before calling.
+type GeneratePostsInput struct {
+	Platforms   []string `json:"platforms"             jsonschema:"description=Platform names or ids to generate for, e.g. [\"Threads\"]. Must be platforms the campaign already targets."`
+	Phase       string   `json:"phase,omitempty"       jsonschema:"description=Phase name, id, or \"current\"; omit for the current phase."`
+	Count       int      `json:"count,omitempty"       jsonschema:"description=How many posts to add; omit to infer from the request (a few = 3)."`
+	WindowStart string   `json:"windowStart,omitempty" jsonschema:"description=First publish date (ISO YYYY-MM-DD), resolved from the requested timeframe against today."`
+	WindowEnd   string   `json:"windowEnd,omitempty"   jsonschema:"description=Last publish date (ISO YYYY-MM-DD)."`
+	PostType    string   `json:"postType,omitempty"    jsonschema:"description=Optional post-type slug (e.g. text-post, article); omit for the platform default."`
+}
+
+// GeneratePostsOutput is returned to the model after targeted posts are created.
+type GeneratePostsOutput struct {
+	PostCount      int      `json:"postCount"`
+	RequestedCount int      `json:"requestedCount"`
+	Clamped        bool     `json:"clamped"` // true when requestedCount exceeded the per-call cap
+	PhaseID        string   `json:"phaseId"`
+	PhaseName      string   `json:"phaseName"`
+	Platforms      []string `json:"platforms"` // resolved platform names
+	Warnings       []string `json:"warnings,omitempty"`
+}
+
 // ── Tool registration ────────────────────────────────────────────────────────
 
 type toolSet struct {
@@ -85,6 +115,7 @@ type toolSet struct {
 	enrichBrief         ai.ToolRef
 	listCampaignPosts   ai.ToolRef
 	getCampaignOverview ai.ToolRef
+	generatePosts       ai.ToolRef
 }
 
 func defineTools(g *genkit.Genkit) *toolSet {
@@ -119,11 +150,21 @@ func defineTools(g *genkit.Genkit) *toolSet {
 		},
 	)
 
+	generatePosts := genkit.DefineTool(g, "generatePosts",
+		"Adds a few NEW draft posts to the campaign for a specific platform, phase, and timeframe — e.g. 'add a few Threads posts in the current phase for the upcoming weeks'. "+
+			"Different from runContentPlan (which regenerates the WHOLE plan across all platforms/phases). Only platforms the campaign already targets are allowed. "+
+			"Resolve the requested timeframe into windowStart/windowEnd (ISO dates) using today's date shown in the context. Returns how many posts were created.",
+		func(ctx *ai.ToolContext, in GeneratePostsInput) (*GeneratePostsOutput, error) {
+			return toolGeneratePosts(ctx, in)
+		},
+	)
+
 	return &toolSet{
 		runContentPlan:      runContentPlan,
 		enrichBrief:         enrichBrief,
 		listCampaignPosts:   listCampaignPosts,
 		getCampaignOverview: getCampaignOverview,
+		generatePosts:       generatePosts,
 	}
 }
 
@@ -237,4 +278,240 @@ func toolGetCampaignOverview(ctx context.Context) (*overview.Overview, error) {
 		return nil, fmt.Errorf("campaign overview is not available")
 	}
 	return st.overview.Overview(ctx, st.campaignID)
+}
+
+func toolGeneratePosts(ctx context.Context, in GeneratePostsInput) (*GeneratePostsOutput, error) {
+	st := getRequestState(ctx)
+	if st.generatePosts == nil {
+		return nil, fmt.Errorf("targeted post generation is not available")
+	}
+	campaign := st.campaign
+	now := time.Now().UTC()
+
+	// Resolve platform names/ids against the campaign's target platforms
+	// (CON-114 "stay in scope").
+	platformIDs, platformNames, err := resolveTargetPlatforms(campaign, in.Platforms)
+	if err != nil {
+		return nil, err
+	}
+
+	// Resolve the phase — "current"/empty derives from the campaign timeline.
+	phaseID, phaseName, err := resolvePhase(campaign, in.Phase, now)
+	if err != nil {
+		return nil, err
+	}
+
+	// Count: default 3 when vague, clamp to [1, cap].
+	maxN := st.maxGeneratePosts
+	if maxN <= 0 {
+		maxN = 10
+	}
+	requested := in.Count
+	if requested <= 0 {
+		requested = 3
+	}
+	count := requested
+	clamped := false
+	if count > maxN {
+		count = maxN
+		clamped = true
+	}
+
+	// Window: default to the next 14 days when omitted; validate otherwise.
+	windowStart, windowEnd, err := resolveWindow(in.WindowStart, in.WindowEnd, now)
+	if err != nil {
+		return nil, err
+	}
+
+	emit(st.onEvent, SSEEventGeneratePostsStarted, GeneratePostsStartedEventPayload{
+		PlatformIDs: platformIDs,
+		PhaseID:     phaseID,
+		Count:       count,
+	})
+
+	// Forward the engine's nested events, namespaced.
+	nested := content_plan.OnEventFunc(func(name content_plan.SSEEventKind, data any) {
+		switch name {
+		case content_plan.SSEEventStep:
+			emit(st.onEvent, SSEEventGeneratePostsStep, data)
+		case content_plan.SSEEventPost:
+			emit(st.onEvent, SSEEventGeneratePostsPost, data)
+		case content_plan.SSEEventWarning:
+			emit(st.onEvent, SSEEventGeneratePostsWarning, data)
+		}
+	})
+
+	resp, err := st.generatePosts(ctx, content_plan.GeneratePostsRequest{
+		CampaignID:  st.campaignID,
+		PlatformIDs: platformIDs,
+		PhaseID:     phaseID,
+		Count:       count,
+		WindowStart: windowStart,
+		WindowEnd:   windowEnd,
+		PostType:    in.PostType,
+	}, nested)
+	if err != nil {
+		return nil, err
+	}
+
+	st.generatedPostsResult = &GeneratedPostsResult{
+		PostCount:   len(resp.Posts),
+		PlatformIDs: platformIDs,
+		PhaseID:     phaseID,
+		Warnings:    resp.Warnings,
+	}
+	return &GeneratePostsOutput{
+		PostCount:      len(resp.Posts),
+		RequestedCount: requested,
+		Clamped:        clamped,
+		PhaseID:        phaseID,
+		PhaseName:      phaseName,
+		Platforms:      platformNames,
+		Warnings:       resp.Warnings,
+	}, nil
+}
+
+// resolveTargetPlatforms maps requested platform names/ids to campaign-target
+// platform ids. It errors (naming the targets) when a requested platform isn't
+// one the campaign already targets — no silent scope expansion.
+func resolveTargetPlatforms(campaign *models.Campaign, requested []string) (ids, names []string, err error) {
+	if len(requested) == 0 {
+		return nil, nil, fmt.Errorf("say which platform to add posts for")
+	}
+	byID := make(map[string]models.Platform, len(campaign.Platforms))
+	byName := make(map[string]models.Platform, len(campaign.Platforms))
+	targetNames := make([]string, 0, len(campaign.Platforms))
+	for _, p := range campaign.Platforms {
+		byID[p.ID] = p
+		byName[strings.ToLower(p.Name)] = p
+		targetNames = append(targetNames, p.Name)
+	}
+	seen := make(map[string]bool)
+	for _, r := range requested {
+		p, ok := byID[r]
+		if !ok {
+			p, ok = byName[strings.ToLower(strings.TrimSpace(r))]
+		}
+		if !ok {
+			return nil, nil, fmt.Errorf("%q is not one of this campaign's target platforms (%s) — add it to the campaign first, or pick a targeted one", r, strings.Join(targetNames, ", "))
+		}
+		if seen[p.ID] {
+			continue
+		}
+		seen[p.ID] = true
+		ids = append(ids, p.ID)
+		names = append(names, p.Name)
+	}
+	return ids, names, nil
+}
+
+func campaignPhases(campaign *models.Campaign) []models.CampaignTypePhase {
+	if campaign.CampaignType == nil {
+		return nil
+	}
+	return campaign.CampaignType.Phases
+}
+
+// resolvePhase resolves "current"/empty to the timeline-current phase; otherwise
+// matches by id or name.
+func resolvePhase(campaign *models.Campaign, phase string, today time.Time) (id, name string, err error) {
+	phases := campaignPhases(campaign)
+	if len(phases) == 0 {
+		return "", "", fmt.Errorf("this campaign's type has no phases")
+	}
+	p := strings.TrimSpace(phase)
+	if p == "" || strings.EqualFold(p, "current") {
+		cur := currentPhase(campaign, today)
+		return cur.ID, cur.Name, nil
+	}
+	for _, ph := range phases {
+		if ph.ID == p || strings.EqualFold(ph.Name, p) {
+			return ph.ID, ph.Name, nil
+		}
+	}
+	pnames := make([]string, 0, len(phases))
+	for _, ph := range phases {
+		pnames = append(pnames, ph.Name)
+	}
+	return "", "", fmt.Errorf("unknown phase %q; the campaign's phases are: %s", phase, strings.Join(pnames, ", "))
+}
+
+// currentPhase returns the phase whose timeline window contains today, by
+// partitioning [StartDate, EndDate] across phases in sequence order. Falls back
+// to the first phase when the campaign has no dates.
+func currentPhase(campaign *models.Campaign, today time.Time) models.CampaignTypePhase {
+	phases := append([]models.CampaignTypePhase(nil), campaignPhases(campaign)...)
+	sort.SliceStable(phases, func(i, j int) bool { return phases[i].Sequence < phases[j].Sequence })
+	if campaign.StartDate == nil || campaign.EndDate == nil {
+		return phases[0]
+	}
+	start, end := *campaign.StartDate, *campaign.EndDate
+	if !today.After(start) {
+		return phases[0]
+	}
+	if today.After(end) {
+		return phases[len(phases)-1]
+	}
+	windows := equalDayWindows(start, end, len(phases))
+	for i, w := range windows {
+		if !today.Before(w[0]) && !today.After(w[1]) {
+			return phases[i]
+		}
+	}
+	return phases[len(phases)-1]
+}
+
+// equalDayWindows partitions [start, end] into n contiguous inclusive day
+// windows (remainder to earliest), mirroring content_plan's date partition.
+func equalDayWindows(start, end time.Time, n int) [][2]time.Time {
+	out := make([][2]time.Time, n)
+	totalDays := int(end.Sub(start).Hours()/24) + 1
+	if totalDays < n {
+		for i := range out {
+			out[i] = [2]time.Time{start, end}
+		}
+		return out
+	}
+	base := totalDays / n
+	rem := totalDays % n
+	cursor := start
+	for i := 0; i < n; i++ {
+		d := base
+		if i < rem {
+			d++
+		}
+		winEnd := cursor.AddDate(0, 0, d-1)
+		out[i] = [2]time.Time{cursor, winEnd}
+		cursor = winEnd.AddDate(0, 0, 1)
+	}
+	return out
+}
+
+// resolveWindow validates the model-resolved publish window, defaulting to the
+// next 14 days when omitted and clamping a past start to today.
+func resolveWindow(startStr, endStr string, today time.Time) (string, string, error) {
+	const iso = "2006-01-02"
+	todayStr := today.Format(iso)
+	if strings.TrimSpace(startStr) == "" && strings.TrimSpace(endStr) == "" {
+		return todayStr, today.AddDate(0, 0, 14).Format(iso), nil
+	}
+	s, err := time.Parse(iso, strings.TrimSpace(startStr))
+	if err != nil {
+		return "", "", fmt.Errorf("windowStart must be an ISO date (YYYY-MM-DD)")
+	}
+	e, err := time.Parse(iso, strings.TrimSpace(endStr))
+	if err != nil {
+		return "", "", fmt.Errorf("windowEnd must be an ISO date (YYYY-MM-DD)")
+	}
+	if e.Before(s) {
+		return "", "", fmt.Errorf("the timeframe's end is before its start")
+	}
+	todayParsed, _ := time.Parse(iso, todayStr)
+	if s.Before(todayParsed) { // never date drafts in the past
+		s = todayParsed
+		if e.Before(s) {
+			e = s
+		}
+	}
+	return s.Format(iso), e.Format(iso), nil
 }

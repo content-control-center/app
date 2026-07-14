@@ -25,13 +25,24 @@ type CampaignAssistantRequest struct {
 // ran this turn.
 type CampaignAssistantResponse struct {
 	Explanation string `json:"explanation"          jsonschema:"description=Conversational reply to the user"`
-	Action      string `json:"action"               jsonschema:"description=answered for a grounded reply; content_plan_generated when the runContentPlan tool ran; brief_enriched when the enrichBrief tool ran; declined when the request is out of scope,enum=answered,enum=content_plan_generated,enum=brief_enriched,enum=declined"`
+	Action      string `json:"action"               jsonschema:"description=answered for a grounded reply; content_plan_generated when the runContentPlan tool ran; brief_enriched when the enrichBrief tool ran; posts_generated when the generatePosts tool added targeted posts; declined when the request is out of scope,enum=answered,enum=content_plan_generated,enum=brief_enriched,enum=posts_generated,enum=declined"`
 	// ContentPlan is set by the server when the runContentPlan tool created
 	// draft posts this turn. Action is then "content_plan_generated".
 	ContentPlan *ContentPlanResult `json:"contentPlan,omitempty" jsonschema:"-"`
 	// Brief is set by the server when the enrichBrief tool applied a new brief
 	// to the campaign this turn. Action is then "brief_enriched".
 	Brief *BriefResult `json:"brief,omitempty" jsonschema:"-"`
+	// GeneratedPosts is set by the server when the generatePosts tool added
+	// targeted posts this turn. Action is then "posts_generated".
+	GeneratedPosts *GeneratedPostsResult `json:"generatedPosts,omitempty" jsonschema:"-"`
+}
+
+// GeneratedPostsResult summarises a generatePosts tool invocation (CON-114).
+type GeneratedPostsResult struct {
+	PostCount   int      `json:"postCount"`
+	PlatformIDs []string `json:"platformIds"`
+	PhaseID     string   `json:"phaseId"`
+	Warnings    []string `json:"warnings,omitempty"`
 }
 
 // ContentPlanResult summarises a runContentPlan tool invocation.
@@ -81,6 +92,12 @@ type CampaignAssistantFlowConfig struct {
 	// Overview backs the getCampaignOverview read tool (CON-113). nil disables
 	// the tool.
 	Overview *overview.Service
+	// GeneratePosts backs the generatePosts targeted-generation tool (CON-114).
+	// nil disables the tool.
+	GeneratePosts func(ctx context.Context, req content_plan.GeneratePostsRequest, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)
+	// MaxGeneratePosts caps how many posts one generatePosts call may create
+	// (CON-114). 0 falls back to 10.
+	MaxGeneratePosts int
 }
 
 // ValidationError is returned when preconditions are not met (HTTP 400).
@@ -118,6 +135,12 @@ const (
 	SSEEventEnrichBriefMessagesDelta    SSEEventKind = "enrich_brief_messages_delta"
 	SSEEventEnrichBriefToneDelta        SSEEventKind = "enrich_brief_tone_delta"
 	SSEEventEnrichBriefComplete         SSEEventKind = "enrich_brief_complete"
+
+	SSEEventGeneratePostsStarted  SSEEventKind = "generate_posts_started"
+	SSEEventGeneratePostsStep     SSEEventKind = "generate_posts_step"
+	SSEEventGeneratePostsPost     SSEEventKind = "generate_posts_post"
+	SSEEventGeneratePostsWarning  SSEEventKind = "generate_posts_warning"
+	SSEEventGeneratePostsComplete SSEEventKind = "generate_posts_complete"
 
 	SSEEventComplete SSEEventKind = "complete"
 	SSEEventError    SSEEventKind = "error"
@@ -159,6 +182,19 @@ type EnrichBriefStartedEventPayload struct {
 // EnrichBriefCompleteEventPayload is emitted once the brief is applied.
 type EnrichBriefCompleteEventPayload struct {
 	Applied bool `json:"applied"`
+}
+
+// GeneratePostsStartedEventPayload is emitted when the generatePosts tool begins.
+type GeneratePostsStartedEventPayload struct {
+	PlatformIDs []string `json:"platformIds"`
+	PhaseID     string   `json:"phaseId"`
+	Count       int      `json:"count"`
+}
+
+// GeneratePostsCompleteEventPayload is emitted once targeted posts are persisted.
+type GeneratePostsCompleteEventPayload struct {
+	PostCount int      `json:"postCount"`
+	Warnings  []string `json:"warnings,omitempty"`
 }
 
 // ErrorEventPayload is emitted when the flow fails mid-stream.

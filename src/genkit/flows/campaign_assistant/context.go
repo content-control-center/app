@@ -3,6 +3,7 @@ package campaign_assistant
 import (
 	"bytes"
 	"text/template"
+	"time"
 
 	"github.com/ogen-app/ogen/src/models"
 )
@@ -25,6 +26,9 @@ type contextTemplateData struct {
 	TargetPersona  string
 	KeyMessages    string
 	ToneGuidelines string
+	// Today is the current date (YYYY-MM-DD), so the planner can resolve
+	// relative timeframes like "upcoming weeks" into concrete dates (CON-114).
+	Today string
 	// Phases lists the campaign type's phases (CON-113). Already hydrated on
 	// the campaign, so surfacing them here costs no extra query.
 	Phases []phaseContext
@@ -41,7 +45,7 @@ type phaseContext struct {
 // needs no tool round-trip. The rendered strings are deterministic, so an
 // unchanged brief produces an identical prefix and Anthropic prompt caching
 // still applies without an in-process cache.
-func assembleContext(campaign *models.Campaign, systemTmpl, contextTmpl *template.Template) (*assistantContext, error) {
+func assembleContext(campaign *models.Campaign, today time.Time, systemTmpl, contextTmpl *template.Template) (*assistantContext, error) {
 	campaignType := campaign.CampaignTypeID
 	var phases []phaseContext
 	if campaign.CampaignType != nil {
@@ -64,6 +68,7 @@ func assembleContext(campaign *models.Campaign, systemTmpl, contextTmpl *templat
 		TargetPersona:  campaign.TargetPersona,
 		KeyMessages:    campaign.KeyMessages,
 		ToneGuidelines: campaign.ToneGuidelines,
+		Today:          today.Format("2006-01-02"),
 		Phases:         phases,
 	}
 

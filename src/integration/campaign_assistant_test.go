@@ -118,14 +118,17 @@ var _ = Describe("Campaign assistant flow", Ordered, func() {
 			CampaignTypes: campaignTypeRepo,
 		})).To(Succeed())
 		enrichBriefCb := enrich_brief.NewEnrichBriefCallback()
+		generatePostsCb := content_plan.NewGeneratePostsCallback()
 
 		overviewSvc := overview.New(campaignRepo, postRepo, platformRepo)
 
 		Expect(campaign_assistant.InitCampaignAssistant(g, campaign_assistant.CampaignAssistantFlowConfig{
-			Provider:    provider,
-			ContentPlan: contentPlanCb,
-			EnrichBrief: enrichBriefCb,
-			Overview:    overviewSvc,
+			Provider:         provider,
+			ContentPlan:      contentPlanCb,
+			EnrichBrief:      enrichBriefCb,
+			Overview:         overviewSvc,
+			GeneratePosts:    generatePostsCb,
+			MaxGeneratePosts: 10,
 		}, campaign_assistant.CampaignAssistantRepos{
 			Messages:  messageRepo,
 			Campaigns: campaignRepo,
@@ -273,6 +276,28 @@ var _ = Describe("Campaign assistant flow", Ordered, func() {
 			// Read-only: no content plan or brief mutation.
 			Expect(resp.ContentPlan).To(BeNil())
 			Expect(resp.Brief).To(BeNil())
+		})
+	})
+
+	Describe("targeted generation", func() {
+		It("adds a few targeted posts in the current phase and persists them", func() {
+			resp, err := callback(ctx, campaign_assistant.CampaignAssistantRequest{
+				CampaignID:  campaignID,
+				Instruction: "Add 2 LinkedIn posts in the current phase for the upcoming two weeks.",
+			}, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp).NotTo(BeNil())
+
+			Expect(resp.Action).To(Equal("posts_generated"))
+			Expect(resp.GeneratedPosts).NotTo(BeNil())
+			Expect(resp.GeneratedPosts.PostCount).To(BeNumerically(">", 0))
+
+			posts, err := postRepo.ListByCampaign(ctx, campaignID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(len(posts)).To(Equal(resp.GeneratedPosts.PostCount))
+			for _, p := range posts {
+				Expect(p.PlatformID).To(Equal(platformID), "posts should be on the requested platform")
+			}
 		})
 	})
 })

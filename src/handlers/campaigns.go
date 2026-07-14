@@ -58,6 +58,10 @@ type CampaignsHandler struct {
 	// NewCampaignsHandler call sites stay unchanged. nil → the endpoint 503s.
 	// Not gated by the Anthropic key — it's a plain tenant-scoped DB read.
 	overview *overview.Service
+	// generatePosts backs POST /:id/generate-posts (CON-114); generatePostsMax
+	// caps the count. Set via SetGeneratePosts. nil → the endpoint 503s.
+	generatePosts    func(ctx context.Context, req content_plan.GeneratePostsRequest, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)
+	generatePostsMax int
 }
 
 // SetOverviewService wires the campaign overview service (CON-113). Kept as a
@@ -65,6 +69,13 @@ type CampaignsHandler struct {
 // fixtures stay unchanged.
 func (h *CampaignsHandler) SetOverviewService(svc *overview.Service) {
 	h.overview = svc
+}
+
+// SetGeneratePosts wires the CON-114 targeted generation callback + its per-call
+// cap. Setter, not a constructor arg, so existing call sites stay unchanged.
+func (h *CampaignsHandler) SetGeneratePosts(fn func(ctx context.Context, req content_plan.GeneratePostsRequest, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error), max int) {
+	h.generatePosts = fn
+	h.generatePostsMax = max
 }
 
 func NewCampaignsHandler(
@@ -98,6 +109,10 @@ func (h *CampaignsHandler) Register(app *fiber.App) {
 	g.Delete("/:id", h.auth, h.Delete)
 	g.Post("/:id/generate-draft", h.auth, h.GenerateDraft)
 	g.Post("/:id/enrich-brief", h.auth, h.EnrichBrief)
+	// CON-114: targeted generation — add a few posts for a platform subset,
+	// phase, and date window. Tenant-scoped (no owner guard), mirroring the
+	// assistant capability.
+	g.Post("/:id/generate-posts", h.auth, h.GeneratePosts)
 	// CON-112: Campaign Assistant chat. Tenant-scoped only — any user who can
 	// see the campaign can use the assistant (no owner-only guard).
 	g.Post("/:id/assistant", h.auth, h.Assistant)
@@ -638,6 +653,113 @@ func (h *CampaignsHandler) Overview(c *fiber.Ctx) error {
 		return err
 	}
 	return c.JSON(ov)
+}
+
+// GeneratePosts godoc
+// @Summary      Generate targeted posts (SSE)
+// @Description  Generates a few new draft posts for a platform subset, a single
+// @Description  phase, and a publish-date window (CON-114). Streams the same
+// @Description  step / post / warning / complete / error events as generate-draft.
+// @Description  Available to any user in the campaign's tenant.
+// @Tags         campaigns
+// @Accept       json
+// @Produce      text/event-stream
+// @Security     CookieAuth
+// @Param        id    path  string  true  "Campaign Sqid"
+// @Success      200  "SSE stream: step / post / warning / complete / error events"
+// @Failure      400  {object}  map[string]string
+// @Failure      401  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Failure      503  {object}  map[string]string
+// @Router       /api/campaigns/{id}/generate-posts [post]
+func (h *CampaignsHandler) GeneratePosts(c *fiber.Ctx) error {
+	if h.generatePosts == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "targeted generation is not available")
+	}
+	if h.isContentPlanReady != nil && !h.isContentPlanReady() {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "targeted generation is not available")
+	}
+
+	var body struct {
+		PlatformIDs []string `json:"platformIds"`
+		PhaseID     string   `json:"phaseId"`
+		Count       int      `json:"count"`
+		WindowStart string   `json:"windowStart"`
+		WindowEnd   string   `json:"windowEnd"`
+		PostType    string   `json:"postType"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	if body.Count < 1 {
+		return fiber.NewError(fiber.StatusBadRequest, "count must be at least 1")
+	}
+	max := h.generatePostsMax
+	if max <= 0 {
+		max = 10
+	}
+	if body.Count > max {
+		body.Count = max
+	}
+
+	// 404 before opening the stream (tenant-scoped).
+	if _, err := h.repo.GetByID(c.Context(), c.Params("id")); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "campaign not found")
+		}
+		return err
+	}
+
+	c.Set("Content-Type", "text/event-stream")
+	c.Set("Cache-Control", "no-cache")
+	c.Set("Connection", "keep-alive")
+	c.Set("X-Accel-Buffering", "no")
+
+	session := c.Locals("session").(*models.Session)
+	flowCtx := tenantctx.With(context.Background(), session.TenantID)
+	generatePosts := h.generatePosts
+	req := content_plan.GeneratePostsRequest{
+		CampaignID:  c.Params("id"),
+		PlatformIDs: body.PlatformIDs,
+		PhaseID:     body.PhaseID,
+		Count:       body.Count,
+		WindowStart: body.WindowStart,
+		WindowEnd:   body.WindowEnd,
+		PostType:    body.PostType,
+	}
+
+	c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
+		writeEvent := func(event string, data any) {
+			b, _ := json.Marshal(data)
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
+			_ = w.Flush()
+		}
+
+		onEvent := content_plan.OnEventFunc(func(name content_plan.SSEEventKind, data any) {
+			writeEvent(string(name), data)
+		})
+
+		resp, err := generatePosts(flowCtx, req, onEvent)
+		if err != nil {
+			code := fiber.StatusInternalServerError
+			msg := err.Error()
+			var ve *content_plan.ValidationError
+			var ae *content_plan.AIError
+			switch {
+			case errors.As(err, &ve):
+				code = fiber.StatusBadRequest
+				msg = ve.Msg
+			case errors.As(err, &ae):
+				code = fiber.StatusBadGateway
+				msg = ae.Msg
+			}
+			writeEvent(string(content_plan.SSEEventError), content_plan.ErrorEventPayload{Message: msg, Code: code})
+			return
+		}
+		writeEvent(string(content_plan.SSEEventComplete), resp)
+	}))
+
+	return nil
 }
 
 // nullSlice returns an empty StringSlice instead of nil so the JSON column

@@ -400,6 +400,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	handlers.NewCampaignTypesHandler(campaignTypeRepo, auth).Register(app)
 	campaignsHandler := handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, gkRuntime.GenerateDraft, gkRuntime.IsAnthropicAvailable, gkRuntime.EnrichBrief, campaignMessageRepo, gkRuntime.RunCampaignAssistant)
 	campaignsHandler.SetOverviewService(campaignOverviewSvc)
+	campaignsHandler.SetGeneratePosts(gkRuntime.GeneratePosts, cfg.GeneratePostsMax)
 	campaignsHandler.Register(app)
 	handlers.NewPlatformsHandler(platformRepo, pubs, autoPublishAllowlistRepo, auth).Register(app)
 	handlers.NewTagsHandler(tagRepo, auth).Register(app)

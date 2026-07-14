@@ -77,6 +77,10 @@ type Config struct {
 	MaxPostsPerBatch   int `envconfig:"MAX_POSTS_PER_BATCH"   default:"30"`
 	MaxParallelBatches int `envconfig:"MAX_PARALLEL_BATCHES"  default:"5"`
 
+	// GeneratePostsMax caps the Campaign Assistant's targeted "add a few posts"
+	// tool (CON-114) so it stays an incremental add rather than a full re-plan.
+	GeneratePostsMax int `envconfig:"GENERATE_POSTS_MAX" default:"10"`
+
 	// Post quality assessment (CON-85). Scoring runs on Sonnet 4.5 by
 	// default — Haiku underdelivered (terse, omitting per-dimension prose) —
 	// specified separately from ModelID so the scoring model can be tuned

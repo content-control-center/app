@@ -75,6 +75,17 @@ func (s *jsonPostScanner) push(chunk string) []string {
 	return complete
 }
 
+// targeting overrides the count, phases, and publish-date window a generation
+// run uses (CON-114). nil = the full-campaign plan (count from
+// EstimatedPostCount, all phases, the campaign date range). The platform subset
+// is applied by the caller via the platforms argument.
+type targeting struct {
+	count       int
+	phases      []resolvedPhase
+	windowStart time.Time
+	windowEnd   time.Time
+}
+
 func generatePosts(
 	ctx context.Context,
 	g *genkit.Genkit,
@@ -84,13 +95,13 @@ func generatePosts(
 	cfg ContentPlanFlowConfig,
 	repos ContentPlanRepos,
 	onEvent OnEventFunc,
+	tgt *targeting,
 ) ([]DraftPost, []string, error) {
 	estCount := 0
 	if campaign.EstimatedPostCount != nil {
 		estCount = *campaign.EstimatedPostCount
 	}
-
-	dayCount := int(campaign.EndDate.Sub(*campaign.StartDate).Hours() / 24)
+	startDate, endDate := *campaign.StartDate, *campaign.EndDate
 
 	phases := make([]resolvedPhase, len(campaign.CampaignType.Phases))
 	for i, p := range campaign.CampaignType.Phases {
@@ -102,6 +113,16 @@ func generatePosts(
 		}
 	}
 
+	// CON-114 targeting: restrict the run to an explicit count, a single phase,
+	// and a custom publish-date window (platforms are already the caller's subset).
+	if tgt != nil {
+		estCount = tgt.count
+		phases = tgt.phases
+		startDate, endDate = tgt.windowStart, tgt.windowEnd
+	}
+
+	dayCount := int(endDate.Sub(startDate).Hours() / 24)
+
 	data := contentPlanTemplateData{
 		Name:                    campaign.Name,
 		Description:             campaign.Description,
@@ -112,8 +133,8 @@ func generatePosts(
 		KeyMessages:             campaign.KeyMessages,
 		ToneGuidelines:          campaign.ToneGuidelines,
 		Language:                campaign.Language,
-		StartDate:               campaign.StartDate.Format("2006-01-02"),
-		EndDate:                 campaign.EndDate.Format("2006-01-02"),
+		StartDate:               startDate.Format("2006-01-02"),
+		EndDate:                 endDate.Format("2006-01-02"),
 		DayCount:                dayCount,
 		EstimatedPostCount:      estCount,
 		Platforms:               platforms,
@@ -155,7 +176,11 @@ func generatePosts(
 	// before its post-event fires — the validator is built once and
 	// shared across all batches; the persist closure binds the campaign
 	// + post repository for the duration of the run.
-	validate := buildPostValidator(campaign, platforms)
+	validPhaseIDs := make(map[string]bool, len(phases))
+	for _, ph := range phases {
+		validPhaseIDs[ph.ID] = true
+	}
+	validate := newPostValidator(platforms, validPhaseIDs, data.StartDate, data.EndDate)
 	persistFn := func(ctx context.Context, dp DraftPost) (string, error) {
 		return persistOne(ctx, dp, campaign, repos.Posts)
 	}
@@ -163,7 +188,7 @@ func generatePosts(
 	// Single-shot fallback: no estimated count, or fewer slots than a single
 	// batch. We still go through the batched path for consistency, but with
 	// a single batch covering everything.
-	batches := planBatches(estCount, phases, platforms, *campaign.StartDate, *campaign.EndDate, maxPostsPerBatch)
+	batches := planBatches(estCount, phases, platforms, startDate, endDate, maxPostsPerBatch)
 	if len(batches) == 0 {
 		// EstimatedPostCount is 0 or otherwise unplannable — preserve the
 		// pre-CON-67 behaviour of asking the model to decide the count

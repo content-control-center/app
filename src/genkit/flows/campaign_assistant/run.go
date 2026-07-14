@@ -67,7 +67,7 @@ func runCampaignAssistant(
 	finaliseOwnerID = campaign.CreatedBy
 
 	// ── Assemble context + load history ──────────────────────────────────────
-	actx, err := assembleContext(campaign, systemTmpl, contextTmpl)
+	actx, err := assembleContext(campaign, time.Now().UTC(), systemTmpl, contextTmpl)
 	if err != nil {
 		return nil, fmt.Errorf("assemble context: %w", err)
 	}
@@ -88,13 +88,15 @@ func runCampaignAssistant(
 
 	// ── Inject per-request state for tools ───────────────────────────────────
 	st := &requestState{
-		campaignID:  req.CampaignID,
-		campaign:    campaign,
-		repos:       repos,
-		onEvent:     onEvent,
-		contentPlan: cfg.ContentPlan,
-		enrichBrief: cfg.EnrichBrief,
-		overview:    cfg.Overview,
+		campaignID:       req.CampaignID,
+		campaign:         campaign,
+		repos:            repos,
+		onEvent:          onEvent,
+		contentPlan:      cfg.ContentPlan,
+		enrichBrief:      cfg.EnrichBrief,
+		overview:         cfg.Overview,
+		generatePosts:    cfg.GeneratePosts,
+		maxGeneratePosts: cfg.MaxGeneratePosts,
 	}
 	ctx = withRequestState(ctx, st)
 
@@ -158,7 +160,7 @@ func runCampaignAssistant(
 		ai.WithSystem(systemBlock),
 		ai.WithMessages(history...),
 		ai.WithPrompt(req.Instruction),
-		ai.WithTools(tools.runContentPlan, tools.enrichBrief, tools.listCampaignPosts, tools.getCampaignOverview),
+		ai.WithTools(tools.runContentPlan, tools.enrichBrief, tools.listCampaignPosts, tools.getCampaignOverview, tools.generatePosts),
 		ai.WithMaxTurns(maxTurns),
 		ai.WithStreaming(streamCb),
 		cfg.Provider.CallConfig(maxTokens),
@@ -212,11 +214,22 @@ func runCampaignAssistant(
 			result.Explanation = "I enriched the campaign brief and saved it to the campaign."
 		}
 	}
+	if st.generatedPostsResult != nil {
+		result.Action = "posts_generated"
+		result.GeneratedPosts = st.generatedPostsResult
+		if result.Explanation == "" {
+			if st.generatedPostsResult.PostCount == 0 {
+				result.Explanation = "I couldn't add any posts for that request."
+			} else {
+				result.Explanation = fmt.Sprintf("I added %d draft post(s) to the campaign.", st.generatedPostsResult.PostCount)
+			}
+		}
+	}
 
 	// Pure-prose recovery: the model ignored the JSON envelope and answered in
 	// plain prose (common for informational questions) and no tool ran. Salvage
 	// the raw text as an "answered" reply.
-	if result.Explanation == "" && st.contentPlanResult == nil && st.briefResult == nil {
+	if result.Explanation == "" && st.contentPlanResult == nil && st.briefResult == nil && st.generatedPostsResult == nil {
 		raw := strings.TrimSpace(scanner.FullText())
 		if raw != "" && !strings.Contains(raw, "{") {
 			slog.WarnContext(ctx, "model emitted prose-only response, treating as answered", logging.AttrComponent, "genkit.campaign_assistant", "campaign_id", req.CampaignID, "len", len(raw))
@@ -256,6 +269,12 @@ func runCampaignAssistant(
 	}
 	if result.Brief != nil {
 		emit(onEvent, SSEEventEnrichBriefComplete, EnrichBriefCompleteEventPayload{Applied: result.Brief.Applied})
+	}
+	if result.GeneratedPosts != nil {
+		emit(onEvent, SSEEventGeneratePostsComplete, GeneratePostsCompleteEventPayload{
+			PostCount: result.GeneratedPosts.PostCount,
+			Warnings:  result.GeneratedPosts.Warnings,
+		})
 	}
 
 	// Emit the final structured response — the canonical result; deltas before
