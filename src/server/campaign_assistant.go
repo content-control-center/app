@@ -1,0 +1,47 @@
+package server
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/firebase/genkit/go/genkit"
+
+	"github.com/ogen-app/ogen/src/config"
+	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
+	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
+	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
+	"github.com/ogen-app/ogen/src/usage"
+	"github.com/ogen-app/ogen/src/vendors/llm"
+)
+
+// initCampaignAssistant registers the campaign assistant flow on the shared
+// Genkit instance and returns a callback for the campaigns handler. It reuses
+// the already-registered content_plan and enrich_brief callbacks as tools
+// (CON-112), so it must be initialised after those two.
+func initCampaignAssistant(
+	g *genkit.Genkit,
+	cfg *config.Config,
+	provider *llm.Provider,
+	recorder *usage.Recorder,
+	checker *usage.Checker,
+	hub eventhub.Hub,
+	repos campaign_assistant.CampaignAssistantRepos,
+	contentPlanFn func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error),
+	enrichBriefFn func(ctx context.Context, req enrich_brief.EnrichBriefRequest, onEvent enrich_brief.OnEventFunc) (*enrich_brief.EnrichBriefResponse, error),
+) (func(ctx context.Context, req campaign_assistant.CampaignAssistantRequest, onEvent campaign_assistant.OnEventFunc) (*campaign_assistant.CampaignAssistantResponse, error), error) {
+	flowCfg := campaign_assistant.CampaignAssistantFlowConfig{
+		Provider:        provider,
+		Recorder:        recorder,
+		Checker:         checker,
+		ModelID:         cfg.PlanningModelID,
+		MaxOutputTokens: 8192,
+		Hub:             hub,
+		ContentPlan:     contentPlanFn,
+		EnrichBrief:     enrichBriefFn,
+	}
+	if err := campaign_assistant.InitCampaignAssistant(g, flowCfg, repos); err != nil {
+		return nil, fmt.Errorf("init campaign assistant flow: %w", err)
+	}
+	return campaign_assistant.NewCampaignAssistantCallback(), nil
+}

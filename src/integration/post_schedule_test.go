@@ -76,7 +76,7 @@ var _ = Describe("Post schedule — CON-78", Ordered, func() {
 
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, "test_session", false).Register(app)
-		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil).Register(app)
+		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
 
 		postsHandler := handlers.NewPostsHandler(postRepo, versionRepo, postMessageRepo, platformRepo, postAttRepo, auth, nil, nil)
 		postsHandler.SetPostLogRepo(logRepo)

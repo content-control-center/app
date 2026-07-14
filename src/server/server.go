@@ -20,6 +20,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
@@ -88,6 +89,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	postRepo := repository.NewPostRepository(db)
 	postVersionRepo := repository.NewPostVersionRepository(db)
 	postMessageRepo := repository.NewPostAssistantMessageRepository(db)
+	campaignMessageRepo := repository.NewCampaignAssistantMessageRepository(db)
 	postAttachmentRepo := repository.NewPostAttachmentRepository(db)
 	postLogRepo := repository.NewPostLogRepository(db)
 	postEvaluationRepo := repository.NewPostEvaluationRepository(db)
@@ -373,6 +375,11 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 			Campaigns:     campaignRepo,
 			CampaignTypes: campaignTypeRepo,
 		},
+		campaignAssistRepos: campaign_assistant.CampaignAssistantRepos{
+			Messages:  campaignMessageRepo,
+			Campaigns: campaignRepo,
+			Posts:     postRepo,
+		},
 		cloneSvc:    cloneSvc,
 		restoreSvc:  restoreSvc,
 		scheduleSvc: scheduleSvc,
@@ -385,7 +392,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	slog.Info("genkit flows registered", logging.AttrComponent, "genkit")
 
 	handlers.NewCampaignTypesHandler(campaignTypeRepo, auth).Register(app)
-	handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, gkRuntime.GenerateDraft, gkRuntime.IsAnthropicAvailable, gkRuntime.EnrichBrief).Register(app)
+	handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, gkRuntime.GenerateDraft, gkRuntime.IsAnthropicAvailable, gkRuntime.EnrichBrief, campaignMessageRepo, gkRuntime.RunCampaignAssistant).Register(app)
 	handlers.NewPlatformsHandler(platformRepo, pubs, autoPublishAllowlistRepo, auth).Register(app)
 	handlers.NewTagsHandler(tagRepo, auth).Register(app)
 	postsHandler := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, platformRepo, postAttachmentRepo, auth, gkRuntime.RunPostAssistant, gkRuntime.IsAnthropicAvailable)

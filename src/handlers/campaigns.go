@@ -12,6 +12,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/valyala/fasthttp"
 
+	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/models"
@@ -44,6 +45,13 @@ type CampaignsHandler struct {
 	// enrichBrief streams an AI-generated campaign brief (CON-56). nil
 	// when the feature is unwired (e.g. tests) → the handler returns 503.
 	enrichBrief func(ctx context.Context, req enrich_brief.EnrichBriefRequest, onEvent enrich_brief.OnEventFunc) (*enrich_brief.EnrichBriefResponse, error)
+	// messageRepo persists the Campaign Assistant conversation (CON-112). nil
+	// in tests that don't exercise the assistant.
+	messageRepo repository.CampaignAssistantMessageRepository
+	// assistant is the Campaign Assistant flow callback (CON-112). nil when
+	// unwired (e.g. tests) → the assistant/messages endpoints return 503.
+	// Readiness is gated by isContentPlanReady, the same Anthropic-key gate.
+	assistant func(ctx context.Context, req campaign_assistant.CampaignAssistantRequest, onEvent campaign_assistant.OnEventFunc) (*campaign_assistant.CampaignAssistantResponse, error)
 }
 
 func NewCampaignsHandler(
@@ -53,6 +61,8 @@ func NewCampaignsHandler(
 	generateDraft func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error),
 	isContentPlanReady func() bool,
 	enrichBrief func(ctx context.Context, req enrich_brief.EnrichBriefRequest, onEvent enrich_brief.OnEventFunc) (*enrich_brief.EnrichBriefResponse, error),
+	messageRepo repository.CampaignAssistantMessageRepository,
+	assistant func(ctx context.Context, req campaign_assistant.CampaignAssistantRequest, onEvent campaign_assistant.OnEventFunc) (*campaign_assistant.CampaignAssistantResponse, error),
 ) *CampaignsHandler {
 	return &CampaignsHandler{
 		repo:               repo,
@@ -61,6 +71,8 @@ func NewCampaignsHandler(
 		generateDraft:      generateDraft,
 		isContentPlanReady: isContentPlanReady,
 		enrichBrief:        enrichBrief,
+		messageRepo:        messageRepo,
+		assistant:          assistant,
 	}
 }
 
@@ -73,6 +85,10 @@ func (h *CampaignsHandler) Register(app *fiber.App) {
 	g.Delete("/:id", h.auth, h.Delete)
 	g.Post("/:id/generate-draft", h.auth, h.GenerateDraft)
 	g.Post("/:id/enrich-brief", h.auth, h.EnrichBrief)
+	// CON-112: Campaign Assistant chat. Tenant-scoped only — any user who can
+	// see the campaign can use the assistant (no owner-only guard).
+	g.Post("/:id/assistant", h.auth, h.Assistant)
+	g.Get("/:id/messages", h.auth, h.ListMessages)
 }
 
 type campaignRequest struct {
@@ -466,6 +482,114 @@ func (h *CampaignsHandler) EnrichBrief(c *fiber.Ctx) error {
 	}))
 
 	return nil
+}
+
+// Assistant godoc
+// @Summary      Campaign assistant (SSE)
+// @Description  Sends an instruction to the Campaign Assistant and streams progress via Server-Sent Events.
+// @Description  "explanation_delta" carries {"delta":"..."} fragments as the reply streams. "tool_call"/"tool_result"
+// @Description  signal tool invocations. When a content plan runs, "content_plan_started", "content_plan_post"
+// @Description  (etc.) and "content_plan_complete" are forwarded; when the brief is enriched, "enrich_brief_started",
+// @Description  the per-field "enrich_brief_*_delta" events and "enrich_brief_complete" are forwarded. A final
+// @Description  "complete" event carries the CampaignAssistantResponse. "error" carries {"message":"...","code":<http_code>}.
+// @Description  Available to any user in the campaign's tenant.
+// @Tags         campaigns
+// @Accept       json
+// @Produce      text/event-stream
+// @Security     CookieAuth
+// @Param        id    path      string           true  "Campaign Sqid"
+// @Param        body  body      assistantRequest true  "Instruction payload"
+// @Success      200  "SSE stream: delta / tool_call / tool_result / *_complete / complete / error events"
+// @Failure      400   {object}  map[string]string
+// @Failure      401   {object}  map[string]string
+// @Failure      503   {object}  map[string]string
+// @Router       /api/campaigns/{id}/assistant [post]
+func (h *CampaignsHandler) Assistant(c *fiber.Ctx) error {
+	if h.assistant == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "campaign assistant is not available")
+	}
+	if h.isContentPlanReady != nil && !h.isContentPlanReady() {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "campaign assistant is not available")
+	}
+
+	var req assistantRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	if err := validate.Struct(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	}
+
+	c.Set("Content-Type", "text/event-stream")
+	c.Set("Cache-Control", "no-cache")
+	c.Set("Connection", "keep-alive")
+	c.Set("X-Accel-Buffering", "no")
+
+	campaignID := c.Params("id")
+	instruction := req.Instruction
+	assistant := h.assistant
+	session := c.Locals("session").(*models.Session)
+	// Carry the tenant into the detached flow context (the StreamWriter runs
+	// after this handler returns) so the tenant-scoped campaign load, brief
+	// write, and usage recording all attribute to the right tenant (CON-86/97).
+	flowCtx := tenantctx.With(context.Background(), session.TenantID)
+
+	c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
+		writeEvent := func(event string, data any) {
+			b, _ := json.Marshal(data)
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
+			_ = w.Flush()
+		}
+
+		onEvent := campaign_assistant.OnEventFunc(func(name campaign_assistant.SSEEventKind, data any) {
+			writeEvent(string(name), data)
+		})
+
+		_, err := assistant(flowCtx, campaign_assistant.CampaignAssistantRequest{
+			CampaignID:  campaignID,
+			Instruction: instruction,
+		}, onEvent)
+		if err != nil {
+			code := fiber.StatusInternalServerError
+			msg := err.Error()
+			var ve *campaign_assistant.ValidationError
+			var ae *campaign_assistant.AIError
+			switch {
+			case errors.As(err, &ve):
+				code = fiber.StatusBadRequest
+				msg = ve.Msg
+			case errors.As(err, &ae):
+				code = fiber.StatusBadGateway
+				msg = ae.Msg
+			}
+			writeEvent(string(campaign_assistant.SSEEventError), campaign_assistant.ErrorEventPayload{Message: msg, Code: code})
+			return
+		}
+		// "complete" is emitted by the runner itself; nothing to write here.
+	}))
+
+	return nil
+}
+
+// ListMessages godoc
+// @Summary      List campaign assistant messages
+// @Description  Returns the most recent Campaign Assistant conversation messages for a campaign.
+// @Tags         campaigns
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id   path      string  true  "Campaign Sqid"
+// @Success      200  {array}   models.CampaignAssistantMessage
+// @Failure      401  {object}  map[string]string
+// @Router       /api/campaigns/{id}/messages [get]
+func (h *CampaignsHandler) ListMessages(c *fiber.Ctx) error {
+	if h.messageRepo == nil {
+		return c.JSON([]models.CampaignAssistantMessage{})
+	}
+	msgs, err := h.messageRepo.ListRecentByCampaignID(c.Context(), c.Params("id"), 50)
+	if err != nil {
+		return err
+	}
+	return c.JSON(msgs)
 }
 
 // nullSlice returns an empty StringSlice instead of nil so the JSON column

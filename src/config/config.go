@@ -56,6 +56,13 @@ type Config struct {
 	MaxContextAssets int    `envconfig:"MAX_ASSET_CONTEXT"     default:"15"`
 	MaxContextChars  int    `envconfig:"MAX_CONTEXT_CHARS"     default:"10000"`
 
+	// PlanningModelID (CON-112) backs the cheap/fast "planning" role used by
+	// the Campaign Assistant's orchestration + intent-routing loop. Prose
+	// generation happens inside the content_plan / enrich_brief sub-flows it
+	// invokes as tools, which stay on ModelID (Sonnet-tier) — so the assistant
+	// routes cheaply on Haiku while the heavy writing stays capable.
+	PlanningModelID string `envconfig:"PLANNING_MODEL_ID" default:"claude-haiku-4-5-20251001"`
+
 	// 64K matches Claude 4.x Haiku/Sonnet's max output. Anthropic charges
 	// only for tokens actually emitted, so a generous cap costs nothing on
 	// short responses but prevents truncation on long rewrites (assistant
