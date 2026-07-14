@@ -14,6 +14,7 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
+	"github.com/ogen-app/ogen/src/genkit/jsonstream"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/vendors/llm"
@@ -111,7 +112,7 @@ func runCampaignAssistant(
 
 	// Stream the conversational reply. Only "explanation" is surfaced as a
 	// delta; the scanner decodes JSON escapes as they arrive.
-	scanner := NewJSONStringScanner(
+	scanner := jsonstream.New(
 		[]string{"explanation"},
 		func(key, delta string) {
 			if key == "explanation" {

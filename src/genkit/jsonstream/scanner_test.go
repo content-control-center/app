@@ -1,4 +1,4 @@
-package enrich_brief
+package jsonstream
 
 import (
 	"strings"
@@ -10,9 +10,9 @@ type capturedDelta struct {
 	delta string
 }
 
-func collect(watched ...string) (*JSONStringScanner, *[]capturedDelta) {
+func collect(watched ...string) (*Scanner, *[]capturedDelta) {
 	var out []capturedDelta
-	s := NewJSONStringScanner(watched, func(k, d string) {
+	s := New(watched, func(k, d string) {
 		out = append(out, capturedDelta{k, d})
 	})
 	return s, &out
@@ -199,7 +199,7 @@ func TestScanner_FullTextPreserved(t *testing.T) {
 
 // feed pushes the whole input in one call and returns the Values map.
 func feed(md string) map[string]any {
-	s := NewJSONStringScanner(nil, nil)
+	s := New(nil, nil)
 	s.Push(md)
 	return s.Values()
 }
@@ -374,7 +374,7 @@ func TestValues_WithWatchedKeyDeltasAndValues(t *testing.T) {
 }
 
 func TestValues_ChunkBoundariesInsideLiteral(t *testing.T) {
-	s := NewJSONStringScanner(nil, nil)
+	s := New(nil, nil)
 	s.Push(`{"saveVersion":tr`)
 	s.Push(`ue,"action":"edited"}`)
 	v := s.Values()

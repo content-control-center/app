@@ -1,4 +1,4 @@
-package enrich_brief
+package jsonstream
 
 import (
 	"strconv"
@@ -7,7 +7,7 @@ import (
 	"unicode/utf8"
 )
 
-// JSONStringScanner is an incremental parser for a single top-level JSON
+// Scanner is an incremental parser for a single top-level JSON
 // object. It serves two purposes:
 //
 //   - During a stream, it invokes onDelta with decoded fragments of watched
@@ -23,7 +23,7 @@ import (
 //
 // The scanner is forgiving of preamble (markdown fences, prose) before the
 // opening `{` and of trailing text after the closing `}`.
-type JSONStringScanner struct {
+type Scanner struct {
 	watched map[string]bool
 	onDelta func(key, delta string)
 
@@ -89,15 +89,15 @@ const (
 	escUnicode
 )
 
-// NewJSONStringScanner returns a scanner that calls onDelta whenever new
+// New returns a scanner that calls onDelta whenever new
 // decoded bytes of a watched string key are available. watched may be nil
 // if callers only need Values() (no streaming preview).
-func NewJSONStringScanner(watched []string, onDelta func(key, delta string)) *JSONStringScanner {
+func New(watched []string, onDelta func(key, delta string)) *Scanner {
 	m := make(map[string]bool, len(watched))
 	for _, k := range watched {
 		m[k] = true
 	}
-	return &JSONStringScanner{
+	return &Scanner{
 		watched:      m,
 		onDelta:      onDelta,
 		accumulators: make(map[string]*valueAcc),
@@ -107,7 +107,7 @@ func NewJSONStringScanner(watched []string, onDelta func(key, delta string)) *JS
 // Push feeds a chunk of raw text from the model stream. It appends the
 // chunk to the internal raw buffer, advances the state machine, and flushes
 // any pending decoded delta at the end.
-func (s *JSONStringScanner) Push(chunk string) {
+func (s *Scanner) Push(chunk string) {
 	s.fullText = append(s.fullText, chunk...)
 	for i := 0; i < len(chunk); i++ {
 		s.step(chunk[i])
@@ -116,7 +116,7 @@ func (s *JSONStringScanner) Push(chunk string) {
 }
 
 // FullText returns every byte pushed into the scanner so far.
-func (s *JSONStringScanner) FullText() string {
+func (s *Scanner) FullText() string {
 	return string(s.fullText)
 }
 
@@ -125,7 +125,7 @@ func (s *JSONStringScanner) FullText() string {
 // literals are parsed as float64 or returned as the raw trimmed string
 // on parse failure. Keys that the scanner did not see (including those
 // whose value was a nested object/array, which is skipped) are absent.
-func (s *JSONStringScanner) Values() map[string]any {
+func (s *Scanner) Values() map[string]any {
 	out := make(map[string]any, len(s.accumulators))
 	for key, acc := range s.accumulators {
 		if acc == nil {
@@ -155,7 +155,7 @@ func (s *JSONStringScanner) Values() map[string]any {
 	return out
 }
 
-func (s *JSONStringScanner) step(c byte) {
+func (s *Scanner) step(c byte) {
 	switch s.state {
 	case stPreamble:
 		if c == '{' {
@@ -266,14 +266,14 @@ func (s *JSONStringScanner) step(c byte) {
 	}
 }
 
-func (s *JSONStringScanner) resetKey() {
+func (s *Scanner) resetKey() {
 	s.curKey = ""
 	s.watching = false
 }
 
 // resetAccumulator initialises or overwrites the accumulator for key.
 // Overwrite semantics give "last-wins" behaviour for duplicate keys.
-func (s *JSONStringScanner) resetAccumulator(key string, kind valueKind) {
+func (s *Scanner) resetAccumulator(key string, kind valueKind) {
 	if key == "" {
 		return
 	}
@@ -282,7 +282,7 @@ func (s *JSONStringScanner) resetAccumulator(key string, kind valueKind) {
 
 // appendToAccumulator writes a raw byte to the current key's accumulator.
 // Used by the literal-collection path.
-func (s *JSONStringScanner) appendToAccumulator(c byte) {
+func (s *Scanner) appendToAccumulator(c byte) {
 	if s.curKey == "" {
 		return
 	}
@@ -291,7 +291,7 @@ func (s *JSONStringScanner) appendToAccumulator(c byte) {
 	}
 }
 
-func (s *JSONStringScanner) stringByte(c byte) {
+func (s *Scanner) stringByte(c byte) {
 	switch s.esc {
 	case escNone:
 		switch c {
@@ -376,7 +376,7 @@ func (s *JSONStringScanner) stringByte(c byte) {
 
 // appendByte writes a decoded byte to (a) the current key's accumulator
 // and (b) — only for watched keys — the streaming delta buffer.
-func (s *JSONStringScanner) appendByte(c byte) {
+func (s *Scanner) appendByte(c byte) {
 	if s.curKey != "" {
 		if acc := s.accumulators[s.curKey]; acc != nil {
 			acc.buf = append(acc.buf, c)
@@ -390,7 +390,7 @@ func (s *JSONStringScanner) appendByte(c byte) {
 
 // appendRune writes a decoded rune's UTF-8 bytes to accumulator and
 // (for watched keys) delta buffer.
-func (s *JSONStringScanner) appendRune(r rune) {
+func (s *Scanner) appendRune(r rune) {
 	var buf [4]byte
 	n := utf8.EncodeRune(buf[:], r)
 	if s.curKey != "" {
@@ -406,7 +406,7 @@ func (s *JSONStringScanner) appendRune(r rune) {
 
 // flushDelta emits the accumulated decoded bytes for the current key,
 // carrying any trailing incomplete UTF-8 bytes over to the next call.
-func (s *JSONStringScanner) flushDelta() {
+func (s *Scanner) flushDelta() {
 	if len(s.deltaBuf) == 0 {
 		return
 	}
