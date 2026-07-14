@@ -14,7 +14,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
 
-	"github.com/ogen-app/ogen/src/campaignoverview"
+	"github.com/ogen-app/ogen/src/campaign_actions/overview"
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
@@ -119,7 +119,7 @@ var _ = Describe("Campaign assistant flow", Ordered, func() {
 		})).To(Succeed())
 		enrichBriefCb := enrich_brief.NewEnrichBriefCallback()
 
-		overviewSvc := campaignoverview.New(campaignRepo, postRepo, platformRepo)
+		overviewSvc := overview.New(campaignRepo, postRepo, platformRepo)
 
 		Expect(campaign_assistant.InitCampaignAssistant(g, campaign_assistant.CampaignAssistantFlowConfig{
 			Provider:    provider,

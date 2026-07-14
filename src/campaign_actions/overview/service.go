@@ -1,4 +1,4 @@
-package campaignoverview
+package overview
 
 import (
 	"context"

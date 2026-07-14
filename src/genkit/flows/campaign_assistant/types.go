@@ -3,7 +3,7 @@ package campaign_assistant
 import (
 	"context"
 
-	"github.com/ogen-app/ogen/src/campaignoverview"
+	"github.com/ogen-app/ogen/src/campaign_actions/overview"
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
@@ -80,7 +80,7 @@ type CampaignAssistantFlowConfig struct {
 	EnrichBrief func(ctx context.Context, req enrich_brief.EnrichBriefRequest, onEvent enrich_brief.OnEventFunc) (*enrich_brief.EnrichBriefResponse, error)
 	// Overview backs the getCampaignOverview read tool (CON-113). nil disables
 	// the tool.
-	Overview *campaignoverview.Service
+	Overview *overview.Service
 }
 
 // ValidationError is returned when preconditions are not met (HTTP 400).

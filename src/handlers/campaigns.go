@@ -12,7 +12,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/valyala/fasthttp"
 
-	"github.com/ogen-app/ogen/src/campaignoverview"
+	"github.com/ogen-app/ogen/src/campaign_actions/overview"
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
@@ -57,13 +57,13 @@ type CampaignsHandler struct {
 	// (a late-bound optional dep, like PostsHandler's setters), so existing
 	// NewCampaignsHandler call sites stay unchanged. nil → the endpoint 503s.
 	// Not gated by the Anthropic key — it's a plain tenant-scoped DB read.
-	overview *campaignoverview.Service
+	overview *overview.Service
 }
 
 // SetOverviewService wires the campaign overview service (CON-113). Kept as a
 // setter, not a constructor arg, so existing NewCampaignsHandler call sites and
 // fixtures stay unchanged.
-func (h *CampaignsHandler) SetOverviewService(svc *campaignoverview.Service) {
+func (h *CampaignsHandler) SetOverviewService(svc *overview.Service) {
 	h.overview = svc
 }
 
@@ -621,7 +621,7 @@ func (h *CampaignsHandler) ListMessages(c *fiber.Ctx) error {
 // @Produce      json
 // @Security     CookieAuth
 // @Param        id   path      string  true  "Campaign Sqid"
-// @Success      200  {object}  campaignoverview.Overview
+// @Success      200  {object}  overview.Overview
 // @Failure      401  {object}  map[string]string
 // @Failure      404  {object}  map[string]string
 // @Failure      503  {object}  map[string]string
@@ -632,7 +632,7 @@ func (h *CampaignsHandler) Overview(c *fiber.Ctx) error {
 	}
 	ov, err := h.overview.Overview(c.Context(), c.Params("id"))
 	if err != nil {
-		if errors.Is(err, campaignoverview.ErrNotFound) {
+		if errors.Is(err, overview.ErrNotFound) {
 			return fiber.NewError(fiber.StatusNotFound, "campaign not found")
 		}
 		return err

@@ -11,7 +11,7 @@ import (
 	"github.com/firebase/genkit/go/genkit"
 	"github.com/firebase/genkit/go/plugins/anthropic"
 
-	"github.com/ogen-app/ogen/src/campaignoverview"
+	"github.com/ogen-app/ogen/src/campaign_actions/overview"
 	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
@@ -64,7 +64,7 @@ type genkitRuntime struct {
 	postQualityRepos    post_quality.PostQualityRepos
 	enrichBriefRepos    enrich_brief.EnrichBriefRepos
 	campaignAssistRepos campaign_assistant.CampaignAssistantRepos
-	campaignOverviewSvc *campaignoverview.Service
+	campaignOverviewSvc *overview.Service
 	cloneSvc            *clone.Service
 	restoreSvc          *restore.Service
 	scheduleSvc         *schedule.Service
@@ -83,7 +83,7 @@ type genkitDeps struct {
 	postQualityRepos    post_quality.PostQualityRepos
 	enrichBriefRepos    enrich_brief.EnrichBriefRepos
 	campaignAssistRepos campaign_assistant.CampaignAssistantRepos
-	campaignOverviewSvc *campaignoverview.Service
+	campaignOverviewSvc *overview.Service
 	cloneSvc            *clone.Service
 	restoreSvc          *restore.Service
 	scheduleSvc         *schedule.Service

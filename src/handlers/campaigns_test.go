@@ -16,7 +16,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
 
-	"github.com/ogen-app/ogen/src/campaignoverview"
+	"github.com/ogen-app/ogen/src/campaign_actions/overview"
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
@@ -1332,7 +1332,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 			handlers.NewUsersHandler(uRepo, setRepo, a2).Register(a)
 			handlers.NewSessionsHandler(uRepo, sRepo, testCookieName, false).Register(a)
 			ch := handlers.NewCampaignsHandler(cRepo, ctRepo, a2, nil, nil, nil, nil, nil)
-			ch.SetOverviewService(campaignoverview.New(cRepo, postRepo, pRepo))
+			ch.SetOverviewService(overview.New(cRepo, postRepo, pRepo))
 			ch.Register(a)
 			return a, postRepo
 		}
@@ -1437,7 +1437,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(200))
 
-				var ov campaignoverview.Overview
+				var ov overview.Overview
 				Expect(json.NewDecoder(resp.Body).Decode(&ov)).To(Succeed())
 				Expect(ov.CampaignID).To(Equal(camp.ID))
 				Expect(ov.Brief.Description).To(Equal(full.Description))

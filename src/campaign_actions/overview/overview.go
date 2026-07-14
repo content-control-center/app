@@ -1,9 +1,9 @@
-// Package campaignoverview computes a read-only "quick overview" of a campaign
+// Package overview computes a read-only "quick overview" of a campaign
 // (CON-113): its brief, phases with per-phase post counts, and content
 // distribution by status, platform, and content type. The same service backs
 // both the Campaign Assistant's getCampaignOverview tool and the
 // GET /api/campaigns/:id/overview REST endpoint.
-package campaignoverview
+package overview
 
 import (
 	"errors"
