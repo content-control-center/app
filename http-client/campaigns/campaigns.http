@@ -186,3 +186,87 @@ Content-Type: application/json
 ### Enrich campaign brief — non-existent ID (expects 404)  [protected]
 POST {{baseUrl}}/api/campaigns/nonexistent/enrich-brief
 Accept: text/event-stream
+
+###
+# ── Campaign Assistant — CON-112 ──────────────────────────────────────────────
+###
+# A conversational, per-campaign assistant. Available to ANY user in the
+# campaign's tenant (no owner-only guard). It routes natural-language
+# instructions to the content_plan and enrich_brief flows (run as tools) or
+# answers grounded questions about the campaign.
+#
+# A cheap planning model (PLANNING_MODEL_ID, Haiku) drives routing; the wrapped
+# flows do the heavy prose on the generation model. enrichBrief auto-applies the
+# new brief to the campaign; runContentPlan persists the draft posts.
+#
+# Requires ANTHROPIC_API_KEY on the server; returns 503 when the flow is unwired.
+# Returns 400 when "instruction" is missing/empty.
+# Response is a Server-Sent Events stream. Events:
+#   "explanation_delta" ({"delta":"..."}) — the conversational reply streaming;
+#   "tool_call" / "tool_result" — the assistant invoking a tool;
+#   "content_plan_started" / "content_plan_step" / "content_plan_post" /
+#     "content_plan_warning" / "content_plan_complete" — forwarded, namespaced,
+#     while runContentPlan runs;
+#   "enrich_brief_started" / "enrich_brief_description_delta" /
+#     "enrich_brief_persona_delta" / "enrich_brief_messages_delta" /
+#     "enrich_brief_tone_delta" / "enrich_brief_complete" — forwarded while
+#     enrichBrief runs;
+#   "complete" (the full CampaignAssistantResponse — the source of truth);
+#   "error" ({"message":"...","code":<http_code>}).
+
+### Campaign assistant — generate a content plan  [protected]
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/assistant
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "instruction": "Generate a content plan for this campaign."
+}
+
+### Campaign assistant — enrich / improve the brief  [protected]
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/assistant
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "instruction": "Improve the campaign brief — make the tone more B2B, technical, and benchmark-driven."
+}
+
+### Campaign assistant — grounded question (no mutation)  [protected]
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/assistant
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "instruction": "Summarise the brief and tell me what posts already exist in this campaign."
+}
+
+### Campaign assistant — out-of-scope request (expects action=declined)  [protected]
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/assistant
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "instruction": "Delete all of my posts and cancel my subscription."
+}
+
+### Campaign assistant — missing instruction (expects 400)  [protected]
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/assistant
+Accept: text/event-stream
+Content-Type: application/json
+
+{}
+
+### Campaign assistant — non-existent campaign (streams error, campaign not found)  [protected]
+POST {{baseUrl}}/api/campaigns/nonexistent/assistant
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "instruction": "Generate a content plan."
+}
+
+### List campaign assistant messages  [protected]
+# Returns up to the 50 most-recent conversation turns (oldest-first).
+GET {{baseUrl}}/api/campaigns/{{campaignId}}/messages
+Accept: application/json
