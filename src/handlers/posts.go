@@ -1205,6 +1205,10 @@ func (h *PostsHandler) ListMessages(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	// Preserve the array contract: an empty history serializes as [] not null.
+	if msgs == nil {
+		msgs = []models.PostAssistantMessage{}
+	}
 	return c.JSON(msgs)
 }
 
