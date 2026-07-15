@@ -37,11 +37,17 @@ func initCampaignAssistant(
 	checkPostsFn func(ctx context.Context, req consistency.PostsCheckRequest, onEvent consistency.OnEventFunc) (*consistency.PostsReview, error),
 ) (func(ctx context.Context, req campaign_assistant.CampaignAssistantRequest, onEvent campaign_assistant.OnEventFunc) (*campaign_assistant.CampaignAssistantResponse, error), error) {
 	flowCfg := campaign_assistant.CampaignAssistantFlowConfig{
-		Provider:         provider,
-		Recorder:         recorder,
-		Checker:          checker,
-		ModelID:          cfg.PlanningModelID,
-		MaxOutputTokens:  8192,
+		Provider: provider,
+		Recorder: recorder,
+		Checker:  checker,
+		ModelID:  cfg.PlanningModelID,
+		// Router slimming (CON-112 perf): the planner only emits a short JSON
+		// envelope (explanation + action) plus tool calls, so 2048 is ample and
+		// bounds worst-case streaming; MaxTurns 2 lets it call at most one tool
+		// per turn (model → tool → compose), preventing several heavy Sonnet
+		// sub-flows from chaining inside a single chat turn.
+		MaxOutputTokens:  2048,
+		MaxTurns:         2,
 		Hub:              hub,
 		ContentPlan:      contentPlanFn,
 		EnrichBrief:      enrichBriefFn,

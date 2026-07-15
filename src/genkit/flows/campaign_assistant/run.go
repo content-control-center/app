@@ -38,6 +38,10 @@ func runCampaignAssistant(
 	if err := cfg.Checker.Enforce(ctx); err != nil {
 		return nil, err
 	}
+	// Phase timers (CON-112 perf): every stage of the turn is timed so a single
+	// request reveals where wall-clock goes — pre-model DB, model TTFT, per-tool
+	// execution, or persist. Logged once as "phase timings" at the end.
+	tAfterEnforce := time.Now()
 
 	// finaliseOwnerID is captured once the campaign is loaded so the deferred
 	// finalisation event is scoped to the campaign owner. Empty before load →
@@ -65,12 +69,14 @@ func runCampaignAssistant(
 		return nil, fmt.Errorf("load campaign: %w", err)
 	}
 	finaliseOwnerID = campaign.CreatedBy
+	tAfterLoad := time.Now()
 
 	// ── Assemble context + load history ──────────────────────────────────────
 	actx, err := assembleContext(campaign, time.Now().UTC(), systemTmpl, contextTmpl)
 	if err != nil {
 		return nil, fmt.Errorf("assemble context: %w", err)
 	}
+	tAfterContext := time.Now()
 
 	msgs, err := repos.Messages.ListRecentByCampaignID(ctx, req.CampaignID, 10)
 	if err != nil {
@@ -85,6 +91,7 @@ func runCampaignAssistant(
 			history = append(history, ai.NewModelTextMessage(m.Content))
 		}
 	}
+	tAfterHistory := time.Now()
 
 	// ── Inject per-request state for tools ───────────────────────────────────
 	st := &requestState{
@@ -128,9 +135,25 @@ func runCampaignAssistant(
 	emittedToolCalls := map[string]bool{}
 	emittedToolResults := map[string]bool{}
 
+	// Streaming instrumentation (CON-112 perf). streamCb runs serially on the
+	// plugin's stream loop, so these need no locking.
+	type toolTiming struct {
+		name string
+		ms   int64
+	}
+	var (
+		firstChunkAt time.Time // model TTFT
+		firstToolAt  time.Time // routing latency (time to first tool call)
+		toolStartAt  = map[string]time.Time{}
+		toolTimings  []toolTiming // per-tool wall-time (call → result)
+	)
+
 	streamCb := func(_ context.Context, chunk *ai.ModelResponseChunk) error {
 		if chunk == nil || chunk.Aggregated {
 			return nil
+		}
+		if firstChunkAt.IsZero() {
+			firstChunkAt = time.Now()
 		}
 		for _, part := range chunk.Content {
 			switch {
@@ -142,6 +165,10 @@ func runCampaignAssistant(
 					continue
 				}
 				emittedToolCalls[tr.Ref] = true
+				if firstToolAt.IsZero() {
+					firstToolAt = time.Now()
+				}
+				toolStartAt[tr.Ref] = time.Now()
 				emit(onEvent, SSEEventToolCall, ToolCallEventPayload{Name: tr.Name, Input: tr.Input, Ref: tr.Ref})
 			case part.IsToolResponse():
 				tr := part.ToolResponse
@@ -149,6 +176,9 @@ func runCampaignAssistant(
 					continue
 				}
 				emittedToolResults[tr.Ref] = true
+				if s, ok := toolStartAt[tr.Ref]; ok {
+					toolTimings = append(toolTimings, toolTiming{name: tr.Name, ms: time.Since(s).Milliseconds()})
+				}
 				emit(onEvent, SSEEventToolResult, ToolResultEventPayload{Name: tr.Name, Ref: tr.Ref, OK: true})
 			}
 		}
@@ -157,6 +187,7 @@ func runCampaignAssistant(
 
 	// No ai.WithOutputType — genkit's strict validator drops the whole response
 	// on common Claude JSON drift. We parse via the tolerant scanner below.
+	genStart := time.Now()
 	resp, err := genkit.Generate(ctx, g,
 		ai.WithModelName(modelName),
 		ai.WithSystem(systemBlock),
@@ -167,6 +198,7 @@ func runCampaignAssistant(
 		ai.WithStreaming(streamCb),
 		cfg.Provider.CallConfig(maxTokens),
 	)
+	genMs := time.Since(genStart).Milliseconds()
 	if err != nil {
 		slog.ErrorContext(ctx, "model call failed", logging.AttrComponent, "genkit.campaign_assistant", "campaign_id", req.CampaignID, "duration_ms", time.Since(start).Milliseconds(), logging.AttrError, err)
 		return nil, &AIError{Msg: fmt.Sprintf("model call failed: %v", err)}
@@ -298,9 +330,44 @@ func runCampaignAssistant(
 	// A history-write failure must not fail the turn: any tool side effects
 	// (posts persisted, brief applied) have already committed, so we log and
 	// still emit the completion events below rather than reporting an error.
+	tPersistStart := time.Now()
 	if err := persistTurn(ctx, repos, req, &result); err != nil {
 		slog.ErrorContext(ctx, "persist conversation turn failed", logging.AttrComponent, "genkit.campaign_assistant", "campaign_id", req.CampaignID, logging.AttrError, err)
 	}
+	persistMs := time.Since(tPersistStart).Milliseconds()
+
+	// ── Phase timings (CON-112 perf) ─────────────────────────────────────────
+	// One structured line to pinpoint where a slow turn spends wall-clock:
+	// pre-model DB (enforce/load/context/history), the genkit call (ttft =
+	// model TTFT, route = time to first tool call, gen = whole call incl. inline
+	// tool execution), per-tool wall-time, and persist. "gen" minus the model's
+	// own generation is the sub-flow tool cost run inside the turn.
+	sinceMs := func(a, b time.Time) int64 { return b.Sub(a).Milliseconds() }
+	var ttftMs, routeMs int64 = -1, -1
+	if !firstChunkAt.IsZero() {
+		ttftMs = sinceMs(genStart, firstChunkAt)
+	}
+	if !firstToolAt.IsZero() {
+		routeMs = sinceMs(genStart, firstToolAt)
+	}
+	toolParts := make([]string, 0, len(toolTimings))
+	for _, tt := range toolTimings {
+		toolParts = append(toolParts, fmt.Sprintf("%s=%dms", tt.name, tt.ms))
+	}
+	slog.InfoContext(ctx, "phase timings", logging.AttrComponent, "genkit.campaign_assistant",
+		"campaign_id", req.CampaignID,
+		"enforce_ms", sinceMs(start, tAfterEnforce),
+		"load_ms", sinceMs(tAfterEnforce, tAfterLoad),
+		"context_ms", sinceMs(tAfterLoad, tAfterContext),
+		"history_ms", sinceMs(tAfterContext, tAfterHistory),
+		"ttft_ms", ttftMs,
+		"route_ms", routeMs,
+		"gen_ms", genMs,
+		"tools", strings.Join(toolParts, ","),
+		"persist_ms", persistMs,
+		"total_ms", time.Since(start).Milliseconds(),
+		"action", result.Action,
+	)
 
 	slog.InfoContext(ctx, "done", logging.AttrComponent, "genkit.campaign_assistant", "campaign_id", req.CampaignID, "duration_ms", time.Since(start).Milliseconds(), "action", result.Action)
 

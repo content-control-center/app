@@ -185,6 +185,18 @@ func generatePosts(
 		return persistOne(ctx, dp, campaign, repos.Posts)
 	}
 
+	// Fill the parallel budget (CON-112 perf): a plan that fits in one batch is
+	// a single long Sonnet call that ignores maxParallel entirely — e.g. 30
+	// posts generated as one 9.5k-token call runs ~170s while 4 of the 5 worker
+	// slots sit idle. Shrink the effective batch size so the plan splits into
+	// ~maxParallel batches that run concurrently (30 posts → 5×6 ≈ 5× faster).
+	// MaxPostsPerBatch stays the upper cap; this only ever makes batches smaller.
+	if estCount > 0 && maxParallel > 1 {
+		if perBatch := (estCount + maxParallel - 1) / maxParallel; perBatch >= 1 && perBatch < maxPostsPerBatch {
+			maxPostsPerBatch = perBatch
+		}
+	}
+
 	// Single-shot fallback: no estimated count, or fewer slots than a single
 	// batch. We still go through the batched path for consistency, but with
 	// a single batch covering everything.
