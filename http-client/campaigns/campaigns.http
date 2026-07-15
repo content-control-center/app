@@ -232,6 +232,28 @@ Content-Type: application/json
   "instruction": "Improve the campaign brief — make the tone more B2B, technical, and benchmark-driven."
 }
 
+### Campaign assistant — change campaign dates  [protected]  (CON-115)
+# action=dates_updated; if drafts now fall outside the new range, the reply
+# offers to redistribute (it won't unless you ask). Chat-only — no REST endpoint.
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/assistant
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "instruction": "Move the campaign end to the beginning of July."
+}
+
+### Campaign assistant — redistribute non-published posts  [protected]  (CON-115)
+# action=posts_redistributed; re-dates only draft + ready-for-publish posts
+# evenly across the timeline (phase by phase). Never moves scheduled/published.
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/assistant
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "instruction": "Redistribute the drafts and unpublished posts across the campaign."
+}
+
 ### Campaign assistant — grounded question (no mutation)  [protected]
 POST {{baseUrl}}/api/campaigns/{{campaignId}}/assistant
 Accept: text/event-stream

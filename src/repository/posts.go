@@ -19,6 +19,9 @@ type PostRepository interface {
 	CreateBatch(ctx context.Context, posts []*models.Post) error
 	GetByID(ctx context.Context, id string) (*models.Post, error)
 	Update(ctx context.Context, post *models.Post) error
+	// UpdateScheduledAtBatch updates only the scheduled_at (+ updated_at)
+	// column of several posts atomically (CON-115 redistribution).
+	UpdateScheduledAtBatch(ctx context.Context, posts []*models.Post) error
 	Delete(ctx context.Context, id string) (bool, error)
 	// CON-69 §8: reconciliation sweeper helpers.
 	ListStuckScheduled(ctx context.Context, cutoff time.Time, limit int) ([]models.Post, error)
@@ -94,6 +97,22 @@ func (r *postRepository) GetByID(ctx context.Context, id string) (*models.Post, 
 func (r *postRepository) Update(ctx context.Context, post *models.Post) error {
 	_, err := r.db.NewUpdate().Model(post).WherePK().Exec(ctx)
 	return err
+}
+
+func (r *postRepository) UpdateScheduledAtBatch(ctx context.Context, posts []*models.Post) error {
+	if len(posts) == 0 {
+		return nil
+	}
+	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		for _, p := range posts {
+			// Only the schedule columns are written; the TenantScoped hook adds
+			// the tenant predicate, WherePK adds the id.
+			if _, err := tx.NewUpdate().Model(p).Column("scheduled_at", "updated_at").WherePK().Exec(ctx); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (r *postRepository) Delete(ctx context.Context, id string) (bool, error) {

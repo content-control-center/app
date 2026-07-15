@@ -300,4 +300,80 @@ var _ = Describe("Campaign assistant flow", Ordered, func() {
 			}
 		})
 	})
+
+	Describe("change dates", func() {
+		It("moves the campaign end date and saves it", func() {
+			resp, err := callback(ctx, campaign_assistant.CampaignAssistantRequest{
+				CampaignID:  campaignID,
+				Instruction: "Extend the campaign end date to 2026-09-30.",
+			}, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp).NotTo(BeNil())
+
+			Expect(resp.Action).To(Equal("dates_updated"))
+			Expect(resp.Dates).NotTo(BeNil())
+			Expect(resp.Dates.EndDate).To(Equal("2026-09-30"))
+
+			after, err := campaignRepo.GetByID(ctx, campaignID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(after.EndDate).NotTo(BeNil())
+			Expect(after.EndDate.Format("2006-01-02")).To(Equal("2026-09-30"))
+		})
+	})
+
+	Describe("redistribute", func() {
+		It("re-dates draft posts across the campaign timeline", func() {
+			full, err := campaignRepo.GetByID(ctx, campaignID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(full.CampaignType).NotTo(BeNil())
+			Expect(full.CampaignType.Phases).NotTo(BeEmpty())
+			phaseID := full.CampaignType.Phases[0].ID
+			start, end := *full.StartDate, *full.EndDate
+
+			// Seed 3 draft posts bunched on a single (out-of-order) date.
+			for i := 0; i < 3; i++ {
+				id, _ := models.NewID()
+				at := start.AddDate(0, 0, 1)
+				Expect(postRepo.Create(ctx, &models.Post{
+					ID:                  id,
+					CampaignID:          campaignID,
+					CampaignTypePhaseID: &phaseID,
+					PlatformID:          platformID,
+					PlatformPostType:    "text-post",
+					Title:               "Draft",
+					Content:             "c",
+					Status:              models.PostStatusDraft,
+					MediaURLs:           models.StringSlice{},
+					UsedAssetIDs:        models.StringSlice{},
+					CTAType:             models.CTATypeNone,
+					CreatedBy:           userID,
+					ScheduledAt:         &at,
+				})).To(Succeed())
+			}
+
+			resp, err := callback(ctx, campaign_assistant.CampaignAssistantRequest{
+				CampaignID:  campaignID,
+				Instruction: "Redistribute the drafts across the campaign.",
+			}, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp).NotTo(BeNil())
+
+			Expect(resp.Action).To(Equal("posts_redistributed"))
+			Expect(resp.Redistribute).NotTo(BeNil())
+			Expect(resp.Redistribute.PostsUpdated).To(BeNumerically(">", 0))
+
+			posts, err := postRepo.ListByCampaign(ctx, campaignID)
+			Expect(err).NotTo(HaveOccurred())
+			lo := start.AddDate(0, 0, -1)
+			hi := end.AddDate(0, 0, 1)
+			for _, p := range posts {
+				if p.Status != models.PostStatusDraft {
+					continue
+				}
+				Expect(p.ScheduledAt).NotTo(BeNil())
+				Expect(p.ScheduledAt.After(lo)).To(BeTrue(), "redistributed date within range")
+				Expect(p.ScheduledAt.Before(hi)).To(BeTrue(), "redistributed date within range")
+			}
+		})
+	})
 })

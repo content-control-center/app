@@ -11,6 +11,7 @@ import (
 	"github.com/firebase/genkit/go/genkit"
 
 	"github.com/ogen-app/ogen/src/campaign_actions/overview"
+	"github.com/ogen-app/ogen/src/campaign_actions/reschedule"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/models"
@@ -45,6 +46,8 @@ type requestState struct {
 	contentPlanResult    *ContentPlanResult
 	briefResult          *BriefResult
 	generatedPostsResult *GeneratedPostsResult
+	datesResult          *DatesResult
+	redistributeResult   *RedistributeResult
 }
 
 func withRequestState(ctx context.Context, s *requestState) context.Context {
@@ -108,6 +111,26 @@ type GeneratePostsOutput struct {
 	Warnings       []string `json:"warnings,omitempty"`
 }
 
+// SetCampaignDatesInput is the input for the setCampaignDates tool (CON-115).
+// The model resolves relative phrasing ("beginning of July") against today.
+type SetCampaignDatesInput struct {
+	StartDate string `json:"startDate,omitempty" jsonschema:"description=New campaign start date (ISO YYYY-MM-DD); omit to leave it unchanged."`
+	EndDate   string `json:"endDate,omitempty"   jsonschema:"description=New campaign end date (ISO YYYY-MM-DD); omit to leave it unchanged."`
+}
+
+// SetCampaignDatesOutput is returned to the model after the dates are saved.
+type SetCampaignDatesOutput struct {
+	StartDate         string `json:"startDate"`
+	EndDate           string `json:"endDate"`
+	PostsOutsideRange int    `json:"postsOutsideRange"` // eligible (draft/ready) posts now dated outside the new range
+}
+
+// RedistributePostsOutput is returned to the model after redistribution.
+type RedistributePostsOutput struct {
+	PostsUpdated int `json:"postsUpdated"`
+	PhaseCount   int `json:"phaseCount"`
+}
+
 // ── Tool registration ────────────────────────────────────────────────────────
 
 type toolSet struct {
@@ -116,6 +139,8 @@ type toolSet struct {
 	listCampaignPosts   ai.ToolRef
 	getCampaignOverview ai.ToolRef
 	generatePosts       ai.ToolRef
+	setCampaignDates    ai.ToolRef
+	redistributePosts   ai.ToolRef
 }
 
 func defineTools(g *genkit.Genkit) *toolSet {
@@ -159,12 +184,31 @@ func defineTools(g *genkit.Genkit) *toolSet {
 		},
 	)
 
+	setCampaignDates := genkit.DefineTool(g, "setCampaignDates",
+		"Changes the campaign's start and/or end date. Call this when the user asks to move, shift, extend, or shorten the campaign's dates (e.g. 'move the campaign end to the beginning of July', 'push the start to next Monday'). "+
+			"Resolve any relative phrasing into ISO YYYY-MM-DD dates using today's date shown in the context; pass only the field(s) that change. The change is saved automatically. "+
+			"If the reply reports posts now outside the new range, offer to redistribute them (do not redistribute unless the user asks).",
+		func(ctx *ai.ToolContext, in SetCampaignDatesInput) (*SetCampaignDatesOutput, error) {
+			return toolSetCampaignDates(ctx, in)
+		},
+	)
+
+	redistributePosts := genkit.DefineTool(g, "redistributePosts",
+		"Redistributes the publish dates of the campaign's non-published posts (drafts and ready-for-publish) evenly across the campaign timeline, phase by phase. "+
+			"Call this when the user asks to redistribute, re-spread, rebalance, or re-schedule the drafts / unpublished posts. It never moves already-scheduled or published posts. Takes no arguments.",
+		func(ctx *ai.ToolContext, _ struct{}) (*RedistributePostsOutput, error) {
+			return toolRedistributePosts(ctx)
+		},
+	)
+
 	return &toolSet{
 		runContentPlan:      runContentPlan,
 		enrichBrief:         enrichBrief,
 		listCampaignPosts:   listCampaignPosts,
 		getCampaignOverview: getCampaignOverview,
 		generatePosts:       generatePosts,
+		setCampaignDates:    setCampaignDates,
+		redistributePosts:   redistributePosts,
 	}
 }
 
@@ -514,4 +558,116 @@ func resolveWindow(startStr, endStr string, today time.Time) (string, string, er
 		}
 	}
 	return s.Format(iso), e.Format(iso), nil
+}
+
+func toolSetCampaignDates(ctx context.Context, in SetCampaignDatesInput) (*SetCampaignDatesOutput, error) {
+	st := getRequestState(ctx)
+	c := st.campaign
+	const iso = "2006-01-02"
+
+	if strings.TrimSpace(in.StartDate) == "" && strings.TrimSpace(in.EndDate) == "" {
+		return nil, fmt.Errorf("give a new start or end date")
+	}
+	start, end := c.StartDate, c.EndDate
+	if s := strings.TrimSpace(in.StartDate); s != "" {
+		t, err := time.Parse(iso, s)
+		if err != nil {
+			return nil, fmt.Errorf("startDate must be an ISO date (YYYY-MM-DD)")
+		}
+		start = &t
+	}
+	if e := strings.TrimSpace(in.EndDate); e != "" {
+		t, err := time.Parse(iso, e)
+		if err != nil {
+			return nil, fmt.Errorf("endDate must be an ISO date (YYYY-MM-DD)")
+		}
+		end = &t
+	}
+	if start == nil || end == nil {
+		return nil, fmt.Errorf("the campaign needs both a start and an end date — please provide both")
+	}
+	if !start.Before(*end) {
+		return nil, fmt.Errorf("the start date must be before the end date")
+	}
+	if end.Sub(*start) < 24*time.Hour {
+		return nil, fmt.Errorf("the campaign must span at least one day")
+	}
+
+	c.StartDate = start
+	c.EndDate = end
+	c.UpdatedAt = time.Now().UTC()
+	if err := st.repos.Campaigns.Update(ctx, c); err != nil {
+		return nil, fmt.Errorf("update campaign dates: %w", err)
+	}
+
+	// Count eligible (draft/ready) posts now dated outside the new range.
+	outside := 0
+	if posts, err := st.repos.Posts.ListByCampaign(ctx, st.campaignID); err == nil {
+		lo, hi := dateOnly(*start), dateOnly(*end)
+		for _, p := range posts {
+			if reschedule.Eligible(p.Status) && p.ScheduledAt != nil {
+				d := dateOnly(*p.ScheduledAt)
+				if d.Before(lo) || d.After(hi) {
+					outside++
+				}
+			}
+		}
+	}
+
+	st.datesResult = &DatesResult{StartDate: start.Format(iso), EndDate: end.Format(iso), PostsOutsideRange: outside}
+	return &SetCampaignDatesOutput{StartDate: start.Format(iso), EndDate: end.Format(iso), PostsOutsideRange: outside}, nil
+}
+
+func toolRedistributePosts(ctx context.Context) (*RedistributePostsOutput, error) {
+	st := getRequestState(ctx)
+	c := st.campaign
+	if c.StartDate == nil || c.EndDate == nil {
+		return nil, fmt.Errorf("set the campaign's start and end dates first, then I can redistribute the posts")
+	}
+
+	posts, err := st.repos.Posts.ListByCampaign(ctx, st.campaignID)
+	if err != nil {
+		return nil, fmt.Errorf("list posts: %w", err)
+	}
+
+	byID := make(map[string]*models.Post, len(posts))
+	for i := range posts {
+		byID[posts[i].ID] = &posts[i]
+	}
+
+	phasesTouched := make(map[string]bool)
+	var changed []*models.Post
+	for _, a := range reschedule.Plan(c, posts) {
+		p := byID[a.PostID]
+		if p == nil {
+			continue
+		}
+		if p.ScheduledAt != nil && dateOnly(*p.ScheduledAt).Equal(a.ScheduledAt) {
+			continue // already on the target date
+		}
+		at := a.ScheduledAt
+		p.ScheduledAt = &at
+		p.UpdatedAt = time.Now().UTC()
+		changed = append(changed, p)
+		key := ""
+		if p.CampaignTypePhaseID != nil {
+			key = *p.CampaignTypePhaseID
+		}
+		phasesTouched[key] = true
+	}
+
+	if len(changed) > 0 {
+		if err := st.repos.Posts.UpdateScheduledAtBatch(ctx, changed); err != nil {
+			return nil, fmt.Errorf("persist redistributed posts: %w", err)
+		}
+	}
+
+	st.redistributeResult = &RedistributeResult{PostsUpdated: len(changed), PhaseCount: len(phasesTouched)}
+	return &RedistributePostsOutput{PostsUpdated: len(changed), PhaseCount: len(phasesTouched)}, nil
+}
+
+// dateOnly truncates a time to its calendar date at 00:00 UTC.
+func dateOnly(t time.Time) time.Time {
+	u := t.UTC()
+	return time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
 }

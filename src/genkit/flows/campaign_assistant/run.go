@@ -160,7 +160,7 @@ func runCampaignAssistant(
 		ai.WithSystem(systemBlock),
 		ai.WithMessages(history...),
 		ai.WithPrompt(req.Instruction),
-		ai.WithTools(tools.runContentPlan, tools.enrichBrief, tools.listCampaignPosts, tools.getCampaignOverview, tools.generatePosts),
+		ai.WithTools(tools.runContentPlan, tools.enrichBrief, tools.listCampaignPosts, tools.getCampaignOverview, tools.generatePosts, tools.setCampaignDates, tools.redistributePosts),
 		ai.WithMaxTurns(maxTurns),
 		ai.WithStreaming(streamCb),
 		cfg.Provider.CallConfig(maxTokens),
@@ -225,11 +225,32 @@ func runCampaignAssistant(
 			}
 		}
 	}
+	if st.datesResult != nil {
+		result.Action = "dates_updated"
+		result.Dates = st.datesResult
+		if result.Explanation == "" {
+			result.Explanation = fmt.Sprintf("Updated the campaign dates to %s – %s.", st.datesResult.StartDate, st.datesResult.EndDate)
+			if st.datesResult.PostsOutsideRange > 0 {
+				result.Explanation += fmt.Sprintf(" %d draft/ready post(s) now fall outside the new range — want me to redistribute them?", st.datesResult.PostsOutsideRange)
+			}
+		}
+	}
+	if st.redistributeResult != nil {
+		result.Action = "posts_redistributed"
+		result.Redistribute = st.redistributeResult
+		if result.Explanation == "" {
+			if st.redistributeResult.PostsUpdated == 0 {
+				result.Explanation = "There were no draft or ready-for-publish posts to redistribute."
+			} else {
+				result.Explanation = fmt.Sprintf("Redistributed %d post(s) across the campaign timeline.", st.redistributeResult.PostsUpdated)
+			}
+		}
+	}
 
 	// Pure-prose recovery: the model ignored the JSON envelope and answered in
 	// plain prose (common for informational questions) and no tool ran. Salvage
 	// the raw text as an "answered" reply.
-	if result.Explanation == "" && st.contentPlanResult == nil && st.briefResult == nil && st.generatedPostsResult == nil {
+	if result.Explanation == "" && st.contentPlanResult == nil && st.briefResult == nil && st.generatedPostsResult == nil && st.datesResult == nil && st.redistributeResult == nil {
 		raw := strings.TrimSpace(scanner.FullText())
 		if raw != "" && !strings.Contains(raw, "{") {
 			slog.WarnContext(ctx, "model emitted prose-only response, treating as answered", logging.AttrComponent, "genkit.campaign_assistant", "campaign_id", req.CampaignID, "len", len(raw))
@@ -275,6 +296,16 @@ func runCampaignAssistant(
 			PostCount: result.GeneratedPosts.PostCount,
 			Warnings:  result.GeneratedPosts.Warnings,
 		})
+	}
+	if result.Dates != nil {
+		emit(onEvent, SSEEventDatesUpdated, DatesUpdatedEventPayload{
+			StartDate:         result.Dates.StartDate,
+			EndDate:           result.Dates.EndDate,
+			PostsOutsideRange: result.Dates.PostsOutsideRange,
+		})
+	}
+	if result.Redistribute != nil {
+		emit(onEvent, SSEEventPostsRedistributed, PostsRedistributedEventPayload{PostsUpdated: result.Redistribute.PostsUpdated})
 	}
 
 	// Emit the final structured response — the canonical result; deltas before

@@ -25,7 +25,7 @@ type CampaignAssistantRequest struct {
 // ran this turn.
 type CampaignAssistantResponse struct {
 	Explanation string `json:"explanation"          jsonschema:"description=Conversational reply to the user"`
-	Action      string `json:"action"               jsonschema:"description=answered for a grounded reply; content_plan_generated when the runContentPlan tool ran; brief_enriched when the enrichBrief tool ran; posts_generated when the generatePosts tool added targeted posts; declined when the request is out of scope,enum=answered,enum=content_plan_generated,enum=brief_enriched,enum=posts_generated,enum=declined"`
+	Action      string `json:"action"               jsonschema:"description=answered for a grounded reply; content_plan_generated when runContentPlan ran; brief_enriched when enrichBrief ran; posts_generated when generatePosts ran; dates_updated when setCampaignDates ran; posts_redistributed when redistributePosts ran; declined when the request is out of scope,enum=answered,enum=content_plan_generated,enum=brief_enriched,enum=posts_generated,enum=dates_updated,enum=posts_redistributed,enum=declined"`
 	// ContentPlan is set by the server when the runContentPlan tool created
 	// draft posts this turn. Action is then "content_plan_generated".
 	ContentPlan *ContentPlanResult `json:"contentPlan,omitempty" jsonschema:"-"`
@@ -35,6 +35,25 @@ type CampaignAssistantResponse struct {
 	// GeneratedPosts is set by the server when the generatePosts tool added
 	// targeted posts this turn. Action is then "posts_generated".
 	GeneratedPosts *GeneratedPostsResult `json:"generatedPosts,omitempty" jsonschema:"-"`
+	// Dates is set by the server when setCampaignDates changed the campaign's
+	// dates this turn. Action is then "dates_updated".
+	Dates *DatesResult `json:"dates,omitempty" jsonschema:"-"`
+	// Redistribute is set by the server when redistributePosts moved posts this
+	// turn. Action is then "posts_redistributed".
+	Redistribute *RedistributeResult `json:"redistribute,omitempty" jsonschema:"-"`
+}
+
+// DatesResult summarises a setCampaignDates tool invocation (CON-115).
+type DatesResult struct {
+	StartDate         string `json:"startDate"`
+	EndDate           string `json:"endDate"`
+	PostsOutsideRange int    `json:"postsOutsideRange"` // eligible posts now dated outside the new range
+}
+
+// RedistributeResult summarises a redistributePosts tool invocation (CON-115).
+type RedistributeResult struct {
+	PostsUpdated int `json:"postsUpdated"`
+	PhaseCount   int `json:"phaseCount"`
 }
 
 // GeneratedPostsResult summarises a generatePosts tool invocation (CON-114).
@@ -142,6 +161,9 @@ const (
 	SSEEventGeneratePostsWarning  SSEEventKind = "generate_posts_warning"
 	SSEEventGeneratePostsComplete SSEEventKind = "generate_posts_complete"
 
+	SSEEventDatesUpdated       SSEEventKind = "dates_updated"
+	SSEEventPostsRedistributed SSEEventKind = "posts_redistributed"
+
 	SSEEventComplete SSEEventKind = "complete"
 	SSEEventError    SSEEventKind = "error"
 )
@@ -195,6 +217,18 @@ type GeneratePostsStartedEventPayload struct {
 type GeneratePostsCompleteEventPayload struct {
 	PostCount int      `json:"postCount"`
 	Warnings  []string `json:"warnings,omitempty"`
+}
+
+// DatesUpdatedEventPayload is emitted once the campaign's dates are saved.
+type DatesUpdatedEventPayload struct {
+	StartDate         string `json:"startDate"`
+	EndDate           string `json:"endDate"`
+	PostsOutsideRange int    `json:"postsOutsideRange"`
+}
+
+// PostsRedistributedEventPayload is emitted once posts are re-dated.
+type PostsRedistributedEventPayload struct {
+	PostsUpdated int `json:"postsUpdated"`
 }
 
 // ErrorEventPayload is emitted when the flow fails mid-stream.
