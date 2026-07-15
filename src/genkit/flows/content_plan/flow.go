@@ -341,7 +341,7 @@ func runGeneratePosts(
 		return nil, &ValidationError{Msg: "windowEnd must be on or after windowStart"}
 	}
 
-	assets, _, err := resolveAssets(ctx, campaign, cfg, repos)
+	assets, assetWarnings, err := resolveAssets(ctx, campaign, cfg, repos)
 	if err != nil {
 		return nil, err
 	}
@@ -362,10 +362,11 @@ func runGeneratePosts(
 		windowStart: winStart,
 		windowEnd:   winEnd,
 	}
-	posts, warnings, err := generatePosts(ctx, g, campaign, platforms, assets, cfg, repos, onEvent, tgt)
+	posts, genWarnings, err := generatePosts(ctx, g, campaign, platforms, assets, cfg, repos, onEvent, tgt)
 	if err != nil {
 		return nil, err
 	}
+	warnings := append(assetWarnings, genWarnings...)
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "generatePosts", Status: "done"})
 
 	slog.InfoContext(ctx, "targeted generation done", logging.AttrComponent, "genkit.content_plan", "campaign_id", req.CampaignID, "duration_ms", time.Since(start).Milliseconds(), "posts", len(posts), "warnings", len(warnings))
