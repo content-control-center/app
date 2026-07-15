@@ -97,6 +97,8 @@ func runCampaignAssistant(
 		overview:         cfg.Overview,
 		generatePosts:    cfg.GeneratePosts,
 		maxGeneratePosts: cfg.MaxGeneratePosts,
+		checkBrief:       cfg.CheckBrief,
+		checkPosts:       cfg.CheckPosts,
 	}
 	ctx = withRequestState(ctx, st)
 
@@ -160,7 +162,7 @@ func runCampaignAssistant(
 		ai.WithSystem(systemBlock),
 		ai.WithMessages(history...),
 		ai.WithPrompt(req.Instruction),
-		ai.WithTools(tools.runContentPlan, tools.enrichBrief, tools.listCampaignPosts, tools.getCampaignOverview, tools.generatePosts, tools.setCampaignDates, tools.redistributePosts),
+		ai.WithTools(tools.runContentPlan, tools.enrichBrief, tools.listCampaignPosts, tools.getCampaignOverview, tools.generatePosts, tools.setCampaignDates, tools.redistributePosts, tools.checkBrief, tools.checkPostsConsistency),
 		ai.WithMaxTurns(maxTurns),
 		ai.WithStreaming(streamCb),
 		cfg.Provider.CallConfig(maxTokens),
@@ -246,11 +248,33 @@ func runCampaignAssistant(
 			}
 		}
 	}
+	if st.briefReviewResult != nil {
+		result.Action = "brief_reviewed"
+		result.BriefReview = st.briefReviewResult
+		if result.Explanation == "" {
+			if len(st.briefReviewResult.Findings) == 0 {
+				result.Explanation = "The brief looks consistent — no issues found."
+			} else {
+				result.Explanation = fmt.Sprintf("I found %d consistency issue(s) in the brief.", len(st.briefReviewResult.Findings))
+			}
+		}
+	}
+	if st.postsReviewResult != nil {
+		result.Action = "posts_reviewed"
+		result.PostsReview = st.postsReviewResult
+		if result.Explanation == "" {
+			if len(st.postsReviewResult.Findings) == 0 {
+				result.Explanation = fmt.Sprintf("Checked %d post(s); they all follow the brief.", st.postsReviewResult.Checked)
+			} else {
+				result.Explanation = fmt.Sprintf("%d of %d checked post(s) drift from the brief.", len(st.postsReviewResult.Findings), st.postsReviewResult.Checked)
+			}
+		}
+	}
 
 	// Pure-prose recovery: the model ignored the JSON envelope and answered in
 	// plain prose (common for informational questions) and no tool ran. Salvage
 	// the raw text as an "answered" reply.
-	if result.Explanation == "" && st.contentPlanResult == nil && st.briefResult == nil && st.generatedPostsResult == nil && st.datesResult == nil && st.redistributeResult == nil {
+	if result.Explanation == "" && st.contentPlanResult == nil && st.briefResult == nil && st.generatedPostsResult == nil && st.datesResult == nil && st.redistributeResult == nil && st.briefReviewResult == nil && st.postsReviewResult == nil {
 		raw := strings.TrimSpace(scanner.FullText())
 		if raw != "" && !strings.Contains(raw, "{") {
 			slog.WarnContext(ctx, "model emitted prose-only response, treating as answered", logging.AttrComponent, "genkit.campaign_assistant", "campaign_id", req.CampaignID, "len", len(raw))
@@ -306,6 +330,20 @@ func runCampaignAssistant(
 	}
 	if result.Redistribute != nil {
 		emit(onEvent, SSEEventPostsRedistributed, PostsRedistributedEventPayload{PostsUpdated: result.Redistribute.PostsUpdated})
+	}
+	if result.BriefReview != nil {
+		emit(onEvent, SSEEventCheckBriefComplete, CheckBriefCompleteEventPayload{
+			Consistent:   result.BriefReview.Consistent,
+			FindingCount: len(result.BriefReview.Findings),
+		})
+	}
+	if result.PostsReview != nil {
+		emit(onEvent, SSEEventCheckPostsComplete, CheckPostsCompleteEventPayload{
+			Checked:    result.PostsReview.Checked,
+			Total:      result.PostsReview.Total,
+			Capped:     result.PostsReview.Capped,
+			DriftCount: len(result.PostsReview.Findings),
+		})
 	}
 
 	// Emit the final structured response — the canonical result; deltas before

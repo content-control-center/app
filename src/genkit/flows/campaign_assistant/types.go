@@ -5,6 +5,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/campaign_actions/overview"
 	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/genkit/flows/consistency"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/repository"
@@ -25,7 +26,7 @@ type CampaignAssistantRequest struct {
 // ran this turn.
 type CampaignAssistantResponse struct {
 	Explanation string `json:"explanation"          jsonschema:"description=Conversational reply to the user"`
-	Action      string `json:"action"               jsonschema:"description=answered for a grounded reply; content_plan_generated when runContentPlan ran; brief_enriched when enrichBrief ran; posts_generated when generatePosts ran; dates_updated when setCampaignDates ran; posts_redistributed when redistributePosts ran; declined when the request is out of scope,enum=answered,enum=content_plan_generated,enum=brief_enriched,enum=posts_generated,enum=dates_updated,enum=posts_redistributed,enum=declined"`
+	Action      string `json:"action"               jsonschema:"description=answered for a grounded reply; content_plan_generated when runContentPlan ran; brief_enriched when enrichBrief ran; posts_generated when generatePosts ran; dates_updated when setCampaignDates ran; posts_redistributed when redistributePosts ran; brief_reviewed when checkBrief ran; posts_reviewed when checkPostsConsistency ran; declined when the request is out of scope,enum=answered,enum=content_plan_generated,enum=brief_enriched,enum=posts_generated,enum=dates_updated,enum=posts_redistributed,enum=brief_reviewed,enum=posts_reviewed,enum=declined"`
 	// ContentPlan is set by the server when the runContentPlan tool created
 	// draft posts this turn. Action is then "content_plan_generated".
 	ContentPlan *ContentPlanResult `json:"contentPlan,omitempty" jsonschema:"-"`
@@ -41,6 +42,12 @@ type CampaignAssistantResponse struct {
 	// Redistribute is set by the server when redistributePosts moved posts this
 	// turn. Action is then "posts_redistributed".
 	Redistribute *RedistributeResult `json:"redistribute,omitempty" jsonschema:"-"`
+	// BriefReview is set by the server when the checkBrief tool ran this turn
+	// (read-only). Action is then "brief_reviewed".
+	BriefReview *consistency.BriefReview `json:"briefReview,omitempty" jsonschema:"-"`
+	// PostsReview is set by the server when the checkPostsConsistency tool ran
+	// this turn (read-only). Action is then "posts_reviewed".
+	PostsReview *consistency.PostsReview `json:"postsReview,omitempty" jsonschema:"-"`
 }
 
 // DatesResult summarises a setCampaignDates tool invocation (CON-115).
@@ -117,6 +124,10 @@ type CampaignAssistantFlowConfig struct {
 	// MaxGeneratePosts caps how many posts one generatePosts call may create
 	// (CON-114). 0 falls back to 10.
 	MaxGeneratePosts int
+	// CheckBrief / CheckPosts back the read-only consistency review tools
+	// (CON-116). nil disables the corresponding tool.
+	CheckBrief func(ctx context.Context, campaignID string, onEvent consistency.OnEventFunc) (*consistency.BriefReview, error)
+	CheckPosts func(ctx context.Context, req consistency.PostsCheckRequest, onEvent consistency.OnEventFunc) (*consistency.PostsReview, error)
 }
 
 // ValidationError is returned when preconditions are not met (HTTP 400).
@@ -163,6 +174,11 @@ const (
 
 	SSEEventDatesUpdated       SSEEventKind = "dates_updated"
 	SSEEventPostsRedistributed SSEEventKind = "posts_redistributed"
+
+	SSEEventCheckBriefStarted  SSEEventKind = "check_brief_started"
+	SSEEventCheckBriefComplete SSEEventKind = "check_brief_complete"
+	SSEEventCheckPostsStarted  SSEEventKind = "check_posts_started"
+	SSEEventCheckPostsComplete SSEEventKind = "check_posts_complete"
 
 	SSEEventComplete SSEEventKind = "complete"
 	SSEEventError    SSEEventKind = "error"
@@ -229,6 +245,20 @@ type DatesUpdatedEventPayload struct {
 // PostsRedistributedEventPayload is emitted once posts are re-dated.
 type PostsRedistributedEventPayload struct {
 	PostsUpdated int `json:"postsUpdated"`
+}
+
+// CheckBriefCompleteEventPayload is emitted once a brief review completes.
+type CheckBriefCompleteEventPayload struct {
+	Consistent   bool `json:"consistent"`
+	FindingCount int  `json:"findingCount"`
+}
+
+// CheckPostsCompleteEventPayload is emitted once a posts review completes.
+type CheckPostsCompleteEventPayload struct {
+	Checked    int  `json:"checked"`
+	Total      int  `json:"total"`
+	Capped     bool `json:"capped"`
+	DriftCount int  `json:"driftCount"`
 }
 
 // ErrorEventPayload is emitted when the flow fails mid-stream.

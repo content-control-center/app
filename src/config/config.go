@@ -81,6 +81,10 @@ type Config struct {
 	// tool (CON-114) so it stays an incremental add rather than a full re-plan.
 	GeneratePostsMax int `envconfig:"GENERATE_POSTS_MAX" default:"10"`
 
+	// ConsistencyPostsMax caps how many posts the Campaign Assistant's posts-vs-
+	// brief consistency check (CON-116) analyzes in a single model call.
+	ConsistencyPostsMax int `envconfig:"CONSISTENCY_POSTS_MAX" default:"20"`
+
 	// Post quality assessment (CON-85). Scoring runs on Sonnet 4.5 by
 	// default — Haiku underdelivered (terse, omitting per-dimension prose) —
 	// specified separately from ModelID so the scoring model can be tuned

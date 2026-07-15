@@ -18,6 +18,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/campaign_actions/overview"
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
+	"github.com/ogen-app/ogen/src/genkit/flows/consistency"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/handlers"
@@ -1608,6 +1609,178 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 					names[i] = e.event
 				}
 				Expect(names).To(Equal([]string{"step", "post", "complete"}))
+			})
+		})
+	})
+
+	// ── Consistency reviews (CON-116) ──────────────────────────────────────────
+
+	Describe("POST /api/campaigns/:id/brief-review and /posts-review", func() {
+		errorHandler := func(c *fiber.Ctx, err error) error {
+			code := fiber.StatusInternalServerError
+			if e, ok := err.(*fiber.Error); ok {
+				code = e.Code
+			}
+			return c.Status(code).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		buildReviewApp := func(
+			checkBrief func(context.Context, string, consistency.OnEventFunc) (*consistency.BriefReview, error),
+			checkPosts func(context.Context, consistency.PostsCheckRequest, consistency.OnEventFunc) (*consistency.PostsReview, error),
+		) *fiber.App {
+			a := fiber.New(fiber.Config{ErrorHandler: errorHandler})
+			ctRepo := repository.NewCampaignTypeRepository(db)
+			cRepo := repository.NewCampaignRepository(db, repository.NewTagRepository(db), repository.NewPlatformRepository(db), ctRepo)
+			sRepo := repository.NewSessionRepository(db)
+			setRepo := repository.NewSettingRepository(db)
+			uRepo := repository.NewUserRepository(db)
+			a2 := handlers.RequireAuth(sRepo, testCookieName)
+			handlers.NewUsersHandler(uRepo, setRepo, a2).Register(a)
+			handlers.NewSessionsHandler(uRepo, sRepo, testCookieName, false).Register(a)
+			ch := handlers.NewCampaignsHandler(cRepo, ctRepo, a2, nil, nil, nil, nil, nil)
+			ch.SetConsistency(checkBrief, checkPosts)
+			ch.Register(a)
+			return a
+		}
+
+		seedCookie := func(a *fiber.App, email string) *http.Cookie {
+			seedTenantUser(db, "Review User", email, "review-password")
+			loginBody, _ := json.Marshal(fiber.Map{"email": email, "password": "review-password"})
+			loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
+			loginReq.Header.Set("Content-Type", "application/json")
+			loginResp, err := a.Test(loginReq)
+			Expect(err).NotTo(HaveOccurred())
+			var ck *http.Cookie
+			for _, c := range loginResp.Cookies() {
+				ck = c
+			}
+			return ck
+		}
+
+		createCampaignOn := func(a *fiber.App, ck *http.Cookie, name, typeID string) models.Campaign {
+			body, _ := json.Marshal(fiber.Map{"name": name, "campaign_type_id": typeID})
+			req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(ck)
+			resp, err := a.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+			var c models.Campaign
+			Expect(json.NewDecoder(resp.Body).Decode(&c)).To(Succeed())
+			return c
+		}
+
+		type sseEvent struct{ event, data string }
+		parseSSE := func(r *bufio.Scanner) []sseEvent {
+			var events []sseEvent
+			var curEvent, curData string
+			for r.Scan() {
+				line := r.Text()
+				switch {
+				case strings.HasPrefix(line, "event: "):
+					curEvent = strings.TrimPrefix(line, "event: ")
+				case strings.HasPrefix(line, "data: "):
+					curData = strings.TrimPrefix(line, "data: ")
+				case line == "":
+					if curEvent != "" {
+						events = append(events, sseEvent{curEvent, curData})
+					}
+					curEvent, curData = "", ""
+				}
+			}
+			return events
+		}
+
+		briefStub := func(_ context.Context, campaignID string, onEvent consistency.OnEventFunc) (*consistency.BriefReview, error) {
+			onEvent(consistency.SSEEventStep, consistency.StepEventPayload{Step: "analyze", Status: "done"})
+			return &consistency.BriefReview{
+				CampaignID: campaignID,
+				Consistent: false,
+				Findings:   []consistency.Finding{{Aspect: "persona", Severity: "high", Issue: "vague", Suggestion: "sharpen"}},
+				Summary:    "one issue",
+			}, nil
+		}
+		postsStub := func(_ context.Context, req consistency.PostsCheckRequest, onEvent consistency.OnEventFunc) (*consistency.PostsReview, error) {
+			onEvent(consistency.SSEEventStep, consistency.StepEventPayload{Step: "analyze", Status: "done"})
+			return &consistency.PostsReview{
+				CampaignID: req.CampaignID,
+				Checked:    2,
+				Total:      2,
+				Findings:   []consistency.PostFinding{},
+				Summary:    "all aligned",
+			}, nil
+		}
+
+		Context("when not authenticated", func() {
+			It("returns 401 for brief-review", func() {
+				req := httptest.NewRequest("POST", "/api/campaigns/someid/brief-review", nil)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+			It("returns 401 for posts-review", func() {
+				req := httptest.NewRequest("POST", "/api/campaigns/someid/posts-review", nil)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+		})
+
+		Context("when authenticated", func() {
+			It("returns 503 when the reviews are unwired", func() {
+				c := createCampaign("No Review", "Uk")
+				req := httptest.NewRequest("POST", "/api/campaigns/"+c.ID+"/brief-review", nil)
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(503))
+			})
+
+			It("returns 404 for an unknown campaign", func() {
+				a := buildReviewApp(briefStub, postsStub)
+				ck := seedCookie(a, "review404@example.com")
+				req := httptest.NewRequest("POST", "/api/campaigns/nonexistent/brief-review", nil)
+				req.AddCookie(ck)
+				resp, err := a.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(404))
+			})
+
+			It("streams step and complete on brief-review success", func() {
+				a := buildReviewApp(briefStub, postsStub)
+				ck := seedCookie(a, "briefok@example.com")
+				camp := createCampaignOn(a, ck, "Brief OK", "Uk")
+				req := httptest.NewRequest("POST", "/api/campaigns/"+camp.ID+"/brief-review", nil)
+				req.AddCookie(ck)
+				resp, err := a.Test(req, 10000)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+				Expect(resp.Header.Get("Content-Type")).To(ContainSubstring("text/event-stream"))
+
+				events := parseSSE(bufio.NewScanner(resp.Body))
+				names := make([]string, len(events))
+				for i, e := range events {
+					names[i] = e.event
+				}
+				Expect(names).To(Equal([]string{"step", "complete"}))
+			})
+
+			It("streams step and complete on posts-review success with an empty body", func() {
+				a := buildReviewApp(briefStub, postsStub)
+				ck := seedCookie(a, "postsok@example.com")
+				camp := createCampaignOn(a, ck, "Posts OK", "Uk")
+				req := httptest.NewRequest("POST", "/api/campaigns/"+camp.ID+"/posts-review", nil)
+				req.AddCookie(ck)
+				resp, err := a.Test(req, 10000)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+
+				events := parseSSE(bufio.NewScanner(resp.Body))
+				names := make([]string, len(events))
+				for i, e := range events {
+					names[i] = e.event
+				}
+				Expect(names).To(Equal([]string{"step", "complete"}))
 			})
 		})
 	})

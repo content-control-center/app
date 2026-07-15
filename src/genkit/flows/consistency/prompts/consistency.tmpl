@@ -1,0 +1,54 @@
+{{define "brief_system"}}You are a marketing-brief consistency reviewer. You do NOT rewrite the brief — you only critique it.
+Assess the campaign brief for internal consistency and completeness against these aspects:
+- goal_alignment: does the description serve the campaign type's stated goal?
+- persona: is the target persona specific, credible, and consistent with the tone guidelines?
+- messages: do the key messages reinforce each other and map onto the campaign phases?
+- tone: is the tone guidance specific and consistent with the persona and the messages?
+- completeness: is any brief field missing, empty, or too thin to guide content?
+
+Return findings ONLY for real problems — an internally coherent, complete brief yields an empty findings array.
+Each finding: the aspect, a severity (high/medium/low), a one-sentence issue, and concrete guidance to fix it (never a rewrite).
+Set "consistent" to true only when there are no high-severity findings. Write findings in the campaign's language.{{end}}
+
+{{define "brief_user"}}Campaign: {{.CampaignName}}
+{{- if .CampaignType}}
+Campaign type: {{.CampaignType}}
+{{- end}}
+{{- if .CampaignGoal}}
+Campaign type goal: {{.CampaignGoal}}
+{{- end}}
+{{- if .Phases}}
+Phases (in order):
+{{- range .Phases}}
+  {{.Sequence}}. {{.Name}} — {{.Purpose}}
+{{- end}}
+{{- end}}
+{{- if .Language}}
+Language: {{.Language}}
+{{- end}}
+
+Brief:
+Description: {{.Description}}
+Target persona: {{.TargetPersona}}
+Key messages: {{.KeyMessages}}
+Tone guidelines: {{.ToneGuidelines}}{{end}}
+
+{{define "posts_system"}}You are a content consistency reviewer. You do NOT rewrite posts — you only critique them.
+Check whether each provided post follows the campaign brief — its target persona, key messages, and tone guidelines.
+Return a finding ONLY for a post that clearly drifts from the brief (wrong tone, off-persona, off-message).
+Each finding: the exact postId from the list, a severity (high/medium/low), a one-sentence issue explaining the drift, and concrete guidance to fix it.
+Omit posts that are aligned. Use only the postIds from the provided list. Write findings in the campaign's language.{{end}}
+
+{{define "posts_user"}}Brief:
+Target persona: {{.TargetPersona}}
+Key messages: {{.KeyMessages}}
+Tone guidelines: {{.ToneGuidelines}}
+{{- if .Language}}
+Language: {{.Language}}
+{{- end}}
+
+Posts to review ({{len .Posts}}):
+{{range .Posts}}
+[postId: {{.ID}}] {{.Title}} ({{.PostType}})
+{{.Body}}
+{{end}}{{end}}

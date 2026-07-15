@@ -254,6 +254,30 @@ Content-Type: application/json
   "instruction": "Redistribute the drafts and unpublished posts across the campaign."
 }
 
+### Campaign assistant — review the brief for consistency  [protected]  (CON-116)
+# action=brief_reviewed; read-only. Returns findings (aspect/severity/issue/
+# suggestion) and, when there are issues, offers to improve the brief with
+# enrichBrief (it won't unless you ask). Response carries "briefReview".
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/assistant
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "instruction": "Is the brief consistent? Review it and suggest improvements."
+}
+
+### Campaign assistant — check posts against the brief  [protected]  (CON-116)
+# action=posts_reviewed; read-only. Checks the campaign's non-published posts
+# (capped) against the brief and returns per-post drift findings. Response
+# carries "postsReview" (checked / total / capped / findings).
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/assistant
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "instruction": "Do the posts follow the brief? Flag any that drift."
+}
+
 ### Campaign assistant — grounded question (no mutation)  [protected]
 POST {{baseUrl}}/api/campaigns/{{campaignId}}/assistant
 Accept: text/event-stream
@@ -326,3 +350,43 @@ Content-Type: application/json
 #   POST /api/campaigns/{{campaignId}}/assistant
 #   { "instruction": "Add a few Threads posts in the current phase for the upcoming weeks" }
 ###
+
+###
+# ── Consistency reviews — CON-116 ─────────────────────────────────────────────
+###
+# Read-only reviews. The brief review checks the brief's internal consistency and
+# completeness; the posts review checks whether the campaign's non-published posts
+# follow the brief. Neither mutates anything — to apply brief fixes, call
+# enrich-brief (or ask the assistant to enrich the brief).
+# Requires ANTHROPIC_API_KEY; 503 when unwired. 404 if the campaign is missing.
+# Response is an SSE stream: step / complete / error.
+#   brief review complete → BriefReview  { consistent, findings[], summary }
+#   posts review complete → PostsReview  { checked, total, capped, aligned, findings[], summary }
+
+### Review the campaign brief for consistency  [protected]  (CON-116)
+# No body. Read-only — does NOT change the brief.
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/brief-review
+Accept: text/event-stream
+
+### Review the brief — non-existent campaign (expects 404)  [protected]
+POST {{baseUrl}}/api/campaigns/nonexistent/brief-review
+Accept: text/event-stream
+
+### Check campaign posts against the brief  [protected]  (CON-116)
+# Body is optional — an empty POST uses the default cap (CONSISTENCY_POSTS_MAX).
+# Send {"max": N} to cap how many non-published posts are checked.
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/posts-review
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "max": 10
+}
+
+### Check campaign posts — default cap, empty body  [protected]  (CON-116)
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/posts-review
+Accept: text/event-stream
+
+### Check campaign posts — non-existent campaign (expects 404)  [protected]
+POST {{baseUrl}}/api/campaigns/nonexistent/posts-review
+Accept: text/event-stream

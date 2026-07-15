@@ -12,6 +12,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/campaign_actions/overview"
 	"github.com/ogen-app/ogen/src/campaign_actions/reschedule"
+	"github.com/ogen-app/ogen/src/genkit/flows/consistency"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/models"
@@ -41,6 +42,9 @@ type requestState struct {
 	// maxGeneratePosts caps a single call.
 	generatePosts    func(ctx context.Context, req content_plan.GeneratePostsRequest, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)
 	maxGeneratePosts int
+	// checkBrief / checkPosts back the read-only consistency review tools (CON-116).
+	checkBrief func(ctx context.Context, campaignID string, onEvent consistency.OnEventFunc) (*consistency.BriefReview, error)
+	checkPosts func(ctx context.Context, req consistency.PostsCheckRequest, onEvent consistency.OnEventFunc) (*consistency.PostsReview, error)
 
 	// Results set by tools, read by the runner after generation.
 	contentPlanResult    *ContentPlanResult
@@ -48,6 +52,8 @@ type requestState struct {
 	generatedPostsResult *GeneratedPostsResult
 	datesResult          *DatesResult
 	redistributeResult   *RedistributeResult
+	briefReviewResult    *consistency.BriefReview
+	postsReviewResult    *consistency.PostsReview
 }
 
 func withRequestState(ctx context.Context, s *requestState) context.Context {
@@ -131,16 +137,23 @@ type RedistributePostsOutput struct {
 	PhaseCount   int `json:"phaseCount"`
 }
 
+// CheckPostsInput is the input for the checkPostsConsistency tool (CON-116).
+type CheckPostsInput struct {
+	Max int `json:"max,omitempty" jsonschema:"description=Optional cap on how many posts to review; omit for the default."`
+}
+
 // ── Tool registration ────────────────────────────────────────────────────────
 
 type toolSet struct {
-	runContentPlan      ai.ToolRef
-	enrichBrief         ai.ToolRef
-	listCampaignPosts   ai.ToolRef
-	getCampaignOverview ai.ToolRef
-	generatePosts       ai.ToolRef
-	setCampaignDates    ai.ToolRef
-	redistributePosts   ai.ToolRef
+	runContentPlan        ai.ToolRef
+	enrichBrief           ai.ToolRef
+	listCampaignPosts     ai.ToolRef
+	getCampaignOverview   ai.ToolRef
+	generatePosts         ai.ToolRef
+	setCampaignDates      ai.ToolRef
+	redistributePosts     ai.ToolRef
+	checkBrief            ai.ToolRef
+	checkPostsConsistency ai.ToolRef
 }
 
 func defineTools(g *genkit.Genkit) *toolSet {
@@ -201,14 +214,33 @@ func defineTools(g *genkit.Genkit) *toolSet {
 		},
 	)
 
+	checkBrief := genkit.DefineTool(g, "checkBrief",
+		"Reviews the campaign brief for internal consistency and completeness (goal alignment, persona, key messages, tone) and returns specific findings with suggestions. "+
+			"Read-only — it does NOT change the brief. Call it when the user asks to check/review the brief or whether it's consistent. Takes no arguments. "+
+			"After reporting the findings, OFFER to improve the brief with enrichBrief when there are issues, but do NOT call enrichBrief in the same turn unless the user asks.",
+		func(ctx *ai.ToolContext, _ struct{}) (*consistency.BriefReview, error) {
+			return toolCheckBrief(ctx)
+		},
+	)
+
+	checkPostsConsistency := genkit.DefineTool(g, "checkPostsConsistency",
+		"Checks whether the campaign's non-published posts follow the brief (persona, key messages, tone) and returns per-post findings for the ones that drift. "+
+			"Read-only — it does NOT change any post. Call it when the user asks whether the posts match/follow the brief. Only the first N posts are checked (report the cap when it applies).",
+		func(ctx *ai.ToolContext, in CheckPostsInput) (*consistency.PostsReview, error) {
+			return toolCheckPostsConsistency(ctx, in)
+		},
+	)
+
 	return &toolSet{
-		runContentPlan:      runContentPlan,
-		enrichBrief:         enrichBrief,
-		listCampaignPosts:   listCampaignPosts,
-		getCampaignOverview: getCampaignOverview,
-		generatePosts:       generatePosts,
-		setCampaignDates:    setCampaignDates,
-		redistributePosts:   redistributePosts,
+		runContentPlan:        runContentPlan,
+		enrichBrief:           enrichBrief,
+		listCampaignPosts:     listCampaignPosts,
+		getCampaignOverview:   getCampaignOverview,
+		generatePosts:         generatePosts,
+		setCampaignDates:      setCampaignDates,
+		redistributePosts:     redistributePosts,
+		checkBrief:            checkBrief,
+		checkPostsConsistency: checkPostsConsistency,
 	}
 }
 
@@ -670,4 +702,34 @@ func toolRedistributePosts(ctx context.Context) (*RedistributePostsOutput, error
 func dateOnly(t time.Time) time.Time {
 	u := t.UTC()
 	return time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+func toolCheckBrief(ctx context.Context) (*consistency.BriefReview, error) {
+	st := getRequestState(ctx)
+	if st.checkBrief == nil {
+		return nil, fmt.Errorf("brief review is not available")
+	}
+	emit(st.onEvent, SSEEventCheckBriefStarted, struct{}{})
+	nested := consistency.OnEventFunc(func(_ consistency.SSEEventKind, _ any) {}) // step events not surfaced individually
+	review, err := st.checkBrief(ctx, st.campaignID, nested)
+	if err != nil {
+		return nil, err
+	}
+	st.briefReviewResult = review
+	return review, nil
+}
+
+func toolCheckPostsConsistency(ctx context.Context, in CheckPostsInput) (*consistency.PostsReview, error) {
+	st := getRequestState(ctx)
+	if st.checkPosts == nil {
+		return nil, fmt.Errorf("posts review is not available")
+	}
+	emit(st.onEvent, SSEEventCheckPostsStarted, struct{}{})
+	nested := consistency.OnEventFunc(func(_ consistency.SSEEventKind, _ any) {})
+	review, err := st.checkPosts(ctx, consistency.PostsCheckRequest{CampaignID: st.campaignID, Max: in.Max}, nested)
+	if err != nil {
+		return nil, err
+	}
+	st.postsReviewResult = review
+	return review, nil
 }
