@@ -28,6 +28,23 @@ func joined(caps []capturedDelta, key string) string {
 	return b.String()
 }
 
+// A watched string that ends with an incomplete UTF-8 tail carried across a
+// chunk boundary must still stream that tail once the string closes, so the
+// streamed deltas match the authoritative Values() (regression for flushDelta
+// early-returning when deltaBuf is empty but carry is not).
+func TestFlushDelta_EmitsCarriedTailAtStringEnd(t *testing.T) {
+	s, caps := collect("k")
+	s.Push(`{"k":"a` + "\xC3") // lone lead byte → carried as incomplete
+	s.Push(`"}`)               // string closes on the next chunk
+
+	if got := joined(*caps, "k"); got != "a\xC3" {
+		t.Fatalf("streamed deltas = %q, want %q", got, "a\xC3")
+	}
+	if v, _ := s.Values()["k"].(string); v != "a\xC3" {
+		t.Fatalf("Values[k] = %q, want %q", v, "a\xC3")
+	}
+}
+
 func TestScanner_SingleStringInOneChunk(t *testing.T) {
 	s, caps := collect("explanation")
 	s.Push(`{"explanation":"hello"}`)

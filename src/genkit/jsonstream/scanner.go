@@ -407,7 +407,10 @@ func (s *Scanner) appendRune(r rune) {
 // flushDelta emits the accumulated decoded bytes for the current key,
 // carrying any trailing incomplete UTF-8 bytes over to the next call.
 func (s *Scanner) flushDelta() {
-	if len(s.deltaBuf) == 0 {
+	// Nothing to do only when there are neither fresh bytes nor a carried
+	// partial-UTF-8 tail. When the string has just ended, deltaBuf can be empty
+	// while carry still holds trailing bytes that must be emitted below.
+	if len(s.deltaBuf) == 0 && len(s.carry) == 0 {
 		return
 	}
 	// Prepend any carried bytes from the previous flush.
