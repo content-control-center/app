@@ -323,6 +323,8 @@ func assembleContextCached(
 
 Tools are model-driven lookups. Per-request state (IDs the model shouldn't have to guess) goes into `context.Context` via a package-private key; tools read it via `getRequestState`.
 
+> ⚠️ **Tools have a large, hidden latency cost — read Gotcha #15 before shipping.** The plugin forces `strict: true` and randomizes tool order per request, which makes Anthropic recompile the tool-call grammar (~50s) on every call. The global tool-order stabilizer already fixes the chronic case, but a new tool-using flow must add a `PrewarmTools` flag + a background `prewarmToolCache` at init to also kill the cold first-request hit. Mirror `campaign_assistant`/`post_assistant`.
+
 ```go
 package <flow_name>
 
@@ -1743,6 +1745,8 @@ Both new fields are additive — old clients that don't read `payload.id` or tha
 
 14. **Authorization before lookup.** If the flow operates on a user-owned resource, check ownership BEFORE returning 404 — never reveal whether an id exists to an unauthorized caller. The handler should 403 for "exists but not yours" and 404 for "doesn't exist or not yours" (whichever the project convention dictates — check `CLAUDE.md` / memory).
 
+15. **Tool-using flows pay a hidden ~50s per request unless tool order is stable (CON-112).** The Genkit Anthropic plugin builds the outgoing `tools` array by ranging a Go **map** (`firebase/genkit go/ai/generate.go`), so tools ship in a **random order on every request**, and it forces `strict: true` on every tool (`plugins/internal/anthropic`). Anthropic compiles strict tool schemas into a constrained-decoding grammar cached **per exact tool-set with an order-sensitive key**, so a random order misses that cache on every call and pays the full server-side grammar compile (~50s) — chronically, nondeterministically, on every tool-using turn. **This is already fixed globally:** `server.InstallAnthropicToolOrderStabilizer()` wraps `http.DefaultTransport` to sort the `tools` array by name before every `/v1/messages` (installed in `newGenkitRuntime` before the plugin builds its client; gated by `ANTHROPIC_STABLE_TOOL_ORDER`, default on). A stable order keeps the cache warm and, as a bonus, makes tool selection deterministic. **When you add a new tool-using flow,** also wire the cold-start pre-warm: a `PrewarmTools bool` on the FlowConfig (set from `cfg.AnthropicStableToolOrder` in the server adapter) and a background `go prewarmToolCache(g, cfg, tools)` right after `defineTools(g)` in `InitX` — mirror `campaign_assistant`/`post_assistant`'s `prewarm.go`. It fires one throwaway `max_tokens:1` generation carrying the full tool set so the *first* request never eats the ~50s compile (`WithMaxTurns(1)` + `max_tokens:1` guarantees no tool actually executes during warm-up). **Diagnosis, if you ever see it regress:** run with `ANTHROPIC_DEBUG_HTTP=1` — a single `/v1/messages` with `server_ms≈50000` and `conn_ms≈0` means the time is server-side generation (compile), *not* your code; then diff the outgoing request bytes against a fast run to spot the ordering. Never diagnose "it's slow" from wall-clock alone — dump the bytes. See `src/server/anthropic_tool_order.go`.
+
 ---
 
 ## Step 13: Verify
@@ -1764,6 +1768,7 @@ Fix any compile or test errors before reporting success. Do not claim success wi
 - `types.go` created — request, response, config, repos, errors, SSE events (if streaming)
 - **`scanner.go` + `scanner_test.go` copied verbatim** from `src/genkit/flows/post_assistant/` — every flow uses the scanner, even non-streaming ones
 - `tools.go` created (if tools needed) — tool names match regex, descriptions written for LLM audience
+- **(Tool-using flows) cold-start pre-warm wired (CON-112, Gotcha #15)** — `PrewarmTools bool` on the FlowConfig set from `cfg.AnthropicStableToolOrder` in the server adapter; `prewarm.go` with `prewarmToolCache` (throwaway `max_tokens:1` gen over the full tool set); `go prewarmToolCache(g, cfg, tools)` fired after `defineTools(g)` in `InitX`. The global `InstallAnthropicToolOrderStabilizer` already keeps the strict-tool grammar cache warm.
 - `context.go` created with `fingerprint` cache (if static context) — every prompt field in the fingerprint
 - `run.go` created — streaming callback feeds the scanner, **no `ai.WithOutputType`**, response struct populated from `scanner.Values()` with required-field sanity check, tool dedup, error mapping
 - `flow.go` created — `InitX`, `NewXCallback`, `emit` helper
