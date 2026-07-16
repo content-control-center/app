@@ -20,6 +20,19 @@ type Config struct {
 	LogLevel  string `envconfig:"LOG_LEVEL"  default:"info"`
 	LogFormat string `envconfig:"LOG_FORMAT" default:""`
 
+	// AnthropicDebugHTTP (CON-112 perf diagnostics) logs every Anthropic
+	// round-trip split into httptrace phases (conn vs. server time), so a slow
+	// call can be attributed to connection acquisition vs. the API itself. This
+	// is how the ~60s "initial analysis" was traced to a server-side hold at
+	// Anthropic's edge. Diagnostic only; leave off in production.
+	AnthropicDebugHTTP bool `envconfig:"ANTHROPIC_DEBUG_HTTP" default:"false"`
+
+	// EnablePprof (CON-112 perf diagnostics) serves net/http/pprof on
+	// localhost:6060 (container-internal; reach via `docker compose exec`). A
+	// goroutine dump captured during a slow request shows exactly what every
+	// goroutine is doing. Diagnostic only; leave off in production.
+	EnablePprof bool `envconfig:"ENABLE_PPROF" default:"false"`
+
 	// Connection-pool sizing. Postgres lifts SQLite's single-writer
 	// ceiling, so the API runs a real pool shared by bun and the River
 	// job queue. Size MaxOpen for combined HTTP + worker load.

@@ -44,6 +44,11 @@ import (
 
 // TODO: refactor this function
 func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secretStore secrets.Store) (*fiber.App, error) {
+	// Opt-in pprof for perf diagnostics (CON-112). Container-internal only.
+	if cfg.EnablePprof {
+		startPprof("localhost:6060")
+	}
+
 	app := fiber.New(fiber.Config{
 		ErrorHandler: defaultErrorHandler,
 		// WriteTimeout 0 disables the per-response write deadline so that SSE
