@@ -117,6 +117,11 @@ type PostAssistantFlowConfig struct {
 	// Hub is the event broker used to publish "operation finalised"
 	// events on success/failure. nil = silent (no events emitted).
 	Hub eventhub.Hub
+	// PrewarmTools, when true, fires one throwaway generation carrying the full
+	// tool set at init so Anthropic compiles + caches the strict-tool grammar
+	// off the user path (CON-112). Only worth it alongside a stable tool order,
+	// so the server sets this from cfg.AnthropicStableToolOrder.
+	PrewarmTools bool
 	// CloneService backs the clonePost tool (CON-59). nil disables the
 	// tool — the assistant then has no clone capability.
 	CloneService *clone.Service
