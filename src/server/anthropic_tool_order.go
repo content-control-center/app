@@ -58,12 +58,18 @@ func (t *anthropicToolOrderTransport) RoundTrip(req *http.Request) (*http.Respon
 	if len(body) == 0 {
 		return t.base.RoundTrip(req)
 	}
-	if sorted, n, changed := sortAnthropicToolsByName(body); changed {
-		setAnthropicReqBody(req, sorted)
-		slog.Debug("anthropic tools reordered for cache stability",
-			logging.AttrComponent, "anthropic.http", "tools", n)
+	sorted, n, changed := sortAnthropicToolsByName(body)
+	if !changed {
+		return t.base.RoundTrip(req)
 	}
-	return t.base.RoundTrip(req)
+
+	// RoundTrip must not modify the caller's request (net/http contract), so
+	// rewrite the sorted body on a clone and leave the original untouched.
+	clone := req.Clone(req.Context())
+	setAnthropicReqBody(clone, sorted)
+	slog.Debug("anthropic tools reordered for cache stability",
+		logging.AttrComponent, "anthropic.http", "tools", n)
+	return t.base.RoundTrip(clone)
 }
 
 // sortAnthropicToolsByName returns the body with its top-level `tools` array
@@ -107,21 +113,24 @@ func anthropicToolName(raw json.RawMessage) string {
 	return t.Name
 }
 
+// readAnthropicReqBody returns a copy of the request body without mutating req.
+// It reads through GetBody, which net/http populates for in-memory bodies such
+// as the SDK's /v1/messages payload, so the caller's one-shot Body is never
+// consumed. Returns nil when GetBody is unavailable — the caller then forwards
+// the request untouched rather than draining the original body.
 func readAnthropicReqBody(req *http.Request) []byte {
-	if req.GetBody != nil { // net/http populates this for in-memory bodies
-		if rc, err := req.GetBody(); err == nil {
-			b, _ := io.ReadAll(rc)
-			rc.Close()
-			return b
-		}
+	if req.GetBody == nil {
+		return nil
 	}
-	b, err := io.ReadAll(req.Body)
+	rc, err := req.GetBody()
 	if err != nil {
 		return nil
 	}
-	req.Body.Close()
-	req.Body = io.NopCloser(bytes.NewReader(b))
-	req.ContentLength = int64(len(b))
+	defer rc.Close()
+	b, err := io.ReadAll(rc)
+	if err != nil {
+		return nil
+	}
 	return b
 }
 
