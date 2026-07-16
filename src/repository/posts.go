@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -106,9 +107,27 @@ func (r *postRepository) UpdateScheduledAtBatch(ctx context.Context, posts []*mo
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		for _, p := range posts {
 			// Only the schedule columns are written; the TenantScoped hook adds
-			// the tenant predicate, WherePK adds the id.
-			if _, err := tx.NewUpdate().Model(p).Column("scheduled_at", "updated_at").WherePK().Exec(ctx); err != nil {
+			// the tenant predicate, WherePK adds the id. The status guard limits
+			// the write to still-eligible posts, so a post that was concurrently
+			// published, scheduled, or already redistributed matches zero rows,
+			// and the exactly-one-row check fails the whole transaction rather
+			// than clobbering a schedule that moved out from under us.
+			res, err := tx.NewUpdate().Model(p).
+				Column("scheduled_at", "updated_at").
+				Where("status IN (?)", bun.In([]models.PostStatus{
+					models.PostStatusDraft, models.PostStatusReadyForPublish,
+				})).
+				WherePK().
+				Exec(ctx)
+			if err != nil {
 				return err
+			}
+			n, err := res.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if n != 1 {
+				return fmt.Errorf("post %s is no longer eligible for redistribution (status changed or removed)", p.ID)
 			}
 		}
 		return nil
