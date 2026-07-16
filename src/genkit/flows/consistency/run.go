@@ -117,12 +117,16 @@ func runCheckPosts(
 
 	eligible := eligiblePosts(all)
 	total := len(eligible)
-	limit := req.Max
-	if limit <= 0 {
-		limit = cfg.MaxPosts
+	// Effective cap: the configured max when set, else the built-in default.
+	// A caller-supplied req.Max may request fewer posts but must never exceed
+	// the cap.
+	maxPosts := cfg.MaxPosts
+	if maxPosts <= 0 {
+		maxPosts = defaultMaxPosts
 	}
-	if limit <= 0 {
-		limit = defaultMaxPosts
+	limit := maxPosts
+	if req.Max > 0 && req.Max < limit {
+		limit = req.Max
 	}
 	checked := eligible
 	capped := false
