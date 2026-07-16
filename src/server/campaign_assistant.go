@@ -46,9 +46,12 @@ func initCampaignAssistant(
 		// bounds worst-case streaming; MaxTurns 2 lets it call at most one tool
 		// per turn (model → tool → compose), preventing several heavy Sonnet
 		// sub-flows from chaining inside a single chat turn.
-		MaxOutputTokens:  2048,
-		MaxTurns:         2,
-		Hub:              hub,
+		MaxOutputTokens: 2048,
+		MaxTurns:        2,
+		Hub:             hub,
+		// CON-112: pre-warm the strict-tool grammar cache at boot when we're also
+		// stabilizing tool order (otherwise the warmed key wouldn't match).
+		PrewarmTools:     cfg.AnthropicStableToolOrder,
 		ContentPlan:      contentPlanFn,
 		EnrichBrief:      enrichBriefFn,
 		Overview:         overviewSvc,

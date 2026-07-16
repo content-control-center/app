@@ -23,9 +23,21 @@ type Config struct {
 	// AnthropicDebugHTTP (CON-112 perf diagnostics) logs every Anthropic
 	// round-trip split into httptrace phases (conn vs. server time), so a slow
 	// call can be attributed to connection acquisition vs. the API itself. This
-	// is how the ~60s "initial analysis" was traced to a server-side hold at
-	// Anthropic's edge. Diagnostic only; leave off in production.
+	// is how the ~50-60s per-request latency was traced to server-side
+	// strict-tool-schema (grammar) recompilation — see AnthropicStableToolOrder
+	// for the root cause and fix. Diagnostic only; leave off in production.
 	AnthropicDebugHTTP bool `envconfig:"ANTHROPIC_DEBUG_HTTP" default:"false"`
+
+	// AnthropicStableToolOrder (CON-112 fix) sorts the outgoing tools array by
+	// name on every Anthropic /v1/messages request. The Genkit Anthropic plugin
+	// builds the tool list by ranging a Go map (ai/generate.go) — a *random*
+	// order per request — and forces strict:true on every tool. Anthropic
+	// compiles strict tool schemas into a constrained-decoding grammar cached
+	// per exact tool-set (the cache key is order-sensitive), so a random order
+	// misses that cache on every call and pays the full ~50s compile each time.
+	// A deterministic order keeps the cache warm after the first request. On by
+	// default; set false only to A/B the effect.
+	AnthropicStableToolOrder bool `envconfig:"ANTHROPIC_STABLE_TOOL_ORDER" default:"true"`
 
 	// EnablePprof (CON-112 perf diagnostics) serves net/http/pprof on
 	// localhost:6060 (container-internal; reach via `docker compose exec`). A

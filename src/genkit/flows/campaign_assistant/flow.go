@@ -47,6 +47,12 @@ func InitCampaignAssistant(g *genkit.Genkit, cfg CampaignAssistantFlowConfig, re
 
 	tools := defineTools(g)
 
+	// CON-112: warm Anthropic's strict-tool grammar cache in the background so
+	// the first real request doesn't pay the ~50s compile. Non-blocking.
+	if cfg.PrewarmTools {
+		go prewarmToolCache(g, cfg, tools)
+	}
+
 	CampaignAssistantFlow = genkit.DefineFlow(g, "campaignAssistant",
 		func(ctx context.Context, req CampaignAssistantRequest) (*CampaignAssistantResponse, error) {
 			return runCampaignAssistant(ctx, g, req, cfg, repos, systemTmpl, contextTmpl, tools, nil)

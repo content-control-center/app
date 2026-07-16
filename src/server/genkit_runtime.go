@@ -119,11 +119,18 @@ func newGenkitRuntime(ctx context.Context, deps genkitDeps, store secrets.Store)
 		checker:             deps.checker,
 	}
 
-	// Route/instrument Anthropic HTTP (CON-112 perf) — must be installed before
-	// the plugin builds its client so the wrapped transport is in place. The
-	// HTTP/1.1 fix defends against the plugin's leaked-stream connection
-	// Opt-in Anthropic HTTP tracing (CON-112 perf diagnostics) — must be installed
-	// before the plugin builds its client so the wrapped transport is in place.
+	// CON-112 fix: stabilize the outgoing tool order so Anthropic's strict-tool
+	// grammar-compilation cache stays warm across requests. Must be installed
+	// before the plugin builds its client (from http.DefaultTransport), and
+	// before the debug-logging wrap below so logging measures the stabilized
+	// request. On by default; opt out via ANTHROPIC_STABLE_TOOL_ORDER=false.
+	if r.cfg == nil || r.cfg.AnthropicStableToolOrder {
+		InstallAnthropicToolOrderStabilizer()
+	}
+
+	// Opt-in Anthropic HTTP tracing (CON-112 perf diagnostics) — must be
+	// installed before the plugin builds its client so the wrapped transport is
+	// in place.
 	if r.cfg != nil && r.cfg.AnthropicDebugHTTP {
 		InstallAnthropicHTTPLogging()
 	}

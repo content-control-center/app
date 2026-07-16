@@ -22,8 +22,10 @@ var installAnthropicHTTPLoggingOnce sync.Once
 // the plugin. Non-Anthropic traffic passes through untouched.
 //
 // Opt-in via ANTHROPIC_DEBUG_HTTP; idempotent. Diagnostic only — this is how the
-// ~60s "initial analysis" was traced to a server-side hold at Anthropic's edge
-// (large server_ms with conn_ms≈0; see the CON-112 perf notes).
+// ~50-60s per-request latency was localized to server-side generation (large
+// server_ms with conn_ms≈0), then traced by diffing the outgoing bytes to
+// strict-tool-schema recompilation caused by a per-request random tool order.
+// The fix is InstallAnthropicToolOrderStabilizer (see anthropic_tool_order.go).
 func InstallAnthropicHTTPLogging() {
 	installAnthropicHTTPLoggingOnce.Do(func() {
 		base := http.DefaultTransport

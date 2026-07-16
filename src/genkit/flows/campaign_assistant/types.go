@@ -110,6 +110,12 @@ type CampaignAssistantFlowConfig struct {
 	// Hub publishes "operation finalised" events on success/failure. nil = silent.
 	Hub eventhub.Hub
 
+	// PrewarmTools, when true, fires one throwaway generation carrying the full
+	// tool set at init so Anthropic compiles + caches the strict-tool grammar
+	// off the user path (CON-112). Only worth it alongside a stable tool order,
+	// so the server sets this from cfg.AnthropicStableToolOrder.
+	PrewarmTools bool
+
 	// ContentPlan and EnrichBrief are the existing flow callbacks, invoked as
 	// tools. Injected so the assistant reuses them verbatim — no duplicate LLM
 	// generation. nil disables the corresponding tool.
