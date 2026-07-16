@@ -50,6 +50,7 @@ func TestAnthropicLoggingTransport_PassThrough(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: unexpected error: %v", tc.url, err)
 		}
+		_ = resp.Body.Close()
 		if base.called != 1 {
 			t.Errorf("%s: base called %d times, want 1", tc.url, base.called)
 		}
