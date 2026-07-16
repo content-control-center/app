@@ -625,25 +625,29 @@ func toolSetCampaignDates(ctx context.Context, in SetCampaignDatesInput) (*SetCa
 		return nil, fmt.Errorf("the campaign must span at least one day")
 	}
 
+	// Count eligible (draft/ready) posts that will fall outside the new range.
+	// Load before persisting the date change so a lookup failure aborts cleanly
+	// instead of saving the dates and silently reporting zero out-of-range posts.
+	posts, err := st.repos.Posts.ListByCampaign(ctx, st.campaignID)
+	if err != nil {
+		return nil, fmt.Errorf("list posts: %w", err)
+	}
+	lo, hi := dateOnly(*start), dateOnly(*end)
+	outside := 0
+	for _, p := range posts {
+		if reschedule.Eligible(p.Status) && p.ScheduledAt != nil {
+			d := dateOnly(*p.ScheduledAt)
+			if d.Before(lo) || d.After(hi) {
+				outside++
+			}
+		}
+	}
+
 	c.StartDate = start
 	c.EndDate = end
 	c.UpdatedAt = time.Now().UTC()
 	if err := st.repos.Campaigns.Update(ctx, c); err != nil {
 		return nil, fmt.Errorf("update campaign dates: %w", err)
-	}
-
-	// Count eligible (draft/ready) posts now dated outside the new range.
-	outside := 0
-	if posts, err := st.repos.Posts.ListByCampaign(ctx, st.campaignID); err == nil {
-		lo, hi := dateOnly(*start), dateOnly(*end)
-		for _, p := range posts {
-			if reschedule.Eligible(p.Status) && p.ScheduledAt != nil {
-				d := dateOnly(*p.ScheduledAt)
-				if d.Before(lo) || d.After(hi) {
-					outside++
-				}
-			}
-		}
 	}
 
 	st.datesResult = &DatesResult{StartDate: start.Format(iso), EndDate: end.Format(iso), PostsOutsideRange: outside}
