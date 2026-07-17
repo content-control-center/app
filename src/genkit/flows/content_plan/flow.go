@@ -32,6 +32,10 @@ var ContentPlanFlow *core.Flow[ContentPlanRequest, *ContentPlanResponse, struct{
 // Set by InitContentPlan alongside ContentPlanFlow.
 var contentPlanRunner func(ctx context.Context, req ContentPlanRequest, onEvent OnEventFunc) (*ContentPlanResponse, error)
 
+// generatePostsRunner backs the CON-114 targeted generation callback. Set by
+// InitContentPlan.
+var generatePostsRunner func(ctx context.Context, req GeneratePostsRequest, onEvent OnEventFunc) (*ContentPlanResponse, error)
+
 // ContentPlanFlowConfig holds the settings for the content plan flow.
 type ContentPlanFlowConfig struct {
 	// Provider resolves the model reference + call config by role, so the
@@ -102,6 +106,10 @@ func InitContentPlan(g *genkit.Genkit, cfg ContentPlanFlowConfig, repos ContentP
 		return runContentPlan(ctx, g, req, cfg, repos, onEvent)
 	}
 
+	generatePostsRunner = func(ctx context.Context, req GeneratePostsRequest, onEvent OnEventFunc) (*ContentPlanResponse, error) {
+		return runGeneratePosts(ctx, g, req, cfg, repos, onEvent)
+	}
+
 	return nil
 }
 
@@ -111,6 +119,15 @@ func InitContentPlan(g *genkit.Genkit, cfg ContentPlanFlowConfig, repos ContentP
 func NewContentPlanCallback() func(ctx context.Context, campaignID string, onEvent OnEventFunc) (*ContentPlanResponse, error) {
 	return func(ctx context.Context, campaignID string, onEvent OnEventFunc) (*ContentPlanResponse, error) {
 		return contentPlanRunner(ctx, ContentPlanRequest{CampaignID: campaignID}, onEvent)
+	}
+}
+
+// NewGeneratePostsCallback returns the CON-114 targeted generation callback for
+// the campaign assistant tool and the REST endpoint. onEvent is forwarded for
+// SSE streaming; nil runs silently.
+func NewGeneratePostsCallback() func(ctx context.Context, req GeneratePostsRequest, onEvent OnEventFunc) (*ContentPlanResponse, error) {
+	return func(ctx context.Context, req GeneratePostsRequest, onEvent OnEventFunc) (*ContentPlanResponse, error) {
+		return generatePostsRunner(ctx, req, onEvent)
 	}
 }
 
@@ -245,7 +262,7 @@ func runContentPlan(
 	// no-ops below for client compatibility; the substantive work all
 	// happens inside generatePosts.
 	slog.InfoContext(ctx, "step 4/6 generatePosts", logging.AttrComponent, "genkit.content_plan", "campaign_id", req.CampaignID, "model", cfg.ModelID, "estimated_count", campaign.EstimatedPostCount)
-	posts, genWarnings, err := generatePosts(ctx, g, campaign, platforms, assets, cfg, repos, onEvent)
+	posts, genWarnings, err := generatePosts(ctx, g, campaign, platforms, assets, cfg, repos, onEvent, nil)
 	if err != nil {
 		slog.ErrorContext(ctx, "generatePosts failed", logging.AttrComponent, "genkit.content_plan", "campaign_id", req.CampaignID, "duration_ms", time.Since(start).Milliseconds(), "persisted", len(posts), logging.AttrError, err)
 		return nil, err
@@ -261,6 +278,98 @@ func runContentPlan(
 	emit(onEvent, SSEEventStep, StepEventPayload{Step: "persistDraftPosts", Status: "done"})
 
 	slog.InfoContext(ctx, "done", logging.AttrComponent, "genkit.content_plan", "campaign_id", req.CampaignID, "duration_ms", time.Since(start).Milliseconds(), "posts", len(posts), "warnings", len(warnings))
+	return &ContentPlanResponse{
+		CampaignID:  campaign.ID,
+		GeneratedAt: time.Now().UTC(),
+		Posts:       posts,
+		Warnings:    warnings,
+	}, nil
+}
+
+// runGeneratePosts is the CON-114 targeted generation orchestrator: generate
+// exactly req.Count draft posts for the requested platform subset, in a single
+// phase, with publish dates within [WindowStart, WindowEnd]. It reuses the
+// content-plan validation, asset grounding, batching, validation, inline
+// persistence, and streaming with a targeting override.
+func runGeneratePosts(
+	ctx context.Context,
+	g *genkit.Genkit,
+	req GeneratePostsRequest,
+	cfg ContentPlanFlowConfig,
+	repos ContentPlanRepos,
+	onEvent OnEventFunc,
+) (out *ContentPlanResponse, retErr error) {
+	start := time.Now()
+	slog.InfoContext(ctx, "starting targeted generation", logging.AttrComponent, "genkit.content_plan", "campaign_id", req.CampaignID, "platforms", len(req.PlatformIDs), "phase_id", req.PhaseID, "count", req.Count)
+
+	if err := cfg.Checker.Enforce(ctx); err != nil {
+		return nil, err
+	}
+	if req.Count <= 0 {
+		return nil, &ValidationError{Msg: "count must be at least 1"}
+	}
+
+	// A fully-configured campaign is still required (brief, phases, dates,
+	// platforms); the targeted window is separate.
+	campaign, err := validateInput(ctx, req.CampaignID, repos.Campaigns, repos.Assets)
+	if err != nil {
+		return nil, err
+	}
+
+	finaliseOwnerID := campaign.CreatedBy
+	defer func() {
+		if cfg.Hub == nil || finaliseOwnerID == "" {
+			return
+		}
+		publishContentPlanFinalised(cfg.Hub, req.CampaignID, finaliseOwnerID, out, retErr)
+	}()
+
+	phase, ok := resolvePhaseByID(campaign, req.PhaseID)
+	if !ok {
+		return nil, &ValidationError{Msg: fmt.Sprintf("phase %q is not a phase of this campaign", req.PhaseID)}
+	}
+
+	winStart, err := time.Parse("2006-01-02", req.WindowStart)
+	if err != nil {
+		return nil, &ValidationError{Msg: "windowStart must be an ISO date (YYYY-MM-DD)"}
+	}
+	winEnd, err := time.Parse("2006-01-02", req.WindowEnd)
+	if err != nil {
+		return nil, &ValidationError{Msg: "windowEnd must be an ISO date (YYYY-MM-DD)"}
+	}
+	if winEnd.Before(winStart) {
+		return nil, &ValidationError{Msg: "windowEnd must be on or after windowStart"}
+	}
+
+	assets, assetWarnings, err := resolveAssets(ctx, campaign, cfg, repos)
+	if err != nil {
+		return nil, err
+	}
+
+	allPlatforms, err := resolvePlatforms(ctx, campaign.TargetPlatforms, repos.Platforms)
+	if err != nil {
+		return nil, err
+	}
+	platforms, err := selectPlatforms(allPlatforms, req.PlatformIDs, req.PostType)
+	if err != nil {
+		return nil, err
+	}
+	emit(onEvent, SSEEventStep, StepEventPayload{Step: "resolveTargets", Status: "done"})
+
+	tgt := &targeting{
+		count:       req.Count,
+		phases:      []resolvedPhase{phase},
+		windowStart: winStart,
+		windowEnd:   winEnd,
+	}
+	posts, genWarnings, err := generatePosts(ctx, g, campaign, platforms, assets, cfg, repos, onEvent, tgt)
+	if err != nil {
+		return nil, err
+	}
+	warnings := append(assetWarnings, genWarnings...)
+	emit(onEvent, SSEEventStep, StepEventPayload{Step: "generatePosts", Status: "done"})
+
+	slog.InfoContext(ctx, "targeted generation done", logging.AttrComponent, "genkit.content_plan", "campaign_id", req.CampaignID, "duration_ms", time.Since(start).Milliseconds(), "posts", len(posts), "warnings", len(warnings))
 	return &ContentPlanResponse{
 		CampaignID:  campaign.ID,
 		GeneratedAt: time.Now().UTC(),

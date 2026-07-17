@@ -18,8 +18,10 @@ import (
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/uptrace/bun"
 
+	"github.com/ogen-app/ogen/src/campaign_actions/overview"
 	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
@@ -42,6 +44,11 @@ import (
 
 // TODO: refactor this function
 func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secretStore secrets.Store) (*fiber.App, error) {
+	// Opt-in pprof for perf diagnostics (CON-112). Container-internal only.
+	if cfg.EnablePprof {
+		startPprof("localhost:6060")
+	}
+
 	app := fiber.New(fiber.Config{
 		ErrorHandler: defaultErrorHandler,
 		// WriteTimeout 0 disables the per-response write deadline so that SSE
@@ -88,6 +95,11 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	postRepo := repository.NewPostRepository(db)
 	postVersionRepo := repository.NewPostVersionRepository(db)
 	postMessageRepo := repository.NewPostAssistantMessageRepository(db)
+	campaignMessageRepo := repository.NewCampaignAssistantMessageRepository(db)
+	// CON-113: one overview service, shared by the REST endpoint and the
+	// Campaign Assistant's getCampaignOverview tool. Not gated by the Anthropic
+	// key — it's a plain tenant-scoped DB read.
+	campaignOverviewSvc := overview.New(campaignRepo, postRepo, platformRepo)
 	postAttachmentRepo := repository.NewPostAttachmentRepository(db)
 	postLogRepo := repository.NewPostLogRepository(db)
 	postEvaluationRepo := repository.NewPostEvaluationRepository(db)
@@ -373,11 +385,17 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 			Campaigns:     campaignRepo,
 			CampaignTypes: campaignTypeRepo,
 		},
-		cloneSvc:    cloneSvc,
-		restoreSvc:  restoreSvc,
-		scheduleSvc: scheduleSvc,
-		recorder:    usageWiring.recorder,
-		checker:     usageWiring.checker,
+		campaignAssistRepos: campaign_assistant.CampaignAssistantRepos{
+			Messages:  campaignMessageRepo,
+			Campaigns: campaignRepo,
+			Posts:     postRepo,
+		},
+		campaignOverviewSvc: campaignOverviewSvc,
+		cloneSvc:            cloneSvc,
+		restoreSvc:          restoreSvc,
+		scheduleSvc:         scheduleSvc,
+		recorder:            usageWiring.recorder,
+		checker:             usageWiring.checker,
 	}, secretStore)
 	if err != nil {
 		return nil, err
@@ -385,7 +403,11 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	slog.Info("genkit flows registered", logging.AttrComponent, "genkit")
 
 	handlers.NewCampaignTypesHandler(campaignTypeRepo, auth).Register(app)
-	handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, gkRuntime.GenerateDraft, gkRuntime.IsAnthropicAvailable, gkRuntime.EnrichBrief).Register(app)
+	campaignsHandler := handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, gkRuntime.GenerateDraft, gkRuntime.IsAnthropicAvailable, gkRuntime.EnrichBrief, campaignMessageRepo, gkRuntime.RunCampaignAssistant)
+	campaignsHandler.SetOverviewService(campaignOverviewSvc)
+	campaignsHandler.SetGeneratePosts(gkRuntime.GeneratePosts, cfg.GeneratePostsMax)
+	campaignsHandler.SetConsistency(gkRuntime.CheckBrief, gkRuntime.CheckPosts)
+	campaignsHandler.Register(app)
 	handlers.NewPlatformsHandler(platformRepo, pubs, autoPublishAllowlistRepo, auth).Register(app)
 	handlers.NewTagsHandler(tagRepo, auth).Register(app)
 	postsHandler := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, platformRepo, postAttachmentRepo, auth, gkRuntime.RunPostAssistant, gkRuntime.IsAnthropicAvailable)

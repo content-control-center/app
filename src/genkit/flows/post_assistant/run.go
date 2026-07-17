@@ -15,6 +15,7 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
+	"github.com/ogen-app/ogen/src/genkit/jsonstream"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/vendors/llm"
@@ -183,7 +184,7 @@ func runPostAssistant(
 	// Set up an incremental JSON scanner that watches the two string-valued
 	// fields whose deltas we surface to the client. The scanner decodes
 	// JSON escapes as they arrive, so the client never sees raw \n / \uXXXX.
-	scanner := NewJSONStringScanner(
+	scanner := jsonstream.New(
 		[]string{"explanation", "updatedContent"},
 		func(key, delta string) {
 			switch key {

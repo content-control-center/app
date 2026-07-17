@@ -12,6 +12,9 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/valyala/fasthttp"
 
+	"github.com/ogen-app/ogen/src/campaign_actions/overview"
+	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
+	"github.com/ogen-app/ogen/src/genkit/flows/consistency"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/models"
@@ -44,6 +47,51 @@ type CampaignsHandler struct {
 	// enrichBrief streams an AI-generated campaign brief (CON-56). nil
 	// when the feature is unwired (e.g. tests) → the handler returns 503.
 	enrichBrief func(ctx context.Context, req enrich_brief.EnrichBriefRequest, onEvent enrich_brief.OnEventFunc) (*enrich_brief.EnrichBriefResponse, error)
+	// messageRepo persists the Campaign Assistant conversation (CON-112). nil
+	// in tests that don't exercise the assistant.
+	messageRepo repository.CampaignAssistantMessageRepository
+	// assistant is the Campaign Assistant flow callback (CON-112). nil when
+	// unwired (e.g. tests) → the assistant/messages endpoints return 503.
+	// Readiness is gated by isContentPlanReady, the same Anthropic-key gate.
+	assistant func(ctx context.Context, req campaign_assistant.CampaignAssistantRequest, onEvent campaign_assistant.OnEventFunc) (*campaign_assistant.CampaignAssistantResponse, error)
+	// overview backs GET /:id/overview (CON-113). Set via SetOverviewService
+	// (a late-bound optional dep, like PostsHandler's setters), so existing
+	// NewCampaignsHandler call sites stay unchanged. nil → the endpoint 503s.
+	// Not gated by the Anthropic key — it's a plain tenant-scoped DB read.
+	overview *overview.Service
+	// generatePosts backs POST /:id/generate-posts (CON-114); generatePostsMax
+	// caps the count. Set via SetGeneratePosts. nil → the endpoint 503s.
+	generatePosts    func(ctx context.Context, req content_plan.GeneratePostsRequest, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)
+	generatePostsMax int
+	// checkBrief / checkPosts back the read-only consistency reviews (CON-116):
+	// POST /:id/brief-review and POST /:id/posts-review. Set via SetConsistency.
+	// Gated by isContentPlanReady (same Anthropic key); nil → the endpoints 503.
+	checkBrief func(ctx context.Context, campaignID string, onEvent consistency.OnEventFunc) (*consistency.BriefReview, error)
+	checkPosts func(ctx context.Context, req consistency.PostsCheckRequest, onEvent consistency.OnEventFunc) (*consistency.PostsReview, error)
+}
+
+// SetOverviewService wires the campaign overview service (CON-113). Kept as a
+// setter, not a constructor arg, so existing NewCampaignsHandler call sites and
+// fixtures stay unchanged.
+func (h *CampaignsHandler) SetOverviewService(svc *overview.Service) {
+	h.overview = svc
+}
+
+// SetGeneratePosts wires the CON-114 targeted generation callback + its per-call
+// cap. Setter, not a constructor arg, so existing call sites stay unchanged.
+func (h *CampaignsHandler) SetGeneratePosts(fn func(ctx context.Context, req content_plan.GeneratePostsRequest, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error), max int) {
+	h.generatePosts = fn
+	h.generatePostsMax = max
+}
+
+// SetConsistency wires the CON-116 read-only review callbacks. Setter, not a
+// constructor arg, so existing call sites and fixtures stay unchanged.
+func (h *CampaignsHandler) SetConsistency(
+	checkBrief func(ctx context.Context, campaignID string, onEvent consistency.OnEventFunc) (*consistency.BriefReview, error),
+	checkPosts func(ctx context.Context, req consistency.PostsCheckRequest, onEvent consistency.OnEventFunc) (*consistency.PostsReview, error),
+) {
+	h.checkBrief = checkBrief
+	h.checkPosts = checkPosts
 }
 
 func NewCampaignsHandler(
@@ -53,6 +101,8 @@ func NewCampaignsHandler(
 	generateDraft func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error),
 	isContentPlanReady func() bool,
 	enrichBrief func(ctx context.Context, req enrich_brief.EnrichBriefRequest, onEvent enrich_brief.OnEventFunc) (*enrich_brief.EnrichBriefResponse, error),
+	messageRepo repository.CampaignAssistantMessageRepository,
+	assistant func(ctx context.Context, req campaign_assistant.CampaignAssistantRequest, onEvent campaign_assistant.OnEventFunc) (*campaign_assistant.CampaignAssistantResponse, error),
 ) *CampaignsHandler {
 	return &CampaignsHandler{
 		repo:               repo,
@@ -61,6 +111,8 @@ func NewCampaignsHandler(
 		generateDraft:      generateDraft,
 		isContentPlanReady: isContentPlanReady,
 		enrichBrief:        enrichBrief,
+		messageRepo:        messageRepo,
+		assistant:          assistant,
 	}
 }
 
@@ -73,6 +125,19 @@ func (h *CampaignsHandler) Register(app *fiber.App) {
 	g.Delete("/:id", h.auth, h.Delete)
 	g.Post("/:id/generate-draft", h.auth, h.GenerateDraft)
 	g.Post("/:id/enrich-brief", h.auth, h.EnrichBrief)
+	// CON-114: targeted generation — add a few posts for a platform subset,
+	// phase, and date window. Tenant-scoped (no owner guard), mirroring the
+	// assistant capability.
+	g.Post("/:id/generate-posts", h.auth, h.GeneratePosts)
+	// CON-112: Campaign Assistant chat. Tenant-scoped only — any user who can
+	// see the campaign can use the assistant (no owner-only guard).
+	g.Post("/:id/assistant", h.auth, h.Assistant)
+	g.Get("/:id/messages", h.auth, h.ListMessages)
+	// CON-113: quick campaign overview (brief recap + phases + content distribution).
+	g.Get("/:id/overview", h.auth, h.Overview)
+	// CON-116: read-only consistency reviews. Tenant-scoped, SSE.
+	g.Post("/:id/brief-review", h.auth, h.BriefReview)
+	g.Post("/:id/posts-review", h.auth, h.PostsReview)
 }
 
 type campaignRequest struct {
@@ -466,6 +531,408 @@ func (h *CampaignsHandler) EnrichBrief(c *fiber.Ctx) error {
 	}))
 
 	return nil
+}
+
+// Assistant godoc
+// @Summary      Campaign assistant (SSE)
+// @Description  Sends an instruction to the Campaign Assistant and streams progress via Server-Sent Events.
+// @Description  "explanation_delta" carries {"delta":"..."} fragments as the reply streams. "tool_call"/"tool_result"
+// @Description  signal tool invocations. When a content plan runs, "content_plan_started", "content_plan_post"
+// @Description  (etc.) and "content_plan_complete" are forwarded; when the brief is enriched, "enrich_brief_started",
+// @Description  the per-field "enrich_brief_*_delta" events and "enrich_brief_complete" are forwarded. A final
+// @Description  "complete" event carries the CampaignAssistantResponse. "error" carries {"message":"...","code":<http_code>}.
+// @Description  Available to any user in the campaign's tenant.
+// @Tags         campaigns
+// @Accept       json
+// @Produce      text/event-stream
+// @Security     CookieAuth
+// @Param        id    path      string           true  "Campaign Sqid"
+// @Param        body  body      assistantRequest true  "Instruction payload"
+// @Success      200  "SSE stream: delta / tool_call / tool_result / *_complete / complete / error events"
+// @Failure      400   {object}  map[string]string
+// @Failure      401   {object}  map[string]string
+// @Failure      503   {object}  map[string]string
+// @Router       /api/campaigns/{id}/assistant [post]
+func (h *CampaignsHandler) Assistant(c *fiber.Ctx) error {
+	if h.assistant == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "campaign assistant is not available")
+	}
+	if h.isContentPlanReady != nil && !h.isContentPlanReady() {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "campaign assistant is not available")
+	}
+
+	var req assistantRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	if err := validate.Struct(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	}
+
+	c.Set("Content-Type", "text/event-stream")
+	c.Set("Cache-Control", "no-cache")
+	c.Set("Connection", "keep-alive")
+	c.Set("X-Accel-Buffering", "no")
+
+	campaignID := c.Params("id")
+	instruction := req.Instruction
+	assistant := h.assistant
+	session := c.Locals("session").(*models.Session)
+	// Carry the tenant into the detached flow context (the StreamWriter runs
+	// after this handler returns) so the tenant-scoped campaign load, brief
+	// write, and usage recording all attribute to the right tenant (CON-86/97).
+	flowCtx := tenantctx.With(context.Background(), session.TenantID)
+
+	c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
+		writeEvent := func(event string, data any) {
+			b, _ := json.Marshal(data)
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
+			_ = w.Flush()
+		}
+
+		onEvent := campaign_assistant.OnEventFunc(func(name campaign_assistant.SSEEventKind, data any) {
+			writeEvent(string(name), data)
+		})
+
+		_, err := assistant(flowCtx, campaign_assistant.CampaignAssistantRequest{
+			CampaignID:  campaignID,
+			Instruction: instruction,
+		}, onEvent)
+		if err != nil {
+			code := fiber.StatusInternalServerError
+			msg := err.Error()
+			var ve *campaign_assistant.ValidationError
+			var ae *campaign_assistant.AIError
+			switch {
+			case errors.As(err, &ve):
+				code = fiber.StatusBadRequest
+				msg = ve.Msg
+			case errors.As(err, &ae):
+				code = fiber.StatusBadGateway
+				msg = ae.Msg
+			}
+			writeEvent(string(campaign_assistant.SSEEventError), campaign_assistant.ErrorEventPayload{Message: msg, Code: code})
+			return
+		}
+		// "complete" is emitted by the runner itself; nothing to write here.
+	}))
+
+	return nil
+}
+
+// ListMessages godoc
+// @Summary      List campaign assistant messages
+// @Description  Returns the most recent Campaign Assistant conversation messages for a campaign.
+// @Tags         campaigns
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id   path      string  true  "Campaign Sqid"
+// @Success      200  {array}   models.CampaignAssistantMessage
+// @Failure      401  {object}  map[string]string
+// @Router       /api/campaigns/{id}/messages [get]
+func (h *CampaignsHandler) ListMessages(c *fiber.Ctx) error {
+	if h.messageRepo == nil {
+		return c.JSON([]models.CampaignAssistantMessage{})
+	}
+	msgs, err := h.messageRepo.ListRecentByCampaignID(c.Context(), c.Params("id"), 50)
+	if err != nil {
+		return err
+	}
+	// Preserve the array contract: an empty history serializes as [] not null.
+	if msgs == nil {
+		msgs = []models.CampaignAssistantMessage{}
+	}
+	return c.JSON(msgs)
+}
+
+// Overview godoc
+// @Summary      Campaign overview
+// @Description  Returns a quick overview of the campaign: brief recap, phases
+// @Description  (with per-phase post counts), and content distribution by
+// @Description  status, platform, and content type. Available to any user in
+// @Description  the campaign's tenant.
+// @Tags         campaigns
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id   path      string  true  "Campaign Sqid"
+// @Success      200  {object}  overview.Overview
+// @Failure      401  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Failure      503  {object}  map[string]string
+// @Router       /api/campaigns/{id}/overview [get]
+func (h *CampaignsHandler) Overview(c *fiber.Ctx) error {
+	if h.overview == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "campaign overview is not available")
+	}
+	ov, err := h.overview.Overview(c.Context(), c.Params("id"))
+	if err != nil {
+		if errors.Is(err, overview.ErrNotFound) {
+			return fiber.NewError(fiber.StatusNotFound, "campaign not found")
+		}
+		return err
+	}
+	return c.JSON(ov)
+}
+
+// GeneratePosts godoc
+// @Summary      Generate targeted posts (SSE)
+// @Description  Generates a few new draft posts for a platform subset, a single
+// @Description  phase, and a publish-date window (CON-114). Streams the same
+// @Description  step / post / warning / complete / error events as generate-draft.
+// @Description  Available to any user in the campaign's tenant.
+// @Tags         campaigns
+// @Accept       json
+// @Produce      text/event-stream
+// @Security     CookieAuth
+// @Param        id    path  string  true  "Campaign Sqid"
+// @Success      200  "SSE stream: step / post / warning / complete / error events"
+// @Failure      400  {object}  map[string]string
+// @Failure      401  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Failure      503  {object}  map[string]string
+// @Router       /api/campaigns/{id}/generate-posts [post]
+func (h *CampaignsHandler) GeneratePosts(c *fiber.Ctx) error {
+	if h.generatePosts == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "targeted generation is not available")
+	}
+	if h.isContentPlanReady != nil && !h.isContentPlanReady() {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "targeted generation is not available")
+	}
+
+	var body struct {
+		PlatformIDs []string `json:"platformIds"`
+		PhaseID     string   `json:"phaseId"`
+		Count       int      `json:"count"`
+		WindowStart string   `json:"windowStart"`
+		WindowEnd   string   `json:"windowEnd"`
+		PostType    string   `json:"postType"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	if body.Count < 1 {
+		return fiber.NewError(fiber.StatusBadRequest, "count must be at least 1")
+	}
+	max := h.generatePostsMax
+	if max <= 0 {
+		max = 10
+	}
+	if body.Count > max {
+		body.Count = max
+	}
+
+	// 404 before opening the stream (tenant-scoped).
+	if _, err := h.repo.GetByID(c.Context(), c.Params("id")); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "campaign not found")
+		}
+		return err
+	}
+
+	c.Set("Content-Type", "text/event-stream")
+	c.Set("Cache-Control", "no-cache")
+	c.Set("Connection", "keep-alive")
+	c.Set("X-Accel-Buffering", "no")
+
+	session := c.Locals("session").(*models.Session)
+	flowCtx := tenantctx.With(context.Background(), session.TenantID)
+	generatePosts := h.generatePosts
+	req := content_plan.GeneratePostsRequest{
+		CampaignID:  c.Params("id"),
+		PlatformIDs: body.PlatformIDs,
+		PhaseID:     body.PhaseID,
+		Count:       body.Count,
+		WindowStart: body.WindowStart,
+		WindowEnd:   body.WindowEnd,
+		PostType:    body.PostType,
+	}
+
+	c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
+		writeEvent := func(event string, data any) {
+			b, _ := json.Marshal(data)
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
+			_ = w.Flush()
+		}
+
+		onEvent := content_plan.OnEventFunc(func(name content_plan.SSEEventKind, data any) {
+			writeEvent(string(name), data)
+		})
+
+		resp, err := generatePosts(flowCtx, req, onEvent)
+		if err != nil {
+			code := fiber.StatusInternalServerError
+			msg := err.Error()
+			var ve *content_plan.ValidationError
+			var ae *content_plan.AIError
+			switch {
+			case errors.As(err, &ve):
+				code = fiber.StatusBadRequest
+				msg = ve.Msg
+			case errors.As(err, &ae):
+				code = fiber.StatusBadGateway
+				msg = ae.Msg
+			}
+			writeEvent(string(content_plan.SSEEventError), content_plan.ErrorEventPayload{Message: msg, Code: code})
+			return
+		}
+		writeEvent(string(content_plan.SSEEventComplete), resp)
+	}))
+
+	return nil
+}
+
+// BriefReview godoc
+// @Summary      Review the campaign brief for consistency (SSE)
+// @Description  Read-only review of the brief's internal consistency and
+// @Description  completeness (CON-116). Streams step / complete / error events.
+// @Description  Does not modify the brief. Available to any user in the tenant.
+// @Tags         campaigns
+// @Produce      text/event-stream
+// @Security     CookieAuth
+// @Param        id   path  string  true  "Campaign Sqid"
+// @Success      200  "SSE stream: step / complete / error events"
+// @Failure      401  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Failure      503  {object}  map[string]string
+// @Router       /api/campaigns/{id}/brief-review [post]
+func (h *CampaignsHandler) BriefReview(c *fiber.Ctx) error {
+	if h.checkBrief == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "brief review is not available")
+	}
+	if h.isContentPlanReady != nil && !h.isContentPlanReady() {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "brief review is not available")
+	}
+
+	// 404 before opening the stream (tenant-scoped).
+	if _, err := h.repo.GetByID(c.Context(), c.Params("id")); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "campaign not found")
+		}
+		return err
+	}
+
+	c.Set("Content-Type", "text/event-stream")
+	c.Set("Cache-Control", "no-cache")
+	c.Set("Connection", "keep-alive")
+	c.Set("X-Accel-Buffering", "no")
+
+	session := c.Locals("session").(*models.Session)
+	flowCtx := tenantctx.With(context.Background(), session.TenantID)
+	checkBrief := h.checkBrief
+	campaignID := c.Params("id")
+
+	c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
+		writeEvent := func(event string, data any) {
+			b, _ := json.Marshal(data)
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
+			_ = w.Flush()
+		}
+
+		onEvent := consistency.OnEventFunc(func(name consistency.SSEEventKind, data any) {
+			writeEvent(string(name), data)
+		})
+
+		resp, err := checkBrief(flowCtx, campaignID, onEvent)
+		if err != nil {
+			writeEvent(string(consistency.SSEEventError), consistencyError(err))
+			return
+		}
+		writeEvent(string(consistency.SSEEventComplete), resp)
+	}))
+
+	return nil
+}
+
+// PostsReview godoc
+// @Summary      Review campaign posts against the brief (SSE)
+// @Description  Read-only check of whether the campaign's non-published posts
+// @Description  follow the brief (CON-116). Only the first N posts are checked.
+// @Description  Streams step / complete / error events. Does not modify any post.
+// @Tags         campaigns
+// @Accept       json
+// @Produce      text/event-stream
+// @Security     CookieAuth
+// @Param        id   path  string  true  "Campaign Sqid"
+// @Success      200  "SSE stream: step / complete / error events"
+// @Failure      400  {object}  map[string]string
+// @Failure      401  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Failure      503  {object}  map[string]string
+// @Router       /api/campaigns/{id}/posts-review [post]
+func (h *CampaignsHandler) PostsReview(c *fiber.Ctx) error {
+	if h.checkPosts == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "posts review is not available")
+	}
+	if h.isContentPlanReady != nil && !h.isContentPlanReady() {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "posts review is not available")
+	}
+
+	var body struct {
+		Max int `json:"max"`
+	}
+	// Body is optional — an empty POST reviews with the default cap.
+	if len(c.Body()) > 0 {
+		if err := c.BodyParser(&body); err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+	}
+
+	// 404 before opening the stream (tenant-scoped).
+	if _, err := h.repo.GetByID(c.Context(), c.Params("id")); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "campaign not found")
+		}
+		return err
+	}
+
+	c.Set("Content-Type", "text/event-stream")
+	c.Set("Cache-Control", "no-cache")
+	c.Set("Connection", "keep-alive")
+	c.Set("X-Accel-Buffering", "no")
+
+	session := c.Locals("session").(*models.Session)
+	flowCtx := tenantctx.With(context.Background(), session.TenantID)
+	checkPosts := h.checkPosts
+	req := consistency.PostsCheckRequest{CampaignID: c.Params("id"), Max: body.Max}
+
+	c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
+		writeEvent := func(event string, data any) {
+			b, _ := json.Marshal(data)
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
+			_ = w.Flush()
+		}
+
+		onEvent := consistency.OnEventFunc(func(name consistency.SSEEventKind, data any) {
+			writeEvent(string(name), data)
+		})
+
+		resp, err := checkPosts(flowCtx, req, onEvent)
+		if err != nil {
+			writeEvent(string(consistency.SSEEventError), consistencyError(err))
+			return
+		}
+		writeEvent(string(consistency.SSEEventComplete), resp)
+	}))
+
+	return nil
+}
+
+// consistencyError maps a consistency flow error onto the SSE error payload,
+// classifying validation vs. AI-provider failures for the client.
+func consistencyError(err error) consistency.ErrorEventPayload {
+	code := fiber.StatusInternalServerError
+	msg := err.Error()
+	var ve *consistency.ValidationError
+	var ae *consistency.AIError
+	switch {
+	case errors.As(err, &ve):
+		code = fiber.StatusBadRequest
+		msg = ve.Msg
+	case errors.As(err, &ae):
+		code = fiber.StatusBadGateway
+		msg = ae.Msg
+	}
+	return consistency.ErrorEventPayload{Message: msg, Code: code}
 }
 
 // nullSlice returns an empty StringSlice instead of nil so the JSON column

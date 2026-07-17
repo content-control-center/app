@@ -12,6 +12,7 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
+	"github.com/ogen-app/ogen/src/genkit/jsonstream"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/vendors/llm"
 )
@@ -71,7 +72,7 @@ func runEnrichBrief(
 	// Watch the four brief fields so the client previews each one as it
 	// streams. The scanner decodes JSON escapes as they arrive, so the
 	// client never sees raw \n / \uXXXX.
-	scanner := NewJSONStringScanner(
+	scanner := jsonstream.New(
 		[]string{"description", "targetPersona", "keyMessages", "toneGuidelines"},
 		func(key, delta string) {
 			switch key {

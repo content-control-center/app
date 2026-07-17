@@ -56,7 +56,7 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
-		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil).Register(app)
+		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
 
 		ph := handlers.NewPostsHandler(postRepo, repository.NewPostVersionRepository(db),
 			repository.NewPostAssistantMessageRepository(db), repository.NewPlatformRepository(db),

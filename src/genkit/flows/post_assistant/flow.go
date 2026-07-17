@@ -45,6 +45,12 @@ func InitPostAssistant(g *genkit.Genkit, cfg PostAssistantFlowConfig, repos Post
 
 	tools := defineTools(g)
 
+	// CON-112: warm Anthropic's strict-tool grammar cache in the background so
+	// the first real request doesn't pay the ~50s compile. Non-blocking.
+	if cfg.PrewarmTools {
+		go prewarmToolCache(g, cfg, tools)
+	}
+
 	PostAssistantFlow = genkit.DefineFlow(g, "postAssistant",
 		func(ctx context.Context, req PostAssistantRequest) (*PostAssistantResponse, error) {
 			return runPostAssistant(ctx, g, req, cfg, repos, systemTmpl, contextTmpl, tools, nil)

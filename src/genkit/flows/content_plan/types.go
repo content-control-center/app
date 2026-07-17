@@ -7,6 +7,21 @@ type ContentPlanRequest struct {
 	CampaignID string `json:"campaignId"`
 }
 
+// GeneratePostsRequest is the input to the targeted generation entry point
+// (CON-114): generate exactly Count draft posts for a platform subset, in a
+// single phase, with publish dates within [WindowStart, WindowEnd]. All fields
+// are concrete — the assistant tool resolves any natural language before
+// calling, so the engine stays deterministic.
+type GeneratePostsRequest struct {
+	CampaignID  string   `json:"campaignId"`
+	PlatformIDs []string `json:"platformIds"` // subset of the campaign's target platforms
+	PhaseID     string   `json:"phaseId"`     // a single campaign phase id
+	Count       int      `json:"count"`       // number of posts to generate
+	WindowStart string   `json:"windowStart"` // ISO YYYY-MM-DD (inclusive)
+	WindowEnd   string   `json:"windowEnd"`   // ISO YYYY-MM-DD (inclusive)
+	PostType    string   `json:"postType"`    // optional post-type slug; empty = platform default(s)
+}
+
 // DraftPost is both the AI output schema (via GenerateData[[]DraftPost]) and
 // the shape persisted as a Post record with status=draft.
 type DraftPost struct {
