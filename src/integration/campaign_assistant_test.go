@@ -381,7 +381,7 @@ var _ = Describe("Campaign assistant flow", Ordered, func() {
 	})
 
 	Describe("attached assets (CON-118)", func() {
-		It("grounds UsedAssetIDs on the attached asset and reports assets_used", func() {
+		It("auto-uses attached assets for generation, persists UseAssets, and grounds the binding", func() {
 			// Seed a ready asset and attach it to the campaign for this spec only.
 			assetID, err := models.NewID()
 			Expect(err).NotTo(HaveOccurred())
@@ -395,9 +395,11 @@ var _ = Describe("Campaign assistant flow", Ordered, func() {
 				CreatedBy: userID,
 			})).To(Succeed())
 
+			// Attach the asset but leave UseAssets OFF — the assistant should turn
+			// it on because the campaign has ready attached assets (CON-118).
 			full, err := campaignRepo.GetByID(ctx, campaignID)
 			Expect(err).NotTo(HaveOccurred())
-			full.UseAssets = true
+			full.UseAssets = false
 			full.AssetIDs = models.StringSlice{assetID}
 			Expect(campaignRepo.Update(ctx, full)).To(Succeed())
 
@@ -427,6 +429,11 @@ var _ = Describe("Campaign assistant flow", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp).NotTo(BeNil())
 			Expect(resp.Action).To(Equal("content_plan_generated"))
+
+			// Auto-use: the assistant enabled + persisted asset generation.
+			updated, err := campaignRepo.GetByID(ctx, campaignID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(updated.UseAssets).To(BeTrue(), "assistant should persist UseAssets when the campaign has attached assets")
 
 			// Provenance: the assets_used event names the attached asset.
 			Expect(assetsUsed).To(ContainElement(campaign_assistant.AssetRef{ID: assetID, Title: assetTitle}))

@@ -3,6 +3,7 @@ package campaign_assistant
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/ogen-app/ogen/src/genkit/flows/consistency"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
 )
@@ -293,6 +295,9 @@ func toolRunContentPlan(ctx context.Context) (*RunContentPlanOutput, error) {
 		return nil, fmt.Errorf("content plan generation is not available")
 	}
 
+	// CON-118: generate from the campaign's attached assets when it has any.
+	ensureCampaignAssetUse(ctx, st)
+
 	emit(st.onEvent, SSEEventContentPlanStarted, ContentPlanStartedEventPayload{})
 
 	// Forward the sub-flow's native events, namespaced, so the client sees
@@ -421,6 +426,8 @@ func toolGeneratePosts(ctx context.Context, in GeneratePostsInput) (*GeneratePos
 	if st.generatePosts == nil {
 		return nil, fmt.Errorf("targeted post generation is not available")
 	}
+	// CON-118: generate from the campaign's attached assets when it has any.
+	ensureCampaignAssetUse(ctx, st)
 	campaign := st.campaign
 	now := time.Now().UTC()
 
@@ -612,6 +619,32 @@ func readyCampaignAssetIDs(ctx context.Context, campaign *models.Campaign, asset
 		}
 	}
 	return out, nil
+}
+
+// ensureCampaignAssetUse turns on asset-sourced content generation when the
+// campaign has ready attached assets but UseAssets is still off, and persists
+// the flag so it sticks for later turns and the UI (CON-118). content_plan
+// injects the attached assets into the generation prompt whenever UseAssets is
+// true, so flipping it here is all that's needed. Best-effort: if the flag
+// can't be persisted, generation just proceeds without assets, as before.
+func ensureCampaignAssetUse(ctx context.Context, st *requestState) {
+	if st.campaign.UseAssets || st.repos.Assets == nil || st.repos.Campaigns == nil {
+		return
+	}
+	if len(st.campaign.AssetIDs) == 0 {
+		return // no assets attached to this campaign
+	}
+	ids, err := readyCampaignAssetIDs(ctx, st.campaign, st.repos.Assets)
+	if err != nil || len(ids) == 0 {
+		return // nothing ready to use
+	}
+	st.campaign.UseAssets = true
+	if err := st.repos.Campaigns.Update(ctx, st.campaign); err != nil {
+		st.campaign.UseAssets = false // keep in-memory state consistent with the DB
+		slog.WarnContext(ctx, "could not enable asset use for generation",
+			logging.AttrComponent, "genkit.campaign_assistant",
+			"campaign_id", st.campaignID, logging.AttrError, err)
+	}
 }
 
 // pageRef renders an asset chunk's page span for citation (CON-118).
