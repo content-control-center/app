@@ -35,6 +35,7 @@ var _ = Describe("Campaign assistant flow", Ordered, func() {
 		campaignRepo repository.CampaignRepository
 		postRepo     repository.PostRepository
 		messageRepo  repository.CampaignAssistantMessageRepository
+		assetRepo    repository.AssetRepository
 		callback     func(ctx context.Context, req campaign_assistant.CampaignAssistantRequest, onEvent campaign_assistant.OnEventFunc) (*campaign_assistant.CampaignAssistantResponse, error)
 
 		platformID = "AXqWG7U2qnpt" // seeded LinkedIn platform (Sqid)
@@ -49,7 +50,7 @@ var _ = Describe("Campaign assistant flow", Ordered, func() {
 		db = mustOpenIntegrationDB()
 
 		tagRepo := repository.NewTagRepository(db)
-		assetRepo := repository.NewAssetRepository(db, tagRepo, repository.NewAssetFileRepository(db))
+		assetRepo = repository.NewAssetRepository(db, tagRepo, repository.NewAssetFileRepository(db))
 		chunksRepo := repository.NewAssetChunksRepository(db)
 		platformRepo := repository.NewPlatformRepository(db)
 		campaignTypeRepo := repository.NewCampaignTypeRepository(db)
@@ -104,7 +105,7 @@ var _ = Describe("Campaign assistant flow", Ordered, func() {
 		}
 		provider := llm.NewProvider(modelID, modelID, modelID)
 
-		Expect(content_plan.InitContentPlan(g, content_plan.ContentPlanFlowConfig{Provider: provider}, content_plan.ContentPlanRepos{
+		Expect(content_plan.InitContentPlan(g, content_plan.ContentPlanFlowConfig{Provider: provider, MaxContextAssets: 5}, content_plan.ContentPlanRepos{
 			Campaigns: campaignRepo,
 			Assets:    assetRepo,
 			Chunks:    chunksRepo,
@@ -133,6 +134,8 @@ var _ = Describe("Campaign assistant flow", Ordered, func() {
 			Messages:  messageRepo,
 			Campaigns: campaignRepo,
 			Posts:     postRepo,
+			Assets:    assetRepo,
+			Chunks:    chunksRepo,
 		})).To(Succeed())
 		callback = campaign_assistant.NewCampaignAssistantCallback()
 	})
@@ -374,6 +377,94 @@ var _ = Describe("Campaign assistant flow", Ordered, func() {
 				Expect(p.ScheduledAt.After(lo)).To(BeTrue(), "redistributed date within range")
 				Expect(p.ScheduledAt.Before(hi)).To(BeTrue(), "redistributed date within range")
 			}
+		})
+	})
+
+	Describe("attached assets (CON-118)", func() {
+		It("auto-uses attached assets for generation, persists UseAssets, and grounds the binding", func() {
+			// Seed a ready asset and attach it to the campaign for this spec only.
+			assetID, err := models.NewID()
+			Expect(err).NotTo(HaveOccurred())
+			const assetTitle = "Go concurrency benchmark"
+			Expect(assetRepo.Create(ctx, &models.Asset{
+				ID:        assetID,
+				Title:     assetTitle,
+				Content:   "Benchmarks show goroutine pipelines sustain 1.2M msgs/sec on 8 cores with p99 latency under 3ms.",
+				Status:    models.AssetStatusReady,
+				TagIDs:    models.StringSlice{},
+				CreatedBy: userID,
+			})).To(Succeed())
+
+			// Attach the asset but leave UseAssets OFF — the assistant should turn
+			// it on because the campaign has ready attached assets (CON-118).
+			full, err := campaignRepo.GetByID(ctx, campaignID)
+			Expect(err).NotTo(HaveOccurred())
+			full.UseAssets = false
+			full.AssetIDs = models.StringSlice{assetID}
+			Expect(campaignRepo.Update(ctx, full)).To(Succeed())
+
+			// Restore the campaign and remove the asset so later specs are unaffected.
+			DeferCleanup(func() {
+				if c, err := campaignRepo.GetByID(ctx, campaignID); err == nil {
+					c.UseAssets = false
+					c.AssetIDs = models.StringSlice{}
+					_ = campaignRepo.Update(ctx, c)
+				}
+				_, _ = db.NewDelete().TableExpr("assets").Where("id = ?", assetID).Exec(ctx)
+			})
+
+			var assetsUsed []campaign_assistant.AssetRef
+			onEvent := campaign_assistant.OnEventFunc(func(name campaign_assistant.SSEEventKind, data any) {
+				if name == campaign_assistant.SSEEventAssetsUsed {
+					if p, ok := data.(campaign_assistant.AssetsUsedEventPayload); ok {
+						assetsUsed = p.Assets
+					}
+				}
+			})
+
+			resp, err := callback(ctx, campaign_assistant.CampaignAssistantRequest{
+				CampaignID:  campaignID,
+				Instruction: "Generate a content plan for this campaign.",
+			}, onEvent)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp).NotTo(BeNil())
+			Expect(resp.Action).To(Equal("content_plan_generated"))
+
+			// Auto-use: the assistant enabled + persisted asset generation.
+			updated, err := campaignRepo.GetByID(ctx, campaignID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(updated.UseAssets).To(BeTrue(), "assistant should persist UseAssets when the campaign has attached assets")
+
+			// Provenance: the assets_used event names the attached asset.
+			Expect(assetsUsed).To(ContainElement(campaign_assistant.AssetRef{ID: assetID, Title: assetTitle}))
+
+			// Per-post grounding (CON-118): a post records only the assets the
+			// model drew on for it, never an id outside the retrieved set — and
+			// since the single attached asset is highly relevant to this campaign,
+			// at least one post should cite it.
+			posts, err := postRepo.ListByCampaign(ctx, campaignID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(posts).NotTo(BeEmpty())
+			cited := false
+			for _, p := range posts {
+				for _, id := range p.UsedAssetIDs {
+					Expect(id).To(Equal(assetID), "a post cited an asset outside the retrieved set")
+					cited = true
+				}
+			}
+			Expect(cited).To(BeTrue(), "at least one post should cite the attached asset")
+		})
+
+		It("handles an asset question without failing the turn", func() {
+			// No embedder is wired in the harness, so askCampaignAssets degrades to
+			// unavailable — the turn must still complete cleanly (CON-118 §9).
+			resp, err := callback(ctx, campaign_assistant.CampaignAssistantRequest{
+				CampaignID:  campaignID,
+				Instruction: "What do the attached assets say about concurrency benchmarks?",
+			}, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp).NotTo(BeNil())
+			Expect(resp.Explanation).NotTo(BeEmpty())
 		})
 	})
 })

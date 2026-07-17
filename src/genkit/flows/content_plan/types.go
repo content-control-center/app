@@ -41,6 +41,19 @@ type ContentPlanResponse struct {
 	GeneratedAt time.Time   `json:"generatedAt"`
 	Posts       []DraftPost `json:"posts"`
 	Warnings    []string    `json:"warnings,omitempty"`
+	// UsedAssets lists the campaign assets retrieved into the generation context
+	// and offered to the model for this plan (CON-118). Each post records only
+	// the subset it actually drew on (Post.UsedAssetIDs), so this plan-level list
+	// is a superset of any single post's binding. Empty when UseAssets is off or
+	// nothing was retrieved.
+	UsedAssets []AssetRef `json:"usedAssets,omitempty"`
+}
+
+// AssetRef is the id+title provenance of an asset that informed generation
+// (CON-118).
+type AssetRef struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
 }
 
 // resolvedPiece is an internal type used to build the prompt context.

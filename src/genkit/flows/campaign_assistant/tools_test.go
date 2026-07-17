@@ -160,3 +160,22 @@ func TestResolveWindow(t *testing.T) {
 		t.Fatal("expected error for bad windowEnd")
 	}
 }
+
+// CON-118: page citation rendering for asset Q&A excerpts.
+func TestPageRef(t *testing.T) {
+	p := func(i int) *int { return &i }
+	cases := []struct {
+		start, end *int
+		want       string
+	}{
+		{nil, nil, ""},
+		{p(4), nil, "p. 4"},
+		{p(4), p(4), "p. 4"},
+		{p(3), p(5), "pp. 3-5"},
+	}
+	for _, c := range cases {
+		if got := pageRef(c.start, c.end); got != c.want {
+			t.Errorf("pageRef(%v, %v) = %q, want %q", c.start, c.end, got, c.want)
+		}
+	}
+}

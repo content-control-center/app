@@ -3,6 +3,8 @@ package campaign_assistant
 import (
 	"context"
 
+	"github.com/firebase/genkit/go/ai"
+
 	"github.com/ogen-app/ogen/src/campaign_actions/overview"
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/genkit/flows/consistency"
@@ -69,12 +71,23 @@ type GeneratedPostsResult struct {
 	PlatformIDs []string `json:"platformIds"`
 	PhaseID     string   `json:"phaseId"`
 	Warnings    []string `json:"warnings,omitempty"`
+	// UsedAssets lists the campaign assets that informed the posts (CON-118);
+	// empty when none were used.
+	UsedAssets []AssetRef `json:"usedAssets,omitempty"`
 }
 
 // ContentPlanResult summarises a runContentPlan tool invocation.
 type ContentPlanResult struct {
 	PostCount int      `json:"postCount"`
 	Warnings  []string `json:"warnings,omitempty"`
+	// UsedAssets lists the campaign assets that informed the plan (CON-118).
+	UsedAssets []AssetRef `json:"usedAssets,omitempty"`
+}
+
+// AssetRef is the id+title of a campaign asset that informed generation (CON-118).
+type AssetRef struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
 }
 
 // BriefResult reports whether the enrichBrief tool applied a new brief.
@@ -88,6 +101,10 @@ type CampaignAssistantRepos struct {
 	Campaigns repository.CampaignRepository
 	// Posts backs the listCampaignPosts read tool used for grounded Q&A.
 	Posts repository.PostRepository
+	// Assets + Chunks back the askCampaignAssets read tool (CON-118): resolve the
+	// campaign's ready attached assets and search their embedded chunks.
+	Assets repository.AssetRepository
+	Chunks repository.AssetChunksRepository
 }
 
 // CampaignAssistantFlowConfig holds static settings for the flow.
@@ -100,7 +117,10 @@ type CampaignAssistantFlowConfig struct {
 	Recorder *usage.Recorder
 	// Checker gates the flow against the tenant's spend caps; nil = no gate.
 	Checker *usage.Checker
-	ModelID string
+	// Embedder embeds the askCampaignAssets query for chunk search (CON-118).
+	// A nil / unavailable embedder disables asset Q&A gracefully.
+	Embedder ai.Embedder
+	ModelID  string
 	// MaxOutputTokens caps a single planner call. 0 falls back to 8192 — the
 	// planner only emits a short JSON envelope, never long prose.
 	MaxOutputTokens int64
@@ -178,6 +198,10 @@ const (
 	SSEEventGeneratePostsWarning  SSEEventKind = "generate_posts_warning"
 	SSEEventGeneratePostsComplete SSEEventKind = "generate_posts_complete"
 
+	// SSEEventAssetsUsed reports which attached assets informed the generated
+	// posts (CON-118); emitted by runContentPlan/generatePosts when non-empty.
+	SSEEventAssetsUsed SSEEventKind = "assets_used"
+
 	SSEEventDatesUpdated       SSEEventKind = "dates_updated"
 	SSEEventPostsRedistributed SSEEventKind = "posts_redistributed"
 
@@ -239,6 +263,12 @@ type GeneratePostsStartedEventPayload struct {
 type GeneratePostsCompleteEventPayload struct {
 	PostCount int      `json:"postCount"`
 	Warnings  []string `json:"warnings,omitempty"`
+}
+
+// AssetsUsedEventPayload lists the attached assets that informed a generation
+// (CON-118).
+type AssetsUsedEventPayload struct {
+	Assets []AssetRef `json:"assets"`
 }
 
 // DatesUpdatedEventPayload is emitted once the campaign's dates are saved.

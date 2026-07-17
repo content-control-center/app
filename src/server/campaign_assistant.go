@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
 	"github.com/ogen-app/ogen/src/campaign_actions/overview"
@@ -27,6 +28,7 @@ func initCampaignAssistant(
 	provider *llm.Provider,
 	recorder *usage.Recorder,
 	checker *usage.Checker,
+	embedder ai.Embedder,
 	hub eventhub.Hub,
 	repos campaign_assistant.CampaignAssistantRepos,
 	contentPlanFn func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error),
@@ -40,6 +42,7 @@ func initCampaignAssistant(
 		Provider: provider,
 		Recorder: recorder,
 		Checker:  checker,
+		Embedder: embedder,
 		ModelID:  cfg.PlanningModelID,
 		// Router slimming (CON-112 perf): the planner only emits a short JSON
 		// envelope (explanation + action) plus tool calls, so 2048 is ample and

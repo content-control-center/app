@@ -283,6 +283,7 @@ func runContentPlan(
 		GeneratedAt: time.Now().UTC(),
 		Posts:       posts,
 		Warnings:    warnings,
+		UsedAssets:  assetRefsOf(assets),
 	}, nil
 }
 
@@ -375,5 +376,6 @@ func runGeneratePosts(
 		GeneratedAt: time.Now().UTC(),
 		Posts:       posts,
 		Warnings:    warnings,
+		UsedAssets:  assetRefsOf(assets),
 	}, nil
 }

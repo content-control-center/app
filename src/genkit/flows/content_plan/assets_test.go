@@ -60,3 +60,62 @@ func TestJoinPagedChunks_Empty(t *testing.T) {
 		t.Errorf("expected empty string, got %q", got)
 	}
 }
+
+// CON-118: the grounded-binding helpers dedupe by id, preserve order, and skip
+// empty ids.
+func TestAssetIDsOf(t *testing.T) {
+	got := assetIDsOf([]resolvedPiece{
+		{ID: "a", Title: "Alpha"},
+		{ID: "b", Title: "Beta"},
+		{ID: "a", Title: "Alpha dup"}, // deduped
+		{ID: "", Title: "no id"},      // skipped
+	})
+	want := []string{"a", "b"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("got %v want %v", got, want)
+	}
+	if assetIDsOf(nil) != nil {
+		t.Error("nil input should return nil")
+	}
+}
+
+// CON-118: a post's UsedAssetIDs is its self-reported assetRefs, filtered to the
+// retrieved-context set — hallucinated ids dropped, dups removed, order kept, and
+// an empty (non-nil) slice when nothing valid remains so the jsonb column stores
+// [] rather than null.
+func TestGroundedRefs(t *testing.T) {
+	grounded := idSet([]string{"a", "b", "c"})
+
+	got := groundedRefs([]string{"b", "x", "a", "b", ""}, grounded)
+	want := []string{"b", "a"} // "x" not retrieved, second "b" deduped, "" skipped
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("got %v want %v", got, want)
+	}
+
+	// A post that cited nothing (or only hallucinated ids) gets a non-nil empty
+	// slice, never nil.
+	if got := groundedRefs(nil, grounded); got == nil || len(got) != 0 {
+		t.Errorf("nil refs should yield non-nil empty slice, got %#v", got)
+	}
+	if got := groundedRefs([]string{"z"}, grounded); got == nil || len(got) != 0 {
+		t.Errorf("unretrieved-only refs should yield non-nil empty slice, got %#v", got)
+	}
+}
+
+func TestAssetRefsOf(t *testing.T) {
+	got := assetRefsOf([]resolvedPiece{
+		{ID: "a", Title: "Alpha"},
+		{ID: "a", Title: "Alpha again"}, // deduped by id, first title kept
+		{ID: "c", Title: "Gamma"},
+		{ID: ""}, // skipped
+	})
+	if len(got) != 2 {
+		t.Fatalf("got %d refs, want 2: %+v", len(got), got)
+	}
+	if got[0] != (AssetRef{ID: "a", Title: "Alpha"}) || got[1] != (AssetRef{ID: "c", Title: "Gamma"}) {
+		t.Fatalf("got %+v, want [{a Alpha} {c Gamma}]", got)
+	}
+	if assetRefsOf(nil) != nil {
+		t.Error("nil input should return nil")
+	}
+}

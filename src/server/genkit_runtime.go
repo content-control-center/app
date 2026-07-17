@@ -308,7 +308,7 @@ func (r *genkitRuntime) rebuild(ctx context.Context, store secrets.Store) error 
 	// CON-112: the campaign assistant reuses the content_plan + enrich_brief
 	// callbacks (plus the CON-114 generatePosts and CON-116 consistency
 	// callbacks) as tools, so it is initialised after them.
-	campaignAssistantFn, err := initCampaignAssistant(g, r.cfg, provider, r.recorder, r.checker, r.hub, r.campaignAssistRepos, contentPlanFn, enrichBriefFn, r.campaignOverviewSvc, generatePostsFn, checkBriefFn, checkPostsFn)
+	campaignAssistantFn, err := initCampaignAssistant(g, r.cfg, provider, r.recorder, r.checker, r.embedder, r.hub, r.campaignAssistRepos, contentPlanFn, enrichBriefFn, r.campaignOverviewSvc, generatePostsFn, checkBriefFn, checkPostsFn)
 	if err != nil {
 		return fmt.Errorf("init campaign assistant: %w", err)
 	}
