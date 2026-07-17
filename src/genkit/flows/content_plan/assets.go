@@ -20,6 +20,50 @@ import (
 // 2's cosine distribution once there is real corpus data.
 const minAssetSimilarity = 0.7
 
+// assetIDsOf returns the distinct IDs of the assets actually retrieved into the
+// generation context. These become each generated post's UsedAssetIDs — a
+// binding grounded on what the model was given, not its self-reported claims
+// (CON-118).
+func assetIDsOf(assets []resolvedPiece) []string {
+	if len(assets) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(assets))
+	out := make([]string, 0, len(assets))
+	for _, a := range assets {
+		if a.ID == "" {
+			continue
+		}
+		if _, ok := seen[a.ID]; ok {
+			continue
+		}
+		seen[a.ID] = struct{}{}
+		out = append(out, a.ID)
+	}
+	return out
+}
+
+// assetRefsOf projects the retrieved pieces into the deduped id+title provenance
+// surfaced on ContentPlanResponse.UsedAssets (CON-118).
+func assetRefsOf(assets []resolvedPiece) []AssetRef {
+	if len(assets) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(assets))
+	out := make([]AssetRef, 0, len(assets))
+	for _, a := range assets {
+		if a.ID == "" {
+			continue
+		}
+		if _, ok := seen[a.ID]; ok {
+			continue
+		}
+		seen[a.ID] = struct{}{}
+		out = append(out, AssetRef{ID: a.ID, Title: a.Title})
+	}
+	return out
+}
+
 func resolveAssets(ctx context.Context, campaign *models.Campaign, cfg ContentPlanFlowConfig, repos ContentPlanRepos) ([]resolvedPiece, []string, error) {
 	if !campaign.UseAssets {
 		return nil, nil, nil

@@ -181,8 +181,12 @@ func generatePosts(
 		validPhaseIDs[ph.ID] = true
 	}
 	validate := newPostValidator(platforms, validPhaseIDs, data.StartDate, data.EndDate)
+	// CON-118: bind every generated post to the assets actually retrieved into
+	// context, not the model's self-reported AssetRefs (which can hallucinate or
+	// omit ids).
+	groundedAssetIDs := assetIDsOf(assets)
 	persistFn := func(ctx context.Context, dp DraftPost) (string, error) {
-		return persistOne(ctx, dp, campaign, repos.Posts)
+		return persistOne(ctx, dp, campaign, repos.Posts, groundedAssetIDs)
 	}
 
 	// Fill the parallel budget (CON-112 perf): a plan that fits in one batch is
@@ -517,7 +521,7 @@ func trimBody(body string) string {
 // CreateBatch — a client disconnect mid-stream now leaves whatever was
 // already persisted in the database, and a hard *AIError from one batch
 // no longer rolls back the surviving batches' rows.
-func persistOne(ctx context.Context, dp DraftPost, campaign *models.Campaign, postRepo repository.PostRepository) (string, error) {
+func persistOne(ctx context.Context, dp DraftPost, campaign *models.Campaign, postRepo repository.PostRepository, usedAssetIDs []string) (string, error) {
 	id, err := models.NewID()
 	if err != nil {
 		return "", err
@@ -545,7 +549,7 @@ func persistOne(ctx context.Context, dp DraftPost, campaign *models.Campaign, po
 		CTAType:             models.CTATypeNone,
 		CTAUrl:              "",
 		TargetAudienceNotes: dp.ToneNotes,
-		UsedAssetIDs:        models.StringSlice(dp.AssetRefs),
+		UsedAssetIDs:        models.StringSlice(usedAssetIDs),
 		CampaignTypePhaseID: phaseID,
 		ScheduledAt:         scheduledAt,
 		CreatedBy:           campaign.CreatedBy,
