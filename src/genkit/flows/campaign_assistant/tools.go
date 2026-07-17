@@ -82,8 +82,9 @@ type EnrichBriefOutput struct {
 
 // RunContentPlanOutput is returned to the model after a content plan runs.
 type RunContentPlanOutput struct {
-	PostCount    int `json:"postCount"`
-	WarningCount int `json:"warningCount"`
+	PostCount    int        `json:"postCount"`
+	WarningCount int        `json:"warningCount"`
+	UsedAssets   []AssetRef `json:"usedAssets,omitempty"` // CON-118: assets that informed the plan
 }
 
 // CampaignPostInfo is a single element of the listCampaignPosts output.
@@ -108,13 +109,14 @@ type GeneratePostsInput struct {
 
 // GeneratePostsOutput is returned to the model after targeted posts are created.
 type GeneratePostsOutput struct {
-	PostCount      int      `json:"postCount"`
-	RequestedCount int      `json:"requestedCount"`
-	Clamped        bool     `json:"clamped"` // true when requestedCount exceeded the per-call cap
-	PhaseID        string   `json:"phaseId"`
-	PhaseName      string   `json:"phaseName"`
-	Platforms      []string `json:"platforms"` // resolved platform names
-	Warnings       []string `json:"warnings,omitempty"`
+	PostCount      int        `json:"postCount"`
+	RequestedCount int        `json:"requestedCount"`
+	Clamped        bool       `json:"clamped"` // true when requestedCount exceeded the per-call cap
+	PhaseID        string     `json:"phaseId"`
+	PhaseName      string     `json:"phaseName"`
+	Platforms      []string   `json:"platforms"` // resolved platform names
+	Warnings       []string   `json:"warnings,omitempty"`
+	UsedAssets     []AssetRef `json:"usedAssets,omitempty"` // CON-118: assets that informed the posts
 }
 
 // SetCampaignDatesInput is the input for the setCampaignDates tool (CON-115).
@@ -273,9 +275,28 @@ func toolRunContentPlan(ctx context.Context) (*RunContentPlanOutput, error) {
 		return nil, err
 	}
 
-	res := &ContentPlanResult{PostCount: len(resp.Posts), Warnings: resp.Warnings}
+	// CON-118: report which attached assets informed the plan.
+	used := toAssetRefs(resp.UsedAssets)
+	if len(used) > 0 {
+		emit(st.onEvent, SSEEventAssetsUsed, AssetsUsedEventPayload{Assets: used})
+	}
+
+	res := &ContentPlanResult{PostCount: len(resp.Posts), Warnings: resp.Warnings, UsedAssets: used}
 	st.contentPlanResult = res
-	return &RunContentPlanOutput{PostCount: res.PostCount, WarningCount: len(res.Warnings)}, nil
+	return &RunContentPlanOutput{PostCount: res.PostCount, WarningCount: len(res.Warnings), UsedAssets: used}, nil
+}
+
+// toAssetRefs maps the content_plan provenance list into the assistant's local
+// AssetRef type for SSE events + tool output (CON-118).
+func toAssetRefs(in []content_plan.AssetRef) []AssetRef {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]AssetRef, len(in))
+	for i, a := range in {
+		out[i] = AssetRef{ID: a.ID, Title: a.Title}
+	}
+	return out
 }
 
 func toolEnrichBrief(ctx context.Context, in EnrichBriefInput) (*EnrichBriefOutput, error) {
@@ -430,11 +451,18 @@ func toolGeneratePosts(ctx context.Context, in GeneratePostsInput) (*GeneratePos
 		return nil, err
 	}
 
+	// CON-118: report which attached assets informed the generated posts.
+	used := toAssetRefs(resp.UsedAssets)
+	if len(used) > 0 {
+		emit(st.onEvent, SSEEventAssetsUsed, AssetsUsedEventPayload{Assets: used})
+	}
+
 	st.generatedPostsResult = &GeneratedPostsResult{
 		PostCount:   len(resp.Posts),
 		PlatformIDs: platformIDs,
 		PhaseID:     phaseID,
 		Warnings:    resp.Warnings,
+		UsedAssets:  used,
 	}
 	return &GeneratePostsOutput{
 		PostCount:      len(resp.Posts),
@@ -444,6 +472,7 @@ func toolGeneratePosts(ctx context.Context, in GeneratePostsInput) (*GeneratePos
 		PhaseName:      phaseName,
 		Platforms:      platformNames,
 		Warnings:       resp.Warnings,
+		UsedAssets:     used,
 	}, nil
 }
 

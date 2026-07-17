@@ -42,6 +42,8 @@ Rules for `action`:
 - "declined" — the request is out of scope (anything outside the capabilities above, e.g. deleting posts, publishing, billing). Explain briefly what you can help with instead.
 
 Keep `explanation` to a few sentences. Never put the full generated posts or the full brief into `explanation` — the client already receives those through their own channels.
+
+When a `runContentPlan` or `generatePosts` result includes `usedAssets`, briefly note in your `explanation` that the posts drew on those attached assets, naming them by title (e.g. "drawing on your pricing PDF and brand guide"). Say nothing about assets when `usedAssets` is empty.
 {{end}}
 {{define "context"}}
 ## Campaign

@@ -69,12 +69,23 @@ type GeneratedPostsResult struct {
 	PlatformIDs []string `json:"platformIds"`
 	PhaseID     string   `json:"phaseId"`
 	Warnings    []string `json:"warnings,omitempty"`
+	// UsedAssets lists the campaign assets that informed the posts (CON-118);
+	// empty when none were used.
+	UsedAssets []AssetRef `json:"usedAssets,omitempty"`
 }
 
 // ContentPlanResult summarises a runContentPlan tool invocation.
 type ContentPlanResult struct {
 	PostCount int      `json:"postCount"`
 	Warnings  []string `json:"warnings,omitempty"`
+	// UsedAssets lists the campaign assets that informed the plan (CON-118).
+	UsedAssets []AssetRef `json:"usedAssets,omitempty"`
+}
+
+// AssetRef is the id+title of a campaign asset that informed generation (CON-118).
+type AssetRef struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
 }
 
 // BriefResult reports whether the enrichBrief tool applied a new brief.
@@ -178,6 +189,10 @@ const (
 	SSEEventGeneratePostsWarning  SSEEventKind = "generate_posts_warning"
 	SSEEventGeneratePostsComplete SSEEventKind = "generate_posts_complete"
 
+	// SSEEventAssetsUsed reports which attached assets informed the generated
+	// posts (CON-118); emitted by runContentPlan/generatePosts when non-empty.
+	SSEEventAssetsUsed SSEEventKind = "assets_used"
+
 	SSEEventDatesUpdated       SSEEventKind = "dates_updated"
 	SSEEventPostsRedistributed SSEEventKind = "posts_redistributed"
 
@@ -239,6 +254,12 @@ type GeneratePostsStartedEventPayload struct {
 type GeneratePostsCompleteEventPayload struct {
 	PostCount int      `json:"postCount"`
 	Warnings  []string `json:"warnings,omitempty"`
+}
+
+// AssetsUsedEventPayload lists the attached assets that informed a generation
+// (CON-118).
+type AssetsUsedEventPayload struct {
+	Assets []AssetRef `json:"assets"`
 }
 
 // DatesUpdatedEventPayload is emitted once the campaign's dates are saved.
