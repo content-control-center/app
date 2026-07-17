@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -19,6 +20,9 @@ type PostRepository interface {
 	CreateBatch(ctx context.Context, posts []*models.Post) error
 	GetByID(ctx context.Context, id string) (*models.Post, error)
 	Update(ctx context.Context, post *models.Post) error
+	// UpdateScheduledAtBatch updates only the scheduled_at (+ updated_at)
+	// column of several posts atomically (CON-115 redistribution).
+	UpdateScheduledAtBatch(ctx context.Context, posts []*models.Post) error
 	Delete(ctx context.Context, id string) (bool, error)
 	// CON-69 §8: reconciliation sweeper helpers.
 	ListStuckScheduled(ctx context.Context, cutoff time.Time, limit int) ([]models.Post, error)
@@ -94,6 +98,40 @@ func (r *postRepository) GetByID(ctx context.Context, id string) (*models.Post, 
 func (r *postRepository) Update(ctx context.Context, post *models.Post) error {
 	_, err := r.db.NewUpdate().Model(post).WherePK().Exec(ctx)
 	return err
+}
+
+func (r *postRepository) UpdateScheduledAtBatch(ctx context.Context, posts []*models.Post) error {
+	if len(posts) == 0 {
+		return nil
+	}
+	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		for _, p := range posts {
+			// Only the schedule columns are written; the TenantScoped hook adds
+			// the tenant predicate, WherePK adds the id. The status guard limits
+			// the write to still-eligible posts, so a post that was concurrently
+			// published, scheduled, or already redistributed matches zero rows,
+			// and the exactly-one-row check fails the whole transaction rather
+			// than clobbering a schedule that moved out from under us.
+			res, err := tx.NewUpdate().Model(p).
+				Column("scheduled_at", "updated_at").
+				Where("status IN (?)", bun.In([]models.PostStatus{
+					models.PostStatusDraft, models.PostStatusReadyForPublish,
+				})).
+				WherePK().
+				Exec(ctx)
+			if err != nil {
+				return err
+			}
+			n, err := res.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if n != 1 {
+				return fmt.Errorf("post %s is no longer eligible for redistribution (status changed or removed)", p.ID)
+			}
+		}
+		return nil
+	})
 }
 
 func (r *postRepository) Delete(ctx context.Context, id string) (bool, error) {

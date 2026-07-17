@@ -20,6 +20,31 @@ type Config struct {
 	LogLevel  string `envconfig:"LOG_LEVEL"  default:"info"`
 	LogFormat string `envconfig:"LOG_FORMAT" default:""`
 
+	// AnthropicDebugHTTP (CON-112 perf diagnostics) logs every Anthropic
+	// round-trip split into httptrace phases (conn vs. server time), so a slow
+	// call can be attributed to connection acquisition vs. the API itself. This
+	// is how the ~50-60s per-request latency was traced to server-side
+	// strict-tool-schema (grammar) recompilation — see AnthropicStableToolOrder
+	// for the root cause and fix. Diagnostic only; leave off in production.
+	AnthropicDebugHTTP bool `envconfig:"ANTHROPIC_DEBUG_HTTP" default:"false"`
+
+	// AnthropicStableToolOrder (CON-112 fix) sorts the outgoing tools array by
+	// name on every Anthropic /v1/messages request. The Genkit Anthropic plugin
+	// builds the tool list by ranging a Go map (ai/generate.go) — a *random*
+	// order per request — and forces strict:true on every tool. Anthropic
+	// compiles strict tool schemas into a constrained-decoding grammar cached
+	// per exact tool-set (the cache key is order-sensitive), so a random order
+	// misses that cache on every call and pays the full ~50s compile each time.
+	// A deterministic order keeps the cache warm after the first request. On by
+	// default; set false only to A/B the effect.
+	AnthropicStableToolOrder bool `envconfig:"ANTHROPIC_STABLE_TOOL_ORDER" default:"true"`
+
+	// EnablePprof (CON-112 perf diagnostics) serves net/http/pprof on
+	// localhost:6060 (container-internal; reach via `docker compose exec`). A
+	// goroutine dump captured during a slow request shows exactly what every
+	// goroutine is doing. Diagnostic only; leave off in production.
+	EnablePprof bool `envconfig:"ENABLE_PPROF" default:"false"`
+
 	// Connection-pool sizing. Postgres lifts SQLite's single-writer
 	// ceiling, so the API runs a real pool shared by bun and the River
 	// job queue. Size MaxOpen for combined HTTP + worker load.
@@ -56,6 +81,13 @@ type Config struct {
 	MaxContextAssets int    `envconfig:"MAX_ASSET_CONTEXT"     default:"15"`
 	MaxContextChars  int    `envconfig:"MAX_CONTEXT_CHARS"     default:"10000"`
 
+	// PlanningModelID (CON-112) backs the cheap/fast "planning" role used by
+	// the Campaign Assistant's orchestration + intent-routing loop. Prose
+	// generation happens inside the content_plan / enrich_brief sub-flows it
+	// invokes as tools, which stay on ModelID (Sonnet-tier) — so the assistant
+	// routes cheaply on Haiku while the heavy writing stays capable.
+	PlanningModelID string `envconfig:"PLANNING_MODEL_ID" default:"claude-haiku-4-5-20251001"`
+
 	// 64K matches Claude 4.x Haiku/Sonnet's max output. Anthropic charges
 	// only for tokens actually emitted, so a generous cap costs nothing on
 	// short responses but prevents truncation on long rewrites (assistant
@@ -69,6 +101,14 @@ type Config struct {
 	// 200+ posts where wall time matters.
 	MaxPostsPerBatch   int `envconfig:"MAX_POSTS_PER_BATCH"   default:"30"`
 	MaxParallelBatches int `envconfig:"MAX_PARALLEL_BATCHES"  default:"5"`
+
+	// GeneratePostsMax caps the Campaign Assistant's targeted "add a few posts"
+	// tool (CON-114) so it stays an incremental add rather than a full re-plan.
+	GeneratePostsMax int `envconfig:"GENERATE_POSTS_MAX" default:"10"`
+
+	// ConsistencyPostsMax caps how many posts the Campaign Assistant's posts-vs-
+	// brief consistency check (CON-116) analyzes in a single model call.
+	ConsistencyPostsMax int `envconfig:"CONSISTENCY_POSTS_MAX" default:"20"`
 
 	// Post quality assessment (CON-85). Scoring runs on Sonnet 4.5 by
 	// default — Haiku underdelivered (terse, omitting per-dimension prose) —

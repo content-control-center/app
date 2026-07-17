@@ -43,6 +43,9 @@ func initPostAssistant(
 		CloneService:    cloneSvc,
 		RestoreService:  restoreSvc,
 		ScheduleService: scheduleSvc,
+		// CON-112: pre-warm the strict-tool grammar cache at boot when we're also
+		// stabilizing tool order (otherwise the warmed key wouldn't match).
+		PrewarmTools: cfg.AnthropicStableToolOrder,
 	}
 	if err := post_assistant.InitPostAssistant(g, flowCfg, repos); err != nil {
 		return nil, fmt.Errorf("init post assistant flow: %w", err)

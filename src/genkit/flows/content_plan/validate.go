@@ -76,12 +76,25 @@ func validateInput(ctx context.Context, campaignID string, campaignRepo reposito
 // when the post passes, an error describing the rejection otherwise.
 type postValidator func(post DraftPost) error
 
-// buildPostValidator captures the per-run constraint sets — platform
-// allowlist, per-platform contentType allowlist, phase allowlist, and
-// the campaign's [start, end] window — into a closure callable inline
-// from generatePostsStreaming. The returned function is goroutine-safe
-// (read-only over the captured maps).
+// buildPostValidator validates against the campaign's full phase set and
+// [start, end] window — the full-plan path. Delegates to newPostValidator.
 func buildPostValidator(campaign *models.Campaign, platforms []resolvedPlatform) postValidator {
+	validPhaseIDs := make(map[string]bool, len(campaign.CampaignType.Phases))
+	for _, ph := range campaign.CampaignType.Phases {
+		validPhaseIDs[ph.ID] = true
+	}
+	return newPostValidator(platforms, validPhaseIDs,
+		campaign.StartDate.Format("2006-01-02"), campaign.EndDate.Format("2006-01-02"))
+}
+
+// newPostValidator captures the per-run constraint sets — platform allowlist,
+// per-platform contentType allowlist, phase allowlist, and the [startDate,
+// endDate] publish window — into a closure callable inline from
+// generatePostsStreaming. Parameterizing the phases + window (rather than
+// reading them off the campaign) lets the CON-114 targeted path restrict to a
+// single phase and a custom window while reusing the same checks. The returned
+// function is goroutine-safe (read-only over the captured maps).
+func newPostValidator(platforms []resolvedPlatform, validPhaseIDs map[string]bool, startDate, endDate string) postValidator {
 	validPlatformIDs := make(map[string]bool, len(platforms))
 	platformAllowedSlugs := make(map[string]map[string]bool)
 	for _, p := range platforms {
@@ -94,14 +107,6 @@ func buildPostValidator(campaign *models.Campaign, platforms []resolvedPlatform)
 			platformAllowedSlugs[p.ID] = m
 		}
 	}
-
-	validPhaseIDs := make(map[string]bool, len(campaign.CampaignType.Phases))
-	for _, ph := range campaign.CampaignType.Phases {
-		validPhaseIDs[ph.ID] = true
-	}
-
-	startDate := campaign.StartDate.Format("2006-01-02")
-	endDate := campaign.EndDate.Format("2006-01-02")
 
 	return func(post DraftPost) error {
 		if !validPlatformIDs[post.PlatformID] {

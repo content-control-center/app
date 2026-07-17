@@ -186,3 +186,207 @@ Content-Type: application/json
 ### Enrich campaign brief — non-existent ID (expects 404)  [protected]
 POST {{baseUrl}}/api/campaigns/nonexistent/enrich-brief
 Accept: text/event-stream
+
+###
+# ── Campaign Assistant — CON-112 ──────────────────────────────────────────────
+###
+# A conversational, per-campaign assistant. Available to ANY user in the
+# campaign's tenant (no owner-only guard). It routes natural-language
+# instructions to the content_plan and enrich_brief flows (run as tools) or
+# answers grounded questions about the campaign.
+#
+# A cheap planning model (PLANNING_MODEL_ID, Haiku) drives routing; the wrapped
+# flows do the heavy prose on the generation model. enrichBrief auto-applies the
+# new brief to the campaign; runContentPlan persists the draft posts.
+#
+# Requires ANTHROPIC_API_KEY on the server; returns 503 when the flow is unwired.
+# Returns 400 when "instruction" is missing/empty.
+# Response is a Server-Sent Events stream. Events:
+#   "explanation_delta" ({"delta":"..."}) — the conversational reply streaming;
+#   "tool_call" / "tool_result" — the assistant invoking a tool;
+#   "content_plan_started" / "content_plan_step" / "content_plan_post" /
+#     "content_plan_warning" / "content_plan_complete" — forwarded, namespaced,
+#     while runContentPlan runs;
+#   "enrich_brief_started" / "enrich_brief_description_delta" /
+#     "enrich_brief_persona_delta" / "enrich_brief_messages_delta" /
+#     "enrich_brief_tone_delta" / "enrich_brief_complete" — forwarded while
+#     enrichBrief runs;
+#   "complete" (the full CampaignAssistantResponse — the source of truth);
+#   "error" ({"message":"...","code":<http_code>}).
+
+### Campaign assistant — generate a content plan  [protected]
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/assistant
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "instruction": "Generate a content plan for this campaign."
+}
+
+### Campaign assistant — enrich / improve the brief  [protected]
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/assistant
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "instruction": "Improve the campaign brief — make the tone more B2B, technical, and benchmark-driven."
+}
+
+### Campaign assistant — change campaign dates  [protected]  (CON-115)
+# action=dates_updated; if drafts now fall outside the new range, the reply
+# offers to redistribute (it won't unless you ask). Chat-only — no REST endpoint.
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/assistant
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "instruction": "Move the campaign end to the beginning of July."
+}
+
+### Campaign assistant — redistribute non-published posts  [protected]  (CON-115)
+# action=posts_redistributed; re-dates only draft + ready-for-publish posts
+# evenly across the timeline (phase by phase). Never moves scheduled/published.
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/assistant
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "instruction": "Redistribute the drafts and unpublished posts across the campaign."
+}
+
+### Campaign assistant — review the brief for consistency  [protected]  (CON-116)
+# action=brief_reviewed; read-only. Returns findings (aspect/severity/issue/
+# suggestion) and, when there are issues, offers to improve the brief with
+# enrichBrief (it won't unless you ask). Response carries "briefReview".
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/assistant
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "instruction": "Is the brief consistent? Review it and suggest improvements."
+}
+
+### Campaign assistant — check posts against the brief  [protected]  (CON-116)
+# action=posts_reviewed; read-only. Checks the campaign's non-published posts
+# (capped) against the brief and returns per-post drift findings. Response
+# carries "postsReview" (checked / total / capped / findings).
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/assistant
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "instruction": "Do the posts follow the brief? Flag any that drift."
+}
+
+### Campaign assistant — grounded question (no mutation)  [protected]
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/assistant
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "instruction": "Summarise the brief and tell me what posts already exist in this campaign."
+}
+
+### Campaign assistant — out-of-scope request (expects action=declined)  [protected]
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/assistant
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "instruction": "Delete all of my posts and cancel my subscription."
+}
+
+### Campaign assistant — missing instruction (expects 400)  [protected]
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/assistant
+Accept: text/event-stream
+Content-Type: application/json
+
+{}
+
+### Campaign assistant — non-existent campaign (streams error, campaign not found)  [protected]
+POST {{baseUrl}}/api/campaigns/nonexistent/assistant
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "instruction": "Generate a content plan."
+}
+
+### List campaign assistant messages  [protected]
+# Returns up to the 50 most-recent conversation turns (oldest-first).
+GET {{baseUrl}}/api/campaigns/{{campaignId}}/messages
+Accept: application/json
+
+### Campaign overview — brief, phases, content distribution  [protected]  (CON-113)
+# Synchronous JSON (not SSE). Returns the brief recap, the campaign's phases with
+# per-phase post counts, and content distribution by status, platform, and
+# content type. Available to any user in the campaign's tenant.
+# 404 if the campaign does not exist (or belongs to another tenant).
+GET {{baseUrl}}/api/campaigns/{{campaignId}}/overview
+Accept: application/json
+
+### Generate targeted posts — add a few posts for a platform/phase/window  [protected]  (CON-114)
+# Adds NEW draft posts for a platform subset, a single phase, and a publish-date
+# window (deterministic params — the assistant tool resolves natural language,
+# this endpoint takes concrete ids/dates). Count is clamped to GENERATE_POSTS_MAX.
+# Requires ANTHROPIC_API_KEY; 503 when unwired. 400 on bad params (unknown/foreign
+# platform, unknown phase, count < 1, bad window); 404 if the campaign is missing.
+# Response is an SSE stream: step / post / warning / complete (ContentPlanResponse) / error.
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/generate-posts
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "platformIds": ["AXqWG7U2qnpt"],
+  "phaseId": "<phase-id-from-the-campaign-type>",
+  "count": 3,
+  "windowStart": "2026-07-20",
+  "windowEnd": "2026-08-03",
+  "postType": "text-post"
+}
+
+###
+# The natural-language equivalent goes through the Campaign Assistant:
+#   POST /api/campaigns/{{campaignId}}/assistant
+#   { "instruction": "Add a few Threads posts in the current phase for the upcoming weeks" }
+###
+
+###
+# ── Consistency reviews — CON-116 ─────────────────────────────────────────────
+###
+# Read-only reviews. The brief review checks the brief's internal consistency and
+# completeness; the posts review checks whether the campaign's non-published posts
+# follow the brief. Neither mutates anything — to apply brief fixes, call
+# enrich-brief (or ask the assistant to enrich the brief).
+# Requires ANTHROPIC_API_KEY; 503 when unwired. 404 if the campaign is missing.
+# Response is an SSE stream: step / complete / error.
+#   brief review complete → BriefReview  { consistent, findings[], summary }
+#   posts review complete → PostsReview  { checked, total, capped, aligned, findings[], summary }
+
+### Review the campaign brief for consistency  [protected]  (CON-116)
+# No body. Read-only — does NOT change the brief.
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/brief-review
+Accept: text/event-stream
+
+### Review the brief — non-existent campaign (expects 404)  [protected]
+POST {{baseUrl}}/api/campaigns/nonexistent/brief-review
+Accept: text/event-stream
+
+### Check campaign posts against the brief  [protected]  (CON-116)
+# Body is optional — an empty POST uses the default cap (CONSISTENCY_POSTS_MAX).
+# Send {"max": N} to cap how many non-published posts are checked.
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/posts-review
+Accept: text/event-stream
+Content-Type: application/json
+
+{
+  "max": 10
+}
+
+### Check campaign posts — default cap, empty body  [protected]  (CON-116)
+POST {{baseUrl}}/api/campaigns/{{campaignId}}/posts-review
+Accept: text/event-stream
+
+### Check campaign posts — non-existent campaign (expects 404)  [protected]
+POST {{baseUrl}}/api/campaigns/nonexistent/posts-review
+Accept: text/event-stream
