@@ -438,14 +438,21 @@ var _ = Describe("Campaign assistant flow", Ordered, func() {
 			// Provenance: the assets_used event names the attached asset.
 			Expect(assetsUsed).To(ContainElement(campaign_assistant.AssetRef{ID: assetID, Title: assetTitle}))
 
-			// Grounded binding: every generated post is bound to the retrieved
-			// asset (not the model's self-reported guess).
+			// Per-post grounding (CON-118): a post records only the assets the
+			// model drew on for it, never an id outside the retrieved set — and
+			// since the single attached asset is highly relevant to this campaign,
+			// at least one post should cite it.
 			posts, err := postRepo.ListByCampaign(ctx, campaignID)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(posts).NotTo(BeEmpty())
+			cited := false
 			for _, p := range posts {
-				Expect([]string(p.UsedAssetIDs)).To(ContainElement(assetID))
+				for _, id := range p.UsedAssetIDs {
+					Expect(id).To(Equal(assetID), "a post cited an asset outside the retrieved set")
+					cited = true
+				}
 			}
+			Expect(cited).To(BeTrue(), "at least one post should cite the attached asset")
 		})
 
 		It("handles an asset question without failing the turn", func() {

@@ -79,6 +79,29 @@ func TestAssetIDsOf(t *testing.T) {
 	}
 }
 
+// CON-118: a post's UsedAssetIDs is its self-reported assetRefs, filtered to the
+// retrieved-context set — hallucinated ids dropped, dups removed, order kept, and
+// an empty (non-nil) slice when nothing valid remains so the jsonb column stores
+// [] rather than null.
+func TestGroundedRefs(t *testing.T) {
+	grounded := idSet([]string{"a", "b", "c"})
+
+	got := groundedRefs([]string{"b", "x", "a", "b", ""}, grounded)
+	want := []string{"b", "a"} // "x" not retrieved, second "b" deduped, "" skipped
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("got %v want %v", got, want)
+	}
+
+	// A post that cited nothing (or only hallucinated ids) gets a non-nil empty
+	// slice, never nil.
+	if got := groundedRefs(nil, grounded); got == nil || len(got) != 0 {
+		t.Errorf("nil refs should yield non-nil empty slice, got %#v", got)
+	}
+	if got := groundedRefs([]string{"z"}, grounded); got == nil || len(got) != 0 {
+		t.Errorf("unretrieved-only refs should yield non-nil empty slice, got %#v", got)
+	}
+}
+
 func TestAssetRefsOf(t *testing.T) {
 	got := assetRefsOf([]resolvedPiece{
 		{ID: "a", Title: "Alpha"},

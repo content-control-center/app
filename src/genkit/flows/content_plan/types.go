@@ -41,9 +41,11 @@ type ContentPlanResponse struct {
 	GeneratedAt time.Time   `json:"generatedAt"`
 	Posts       []DraftPost `json:"posts"`
 	Warnings    []string    `json:"warnings,omitempty"`
-	// UsedAssets lists the campaign assets actually retrieved into the generation
-	// context and recorded on the posts' UsedAssetIDs (CON-118). Empty when
-	// UseAssets is off or nothing was retrieved.
+	// UsedAssets lists the campaign assets retrieved into the generation context
+	// and offered to the model for this plan (CON-118). Each post records only
+	// the subset it actually drew on (Post.UsedAssetIDs), so this plan-level list
+	// is a superset of any single post's binding. Empty when UseAssets is off or
+	// nothing was retrieved.
 	UsedAssets []AssetRef `json:"usedAssets,omitempty"`
 }
 

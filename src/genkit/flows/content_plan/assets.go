@@ -43,6 +43,42 @@ func assetIDsOf(assets []resolvedPiece) []string {
 	return out
 }
 
+// idSet builds a lookup set from a slice of asset IDs — the retrieved-context
+// grounding set used to validate each post's self-reported assetRefs (CON-118).
+func idSet(ids []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		set[id] = struct{}{}
+	}
+	return set
+}
+
+// groundedRefs filters a post's model-reported assetRefs (DraftPost.AssetRefs)
+// down to the ids actually retrieved into the generation context, deduped and in
+// the model's order. This is each post's UsedAssetIDs binding (CON-118): only
+// the assets the model said it drew on for that specific post, and only those we
+// can confirm were placed in its prompt — a hallucinated id is dropped, and a
+// post that cited nothing records an empty list rather than inheriting the whole
+// retrieved set. grounded is the id set from assetIDsOf, precomputed once per run.
+func groundedRefs(refs []string, grounded map[string]struct{}) []string {
+	out := make([]string, 0, len(refs))
+	seen := make(map[string]struct{}, len(refs))
+	for _, id := range refs {
+		if id == "" {
+			continue
+		}
+		if _, ok := grounded[id]; !ok {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
 // assetRefsOf projects the retrieved pieces into the deduped id+title provenance
 // surfaced on ContentPlanResponse.UsedAssets (CON-118).
 func assetRefsOf(assets []resolvedPiece) []AssetRef {

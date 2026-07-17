@@ -181,12 +181,14 @@ func generatePosts(
 		validPhaseIDs[ph.ID] = true
 	}
 	validate := newPostValidator(platforms, validPhaseIDs, data.StartDate, data.EndDate)
-	// CON-118: bind every generated post to the assets actually retrieved into
-	// context, not the model's self-reported AssetRefs (which can hallucinate or
-	// omit ids).
-	groundedAssetIDs := assetIDsOf(assets)
+	// CON-118: bind each post to the subset of retrieved assets the model
+	// reported drawing on for that post (dp.AssetRefs), filtered to the ids
+	// actually retrieved into context so a hallucinated id never persists. Posts
+	// no longer all inherit the full retrieved set — a post that cited no asset
+	// records an empty list.
+	grounded := idSet(assetIDsOf(assets))
 	persistFn := func(ctx context.Context, dp DraftPost) (string, error) {
-		return persistOne(ctx, dp, campaign, repos.Posts, groundedAssetIDs)
+		return persistOne(ctx, dp, campaign, repos.Posts, groundedRefs(dp.AssetRefs, grounded))
 	}
 
 	// Fill the parallel budget (CON-112 perf): a plan that fits in one batch is
