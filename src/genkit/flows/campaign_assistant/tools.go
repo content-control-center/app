@@ -9,13 +9,16 @@ import (
 
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
+	"github.com/pgvector/pgvector-go"
 
 	"github.com/ogen-app/ogen/src/campaign_actions/overview"
 	"github.com/ogen-app/ogen/src/campaign_actions/reschedule"
+	"github.com/ogen-app/ogen/src/genkit/embedopts"
 	"github.com/ogen-app/ogen/src/genkit/flows/consistency"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/repository"
 )
 
 // ── Context key for per-request state ────────────────────────────────────────
@@ -32,6 +35,9 @@ type requestState struct {
 	campaign   *models.Campaign
 	repos      CampaignAssistantRepos
 	onEvent    OnEventFunc
+	// embedder backs the askCampaignAssets read tool (CON-118); nil / unavailable
+	// degrades that tool to "search unavailable".
+	embedder ai.Embedder
 
 	// Injected sub-flow callbacks, invoked as tools.
 	contentPlan func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)
@@ -144,6 +150,27 @@ type CheckPostsInput struct {
 	Max int `json:"max,omitempty" jsonschema:"description=Optional cap on how many posts to review; omit for the default."`
 }
 
+// AskCampaignAssetsInput is the input for the askCampaignAssets read tool (CON-118).
+type AskCampaignAssetsInput struct {
+	Query string `json:"query" jsonschema:"description=The question to answer from the campaign's attached assets, e.g. 'what does the pricing PDF say about enterprise tiers?'"`
+}
+
+// AskCampaignAssetsOutput returns the asset excerpts most relevant to the query
+// for the planner to answer from (CON-118).
+type AskCampaignAssetsOutput struct {
+	Excerpts  []AssetExcerpt `json:"excerpts"`
+	Available bool           `json:"available"`      // false when asset search could not run
+	Note      string         `json:"note,omitempty"` // status when excerpts is empty
+}
+
+// AssetExcerpt is one relevant chunk of an attached asset.
+type AssetExcerpt struct {
+	AssetID string `json:"assetId"`
+	Title   string `json:"title"`
+	Pages   string `json:"pages,omitempty"`
+	Text    string `json:"text"`
+}
+
 // ── Tool registration ────────────────────────────────────────────────────────
 
 type toolSet struct {
@@ -156,6 +183,7 @@ type toolSet struct {
 	redistributePosts     ai.ToolRef
 	checkBrief            ai.ToolRef
 	checkPostsConsistency ai.ToolRef
+	askCampaignAssets     ai.ToolRef
 }
 
 func defineTools(g *genkit.Genkit) *toolSet {
@@ -233,6 +261,16 @@ func defineTools(g *genkit.Genkit) *toolSet {
 		},
 	)
 
+	askCampaignAssets := genkit.DefineTool(g, "askCampaignAssets",
+		"Answers a question grounded in the campaign's attached assets (uploaded PDFs, markdown, etc.). "+
+			"Call this when the user asks what an attached asset says or wants facts pulled from the campaign's assets — e.g. \"what does the pricing PDF say about enterprise tiers?\". "+
+			"Read-only: it returns the most relevant excerpts (with asset title + page) for you to answer from; it does NOT generate posts. "+
+			"If the result reports available:false or no excerpts, tell the user you couldn't search / find matching asset content.",
+		func(ctx *ai.ToolContext, in AskCampaignAssetsInput) (*AskCampaignAssetsOutput, error) {
+			return toolAskCampaignAssets(ctx, in)
+		},
+	)
+
 	return &toolSet{
 		runContentPlan:        runContentPlan,
 		enrichBrief:           enrichBrief,
@@ -243,6 +281,7 @@ func defineTools(g *genkit.Genkit) *toolSet {
 		redistributePosts:     redistributePosts,
 		checkBrief:            checkBrief,
 		checkPostsConsistency: checkPostsConsistency,
+		askCampaignAssets:     askCampaignAssets,
 	}
 }
 
@@ -474,6 +513,116 @@ func toolGeneratePosts(ctx context.Context, in GeneratePostsInput) (*GeneratePos
 		Warnings:       resp.Warnings,
 		UsedAssets:     used,
 	}, nil
+}
+
+// minAskAssetsSimilarity is the cosine-similarity floor for asset Q&A. Lower
+// than content_plan's generation threshold: a specific question benefits from
+// recall, and the planner filters the returned excerpts (CON-118).
+const minAskAssetsSimilarity = 0.5
+
+// askAssetsChunkLimit caps how many chunks the Q&A tool returns to the planner.
+const askAssetsChunkLimit = 8
+
+// toolAskCampaignAssets answers a question grounded in the campaign's attached
+// assets by embedding the query and searching the assets' chunks (CON-118). It
+// is read-only and degrades cleanly (available:false / a note) rather than
+// failing the turn when the embedder is unavailable or nothing matches.
+func toolAskCampaignAssets(ctx context.Context, in AskCampaignAssetsInput) (*AskCampaignAssetsOutput, error) {
+	st := getRequestState(ctx)
+	query := strings.TrimSpace(in.Query)
+	if query == "" {
+		return nil, fmt.Errorf("ask a question about the campaign's assets")
+	}
+	if !embedopts.Available(st.embedder) || st.repos.Chunks == nil || st.repos.Assets == nil {
+		return &AskCampaignAssetsOutput{Available: false, Note: "asset search is unavailable right now"}, nil
+	}
+
+	ids, err := readyCampaignAssetIDs(ctx, st.campaign, st.repos.Assets)
+	if err != nil {
+		return nil, fmt.Errorf("resolve campaign assets: %w", err)
+	}
+	if len(ids) == 0 {
+		return &AskCampaignAssetsOutput{Available: true, Note: "this campaign has no ready assets to search"}, nil
+	}
+
+	qResp, err := st.embedder.Embed(ctx, &ai.EmbedRequest{
+		Input:   []*ai.Document{ai.DocumentFromText(query, nil)},
+		Options: embedopts.Query(),
+	})
+	if err != nil || len(qResp.Embeddings) == 0 {
+		return &AskCampaignAssetsOutput{Available: false, Note: "asset search is unavailable right now"}, nil
+	}
+
+	chunks, err := st.repos.Chunks.SearchSimilar(ctx, pgvector.NewHalfVector(qResp.Embeddings[0].Embedding), ids, minAskAssetsSimilarity, askAssetsChunkLimit)
+	if err != nil {
+		return nil, fmt.Errorf("search assets: %w", err)
+	}
+	if len(chunks) == 0 {
+		return &AskCampaignAssetsOutput{Available: true, Note: "no attached asset content matched the question"}, nil
+	}
+
+	titles := make(map[string]string)
+	excerpts := make([]AssetExcerpt, 0, len(chunks))
+	for _, c := range chunks {
+		title, ok := titles[c.AssetID]
+		if !ok {
+			if a, err := st.repos.Assets.GetByID(ctx, c.AssetID); err == nil {
+				title = a.Title
+			}
+			titles[c.AssetID] = title
+		}
+		excerpts = append(excerpts, AssetExcerpt{
+			AssetID: c.AssetID,
+			Title:   title,
+			Pages:   pageRef(c.PageStart, c.PageEnd),
+			Text:    c.Content,
+		})
+	}
+	return &AskCampaignAssetsOutput{Excerpts: excerpts, Available: true}, nil
+}
+
+// readyCampaignAssetIDs resolves the campaign's attached, ready asset IDs — the
+// explicit AssetIDs list when set, otherwise all tenant-ready assets — excluding
+// failed/partial. Mirrors content_plan's candidate resolution (CON-118). It does
+// NOT require campaign.UseAssets: that flag governs automatic inclusion during
+// generation, whereas Q&A is an explicit request to consult the assets.
+func readyCampaignAssetIDs(ctx context.Context, campaign *models.Campaign, assets repository.AssetRepository) ([]string, error) {
+	bad := func(status string) bool {
+		return status == models.AssetStatusFailed || status == models.AssetStatusPartial
+	}
+	if len(campaign.AssetIDs) > 0 {
+		out := make([]string, 0, len(campaign.AssetIDs))
+		for _, id := range campaign.AssetIDs {
+			a, err := assets.GetByID(ctx, id)
+			if err != nil || bad(a.Status) {
+				continue
+			}
+			out = append(out, a.ID)
+		}
+		return out, nil
+	}
+	all, err := assets.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(all))
+	for _, a := range all {
+		if !bad(a.Status) {
+			out = append(out, a.ID)
+		}
+	}
+	return out, nil
+}
+
+// pageRef renders an asset chunk's page span for citation (CON-118).
+func pageRef(start, end *int) string {
+	if start == nil {
+		return ""
+	}
+	if end == nil || *end == *start {
+		return fmt.Sprintf("p. %d", *start)
+	}
+	return fmt.Sprintf("pp. %d-%d", *start, *end)
 }
 
 // resolveTargetPlatforms maps requested platform names/ids to campaign-target

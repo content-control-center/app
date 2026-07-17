@@ -389,6 +389,8 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 			Messages:  campaignMessageRepo,
 			Campaigns: campaignRepo,
 			Posts:     postRepo,
+			Assets:    pieceRepo,
+			Chunks:    chunksRepo,
 		},
 		campaignOverviewSvc: campaignOverviewSvc,
 		cloneSvc:            cloneSvc,

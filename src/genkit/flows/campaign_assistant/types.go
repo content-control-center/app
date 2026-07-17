@@ -3,6 +3,8 @@ package campaign_assistant
 import (
 	"context"
 
+	"github.com/firebase/genkit/go/ai"
+
 	"github.com/ogen-app/ogen/src/campaign_actions/overview"
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/genkit/flows/consistency"
@@ -99,6 +101,10 @@ type CampaignAssistantRepos struct {
 	Campaigns repository.CampaignRepository
 	// Posts backs the listCampaignPosts read tool used for grounded Q&A.
 	Posts repository.PostRepository
+	// Assets + Chunks back the askCampaignAssets read tool (CON-118): resolve the
+	// campaign's ready attached assets and search their embedded chunks.
+	Assets repository.AssetRepository
+	Chunks repository.AssetChunksRepository
 }
 
 // CampaignAssistantFlowConfig holds static settings for the flow.
@@ -111,7 +117,10 @@ type CampaignAssistantFlowConfig struct {
 	Recorder *usage.Recorder
 	// Checker gates the flow against the tenant's spend caps; nil = no gate.
 	Checker *usage.Checker
-	ModelID string
+	// Embedder embeds the askCampaignAssets query for chunk search (CON-118).
+	// A nil / unavailable embedder disables asset Q&A gracefully.
+	Embedder ai.Embedder
+	ModelID  string
 	// MaxOutputTokens caps a single planner call. 0 falls back to 8192 — the
 	// planner only emits a short JSON envelope, never long prose.
 	MaxOutputTokens int64
