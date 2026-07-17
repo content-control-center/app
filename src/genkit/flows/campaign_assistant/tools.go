@@ -563,28 +563,49 @@ func equalDayWindows(start, end time.Time, n int) [][2]time.Time {
 	return out
 }
 
-// resolveWindow validates the model-resolved publish window, defaulting to the
-// next 14 days when omitted and clamping a past start to today.
+// resolveWindow validates the model-resolved publish window and fills in a
+// missing bound rather than failing: the planner often resolves only one side
+// of a vague timeframe ("upcoming weeks" → a start, no end). A non-empty but
+// malformed bound is still rejected. It defaults to a 14-day span and clamps a
+// past start to today so drafts are never dated in the past.
 func resolveWindow(startStr, endStr string, today time.Time) (string, string, error) {
 	const iso = "2006-01-02"
-	todayStr := today.Format(iso)
-	if strings.TrimSpace(startStr) == "" && strings.TrimSpace(endStr) == "" {
-		return todayStr, today.AddDate(0, 0, 14).Format(iso), nil
+	const spanDays = 14
+	todayDate, _ := time.Parse(iso, today.Format(iso))
+	startStr, endStr = strings.TrimSpace(startStr), strings.TrimSpace(endStr)
+
+	var s, e time.Time
+	haveStart, haveEnd := startStr != "", endStr != ""
+	if haveStart {
+		t, err := time.Parse(iso, startStr)
+		if err != nil {
+			return "", "", fmt.Errorf("windowStart must be an ISO date (YYYY-MM-DD)")
+		}
+		s = t
 	}
-	s, err := time.Parse(iso, strings.TrimSpace(startStr))
-	if err != nil {
-		return "", "", fmt.Errorf("windowStart must be an ISO date (YYYY-MM-DD)")
+	if haveEnd {
+		t, err := time.Parse(iso, endStr)
+		if err != nil {
+			return "", "", fmt.Errorf("windowEnd must be an ISO date (YYYY-MM-DD)")
+		}
+		e = t
 	}
-	e, err := time.Parse(iso, strings.TrimSpace(endStr))
-	if err != nil {
-		return "", "", fmt.Errorf("windowEnd must be an ISO date (YYYY-MM-DD)")
+
+	// Derive whichever bound the model left out.
+	switch {
+	case !haveStart && !haveEnd:
+		s, e = todayDate, todayDate.AddDate(0, 0, spanDays)
+	case haveStart && !haveEnd:
+		e = s.AddDate(0, 0, spanDays)
+	case !haveStart && haveEnd:
+		s = todayDate
 	}
+
 	if e.Before(s) {
 		return "", "", fmt.Errorf("the timeframe's end is before its start")
 	}
-	todayParsed, _ := time.Parse(iso, todayStr)
-	if s.Before(todayParsed) { // never date drafts in the past
-		s = todayParsed
+	if s.Before(todayDate) { // never date drafts in the past
+		s = todayDate
 		if e.Before(s) {
 			e = s
 		}

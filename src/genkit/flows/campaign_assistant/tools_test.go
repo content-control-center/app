@@ -141,4 +141,22 @@ func TestResolveWindow(t *testing.T) {
 	if _, _, err := resolveWindow("nope", "2026-02-15", today); err == nil {
 		t.Fatal("expected error for bad windowStart")
 	}
+
+	// Only a start → end derived as start + 14 days (the "upcoming weeks" bug:
+	// the model resolves a start and omits the end). Must not error.
+	s, e, err = resolveWindow("2026-02-10", "", today)
+	if err != nil || s != "2026-02-10" || e != "2026-02-24" {
+		t.Fatalf("start-only = %s..%s err=%v", s, e, err)
+	}
+
+	// Only an end → start defaults to today.
+	s, e, err = resolveWindow("", "2026-02-28", today)
+	if err != nil || s != "2026-02-10" || e != "2026-02-28" {
+		t.Fatalf("end-only = %s..%s err=%v", s, e, err)
+	}
+
+	// A non-empty but malformed end is still rejected.
+	if _, _, err := resolveWindow("2026-02-15", "nope", today); err == nil {
+		t.Fatal("expected error for bad windowEnd")
+	}
 }
