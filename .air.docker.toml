@@ -1,0 +1,33 @@
+# Docker dev live-reload config — used by Dockerfile.dev via
+# docker-compose.override.yml. Mirrors the host-run .air.toml but adds
+# filesystem POLLING: Docker Desktop bind-mount FS events don't cross the Linux
+# VM boundary on macOS/Windows, so air must poll to notice host edits.
+# Keep the [build] cmd / excludes in sync with .air.toml.
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd      = "GOTOOLCHAIN=go1.26.1 go build -o ./tmp/server ./cmd/server"
+  bin      = "./tmp/server"
+  delay    = 500
+  # Watch Go source and SQL migration files; ignore generated/dev noise.
+  include_ext = ["go", "sql"]
+  exclude_dir = ["tmp", "web", "docs", "http-client", "ogen-keys", ".git", ".genkit"]
+  exclude_regex = ["_test\\.go$"]
+  log              = "tmp/build-errors.log"
+  stop_on_error    = true
+  send_interrupt   = true
+  kill_delay       = "1s"
+  # Bind-mount FS events are unreliable across the Docker Desktop VM — poll.
+  poll = true
+
+[log]
+  time = true
+
+[color]
+  watcher = "cyan"
+  build   = "yellow"
+  runner  = "green"
+
+[screen]
+  clear_on_rebuild = true

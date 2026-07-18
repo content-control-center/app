@@ -1,0 +1,22 @@
+# syntax=docker/dockerfile:1
+# Dev-only image: live-reloads the Go API with `air`. The production image is
+# the multi-stage Dockerfile; this one is referenced only by
+# docker-compose.override.yml, which bind-mounts the source and persists the Go
+# build/module caches in named volumes so incremental rebuilds are ~1-3s.
+FROM golang:1.26-alpine AS dev
+
+# git: occasionally needed by the Go toolchain; air: the file watcher.
+RUN apk add --no-cache git \
+ && go install github.com/air-verse/air@latest
+
+WORKDIR /app
+
+# Static build (matches prod) and bind to the compose-mapped port.
+ENV CGO_ENABLED=0 \
+    ADDR=":9001"
+
+EXPOSE 9001
+
+# Source is bind-mounted at /app by compose; air rebuilds + restarts on change.
+# Uses the Docker-specific air config (polls the FS — see .air.docker.toml).
+CMD ["air", "-c", ".air.docker.toml"]

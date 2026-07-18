@@ -1,0 +1,25 @@
+# Dev-only override, auto-loaded by `docker compose up`. Replaces the prebuilt
+# `ogen` image on the `api` service with a live-reloading dev container
+# (Dockerfile.dev + air) that recompiles the Go server on any .go change.
+# The production docker-compose.yml and Dockerfile are left untouched.
+#
+#   docker compose up                         # dev: live-reload (this override applies)
+#   docker compose -f docker-compose.yml up   # prod-like: prebuilt image, no reload
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    image: ogen-dev
+    volumes:
+      # Live source -> air watches & recompiles inside the container.
+      - .:/app
+      # Keep the Go caches OFF the bind mount: fast incremental rebuilds and no
+      # host build artifacts leaking in. (env_file, ports, depends_on and the
+      # ogen-keys mount are inherited from docker-compose.yml.)
+      - go-build-cache:/root/.cache/go-build
+      - go-mod-cache:/go/pkg/mod
+
+volumes:
+  go-build-cache:
+  go-mod-cache:
