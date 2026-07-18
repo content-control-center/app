@@ -519,13 +519,22 @@ func accessLog() fiber.Handler {
 		if status >= 500 {
 			level = slog.LevelError
 		}
+		// Streaming responses (SetBodyStreamWriter — e.g. the SSE event stream)
+		// have no materialised body. Calling c.Response().Body() on one drains
+		// the stream to EOF to buffer it; for a long-lived/infinite stream that
+		// never returns, blocking the response from ever being flushed (the SSE
+		// client then hangs forever in "connecting"). Skip the byte count there.
+		respBytes := 0
+		if !c.Response().IsBodyStream() {
+			respBytes = len(c.Response().Body())
+		}
 		slog.Default().LogAttrs(c.Context(), level, "request",
 			slog.String(logging.AttrComponent, "http"),
 			slog.String("method", c.Method()),
 			slog.String("path", c.Path()),
 			slog.Int("status", status),
 			slog.Int64("latency_ms", time.Since(start).Milliseconds()),
-			slog.Int("bytes", len(c.Response().Body())),
+			slog.Int("bytes", respBytes),
 			slog.String("ip", c.IP()),
 		)
 		return nil
