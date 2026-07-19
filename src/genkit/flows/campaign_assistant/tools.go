@@ -111,7 +111,7 @@ type GeneratePostsInput struct {
 	Phase       string   `json:"phase,omitempty"       jsonschema:"description=Phase name, id, or \"current\"; omit for the current phase."`
 	Count       int      `json:"count,omitempty"       jsonschema:"description=Exact number of posts to add. When the user names a quantity, set count to that number (\"add 1 post\"->1, \"generate 5 articles\"->5). Omit only when the user gives no number at all; an omitted count defaults to 3 (\"a few\"). Capped per call."`
 	WindowStart string   `json:"windowStart,omitempty" jsonschema:"description=First publish date (ISO YYYY-MM-DD), resolved from the requested timeframe against today."`
-	WindowEnd   string   `json:"windowEnd,omitempty"   jsonschema:"description=Last publish date (ISO YYYY-MM-DD)."`
+	WindowEnd   string   `json:"windowEnd,omitempty"   jsonschema:"description=Last publish date (ISO YYYY-MM-DD). For a single specific date, set this equal to windowStart."`
 	PostType    string   `json:"postType,omitempty"    jsonschema:"description=Optional post-type slug (e.g. text-post, article); omit for the platform default."`
 }
 
