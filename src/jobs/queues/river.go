@@ -45,6 +45,11 @@ type Deps struct {
 	// embedder, storage, asset repos). A nil Client (no PDF_SERVICE_ADDR) makes
 	// the job a no-op.
 	PDF PDFDeps
+
+	// CON-105: the image_generate worker's dependencies (imagine flow callback,
+	// storage, asset/post repos). A nil Generate (no gemini_api_key / unwired)
+	// makes the job a no-op.
+	ImageGen ImageGenDeps
 }
 
 // registrars is appended to by each worker file's init(). A job is registered
@@ -209,6 +214,18 @@ func (e *Enqueuer) EnqueueProcessPDFTx(ctx context.Context, tx *sql.Tx, assetID,
 		OriginalName: originalName,
 		MimeType:     mimeType,
 	}, insertOptsWithRequestID(ctx, nil))
+	return err
+}
+
+// EnqueueImageGenerateTx enqueues an image-generation task inside the given
+// transaction, so it commits atomically with the pending Asset insert (CON-105):
+// a committed request always has a job, a rolled-back one never does. The worker
+// re-reads the reference bytes from storage, so they are not in the args.
+func (e *Enqueuer) EnqueueImageGenerateTx(ctx context.Context, tx *sql.Tx, task ImageGenerateTask) error {
+	if e == nil || e.Client == nil {
+		return nil
+	}
+	_, err := e.Client.InsertTx(ctx, tx, task, insertOptsWithRequestID(ctx, nil))
 	return err
 }
 

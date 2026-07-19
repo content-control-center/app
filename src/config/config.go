@@ -67,6 +67,20 @@ type Config struct {
 	EmbedModel      string `envconfig:"EMBED_MODEL"       default:"gemini-embedding-2"`
 	EmbedDimensions int    `envconfig:"EMBED_DIMENSIONS"  default:"3072"`
 
+	// Image generation (Nano Banana, CON-105). Runs on the same Gemini vendor
+	// as embeddings, reusing the gemini_api_key secret. ImageGenBackend is the
+	// isolation seam for CON-109: "developer" uses the global Gemini Developer
+	// API (v1, no GCP provisioning, no EU residency); "vertex" will use the
+	// Vertex AI EU endpoint (ADC creds + VertexProjectID/VertexLocation) once
+	// that work lands. VertexProjectID/VertexLocation are unused while backend
+	// is "developer".
+	ImageGenBackend     string `envconfig:"IMAGE_GEN_BACKEND"       default:"developer"` // developer | vertex
+	ImageModelID        string `envconfig:"IMAGE_MODEL_ID"          default:"gemini-3.1-flash-image"` // Nano Banana 2 (default tier)
+	ImagePremiumModelID string `envconfig:"IMAGE_PREMIUM_MODEL_ID"  default:"gemini-3-pro-image"`     // Nano Banana Pro (premium tier)
+	ImageMaxReferences  int    `envconfig:"IMAGE_MAX_REFERENCES"    default:"14"`                     // SDK hard cap on reference images per request (§6)
+	VertexProjectID     string `envconfig:"VERTEX_PROJECT_ID"       default:""`                       // CON-109; unused until IMAGE_GEN_BACKEND=vertex
+	VertexLocation      string `envconfig:"VERTEX_LOCATION"         default:"europe-west4"`           // CON-109; EU region for data residency (§10)
+
 	// CORS allowlist for the decoupled UI (CON-98). Comma-separated explicit
 	// origins, e.g. "https://app.getogen.com". Empty disables the CORS
 	// middleware entirely (same-origin dev, or a UI that reverse-proxies

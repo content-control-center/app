@@ -96,6 +96,28 @@ func TestEmbedMeter(t *testing.T) {
 	}
 }
 
+func TestGeminiImageMeter(t *testing.T) {
+	// The same "gemini" descriptor meters image generation (CON-105): a genkit
+	// *ai.ModelResponse is tagged generate_image, with reference+prompt tokens
+	// on input and the rendered image on output (§9).
+	d, _ := vendors.Get(llm.VendorGemini)
+	resp := &ai.ModelResponse{Usage: &ai.GenerationUsage{
+		InputTokens:  1200,
+		OutputTokens: 1290,
+	}}
+	op, u, ok := d.Meter.Extract(resp)
+	if !ok || op != "generate_image" {
+		t.Fatalf("Extract = (%q, _, %v), want (generate_image, _, true)", op, ok)
+	}
+	if u[vendors.KindInput] != 1200 || u[vendors.KindOutput] != 1290 {
+		t.Errorf("usage = %v", u)
+	}
+	// A response with no usage yields nothing to record.
+	if _, _, ok := d.Meter.Extract(&ai.ModelResponse{}); ok {
+		t.Error("nil Usage should yield ok=false")
+	}
+}
+
 func TestProviderRef(t *testing.T) {
 	p := llm.NewProvider("claude-sonnet-4-5-20250929", "claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001")
 	if got := p.Ref(llm.RoleGeneration); got != "anthropic/claude-sonnet-4-5-20250929" {
