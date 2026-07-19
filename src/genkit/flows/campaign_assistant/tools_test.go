@@ -127,10 +127,13 @@ func TestResolveWindow(t *testing.T) {
 		t.Fatalf("passthrough = %s..%s err=%v", s, e, err)
 	}
 
-	// Past start clamps to today.
-	s, _, err = resolveWindow("2026-01-01", "2026-02-28", today)
-	if err != nil || s != "2026-02-10" {
-		t.Fatalf("past-start clamp = %s err=%v", s, err)
+	// Past start is rejected, not clamped (CON-114: never date drafts in the past).
+	if _, _, err := resolveWindow("2026-01-01", "2026-02-28", today); err == nil {
+		t.Fatal("expected error for a past windowStart")
+	}
+	// Today itself is allowed (equal, not before).
+	if s, _, err := resolveWindow("2026-02-10", "", today); err != nil || s != "2026-02-10" {
+		t.Fatalf("today start = %s err=%v", s, err)
 	}
 
 	// End before start → error.

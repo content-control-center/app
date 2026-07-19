@@ -122,7 +122,8 @@ type GeneratePostsOutput struct {
 	Clamped        bool       `json:"clamped"` // true when requestedCount exceeded the per-call cap
 	PhaseID        string     `json:"phaseId"`
 	PhaseName      string     `json:"phaseName"`
-	Platforms      []string   `json:"platforms"` // resolved platform names
+	Platforms      []string   `json:"platforms"`       // resolved platform names
+	Dates          []string   `json:"dates,omitempty"` // CON-114: actual publish dates of the created posts, so the model reports them instead of inventing dates
 	Warnings       []string   `json:"warnings,omitempty"`
 	UsedAssets     []AssetRef `json:"usedAssets,omitempty"` // CON-118: assets that informed the posts
 }
@@ -511,6 +512,7 @@ func toolGeneratePosts(ctx context.Context, in GeneratePostsInput) (*GeneratePos
 		PhaseID:        phaseID,
 		PhaseName:      phaseName,
 		Platforms:      platformNames,
+		Dates:          publishDatesOf(resp.Posts),
 		Warnings:       resp.Warnings,
 		UsedAssets:     used,
 	}, nil
@@ -549,6 +551,18 @@ func singlePostWindowEnd(resolvedStart, resolvedEnd, rawEnd string, count int) s
 		return resolvedStart
 	}
 	return resolvedEnd
+}
+
+// publishDatesOf extracts the actual publish dates of the created posts, so the
+// model reports the real dates in its reply instead of inventing them (CON-114).
+func publishDatesOf(posts []content_plan.DraftPost) []string {
+	out := make([]string, 0, len(posts))
+	for _, p := range posts {
+		if p.PublishDate != "" {
+			out = append(out, p.PublishDate)
+		}
+	}
+	return out
 }
 
 // minAskAssetsSimilarity is the cosine-similarity floor for asset Q&A. Lower
@@ -844,11 +858,15 @@ func resolveWindow(startStr, endStr string, today time.Time) (string, string, er
 	if e.Before(s) {
 		return "", "", fmt.Errorf("the timeframe's end is before its start")
 	}
-	if s.Before(todayDate) { // never date drafts in the past
-		s = todayDate
-		if e.Before(s) {
-			e = s
-		}
+	// Reject an explicitly-requested past date rather than silently clamping it
+	// to today (CON-114). Derived bounds default to today, so only a user-supplied
+	// start/end can be in the past here; the planner is told to catch this first
+	// and reply conversationally, and this is the backstop.
+	if haveStart && s.Before(todayDate) {
+		return "", "", fmt.Errorf("%s is in the past — choose %s (today) or a later date", startStr, todayDate.Format(iso))
+	}
+	if haveEnd && e.Before(todayDate) {
+		return "", "", fmt.Errorf("%s is in the past — choose %s (today) or a later date", endStr, todayDate.Format(iso))
 	}
 	return s.Format(iso), e.Format(iso), nil
 }
