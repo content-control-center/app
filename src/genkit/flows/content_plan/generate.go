@@ -216,7 +216,9 @@ func generatePosts(
 			return nil, nil, fmt.Errorf("render user prompt: %w", err)
 		}
 		slog.DebugContext(ctx, "user prompt (no batch plan)", logging.AttrComponent, "genkit.content_plan", "prompt", userPrompt)
-		posts, genErr := generatePostsStreaming(ctx, g, modelName, systemPrompt, userPrompt, modelCfg, recordUsage, 0, validate, persistFn, onEvent)
+		// expectedCount 0 = uncapped: no batch plan, so the model decides how
+		// many posts the campaign warrants (pre-CON-67 behaviour).
+		posts, genErr := generatePostsStreaming(ctx, g, modelName, systemPrompt, userPrompt, modelCfg, recordUsage, 0, 0, validate, persistFn, onEvent)
 		if genErr != nil {
 			// Even on hard failure, return what was persisted so the
 			// caller's partial-success aggregation has the rows.
@@ -235,7 +237,9 @@ func generatePosts(
 			return nil, fmt.Errorf("render user prompt for batch %d: %w", spec.Index, err)
 		}
 		slog.DebugContext(ctx, "batch user prompt", logging.AttrComponent, "genkit.content_plan", "batch", spec.Index+1, "total", len(batches), "posts", spec.PostCount, "window_start", spec.DateWindow.Start, "window_end", spec.DateWindow.End, "prompt", userPrompt)
-		return generatePostsStreaming(ctx, g, modelName, systemPrompt, userPrompt, modelCfg, recordUsage, spec.GlobalStartIndex, validate, persistFn, emit)
+		// Cap persistence at the batch's planned size so an over-producing model
+		// can't inflate the count (CON-114).
+		return generatePostsStreaming(ctx, g, modelName, systemPrompt, userPrompt, modelCfg, recordUsage, spec.GlobalStartIndex, spec.PostCount, validate, persistFn, emit)
 	}
 	return runBatchesParallel(ctx, batches, maxParallel, gen, onEvent)
 }
@@ -361,6 +365,7 @@ func generatePostsStreaming(
 	modelCfg ai.GenerateOption,
 	recordUsage func(context.Context, *ai.ModelResponse),
 	globalStartIndex int,
+	expectedCount int,
 	validate postValidator,
 	persistFn func(ctx context.Context, post DraftPost) (string, error),
 	onEvent OnEventFunc,
@@ -379,6 +384,14 @@ func generatePostsStreaming(
 	var totalBytes int
 
 	tryPersist := func(post DraftPost, position int) {
+		// CON-114: never persist more than this batch asked for. The generation
+		// model can over-produce (e.g. stream 3 posts for a "generate exactly 1"
+		// batch); without this cap every extra valid post is persisted, so a
+		// request for 1 post yielded 3. expectedCount <= 0 = uncapped (the
+		// count-less fallback where the model decides how many to produce).
+		if !withinCount(len(posts), expectedCount) {
+			return
+		}
 		if err := validate(post); err != nil {
 			emit(onEvent, SSEEventWarning, WarningPayload{
 				Message: fmt.Sprintf("post %q dropped: %s", post.Title, err),
@@ -515,6 +528,13 @@ func trimBody(body string) string {
 		return string(runes[:maxBodyRunes])
 	}
 	return body
+}
+
+// withinCount reports whether another post may still be persisted for a batch
+// that asked for expectedCount posts. expectedCount <= 0 means uncapped — the
+// count-less fallback where the generation model decides how many to produce.
+func withinCount(persisted, expectedCount int) bool {
+	return expectedCount <= 0 || persisted < expectedCount
 }
 
 // persistOne inserts a single DraftPost as a new Post row and returns the
