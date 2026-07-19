@@ -180,8 +180,9 @@ func TestPageRef(t *testing.T) {
 	}
 }
 
-// CON-114: a count the user names is honored exactly; only an omitted/zero count
-// defaults to 3 ("a few"). Guards the "generate 1 post" -> 3 regression.
+// CON-114: a count the user names is honored exactly; an omitted/zero count
+// defaults to 1 (the safe minimum) so an omitting planner can't over-produce.
+// Guards the "generate 1 post" -> 3 regression.
 func TestResolveGenerateCount(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -193,8 +194,8 @@ func TestResolveGenerateCount(t *testing.T) {
 	}{
 		{"exact one is honored", 1, 10, 1, 1, false},
 		{"exact five is honored", 5, 10, 5, 5, false},
-		{"omitted defaults to a few", 0, 10, 3, 3, false},
-		{"negative treated as omitted", -2, 10, 3, 3, false},
+		{"omitted defaults to 1 (safe minimum)", 0, 10, 1, 1, false},
+		{"negative treated as omitted", -2, 10, 1, 1, false},
 		{"above cap clamps down", 25, 10, 10, 25, true},
 		{"unset cap falls back to 10", 25, 0, 10, 25, true},
 	}

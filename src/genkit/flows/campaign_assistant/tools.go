@@ -109,7 +109,7 @@ type CampaignPostInfo struct {
 type GeneratePostsInput struct {
 	Platforms   []string `json:"platforms"             jsonschema:"description=Platform names or ids to generate for, e.g. [\"Threads\"]. Must be platforms the campaign already targets."`
 	Phase       string   `json:"phase,omitempty"       jsonschema:"description=Phase name, id, or \"current\"; omit for the current phase."`
-	Count       int      `json:"count,omitempty"       jsonschema:"description=Exact number of posts to add. When the user names a quantity, set count to that number (\"add 1 post\"->1, \"generate 5 articles\"->5). Omit only when the user gives no number at all; an omitted count defaults to 3 (\"a few\"). Capped per call."`
+	Count       int      `json:"count,omitempty"       jsonschema:"description=Number of posts to add: the exact number the user names (\"add 1 post\"->1, \"5 articles\"->5), or 3 for a vague \"a few\"/\"some\". Always set it; if omitted only 1 post is created. Capped per call."`
 	WindowStart string   `json:"windowStart,omitempty" jsonschema:"description=First publish date (ISO YYYY-MM-DD), resolved from the requested timeframe against today."`
 	WindowEnd   string   `json:"windowEnd,omitempty"   jsonschema:"description=Last publish date (ISO YYYY-MM-DD). For a single specific date, set this equal to windowStart."`
 	PostType    string   `json:"postType,omitempty"    jsonschema:"description=Optional post-type slug (e.g. text-post, article); omit for the platform default."`
@@ -513,17 +513,18 @@ func toolGeneratePosts(ctx context.Context, in GeneratePostsInput) (*GeneratePos
 
 // resolveGenerateCount maps the model-supplied count to the number of posts the
 // generatePosts tool will actually create. An explicit positive count is honored
-// exactly — "add 1 post" yields 1, not the "a few" default — while a missing or
-// non-positive count falls back to 3 ("a few"). Anything above the per-call cap
-// (maxN, default 10) is clamped down. Returns the effective count, the requested
-// count after the default is applied (surfaced to the model as RequestedCount),
-// and whether the request was clamped.
+// exactly. A missing or non-positive count defaults to 1 — the safe minimum, so
+// a planner that omits count (as Haiku does for "generate 1 post") can never
+// over-produce; the model is instead told to pass 3 for a vague "a few". Anything
+// above the per-call cap (maxN, default 10) is clamped down. Returns the
+// effective count, the requested count after the default is applied (surfaced as
+// RequestedCount), and whether the request was clamped.
 func resolveGenerateCount(requested, maxN int) (count, requestedOut int, clamped bool) {
 	if maxN <= 0 {
 		maxN = 10
 	}
 	if requested <= 0 {
-		requested = 3
+		requested = 1
 	}
 	count = requested
 	if count > maxN {
