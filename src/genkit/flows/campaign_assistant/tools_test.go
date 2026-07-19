@@ -127,10 +127,13 @@ func TestResolveWindow(t *testing.T) {
 		t.Fatalf("passthrough = %s..%s err=%v", s, e, err)
 	}
 
-	// Past start clamps to today.
-	s, _, err = resolveWindow("2026-01-01", "2026-02-28", today)
-	if err != nil || s != "2026-02-10" {
-		t.Fatalf("past-start clamp = %s err=%v", s, err)
+	// Past start is rejected, not clamped (CON-114: never date drafts in the past).
+	if _, _, err := resolveWindow("2026-01-01", "2026-02-28", today); err == nil {
+		t.Fatal("expected error for a past windowStart")
+	}
+	// Today itself is allowed (equal, not before).
+	if s, _, err := resolveWindow("2026-02-10", "", today); err != nil || s != "2026-02-10" {
+		t.Fatalf("today start = %s err=%v", s, err)
 	}
 
 	// End before start → error.
@@ -176,6 +179,56 @@ func TestPageRef(t *testing.T) {
 	for _, c := range cases {
 		if got := pageRef(c.start, c.end); got != c.want {
 			t.Errorf("pageRef(%v, %v) = %q, want %q", c.start, c.end, got, c.want)
+		}
+	}
+}
+
+// CON-114: a count the user names is honored exactly; an omitted/zero count
+// defaults to 1 (the safe minimum) so an omitting planner can't over-produce.
+// Guards the "generate 1 post" -> 3 regression.
+func TestResolveGenerateCount(t *testing.T) {
+	cases := []struct {
+		name        string
+		requested   int
+		maxN        int
+		wantCount   int
+		wantReq     int
+		wantClamped bool
+	}{
+		{"exact one is honored", 1, 10, 1, 1, false},
+		{"exact five is honored", 5, 10, 5, 5, false},
+		{"omitted defaults to 1 (safe minimum)", 0, 10, 1, 1, false},
+		{"negative treated as omitted", -2, 10, 1, 1, false},
+		{"above cap clamps down", 25, 10, 10, 25, true},
+		{"unset cap falls back to 10", 25, 0, 10, 25, true},
+	}
+	for _, c := range cases {
+		gotCount, gotReq, gotClamped := resolveGenerateCount(c.requested, c.maxN)
+		if gotCount != c.wantCount || gotReq != c.wantReq || gotClamped != c.wantClamped {
+			t.Errorf("%s: resolveGenerateCount(%d, %d) = (count=%d, requested=%d, clamped=%v); want (count=%d, requested=%d, clamped=%v)",
+				c.name, c.requested, c.maxN, gotCount, gotReq, gotClamped, c.wantCount, c.wantReq, c.wantClamped)
+		}
+	}
+}
+
+// CON-114: a single post with only a start date is pinned to that day, so
+// "generate 1 for Jul 22" lands on Jul 22 instead of the midpoint of the
+// derived 14-day window. Explicit ends and multi-post requests keep their range.
+func TestSinglePostWindowEnd(t *testing.T) {
+	cases := []struct {
+		name               string
+		start, end, rawEnd string
+		count              int
+		want               string
+	}{
+		{"one post, derived end -> pinned to start", "2026-07-22", "2026-08-05", "", 1, "2026-07-22"},
+		{"one post, explicit end -> range kept", "2026-07-22", "2026-07-29", "2026-07-29", 1, "2026-07-29"},
+		{"multi post, derived end -> range kept", "2026-07-22", "2026-08-05", "", 3, "2026-08-05"},
+	}
+	for _, c := range cases {
+		if got := singlePostWindowEnd(c.start, c.end, c.rawEnd, c.count); got != c.want {
+			t.Errorf("%s: singlePostWindowEnd(%q, %q, %q, %d) = %q, want %q",
+				c.name, c.start, c.end, c.rawEnd, c.count, got, c.want)
 		}
 	}
 }

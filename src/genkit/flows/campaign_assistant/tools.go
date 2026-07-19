@@ -109,9 +109,9 @@ type CampaignPostInfo struct {
 type GeneratePostsInput struct {
 	Platforms   []string `json:"platforms"             jsonschema:"description=Platform names or ids to generate for, e.g. [\"Threads\"]. Must be platforms the campaign already targets."`
 	Phase       string   `json:"phase,omitempty"       jsonschema:"description=Phase name, id, or \"current\"; omit for the current phase."`
-	Count       int      `json:"count,omitempty"       jsonschema:"description=How many posts to add; omit to infer from the request (a few = 3)."`
+	Count       int      `json:"count,omitempty"       jsonschema:"description=Number of posts to add: the exact number the user names (\"add 1 post\"->1, \"5 articles\"->5), or 3 for a vague \"a few\"/\"some\". Always set it; if omitted only 1 post is created. Capped per call."`
 	WindowStart string   `json:"windowStart,omitempty" jsonschema:"description=First publish date (ISO YYYY-MM-DD), resolved from the requested timeframe against today."`
-	WindowEnd   string   `json:"windowEnd,omitempty"   jsonschema:"description=Last publish date (ISO YYYY-MM-DD)."`
+	WindowEnd   string   `json:"windowEnd,omitempty"   jsonschema:"description=Last publish date (ISO YYYY-MM-DD). For a single specific date, set this equal to windowStart."`
 	PostType    string   `json:"postType,omitempty"    jsonschema:"description=Optional post-type slug (e.g. text-post, article); omit for the platform default."`
 }
 
@@ -122,7 +122,8 @@ type GeneratePostsOutput struct {
 	Clamped        bool       `json:"clamped"` // true when requestedCount exceeded the per-call cap
 	PhaseID        string     `json:"phaseId"`
 	PhaseName      string     `json:"phaseName"`
-	Platforms      []string   `json:"platforms"` // resolved platform names
+	Platforms      []string   `json:"platforms"`       // resolved platform names
+	Dates          []string   `json:"dates,omitempty"` // CON-114: actual publish dates of the created posts, so the model reports them instead of inventing dates
 	Warnings       []string   `json:"warnings,omitempty"`
 	UsedAssets     []AssetRef `json:"usedAssets,omitempty"` // CON-118: assets that informed the posts
 }
@@ -444,27 +445,21 @@ func toolGeneratePosts(ctx context.Context, in GeneratePostsInput) (*GeneratePos
 		return nil, err
 	}
 
-	// Count: default 3 when vague, clamp to [1, cap].
-	maxN := st.maxGeneratePosts
-	if maxN <= 0 {
-		maxN = 10
-	}
-	requested := in.Count
-	if requested <= 0 {
-		requested = 3
-	}
-	count := requested
-	clamped := false
-	if count > maxN {
-		count = maxN
-		clamped = true
-	}
+	// Count: honor an explicit number exactly (so "add 1 post" yields 1); fall
+	// back to 1 (the safe minimum) when the model omitted it; clamp to the
+	// per-call cap. Extracted as resolveGenerateCount for unit testing.
+	count, requested, clamped := resolveGenerateCount(in.Count, st.maxGeneratePosts)
 
 	// Window: default to the next 14 days when omitted; validate otherwise.
 	windowStart, windowEnd, err := resolveWindow(in.WindowStart, in.WindowEnd, now)
 	if err != nil {
 		return nil, err
 	}
+	// A lone post has nothing to spread across a 14-day window, so "generate 1
+	// for Jul 22" must land ON Jul 22 — not the window's midpoint. When the model
+	// gave only a start for a single post, collapse the derived range to that day
+	// so validation pins the publish date exactly (CON-114).
+	windowEnd = singlePostWindowEnd(windowStart, windowEnd, in.WindowEnd, count)
 
 	emit(st.onEvent, SSEEventGeneratePostsStarted, GeneratePostsStartedEventPayload{
 		PlatformIDs: platformIDs,
@@ -517,9 +512,57 @@ func toolGeneratePosts(ctx context.Context, in GeneratePostsInput) (*GeneratePos
 		PhaseID:        phaseID,
 		PhaseName:      phaseName,
 		Platforms:      platformNames,
+		Dates:          publishDatesOf(resp.Posts),
 		Warnings:       resp.Warnings,
 		UsedAssets:     used,
 	}, nil
+}
+
+// resolveGenerateCount maps the model-supplied count to the number of posts the
+// generatePosts tool will actually create. An explicit positive count is honored
+// exactly. A missing or non-positive count defaults to 1 — the safe minimum, so
+// a planner that omits count (as Haiku does for "generate 1 post") can never
+// over-produce; the model is instead told to pass 3 for a vague "a few". Anything
+// above the per-call cap (maxN, default 10) is clamped down. Returns the
+// effective count, the requested count after the default is applied (surfaced as
+// RequestedCount), and whether the request was clamped.
+func resolveGenerateCount(requested, maxN int) (count, requestedOut int, clamped bool) {
+	if maxN <= 0 {
+		maxN = 10
+	}
+	if requested <= 0 {
+		requested = 1
+	}
+	count = requested
+	if count > maxN {
+		count = maxN
+		clamped = true
+	}
+	return count, requested, clamped
+}
+
+// singlePostWindowEnd collapses a derived date range to a single day when the
+// tool is creating exactly one post and the user gave no explicit end. A lone
+// post has nothing to spread across a window, so "generate 1 for Jul 22" must
+// land on Jul 22 rather than the midpoint of resolveWindow's 14-day default. An
+// explicit end (rawEnd != "") or a multi-post request keeps the resolved end.
+func singlePostWindowEnd(resolvedStart, resolvedEnd, rawEnd string, count int) string {
+	if count == 1 && rawEnd == "" {
+		return resolvedStart
+	}
+	return resolvedEnd
+}
+
+// publishDatesOf extracts the actual publish dates of the created posts, so the
+// model reports the real dates in its reply instead of inventing them (CON-114).
+func publishDatesOf(posts []content_plan.DraftPost) []string {
+	out := make([]string, 0, len(posts))
+	for _, p := range posts {
+		if p.PublishDate != "" {
+			out = append(out, p.PublishDate)
+		}
+	}
+	return out
 }
 
 // minAskAssetsSimilarity is the cosine-similarity floor for asset Q&A. Lower
@@ -815,11 +858,15 @@ func resolveWindow(startStr, endStr string, today time.Time) (string, string, er
 	if e.Before(s) {
 		return "", "", fmt.Errorf("the timeframe's end is before its start")
 	}
-	if s.Before(todayDate) { // never date drafts in the past
-		s = todayDate
-		if e.Before(s) {
-			e = s
-		}
+	// Reject an explicitly-requested past date rather than silently clamping it
+	// to today (CON-114). Derived bounds default to today, so only a user-supplied
+	// start/end can be in the past here; the planner is told to catch this first
+	// and reply conversationally, and this is the backstop.
+	if haveStart && s.Before(todayDate) {
+		return "", "", fmt.Errorf("%s is in the past — choose %s (today) or a later date", startStr, todayDate.Format(iso))
+	}
+	if haveEnd && e.Before(todayDate) {
+		return "", "", fmt.Errorf("%s is in the past — choose %s (today) or a later date", endStr, todayDate.Format(iso))
 	}
 	return s.Format(iso), e.Format(iso), nil
 }
