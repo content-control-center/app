@@ -109,7 +109,7 @@ type CampaignPostInfo struct {
 type GeneratePostsInput struct {
 	Platforms   []string `json:"platforms"             jsonschema:"description=Platform names or ids to generate for, e.g. [\"Threads\"]. Must be platforms the campaign already targets."`
 	Phase       string   `json:"phase,omitempty"       jsonschema:"description=Phase name, id, or \"current\"; omit for the current phase."`
-	Count       int      `json:"count,omitempty"       jsonschema:"description=How many posts to add; omit to infer from the request (a few = 3)."`
+	Count       int      `json:"count,omitempty"       jsonschema:"description=Exact number of posts to add. When the user names a quantity, set count to that number (\"add 1 post\"->1, \"generate 5 articles\"->5). Omit only when the user gives no number at all; an omitted count defaults to 3 (\"a few\"). Capped per call."`
 	WindowStart string   `json:"windowStart,omitempty" jsonschema:"description=First publish date (ISO YYYY-MM-DD), resolved from the requested timeframe against today."`
 	WindowEnd   string   `json:"windowEnd,omitempty"   jsonschema:"description=Last publish date (ISO YYYY-MM-DD)."`
 	PostType    string   `json:"postType,omitempty"    jsonschema:"description=Optional post-type slug (e.g. text-post, article); omit for the platform default."`
@@ -444,21 +444,10 @@ func toolGeneratePosts(ctx context.Context, in GeneratePostsInput) (*GeneratePos
 		return nil, err
 	}
 
-	// Count: default 3 when vague, clamp to [1, cap].
-	maxN := st.maxGeneratePosts
-	if maxN <= 0 {
-		maxN = 10
-	}
-	requested := in.Count
-	if requested <= 0 {
-		requested = 3
-	}
-	count := requested
-	clamped := false
-	if count > maxN {
-		count = maxN
-		clamped = true
-	}
+	// Count: honor an explicit number exactly (so "add 1 post" yields 1); fall
+	// back to 3 ("a few") only when the model omitted it; clamp to the per-call
+	// cap. Extracted as resolveGenerateCount for unit testing.
+	count, requested, clamped := resolveGenerateCount(in.Count, st.maxGeneratePosts)
 
 	// Window: default to the next 14 days when omitted; validate otherwise.
 	windowStart, windowEnd, err := resolveWindow(in.WindowStart, in.WindowEnd, now)
@@ -520,6 +509,28 @@ func toolGeneratePosts(ctx context.Context, in GeneratePostsInput) (*GeneratePos
 		Warnings:       resp.Warnings,
 		UsedAssets:     used,
 	}, nil
+}
+
+// resolveGenerateCount maps the model-supplied count to the number of posts the
+// generatePosts tool will actually create. An explicit positive count is honored
+// exactly — "add 1 post" yields 1, not the "a few" default — while a missing or
+// non-positive count falls back to 3 ("a few"). Anything above the per-call cap
+// (maxN, default 10) is clamped down. Returns the effective count, the requested
+// count after the default is applied (surfaced to the model as RequestedCount),
+// and whether the request was clamped.
+func resolveGenerateCount(requested, maxN int) (count, requestedOut int, clamped bool) {
+	if maxN <= 0 {
+		maxN = 10
+	}
+	if requested <= 0 {
+		requested = 3
+	}
+	count = requested
+	if count > maxN {
+		count = maxN
+		clamped = true
+	}
+	return count, requested, clamped
 }
 
 // minAskAssetsSimilarity is the cosine-similarity floor for asset Q&A. Lower

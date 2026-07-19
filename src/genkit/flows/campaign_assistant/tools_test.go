@@ -179,3 +179,30 @@ func TestPageRef(t *testing.T) {
 		}
 	}
 }
+
+// CON-114: a count the user names is honored exactly; only an omitted/zero count
+// defaults to 3 ("a few"). Guards the "generate 1 post" -> 3 regression.
+func TestResolveGenerateCount(t *testing.T) {
+	cases := []struct {
+		name        string
+		requested   int
+		maxN        int
+		wantCount   int
+		wantReq     int
+		wantClamped bool
+	}{
+		{"exact one is honored", 1, 10, 1, 1, false},
+		{"exact five is honored", 5, 10, 5, 5, false},
+		{"omitted defaults to a few", 0, 10, 3, 3, false},
+		{"negative treated as omitted", -2, 10, 3, 3, false},
+		{"above cap clamps down", 25, 10, 10, 25, true},
+		{"unset cap falls back to 10", 25, 0, 10, 25, true},
+	}
+	for _, c := range cases {
+		gotCount, gotReq, gotClamped := resolveGenerateCount(c.requested, c.maxN)
+		if gotCount != c.wantCount || gotReq != c.wantReq || gotClamped != c.wantClamped {
+			t.Errorf("%s: resolveGenerateCount(%d, %d) = (count=%d, requested=%d, clamped=%v); want (count=%d, requested=%d, clamped=%v)",
+				c.name, c.requested, c.maxN, gotCount, gotReq, gotClamped, c.wantCount, c.wantReq, c.wantClamped)
+		}
+	}
+}
