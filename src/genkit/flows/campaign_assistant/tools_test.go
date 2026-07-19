@@ -207,3 +207,25 @@ func TestResolveGenerateCount(t *testing.T) {
 		}
 	}
 }
+
+// CON-114: a single post with only a start date is pinned to that day, so
+// "generate 1 for Jul 22" lands on Jul 22 instead of the midpoint of the
+// derived 14-day window. Explicit ends and multi-post requests keep their range.
+func TestSinglePostWindowEnd(t *testing.T) {
+	cases := []struct {
+		name               string
+		start, end, rawEnd string
+		count              int
+		want               string
+	}{
+		{"one post, derived end -> pinned to start", "2026-07-22", "2026-08-05", "", 1, "2026-07-22"},
+		{"one post, explicit end -> range kept", "2026-07-22", "2026-07-29", "2026-07-29", 1, "2026-07-29"},
+		{"multi post, derived end -> range kept", "2026-07-22", "2026-08-05", "", 3, "2026-08-05"},
+	}
+	for _, c := range cases {
+		if got := singlePostWindowEnd(c.start, c.end, c.rawEnd, c.count); got != c.want {
+			t.Errorf("%s: singlePostWindowEnd(%q, %q, %q, %d) = %q, want %q",
+				c.name, c.start, c.end, c.rawEnd, c.count, got, c.want)
+		}
+	}
+}

@@ -445,8 +445,8 @@ func toolGeneratePosts(ctx context.Context, in GeneratePostsInput) (*GeneratePos
 	}
 
 	// Count: honor an explicit number exactly (so "add 1 post" yields 1); fall
-	// back to 3 ("a few") only when the model omitted it; clamp to the per-call
-	// cap. Extracted as resolveGenerateCount for unit testing.
+	// back to 1 (the safe minimum) when the model omitted it; clamp to the
+	// per-call cap. Extracted as resolveGenerateCount for unit testing.
 	count, requested, clamped := resolveGenerateCount(in.Count, st.maxGeneratePosts)
 
 	// Window: default to the next 14 days when omitted; validate otherwise.
@@ -454,6 +454,11 @@ func toolGeneratePosts(ctx context.Context, in GeneratePostsInput) (*GeneratePos
 	if err != nil {
 		return nil, err
 	}
+	// A lone post has nothing to spread across a 14-day window, so "generate 1
+	// for Jul 22" must land ON Jul 22 — not the window's midpoint. When the model
+	// gave only a start for a single post, collapse the derived range to that day
+	// so validation pins the publish date exactly (CON-114).
+	windowEnd = singlePostWindowEnd(windowStart, windowEnd, in.WindowEnd, count)
 
 	emit(st.onEvent, SSEEventGeneratePostsStarted, GeneratePostsStartedEventPayload{
 		PlatformIDs: platformIDs,
@@ -532,6 +537,18 @@ func resolveGenerateCount(requested, maxN int) (count, requestedOut int, clamped
 		clamped = true
 	}
 	return count, requested, clamped
+}
+
+// singlePostWindowEnd collapses a derived date range to a single day when the
+// tool is creating exactly one post and the user gave no explicit end. A lone
+// post has nothing to spread across a window, so "generate 1 for Jul 22" must
+// land on Jul 22 rather than the midpoint of resolveWindow's 14-day default. An
+// explicit end (rawEnd != "") or a multi-post request keeps the resolved end.
+func singlePostWindowEnd(resolvedStart, resolvedEnd, rawEnd string, count int) string {
+	if count == 1 && rawEnd == "" {
+		return resolvedStart
+	}
+	return resolvedEnd
 }
 
 // minAskAssetsSimilarity is the cosine-similarity floor for asset Q&A. Lower
