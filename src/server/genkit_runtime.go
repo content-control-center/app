@@ -124,8 +124,18 @@ func newGenkitRuntime(ctx context.Context, deps genkitDeps, store secrets.Store)
 	// before the plugin builds its client (from http.DefaultTransport), and
 	// before the debug-logging wrap below so logging measures the stabilized
 	// request. On by default; opt out via ANTHROPIC_STABLE_TOOL_ORDER=false.
+	//
+	// The planning model (campaign_assistant's tool-using routing loop) also
+	// gets an ephemeral cache_control breakpoint on its system prefix so a
+	// multi-turn conversation reuses the tools+system tokens across turns; other
+	// flows are left uncached to avoid paying the cache-write premium for
+	// nothing. See InstallAnthropicToolOrderStabilizer.
 	if r.cfg == nil || r.cfg.AnthropicStableToolOrder {
-		InstallAnthropicToolOrderStabilizer()
+		planningModel := ""
+		if r.cfg != nil {
+			planningModel = r.cfg.PlanningModelID
+		}
+		InstallAnthropicToolOrderStabilizer(planningModel)
 	}
 
 	// Opt-in Anthropic HTTP tracing (CON-112 perf diagnostics) — must be

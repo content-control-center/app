@@ -43,8 +43,15 @@ type phaseContext struct {
 // assembleContext renders the system + context blocks from the campaign. The
 // brief is placed in the context block so grounded Q&A ("summarise the brief")
 // needs no tool round-trip. The rendered strings are deterministic, so an
-// unchanged brief produces an identical prefix and Anthropic prompt caching
-// still applies without an in-process cache.
+// unchanged brief and date produce a byte-identical system prefix across the
+// turns of a conversation. That determinism is what makes the ephemeral
+// cache_control breakpoint (added at the wire for the planning model — see
+// server.InstallAnthropicToolOrderStabilizer) actually hit: without an explicit
+// breakpoint Anthropic caches nothing at the token level. The dynamic context
+// (today's date, the live brief) is concatenated after the static prompt, so
+// the cached prefix rotates daily and on brief edits — fine, since consecutive
+// turns within the cache TTL share it. Note this is separate from the
+// strict-tool grammar cache the tool-order stabilizer keeps warm.
 func assembleContext(campaign *models.Campaign, today time.Time, systemTmpl, contextTmpl *template.Template) (*assistantContext, error) {
 	campaignType := campaign.CampaignTypeID
 	var phases []phaseContext
