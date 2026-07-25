@@ -121,6 +121,145 @@ func TestAnthropicToolOrderTransport_ClonesWithoutMutatingOriginal(t *testing.T)
 	}
 }
 
+func TestAddAnthropicSystemCacheControl(t *testing.T) {
+	t.Run("string system is promoted to a cached text block", func(t *testing.T) {
+		out, changed := addAnthropicSystemCacheControl([]byte(`{"model":"m","system":"you are a bot"}`))
+		if !changed {
+			t.Fatal("expected changed=true")
+		}
+		blocks := systemBlocks(t, out)
+		if len(blocks) != 1 {
+			t.Fatalf("want 1 system block, got %d", len(blocks))
+		}
+		if blocks[0].Type != "text" || blocks[0].Text != "you are a bot" {
+			t.Errorf("block content not preserved: %+v", blocks[0])
+		}
+		if blocks[0].CacheControl == nil || blocks[0].CacheControl.Type != "ephemeral" {
+			t.Errorf("missing ephemeral cache_control: %+v", blocks[0])
+		}
+	})
+
+	t.Run("array system marks the last block only", func(t *testing.T) {
+		in := `{"system":[{"type":"text","text":"a"},{"type":"text","text":"b"}]}`
+		out, changed := addAnthropicSystemCacheControl([]byte(in))
+		if !changed {
+			t.Fatal("expected changed=true")
+		}
+		blocks := systemBlocks(t, out)
+		if len(blocks) != 2 {
+			t.Fatalf("want 2 system blocks, got %d", len(blocks))
+		}
+		if blocks[0].CacheControl != nil {
+			t.Errorf("first block should be unmarked, got %+v", blocks[0].CacheControl)
+		}
+		if blocks[1].CacheControl == nil || blocks[1].CacheControl.Type != "ephemeral" {
+			t.Errorf("last block should carry ephemeral cache_control, got %+v", blocks[1].CacheControl)
+		}
+	})
+
+	t.Run("no-op cases pass through unchanged", func(t *testing.T) {
+		cases := map[string]string{
+			"no system field": `{"model":"m","messages":[]}`,
+			"empty string":    `{"system":""}`,
+			"empty array":     `{"system":[]}`,
+			"already marked":  `{"system":[{"type":"text","text":"a","cache_control":{"type":"ephemeral"}}]}`,
+			"not valid json":  `not json`,
+		}
+		for name, in := range cases {
+			out, changed := addAnthropicSystemCacheControl([]byte(in))
+			if changed {
+				t.Errorf("%s: expected changed=false", name)
+			}
+			if !bytes.Equal(out, []byte(in)) {
+				t.Errorf("%s: body altered:\n in=%s\nout=%s", name, in, out)
+			}
+		}
+	})
+}
+
+// The system cache breakpoint is added only for the configured model; the tool
+// sort still applies to every Anthropic request regardless.
+func TestAnthropicToolOrderTransport_SystemCacheScopedToModel(t *testing.T) {
+	const body = `{"model":"planning-model","system":"sys","tools":[{"name":"charlie"},{"name":"alpha"}]}`
+
+	roundTrip := func(t *testing.T, cachePrefixModel string) []byte {
+		t.Helper()
+		base := &stubRoundTripper{resp: newResp(200)}
+		tr := &anthropicToolOrderTransport{base: base, cachePrefixModel: cachePrefixModel}
+		req, err := http.NewRequest(http.MethodPost, "https://api.anthropic.com/v1/messages", bytes.NewReader([]byte(body)))
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		resp, err := tr.RoundTrip(req)
+		if err != nil {
+			t.Fatalf("round trip: %v", err)
+		}
+		_ = resp.Body.Close()
+		sent, _ := io.ReadAll(base.last.Body)
+		return sent
+	}
+
+	t.Run("matching model gets a system cache breakpoint", func(t *testing.T) {
+		sent := roundTrip(t, "planning-model")
+		if got := toolNameOrder(t, sent); got != "alpha,charlie" {
+			t.Errorf("tools not sorted: %q", got)
+		}
+		blocks := systemBlocks(t, sent)
+		if len(blocks) != 1 || blocks[0].CacheControl == nil {
+			t.Errorf("expected a cached system block, got %s", sent)
+		}
+	})
+
+	t.Run("other model gets tool sort but no cache breakpoint", func(t *testing.T) {
+		sent := roundTrip(t, "some-other-model")
+		if got := toolNameOrder(t, sent); got != "alpha,charlie" {
+			t.Errorf("tools not sorted: %q", got)
+		}
+		// system stays a bare string — no breakpoint added.
+		var top struct {
+			System json.RawMessage `json:"system"`
+		}
+		if err := json.Unmarshal(sent, &top); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if len(top.System) == 0 || top.System[0] != '"' {
+			t.Errorf("system should stay an unmodified string, got %s", top.System)
+		}
+	})
+
+	t.Run("empty cachePrefixModel disables caching", func(t *testing.T) {
+		sent := roundTrip(t, "")
+		var top struct {
+			System json.RawMessage `json:"system"`
+		}
+		if err := json.Unmarshal(sent, &top); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if len(top.System) == 0 || top.System[0] != '"' {
+			t.Errorf("system should stay an unmodified string, got %s", top.System)
+		}
+	})
+}
+
+type systemBlock struct {
+	Type         string `json:"type"`
+	Text         string `json:"text"`
+	CacheControl *struct {
+		Type string `json:"type"`
+	} `json:"cache_control"`
+}
+
+func systemBlocks(t *testing.T, body []byte) []systemBlock {
+	t.Helper()
+	var top struct {
+		System []systemBlock `json:"system"`
+	}
+	if err := json.Unmarshal(body, &top); err != nil {
+		t.Fatalf("unmarshal system blocks: %v", err)
+	}
+	return top.System
+}
+
 func toolNameOrder(t *testing.T, body []byte) string {
 	t.Helper()
 	var top struct {

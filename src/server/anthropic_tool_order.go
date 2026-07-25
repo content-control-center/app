@@ -34,18 +34,36 @@ var installAnthropicToolOrderOnce sync.Once
 // intercepts every model call without forking the plugin — same hook point as
 // InstallAnthropicHTTPLogging. Must be installed before the plugin builds its
 // client. Idempotent; non-Anthropic traffic passes through untouched.
-func InstallAnthropicToolOrderStabilizer() {
+//
+// cachePrefixModel, when non-empty, additionally gets an ephemeral
+// cache_control breakpoint on `system` (token-level prompt caching, distinct
+// from the strict-tool grammar cache above). Anthropic assembles the prefix as
+// tools→system, so one breakpoint on the last system block caches the tool
+// schemas AND the system prompt together. Scoped to a single model — the cheap
+// planning model behind campaign_assistant (CON-112) — because a flow whose
+// system prompt changes every request with no reads would only pay the ~1.25×
+// cache-write premium. Pass "" to disable. Prompt caching only fires when the
+// cached prefix clears the model's minimum (~4096 tokens on Haiku 4.5);
+// shorter prefixes silently do nothing — verify via cache_read_input_tokens.
+func InstallAnthropicToolOrderStabilizer(cachePrefixModel string) {
 	installAnthropicToolOrderOnce.Do(func() {
 		base := http.DefaultTransport
 		if base == nil {
 			base = &http.Transport{}
 		}
-		http.DefaultTransport = &anthropicToolOrderTransport{base: base}
-		slog.Info("anthropic tool-order stabilizer installed", logging.AttrComponent, "anthropic.http")
+		http.DefaultTransport = &anthropicToolOrderTransport{base: base, cachePrefixModel: cachePrefixModel}
+		slog.Info("anthropic tool-order stabilizer installed",
+			logging.AttrComponent, "anthropic.http", "cache_prefix_model", cachePrefixModel)
 	})
 }
 
-type anthropicToolOrderTransport struct{ base http.RoundTripper }
+type anthropicToolOrderTransport struct {
+	base http.RoundTripper
+	// cachePrefixModel is the model whose requests get a system cache_control
+	// breakpoint. Empty disables prompt caching (tool-order sorting is
+	// unconditional). See InstallAnthropicToolOrderStabilizer.
+	cachePrefixModel string
+}
 
 func (t *anthropicToolOrderTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.Body == nil ||
@@ -58,18 +76,107 @@ func (t *anthropicToolOrderTransport) RoundTrip(req *http.Request) (*http.Respon
 	if len(body) == 0 {
 		return t.base.RoundTrip(req)
 	}
-	sorted, n, changed := sortAnthropicToolsByName(body)
+
+	out, changed := body, false
+	if sorted, n, ok := sortAnthropicToolsByName(out); ok {
+		out, changed = sorted, true
+		slog.Debug("anthropic tools reordered for cache stability",
+			logging.AttrComponent, "anthropic.http", "tools", n)
+	}
+	// Prompt caching is scoped to the one model configured for it, so other
+	// flows never pay the cache-write premium on a prefix they won't reuse.
+	if t.cachePrefixModel != "" && anthropicRequestModel(out) == t.cachePrefixModel {
+		if cached, ok := addAnthropicSystemCacheControl(out); ok {
+			out, changed = cached, true
+			slog.Debug("anthropic system cache breakpoint added",
+				logging.AttrComponent, "anthropic.http")
+		}
+	}
 	if !changed {
 		return t.base.RoundTrip(req)
 	}
 
 	// RoundTrip must not modify the caller's request (net/http contract), so
-	// rewrite the sorted body on a clone and leave the original untouched.
+	// rewrite the transformed body on a clone and leave the original untouched.
 	clone := req.Clone(req.Context())
-	setAnthropicReqBody(clone, sorted)
-	slog.Debug("anthropic tools reordered for cache stability",
-		logging.AttrComponent, "anthropic.http", "tools", n)
+	setAnthropicReqBody(clone, out)
 	return t.base.RoundTrip(clone)
+}
+
+// anthropicRequestModel returns the top-level `model` of a /v1/messages body,
+// or "" when it can't be read.
+func anthropicRequestModel(body []byte) string {
+	var t struct {
+		Model string `json:"model"`
+	}
+	_ = json.Unmarshal(body, &t)
+	return t.Model
+}
+
+// addAnthropicSystemCacheControl puts one ephemeral cache_control breakpoint on
+// the request's `system` field. Because Anthropic assembles the prompt prefix
+// as tools→system, this caches the tool schemas AND the system prompt together.
+// The `system` field may arrive as a JSON string or as an array of content
+// blocks (both are valid Anthropic input); handle both. Every other top-level
+// field is preserved as raw bytes, so the transform is lossless. changed is
+// false when there is no system, it is empty, or a breakpoint already exists.
+func addAnthropicSystemCacheControl(body []byte) (out []byte, changed bool) {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(body, &top); err != nil {
+		return body, false
+	}
+	raw, ok := top["system"]
+	if !ok {
+		return body, false
+	}
+
+	var asString string
+	if err := json.Unmarshal(raw, &asString); err == nil {
+		// String form: promote to a single cached text block.
+		if asString == "" {
+			return body, false
+		}
+		block := map[string]any{
+			"type":          "text",
+			"text":          asString,
+			"cache_control": map[string]string{"type": "ephemeral"},
+		}
+		newSys, err := json.Marshal([]any{block})
+		if err != nil {
+			return body, false
+		}
+		top["system"] = newSys
+	} else {
+		// Array form: attach cache_control to the last block.
+		var blocks []json.RawMessage
+		if err := json.Unmarshal(raw, &blocks); err != nil || len(blocks) == 0 {
+			return body, false
+		}
+		var last map[string]json.RawMessage
+		if err := json.Unmarshal(blocks[len(blocks)-1], &last); err != nil {
+			return body, false
+		}
+		if _, exists := last["cache_control"]; exists {
+			return body, false // already marked; nothing to do
+		}
+		last["cache_control"] = json.RawMessage(`{"type":"ephemeral"}`)
+		nb, err := json.Marshal(last)
+		if err != nil {
+			return body, false
+		}
+		blocks[len(blocks)-1] = nb
+		newSys, err := json.Marshal(blocks)
+		if err != nil {
+			return body, false
+		}
+		top["system"] = newSys
+	}
+
+	rewritten, err := json.Marshal(top)
+	if err != nil {
+		return body, false
+	}
+	return rewritten, true
 }
 
 // sortAnthropicToolsByName returns the body with its top-level `tools` array
