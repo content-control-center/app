@@ -488,20 +488,28 @@ func (h *PostAttachmentsHandler) Update(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "at least one of position or alt_text is required")
 	}
 
-	if req.Position != nil {
-		if *req.Position < 0 {
-			return fiber.NewError(fiber.StatusBadRequest, "position must be non-negative")
+	// Validate + normalize both inputs before any mutation, so an invalid
+	// alt_text can't leave a partially-applied update (e.g. position already
+	// changed).
+	if req.Position != nil && *req.Position < 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "position must be non-negative")
+	}
+	var altText string
+	if req.AltText != nil {
+		normalized, err := normalizeAltText(*req.AltText)
+		if err != nil {
+			return err
 		}
+		altText = normalized
+	}
+
+	if req.Position != nil {
 		if err := h.repo.UpdatePosition(c.Context(), att.ID, *req.Position); err != nil {
 			return err
 		}
 	}
 	if req.AltText != nil {
-		alt, err := normalizeAltText(*req.AltText)
-		if err != nil {
-			return err
-		}
-		if err := h.repo.UpdateAltText(c.Context(), att.ID, alt); err != nil {
+		if err := h.repo.UpdateAltText(c.Context(), att.ID, altText); err != nil {
 			return err
 		}
 	}

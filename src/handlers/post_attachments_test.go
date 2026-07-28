@@ -686,6 +686,35 @@ var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(pResp.StatusCode).To(Equal(400))
 		})
+
+		It("does not change position when alt_text validation fails (CON-122)", func() {
+			postID := createPostWithPlatform(linkedinPlatformID)
+			resp, err := uploadPNG(postID, minimalPNG())
+			Expect(err).NotTo(HaveOccurred())
+			var att map[string]any
+			Expect(json.NewDecoder(resp.Body).Decode(&att)).To(Succeed())
+			id := att["id"].(string)
+
+			// Valid position + invalid (over-long) alt_text: the whole request
+			// must 400 without having applied the position change.
+			tooLong := string(bytes.Repeat([]byte("a"), 2001)) // exceeds maxAltTextLen
+			body, _ := json.Marshal(fiber.Map{"position": 3, "alt_text": tooLong})
+			req := httptest.NewRequest("PATCH", "/api/posts/"+postID+"/attachments/"+id, bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(authCookie)
+			pResp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pResp.StatusCode).To(Equal(400))
+
+			getReq := httptest.NewRequest("GET", "/api/posts/"+postID+"/attachments/"+id, nil)
+			getReq.AddCookie(authCookie)
+			getResp, err := app.Test(getReq)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(getResp.StatusCode).To(Equal(200))
+			var after map[string]any
+			Expect(json.NewDecoder(getResp.Body).Decode(&after)).To(Succeed())
+			Expect(after["position"]).To(BeEquivalentTo(0)) // unchanged
+		})
 	})
 
 	// ── alt text on upload (CON-122) ────────────────────────────────────────
