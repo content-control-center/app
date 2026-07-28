@@ -55,3 +55,53 @@ func TestCreateAtNextPositionRequiresParentPost(t *testing.T) {
 		t.Fatalf("attaching from another tenant to an existing post must fail closed with ErrNoRows, got %v", err)
 	}
 }
+
+// TestReorderPositions verifies the transactional bulk renumber (CON-124),
+// including the case the frontend workaround produces: starting positions that
+// have drifted into a non-contiguous high block rather than 0..n-1.
+func TestReorderPositions(t *testing.T) {
+	db := openMigratedDB(t)
+	repo := repository.NewPostAttachmentRepository(db)
+	ctx := tenantCtx()
+
+	seedPost(t, db, "post-r", "", "", time.Now().UTC())
+
+	ids := []string{"r0", "r1", "r2"}
+	for _, id := range ids {
+		att := &models.PostAttachment{
+			ID: id, PostID: "post-r", MimeType: "image/png",
+			SizeBytes: 1, ChecksumSHA256: "c-" + id, S3Key: "k-" + id, CreatedBy: "user-1",
+		}
+		if err := repo.CreateAtNextPosition(ctx, att); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+	}
+
+	// Drift positions up into a non-contiguous block (5,6,7) to mimic the
+	// frontend's max+1..max+n renumbering.
+	for i, id := range ids {
+		if err := repo.UpdatePosition(ctx, id, 5+i); err != nil {
+			t.Fatalf("drift %s: %v", id, err)
+		}
+	}
+
+	// Reverse the order in one transactional call — must not trip the unique
+	// constraint despite renumbering into positions siblings still hold.
+	if err := repo.ReorderPositions(ctx, "post-r", []string{"r2", "r1", "r0"}); err != nil {
+		t.Fatalf("reorder: %v", err)
+	}
+
+	got, err := repo.ListByPostID(ctx, "post-r")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	want := []string{"r2", "r1", "r0"} // ListByPostID orders by position
+	if len(got) != len(want) {
+		t.Fatalf("got %d attachments, want %d", len(got), len(want))
+	}
+	for i, a := range got {
+		if a.ID != want[i] || a.Position != i {
+			t.Errorf("pos %d: got id=%s position=%d, want id=%s position=%d", i, a.ID, a.Position, want[i], i)
+		}
+	}
+}

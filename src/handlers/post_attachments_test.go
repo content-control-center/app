@@ -262,6 +262,16 @@ var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 		return app.Test(req, 30000)
 	}
 
+	// uploadAttID uploads a PNG and returns the created attachment id.
+	uploadAttID := func(postID string) string {
+		resp, err := uploadPNG(postID, minimalPNG())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(Equal(201))
+		var att map[string]any
+		Expect(json.NewDecoder(resp.Body).Decode(&att)).To(Succeed())
+		return att["id"].(string)
+	}
+
 	// ── POST /api/posts/:post_id/attachments ─────────────────────────────────
 
 	Describe("POST /api/posts/:post_id/attachments", func() {
@@ -649,6 +659,20 @@ var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 			Expect(pResp.StatusCode).To(Equal(404))
 		})
 
+		It("returns 409 (not 500) when the target position is already taken (CON-124)", func() {
+			postID := createPostWithPlatform(linkedinPlatformID)
+			id0 := uploadAttID(postID) // position 0
+			_ = uploadAttID(postID)    // position 1
+
+			body, _ := json.Marshal(fiber.Map{"position": 1}) // collides with sibling
+			req := httptest.NewRequest("PATCH", "/api/posts/"+postID+"/attachments/"+id0, bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(authCookie)
+			pResp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pResp.StatusCode).To(Equal(409))
+		})
+
 		It("updates alt_text (CON-122)", func() {
 			postID := createPostWithPlatform(linkedinPlatformID)
 			resp, err := uploadPNG(postID, minimalPNG())
@@ -714,6 +738,56 @@ var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 			var after map[string]any
 			Expect(json.NewDecoder(getResp.Body).Decode(&after)).To(Succeed())
 			Expect(after["position"]).To(BeEquivalentTo(0)) // unchanged
+		})
+	})
+
+	// ── PATCH /api/posts/:post_id/attachments/reorder (bulk, CON-124) ────────
+
+	Describe("PATCH /api/posts/:post_id/attachments/reorder", func() {
+		It("renumbers the whole list atomically to match ids", func() {
+			postID := createPostWithPlatform(linkedinPlatformID)
+			a := uploadAttID(postID)  // 0
+			b := uploadAttID(postID)  // 1
+			cc := uploadAttID(postID) // 2
+
+			body, _ := json.Marshal(fiber.Map{"ids": []string{cc, a, b}})
+			req := httptest.NewRequest("PATCH", "/api/posts/"+postID+"/attachments/reorder", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(200))
+
+			var got struct {
+				Attachments []struct {
+					ID       string `json:"id"`
+					Position int    `json:"position"`
+				} `json:"attachments"`
+			}
+			Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+			Expect(got.Attachments).To(HaveLen(3))
+			// Returned in position order, renumbered 0..2 to match the request.
+			Expect(got.Attachments[0].ID).To(Equal(cc))
+			Expect(got.Attachments[0].Position).To(Equal(0))
+			Expect(got.Attachments[1].ID).To(Equal(a))
+			Expect(got.Attachments[1].Position).To(Equal(1))
+			Expect(got.Attachments[2].ID).To(Equal(b))
+			Expect(got.Attachments[2].Position).To(Equal(2))
+		})
+
+		It("returns 400 when ids don't match the post's attachments exactly", func() {
+			postID := createPostWithPlatform(linkedinPlatformID)
+			a := uploadAttID(postID)
+			_ = uploadAttID(postID)
+
+			// Missing one id.
+			body, _ := json.Marshal(fiber.Map{"ids": []string{a}})
+			req := httptest.NewRequest("PATCH", "/api/posts/"+postID+"/attachments/reorder", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(400))
 		})
 	})
 

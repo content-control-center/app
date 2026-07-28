@@ -40,6 +40,11 @@ const (
 	// the unbounded TEXT column, not per-platform correctness.
 	maxAltTextLen = 2000
 
+	// postAttachmentsPositionConstraint is the name Postgres gives the inline
+	// UNIQUE (post_id, position) on post_attachments (baseline schema). Used to
+	// scope the reorder 409 to that specific collision (CON-124).
+	postAttachmentsPositionConstraint = "post_attachments_post_id_position_key"
+
 	// pdfThumbnailDPI is the resolution used when rendering the first-page
 	// preview for PDF attachments.
 	pdfThumbnailDPI = 96
@@ -89,6 +94,9 @@ func (h *PostAttachmentsHandler) Register(app *fiber.App) {
 	g := app.Group("/api/posts/:post_id/attachments", h.auth)
 	g.Get("/", h.List)
 	g.Post("/", h.Upload)
+	// Static /reorder is registered before the /:id param route so a PATCH to
+	// .../attachments/reorder isn't captured as id="reorder" (CON-124).
+	g.Patch("/reorder", h.ReorderAll)
 	g.Get("/:id", h.Get)
 	g.Patch("/:id", h.Update)
 	g.Delete("/:id", h.Delete)
@@ -505,6 +513,13 @@ func (h *PostAttachmentsHandler) Update(c *fiber.Ctx) error {
 
 	if req.Position != nil {
 		if err := h.repo.UpdatePosition(c.Context(), att.ID, *req.Position); err != nil {
+			// UNIQUE(post_id, position): another attachment already holds the
+			// target position. Surface as 409 (not a raw 500) and point at the
+			// atomic reorder endpoint (CON-124).
+			if isUniqueViolationOn(err, postAttachmentsPositionConstraint) {
+				return fiber.NewError(fiber.StatusConflict,
+					"another attachment already holds that position; PATCH /attachments/reorder to reorder the whole list atomically")
+			}
 			return err
 		}
 	}
@@ -523,6 +538,92 @@ func (h *PostAttachmentsHandler) Update(c *fiber.Ctx) error {
 		PostAttachment:     updated,
 		PlatformValidation: platforms.ValidateAttachment(updated, post.Platform),
 	})
+}
+
+type reorderAllRequest struct {
+	// IDs is the post's attachments in their new order. It must list every
+	// current attachment exactly once.
+	IDs []string `json:"ids"`
+}
+
+// ReorderAll godoc
+// @Summary      Reorder all post attachments (atomic)
+// @Description  Renumbers the post's attachments to match `ids` (0..n-1) in one
+// @Description  transaction, so the whole list reorders in a single request
+// @Description  without tripping UNIQUE(post_id, position) (CON-124). `ids` must
+// @Description  list every current attachment exactly once. Returns the
+// @Description  reordered list.
+// @Tags         post-attachments
+// @Accept       json
+// @Produce      json
+// @Security     CookieAuth
+// @Param        post_id  path      string             true  "Post Sqid"
+// @Param        body     body      reorderAllRequest  true  "Attachment ids in the new order"
+// @Success      200      {object}  listResponse
+// @Failure      400      {object}  map[string]string
+// @Failure      401      {object}  map[string]string
+// @Failure      404      {object}  map[string]string
+// @Failure      409      {object}  map[string]string
+// @Router       /api/posts/{post_id}/attachments/reorder [patch]
+func (h *PostAttachmentsHandler) ReorderAll(c *fiber.Ctx) error {
+	post, err := h.loadPostOrErr(c)
+	if err != nil {
+		return err
+	}
+	if terminalForMutations(post.Status) {
+		return fiber.NewError(fiber.StatusConflict, "post is in a terminal publishing state and its attachments are immutable")
+	}
+
+	var req reorderAllRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	if len(req.IDs) == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "ids is required")
+	}
+
+	current, err := h.repo.ListByPostID(c.Context(), post.ID)
+	if err != nil {
+		return err
+	}
+	// The ordered ids must be exactly the post's current attachments — same
+	// count, same members, no duplicates — so the renumber covers every row and
+	// none is left in the temporary offset range.
+	if len(req.IDs) != len(current) {
+		return fiber.NewError(fiber.StatusBadRequest, "ids must list every attachment of the post exactly once")
+	}
+	valid := make(map[string]bool, len(current))
+	for i := range current {
+		valid[current[i].ID] = true
+	}
+	seen := make(map[string]bool, len(req.IDs))
+	for _, id := range req.IDs {
+		if !valid[id] || seen[id] {
+			return fiber.NewError(fiber.StatusBadRequest, "ids must list every attachment of the post exactly once")
+		}
+		seen[id] = true
+	}
+
+	if err := h.repo.ReorderPositions(c.Context(), post.ID, req.IDs); err != nil {
+		return err
+	}
+
+	updated, err := h.repo.ListByPostID(c.Context(), post.ID)
+	if err != nil {
+		return err
+	}
+	out := listResponse{
+		Attachments:        make([]attachmentResponse, 0, len(updated)),
+		PlatformValidation: platforms.ValidatePostAttachments(updated, post.Platform),
+	}
+	for i := range updated {
+		h.hydratePresigned(c, &updated[i])
+		out.Attachments = append(out.Attachments, attachmentResponse{
+			PostAttachment:     &updated[i],
+			PlatformValidation: platforms.ValidateAttachment(&updated[i], post.Platform),
+		})
+	}
+	return c.JSON(out)
 }
 
 // Delete godoc
