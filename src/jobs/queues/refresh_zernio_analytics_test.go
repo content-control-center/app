@@ -13,7 +13,8 @@ import (
 	"github.com/ogen-app/ogen/src/repository"
 )
 
-// fakeAnalyticsRepo records upserts for assertions.
+// fakeAnalyticsRepo records inserts for assertions. Append-only in production;
+// the fake keeps the latest row per post_id, which is all these tests assert on.
 type fakeAnalyticsRepo struct {
 	mu       sync.Mutex
 	upserted map[string]*models.PostAnalytics
@@ -23,7 +24,7 @@ func newFakeAnalyticsRepo() *fakeAnalyticsRepo {
 	return &fakeAnalyticsRepo{upserted: map[string]*models.PostAnalytics{}}
 }
 
-func (r *fakeAnalyticsRepo) Upsert(_ context.Context, a *models.PostAnalytics) error {
+func (r *fakeAnalyticsRepo) Insert(_ context.Context, a *models.PostAnalytics) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	cp := *a

@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/uptrace/bun"
 
@@ -71,6 +72,41 @@ func main() {
 			} else {
 				analyticsDB = adb
 				defer analyticsDB.Close()
+
+				// CON-125: one-time, idempotent backfills into the analytics DB.
+				// Best-effort — never fatal to boot. Each runs under a bounded
+				// context so a slow/unresponsive analytics DB can't hang boot; the
+				// backfills are restart-safe, so a timed-out run simply resumes on
+				// the next boot.
+				const backfillTimeout = 2 * time.Minute
+
+				// Track B: legacy main-DB post_analytics → analytics DB snapshots.
+				// The legacy table is retained until a separate later migration.
+				func() {
+					ctx, cancel := context.WithTimeout(context.Background(), backfillTimeout)
+					defer cancel()
+					if n, berr := repository.BackfillPostAnalytics(ctx, db, adb); berr != nil {
+						slog.Warn("post_analytics backfill failed (non-fatal)",
+							logging.AttrComponent, "boot", logging.AttrError, berr)
+					} else if n > 0 {
+						slog.Info("post_analytics backfilled",
+							logging.AttrComponent, "boot", "rows", n)
+					}
+				}()
+
+				// Historical post_logs audit trail → activity_events (curated to
+				// the activity taxonomy).
+				func() {
+					ctx, cancel := context.WithTimeout(context.Background(), backfillTimeout)
+					defer cancel()
+					if n, berr := repository.BackfillPostLogsToActivity(ctx, db, adb); berr != nil {
+						slog.Warn("post_logs → activity_events backfill failed (non-fatal)",
+							logging.AttrComponent, "boot", logging.AttrError, berr)
+					} else if n > 0 {
+						slog.Info("post_logs migrated to activity_events",
+							logging.AttrComponent, "boot", "rows", n)
+					}
+				}()
 			}
 		}
 	}

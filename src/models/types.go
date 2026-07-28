@@ -58,6 +58,41 @@ func (s *CampaignPlatforms) Scan(src any) error {
 	}
 }
 
+// JSONMap is a free-form map[string]any that serialises as a JSON object in a
+// jsonb column. Used for the activity_events payload (CON-125), where each
+// activity type carries its own small bag of fields.
+type JSONMap map[string]any
+
+func (m JSONMap) Value() (driver.Value, error) {
+	if m == nil {
+		return nil, nil
+	}
+	b, err := json.Marshal(m)
+	return string(b), err
+}
+
+func (m *JSONMap) Scan(src any) error {
+	switch v := src.(type) {
+	case string:
+		if v == "" {
+			*m = nil
+			return nil
+		}
+		return json.Unmarshal([]byte(v), m)
+	case []byte:
+		if len(v) == 0 {
+			*m = nil
+			return nil
+		}
+		return json.Unmarshal(v, m)
+	case nil:
+		*m = nil
+		return nil
+	default:
+		return fmt.Errorf("JSONMap: cannot scan %T", src)
+	}
+}
+
 // PostTypeMap is a map[string]string that serialises as a JSON object in a
 // jsonb column. Keys are post-type slugs, values are display names.
 type PostTypeMap map[string]string

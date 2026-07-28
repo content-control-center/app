@@ -8,6 +8,7 @@ import (
 
 	"github.com/riverqueue/river"
 
+	"github.com/ogen-app/ogen/src/activity"
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/post_actions/logs"
@@ -135,6 +136,11 @@ func (p *PollZernioStatusProcessor) Process(ctx context.Context, task PollZernio
 				"published_at": now,
 				"platforms":    job.Platforms,
 			}))
+		p.Deps.ActivityRecorder.Record(ctx, activity.CategoryPublish, "publish_succeeded",
+			activity.WithEntity("post", post.ID),
+			activity.WithSource(activity.SourceJob),
+			activity.WithStatus(string(from)+"->"+string(post.Status)),
+		)
 	case zernio.JobStatusFailed, zernio.JobStatusPartial:
 		// `partial` = some platforms succeeded, others failed. Per
 		// CON-69 we treat this as Failed for the MVP; per-platform
@@ -152,6 +158,12 @@ func (p *PollZernioStatusProcessor) Process(ctx context.Context, task PollZernio
 				"zernio_status": job.Status,
 				"platforms":     job.Platforms,
 			}))
+		p.Deps.ActivityRecorder.Record(ctx, activity.CategoryPublish, "publish_failed",
+			activity.WithEntity("post", post.ID),
+			activity.WithSource(activity.SourceJob),
+			activity.WithStatus(string(from)+"->"+string(post.Status)),
+			activity.WithPayload(map[string]any{"zernio_status": string(job.Status)}),
+		)
 	default:
 		// Defensive: unknown terminal state.
 		appendLog(ctx, p.Deps, post.ID, models.PostLogEventZernioPoll, post.Status, post.Status,

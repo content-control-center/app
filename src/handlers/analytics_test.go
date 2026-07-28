@@ -2,6 +2,7 @@ package handlers_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
 
+	"github.com/ogen-app/ogen/src/database"
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
@@ -32,6 +34,11 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 
 	BeforeAll(func() {
 		db = mustOpenTestDBWithMigrations()
+		// CON-125 Track B: post_analytics_snapshots lives in the analytics
+		// migration set. In tests one physical DB holds both sets (the table
+		// names don't collide), so the analytics repo is pointed at the same
+		// pool after applying the analytics migrations.
+		Expect(database.MigrateAnalytics(context.Background(), db)).To(Succeed())
 	})
 
 	BeforeEach(func() {
@@ -92,7 +99,7 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 
 	AfterEach(func() {
 		ctx := tenantCtx()
-		_, _ = db.NewDelete().TableExpr("post_analytics").Where("1 = 1").Exec(ctx)
+		_, _ = db.NewDelete().TableExpr("post_analytics_snapshots").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("posts").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("campaigns").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(ctx)
@@ -119,18 +126,24 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 	}
 
 	seedSnapshot := func(postID, pubPostID string, impressions, likes int, rate float64) {
-		Expect(analyticsRepo.Upsert(tenantCtx(), &models.PostAnalytics{
+		id, err := models.NewID()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(analyticsRepo.Insert(tenantCtx(), &models.PostAnalytics{
+			ID:              id,
 			PostID:          postID,
 			PublisherPostID: pubPostID,
-			Impressions:     impressions,
-			Likes:           likes,
-			EngagementRate:  rate,
+			Publisher:       models.PublisherZernio,
+			// Denormalised platform name (was joined from platforms.name).
+			Platform:       "LinkedIn",
+			Impressions:    impressions,
+			Likes:          likes,
+			EngagementRate: rate,
 			PlatformAnalytics: models.PlatformAnalyticsList{
 				{Platform: "linkedin", SyncStatus: "synced", Analytics: models.PostAnalyticsMetrics{Impressions: impressions, Likes: likes}},
 			},
-			SyncStatus:      "synced",
-			LastRefreshedAt: time.Now().UTC(),
-			RawJSON:         "{}",
+			SyncStatus: "synced",
+			RawJSON:    "{}",
+			OccurredAt: time.Now().UTC(),
 		})).To(Succeed())
 	}
 

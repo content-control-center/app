@@ -12,6 +12,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/valyala/fasthttp"
 
+	"github.com/ogen-app/ogen/src/activity"
 	"github.com/ogen-app/ogen/src/campaign_actions/overview"
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/consistency"
@@ -68,6 +69,33 @@ type CampaignsHandler struct {
 	// Gated by isContentPlanReady (same Anthropic key); nil → the endpoints 503.
 	checkBrief func(ctx context.Context, campaignID string, onEvent consistency.OnEventFunc) (*consistency.BriefReview, error)
 	checkPosts func(ctx context.Context, req consistency.PostsCheckRequest, onEvent consistency.OnEventFunc) (*consistency.PostsReview, error)
+	// activity records CON-125 user-activity events (campaign_created,
+	// content_generated, …). nil is a no-op (analytics disabled / fixtures).
+	// Wired via SetActivityRecorder.
+	activity *activity.Recorder
+}
+
+// SetActivityRecorder wires the CON-125 activity recorder. nil (analytics
+// disabled) makes every activity emission a no-op.
+func (h *CampaignsHandler) SetActivityRecorder(r *activity.Recorder) {
+	h.activity = r
+}
+
+// recordActivity emits a best-effort CON-125 activity event. Tenant + user are
+// resolved from the request context (set by the auth middleware); source
+// defaults to api and can be overridden by a later option.
+func (h *CampaignsHandler) recordActivity(c *fiber.Ctx, category, typ string, opts ...activity.Option) {
+	h.activity.Record(c.Context(), category, typ,
+		append([]activity.Option{activity.WithSource(activity.SourceAPI)}, opts...)...)
+}
+
+// timePtrEqual compares two optional timestamps by value (the fields are
+// *time.Time, so == would compare pointers).
+func timePtrEqual(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Equal(*b)
 }
 
 // SetOverviewService wires the campaign overview service (CON-113). Kept as a
@@ -244,6 +272,10 @@ func (h *CampaignsHandler) Create(c *fiber.Ctx) error {
 	if err := h.repo.Create(c.Context(), campaign); err != nil {
 		return err
 	}
+	h.recordActivity(c, activity.CategoryCampaign, "campaign_created",
+		activity.WithEntity("campaign", campaign.ID),
+		activity.WithPayload(map[string]any{"status": string(campaign.Status), "campaign_type_id": campaign.CampaignTypeID}),
+	)
 	return c.Status(fiber.StatusCreated).JSON(campaign)
 }
 
@@ -307,6 +339,10 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 		return err
 	}
 
+	// Snapshot the fields we emit change-events for before overwriting them.
+	prevStatus := campaign.Status
+	prevStart, prevEnd := campaign.StartDate, campaign.EndDate
+
 	campaign.Name = req.Name
 	campaign.Description = req.Description
 	campaign.TargetPersona = req.TargetPersona
@@ -329,6 +365,21 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 	if err := h.repo.Update(c.Context(), campaign); err != nil {
 		return err
 	}
+	h.recordActivity(c, activity.CategoryCampaign, "campaign_updated",
+		activity.WithEntity("campaign", campaign.ID),
+		activity.WithStatus(string(campaign.Status)),
+	)
+	if prevStatus != campaign.Status {
+		h.recordActivity(c, activity.CategoryCampaign, "campaign_status_changed",
+			activity.WithEntity("campaign", campaign.ID),
+			activity.WithStatus(string(prevStatus)+"->"+string(campaign.Status)),
+		)
+	}
+	if !timePtrEqual(prevStart, campaign.StartDate) || !timePtrEqual(prevEnd, campaign.EndDate) {
+		h.recordActivity(c, activity.CategoryCampaign, "campaign_dates_changed",
+			activity.WithEntity("campaign", campaign.ID),
+		)
+	}
 	return c.JSON(campaign)
 }
 
@@ -350,6 +401,9 @@ func (h *CampaignsHandler) Delete(c *fiber.Ctx) error {
 	if !deleted {
 		return fiber.NewError(fiber.StatusNotFound, "campaign not found")
 	}
+	h.recordActivity(c, activity.CategoryCampaign, "campaign_deleted",
+		activity.WithEntity("campaign", c.Params("id")),
+	)
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
@@ -394,6 +448,11 @@ func (h *CampaignsHandler) GenerateDraft(c *fiber.Ctx) error {
 	c.Set("Cache-Control", "no-cache")
 	c.Set("Connection", "keep-alive")
 	c.Set("X-Accel-Buffering", "no")
+
+	h.recordActivity(c, activity.CategoryCampaign, "content_generated",
+		activity.WithEntity("campaign", campaign.ID),
+		activity.WithPayload(map[string]any{"mode": "generate_draft"}),
+	)
 
 	campaignID := campaign.ID
 	generateDraft := h.generateDraft
@@ -494,6 +553,10 @@ func (h *CampaignsHandler) EnrichBrief(c *fiber.Ctx) error {
 	c.Set("Connection", "keep-alive")
 	c.Set("X-Accel-Buffering", "no")
 
+	h.recordActivity(c, activity.CategoryCampaign, "brief_enriched",
+		activity.WithEntity("campaign", campaign.ID),
+	)
+
 	req := enrich_brief.EnrichBriefRequest{CampaignID: campaign.ID, Instruction: body.Instruction}
 	enrichBrief := h.enrichBrief
 	flowCtx := tenantctx.With(context.Background(), session.TenantID)
@@ -573,6 +636,11 @@ func (h *CampaignsHandler) Assistant(c *fiber.Ctx) error {
 	c.Set("Cache-Control", "no-cache")
 	c.Set("Connection", "keep-alive")
 	c.Set("X-Accel-Buffering", "no")
+
+	h.recordActivity(c, activity.CategoryAIFlow, "campaign_assistant_turn",
+		activity.WithEntity("campaign", c.Params("id")),
+		activity.WithSource(activity.SourceAssistant),
+	)
 
 	campaignID := c.Params("id")
 	instruction := req.Instruction
@@ -734,6 +802,11 @@ func (h *CampaignsHandler) GeneratePosts(c *fiber.Ctx) error {
 	c.Set("Connection", "keep-alive")
 	c.Set("X-Accel-Buffering", "no")
 
+	h.recordActivity(c, activity.CategoryCampaign, "content_generated",
+		activity.WithEntity("campaign", c.Params("id")),
+		activity.WithPayload(map[string]any{"mode": "generate_posts", "count": body.Count}),
+	)
+
 	session := c.Locals("session").(*models.Session)
 	flowCtx := tenantctx.With(context.Background(), session.TenantID)
 	generatePosts := h.generatePosts
@@ -818,6 +891,10 @@ func (h *CampaignsHandler) BriefReview(c *fiber.Ctx) error {
 
 	session := c.Locals("session").(*models.Session)
 	flowCtx := tenantctx.With(context.Background(), session.TenantID)
+	h.recordActivity(c, activity.CategoryAIFlow, "brief_review",
+		activity.WithEntity("campaign", c.Params("id")),
+	)
+
 	checkBrief := h.checkBrief
 	campaignID := c.Params("id")
 
@@ -892,6 +969,10 @@ func (h *CampaignsHandler) PostsReview(c *fiber.Ctx) error {
 
 	session := c.Locals("session").(*models.Session)
 	flowCtx := tenantctx.With(context.Background(), session.TenantID)
+	h.recordActivity(c, activity.CategoryAIFlow, "posts_review",
+		activity.WithEntity("campaign", c.Params("id")),
+	)
+
 	checkPosts := h.checkPosts
 	req := consistency.PostsCheckRequest{CampaignID: c.Params("id"), Max: body.Max}
 

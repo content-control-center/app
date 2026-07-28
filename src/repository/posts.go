@@ -196,7 +196,10 @@ func (r *postRepository) ListWithPublisherPostID(ctx context.Context) ([]models.
 	var posts []models.Post
 	err := r.db.NewSelect().
 		Model(&posts).
-		Column("id", "tenant_id", "publisher_post_id").
+		// title / published_at / platform_id / publisher are denormalised onto
+		// the analytics snapshot at refresh time (CON-125 Track B), so the
+		// overview read needs no cross-DB join back to posts/platforms.
+		Column("id", "tenant_id", "publisher_post_id", "title", "published_at", "platform_id", "publisher").
 		Where("po.publisher = ?", models.PublisherZernio).
 		Where("po.publisher_post_id IS NOT NULL").
 		Where("po.publisher_post_id <> ''").

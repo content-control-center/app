@@ -128,13 +128,28 @@ func (p *RefreshZernioAnalyticsProcessor) refresh(ctx context.Context, now time.
 	if len(posts) == 0 {
 		return 0, nil
 	}
-	// publisher_post_id → post_id match map. Zernio returns analytics for
-	// every late post on the account; we upsert only the ones Ogen owns.
+	// Resolve platform_id → name once per tick (platforms is a small seeded
+	// reference table) so each snapshot can carry the denormalised platform
+	// name (CON-125 Track B). Best-effort: a lookup failure leaves names empty
+	// rather than failing the whole tick.
+	platformName := map[string]string{}
+	if p.Deps.PlatformRepo != nil {
+		if plats, perr := p.Deps.PlatformRepo.List(ctx); perr == nil {
+			for _, pl := range plats {
+				platformName[pl.ID] = pl.Name
+			}
+		} else {
+			slog.WarnContext(ctx, "analytics refresh: platform list failed; platform names left empty", logging.AttrComponent, "jobs.refresh_analytics", logging.AttrError, perr)
+		}
+	}
+	// publisher_post_id → post_id match map, plus the per-post fields we
+	// denormalise onto the snapshot. Zernio returns analytics for every late
+	// post on the account; we write only the ones Ogen owns.
 	byPublisherID := make(map[string]string, len(posts))
-	tenantByPostID := make(map[string]string, len(posts))
+	postByID := make(map[string]models.Post, len(posts))
 	for _, post := range posts {
 		byPublisherID[post.PublisherPostID] = post.ID
-		tenantByPostID[post.ID] = post.TenantID
+		postByID[post.ID] = post
 	}
 
 	from := now.AddDate(0, 0, -p.windowDays()).Format("2006-01-02")
@@ -159,12 +174,17 @@ func (p *RefreshZernioAnalyticsProcessor) refresh(ctx context.Context, now time.
 			if postID == "" {
 				continue
 			}
-			// Upsert + event within the post's tenant (CON-97 PR4); the post
+			// Append + event within the post's tenant (CON-97 PR4); the post
 			// list above ran cross-tenant under the job's system context.
-			pctx := tenantctx.With(ctx, tenantByPostID[postID])
-			snapshot := buildSnapshot(postID, publisherPostID, &items[i], now)
-			if uerr := p.Deps.AnalyticsRepo.Upsert(pctx, snapshot); uerr != nil {
-				slog.ErrorContext(pctx, "analytics upsert failed", logging.AttrComponent, "jobs.refresh_analytics", "post_id", postID, logging.AttrError, uerr)
+			post := postByID[postID]
+			pctx := tenantctx.With(ctx, post.TenantID)
+			snapshot, berr := buildSnapshot(post, publisherPostID, platformName[post.PlatformID], &items[i], now)
+			if berr != nil {
+				slog.ErrorContext(pctx, "analytics snapshot build failed", logging.AttrComponent, "jobs.refresh_analytics", "post_id", postID, logging.AttrError, berr)
+				continue
+			}
+			if uerr := p.Deps.AnalyticsRepo.Insert(pctx, snapshot); uerr != nil {
+				slog.ErrorContext(pctx, "analytics insert failed", logging.AttrComponent, "jobs.refresh_analytics", "post_id", postID, logging.AttrError, uerr)
 				continue
 			}
 			upserts++
@@ -197,13 +217,25 @@ func (p *RefreshZernioAnalyticsProcessor) matchPostID(byPublisherID map[string]s
 	return "", ""
 }
 
-// buildSnapshot maps a Zernio analytics item onto the persisted model.
-// publisherPostID is the matched key from the local post (the join id),
-// kept consistent with posts.publisher_post_id.
-func buildSnapshot(postID, publisherPostID string, item *zernio.AnalyticsItem, now time.Time) *models.PostAnalytics {
+// buildSnapshot maps a Zernio analytics item onto a new append-only snapshot
+// row (CON-125 Track B). publisherPostID is the matched key from the local post
+// (kept consistent with posts.publisher_post_id); platformName is the resolved
+// display name for the post's platform. The post's publisher/title/published_at
+// are denormalised so the overview read needs no cross-DB join. A fresh id and
+// occurred_at (the refresh time) make each tick a distinct row.
+func buildSnapshot(post models.Post, publisherPostID, platformName string, item *zernio.AnalyticsItem, now time.Time) (*models.PostAnalytics, error) {
+	id, err := models.NewID()
+	if err != nil {
+		return nil, err
+	}
 	a := &models.PostAnalytics{
-		PostID:             postID,
+		ID:                 id,
+		PostID:             post.ID,
 		PublisherPostID:    publisherPostID,
+		Publisher:          post.Publisher,
+		Platform:           platformName,
+		Title:              post.Title,
+		PublishedAt:        post.PublishedAt,
 		Impressions:        item.Analytics.Impressions,
 		Reach:              item.Analytics.Reach,
 		Likes:              item.Analytics.Likes,
@@ -216,10 +248,10 @@ func buildSnapshot(postID, publisherPostID string, item *zernio.AnalyticsItem, n
 		PlatformAnalytics:  mapPlatformAnalytics(item.PlatformAnalytics),
 		SyncStatus:         item.SyncStatus,
 		MetricsLastUpdated: item.Analytics.LastUpdated,
-		LastRefreshedAt:    now,
 		RawJSON:            rawOrEmpty(item.Raw),
+		OccurredAt:         now,
 	}
-	return a
+	return a, nil
 }
 
 func mapPlatformAnalytics(in []zernio.PlatformAnalytics) models.PlatformAnalyticsList {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/riverqueue/river"
 
+	"github.com/ogen-app/ogen/src/activity"
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
@@ -50,10 +51,11 @@ const FailureReasonReconciliationTimeout = "reconciliation_timeout"
 // by a River PeriodicJob.
 type ReconcileScheduledPostsProcessor struct {
 	river.WorkerDefaults[ReconcileScheduledPostsTask]
-	Repo    ReconcilePostRepo
-	LogRepo ReconcileLogRepo
-	Grace   time.Duration // how long after scheduled_at before timing out
-	Limit   int           // max posts to process per tick (defaults to 100)
+	Repo     ReconcilePostRepo
+	LogRepo  ReconcileLogRepo
+	Activity *activity.Recorder // CON-125 reconciliation_timeout events; nil = no-op
+	Grace    time.Duration      // how long after scheduled_at before timing out
+	Limit    int                // max posts to process per tick (defaults to 100)
 }
 
 // Work is the River entrypoint; it delegates to Process.
@@ -72,9 +74,10 @@ func (p *ReconcileScheduledPostsProcessor) Timeout(*river.Job[ReconcileScheduled
 func init() {
 	register(func(w *river.Workers, d Deps) {
 		river.AddWorker(w, &ReconcileScheduledPostsProcessor{
-			Repo:    d.Zernio.PostRepo,
-			LogRepo: d.Zernio.PostLogRepo,
-			Grace:   d.ReconcileGrace,
+			Repo:     d.Zernio.PostRepo,
+			LogRepo:  d.Zernio.PostLogRepo,
+			Activity: d.Zernio.ActivityRecorder,
+			Grace:    d.ReconcileGrace,
 		})
 	})
 }
@@ -141,6 +144,11 @@ func (p *ReconcileScheduledPostsProcessor) Process(ctx context.Context, _ Reconc
 				"publisher_post_id":     post.PublisherPostID,
 			})),
 		})
+		p.Activity.Record(pctx, activity.CategoryPublish, "reconciliation_timeout",
+			activity.WithEntity("post", post.ID),
+			activity.WithSource(activity.SourceJob),
+			activity.WithStatus(string(from)+"->"+string(to)),
+		)
 	}
 	if len(stuck) > 0 {
 		jobs.ReconciliationTimeouts.Add(int64(len(stuck)))

@@ -13,6 +13,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/uptrace/bun"
 
+	"github.com/ogen-app/ogen/src/activity"
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/tenantctx"
@@ -37,6 +39,10 @@ type TenantsHandler struct {
 	cookieName   string
 	secureCookie bool
 	auth         fiber.Handler
+	// activity records CON-125 authentication events (signup, tenant_updated).
+	// Signup runs outside tenant scope, so it builds an explicit context. nil is
+	// a no-op. Wired via SetActivityRecorder.
+	activity *activity.Recorder
 }
 
 func NewTenantsHandler(db *bun.DB, tenantRepo repository.TenantRepository, userRepo repository.UserRepository, profileJobs ProfileBootstrapEnqueuer, cookieName string, secureCookie bool, auth fiber.Handler) *TenantsHandler {
@@ -50,6 +56,9 @@ func NewTenantsHandler(db *bun.DB, tenantRepo repository.TenantRepository, userR
 		auth:         auth,
 	}
 }
+
+// SetActivityRecorder wires the CON-125 activity recorder (nil-safe no-op).
+func (h *TenantsHandler) SetActivityRecorder(r *activity.Recorder) { h.activity = r }
 
 func (h *TenantsHandler) Register(app *fiber.App) {
 	app.Post("/api/tenants", h.Signup) // public self-service signup
@@ -174,6 +183,12 @@ func (h *TenantsHandler) Signup(c *fiber.Ctx) error {
 		SameSite: "Lax",
 	})
 
+	h.activity.Record(
+		logging.WithUserID(tenantctx.With(c.Context(), tenantID), user.ID),
+		activity.CategoryAuthentication, "signup",
+		activity.WithEntity("tenant", tenantID), activity.WithSource(activity.SourceAPI),
+	)
+
 	return c.Status(fiber.StatusCreated).JSON(signupResponse{Tenant: tenant, User: user, Session: session})
 }
 
@@ -250,6 +265,8 @@ func (h *TenantsHandler) Update(c *fiber.Ctx) error {
 	if err := h.tenantRepo.Update(c.Context(), tenant); err != nil {
 		return err
 	}
+	h.activity.Record(c.Context(), activity.CategoryAuthentication, "tenant_updated",
+		activity.WithEntity("tenant", tenant.ID), activity.WithSource(activity.SourceAPI))
 	return c.JSON(tenant)
 }
 

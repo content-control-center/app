@@ -103,7 +103,14 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	postAttachmentRepo := repository.NewPostAttachmentRepository(db)
 	postLogRepo := repository.NewPostLogRepository(db)
 	postEvaluationRepo := repository.NewPostEvaluationRepository(db)
-	postAnalyticsRepo := repository.NewPostAnalyticsRepository(db)
+	// CON-125 Track B: post analytics snapshots live in the isolated analytics
+	// DB (append-only time series), so the repo is built on that pool. nil when
+	// analytics is disabled — the read endpoints then fail-open to 503, and the
+	// refresh job no-ops (its AnalyticsRepo is nil).
+	var postAnalyticsRepo repository.PostAnalyticsRepository
+	if analyticsDB != nil {
+		postAnalyticsRepo = repository.NewPostAnalyticsRepository(analyticsDB)
+	}
 	socialAccountRepo := repository.NewSocialAccountRepository(db)
 	autoPublishAllowlistRepo := repository.NewAutoPublishAllowlistRepository(db)
 	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
@@ -118,19 +125,29 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	usageWiring := initUsage(cfg, db, analyticsDB)
 	handlers.NewUsageHandler(usageWiring.events, usageWiring.limits, usageWiring.defaults, auth, cfg.UsageAdminToken).Register(app)
 
+	// CON-125: centralised user-activity collection. Shares the analytics pool;
+	// the recorder is nil (a no-op) when analytics is disabled. Call-sites emit
+	// via activityWiring.recorder.Record(...). Drained on shutdown below, after
+	// the job producers stop.
+	activityWiring := initActivity(cfg, analyticsDB)
+
 	// In-process event hub: backend code publishes; the SSE endpoint
 	// fans events out to authenticated clients.
 	hub := eventhub.New(eventhub.Config{})
 	handlers.NewEventsHandler(hub, sessionRepo, auth, 0).Register(app)
 
 	handlers.NewHealthHandler(db, secretStore).Register(app)
-	handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
+	usersHandler := handlers.NewUsersHandler(userRepo, settingRepo, auth)
+	usersHandler.SetActivityRecorder(activityWiring.recorder)
+	usersHandler.Register(app)
 	// CON-97 signup + CON-102 eager Zernio profile provisioning are registered
 	// below, after the River enqueuer is built (signup enqueues a bootstrap job
 	// in its transaction).
 	// Session cookies are marked Secure in production. Debug mode is the
 	// development escape hatch so localhost over plain HTTP still works.
-	handlers.NewSessionsHandler(userRepo, sessionRepo, cfg.SessionCookieName, !cfg.Debug).Register(app)
+	sessionsHandler := handlers.NewSessionsHandler(userRepo, sessionRepo, cfg.SessionCookieName, !cfg.Debug)
+	sessionsHandler.SetActivityRecorder(activityWiring.recorder)
+	sessionsHandler.Register(app)
 	handlers.NewSettingsHandler(settingRepo, auth).Register(app)
 	handlers.NewSecretsHandler(secretStore, auth).Register(app)
 	handlers.NewAutoPublishAllowlistHandler(autoPublishAllowlistRepo, auth).Register(app)
@@ -236,8 +253,10 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		SocialAccountRepo:  socialAccountRepo,
 		SettingRepo:        settingRepo,
 		AnalyticsRepo:      postAnalyticsRepo,
+		PlatformRepo:       platformRepo,
 		Client:             zernioRT.Integration.Client,
 		Recorder:           usageWiring.recorder,
+		ActivityRecorder:   activityWiring.recorder,
 		ProfileID: func(ctx context.Context) (string, error) {
 			id, _, err := zernioRT.Settings.Get(ctx, pubzernio.SettingProfileID)
 			return id, err
@@ -291,7 +310,9 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// CON-102: signup enqueues an eager Zernio profile-bootstrap job in its
 	// transaction via the enqueuer, so the registration here waits until the
 	// River client exists.
-	handlers.NewTenantsHandler(db, tenantRepo, userRepo, enqueuer, cfg.SessionCookieName, !cfg.Debug, auth).Register(app)
+	tenantsHandler := handlers.NewTenantsHandler(db, tenantRepo, userRepo, enqueuer, cfg.SessionCookieName, !cfg.Debug, auth)
+	tenantsHandler.SetActivityRecorder(activityWiring.recorder)
+	tenantsHandler.Register(app)
 
 	// Expose expvar counters for ops health dashboards (CON-69 §13).
 	// Gated by the same auth as the rest of the app so internal
@@ -319,6 +340,16 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 			sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			return usageWiring.recorder.Close(sctx)
+		})
+	}
+	// Drain the activity recorder LAST, for the same reason as the usage
+	// recorder above (it too is fed by request handlers and background workers).
+	// Nil-safe when analytics is disabled.
+	if activityWiring.recorder != nil {
+		app.Hooks().OnShutdown(func() error {
+			sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			return activityWiring.recorder.Close(sctx)
 		})
 	}
 
@@ -409,6 +440,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	campaignsHandler.SetOverviewService(campaignOverviewSvc)
 	campaignsHandler.SetGeneratePosts(gkRuntime.GeneratePosts, cfg.GeneratePostsMax)
 	campaignsHandler.SetConsistency(gkRuntime.CheckBrief, gkRuntime.CheckPosts)
+	campaignsHandler.SetActivityRecorder(activityWiring.recorder)
 	campaignsHandler.Register(app)
 	handlers.NewPlatformsHandler(platformRepo, pubs, autoPublishAllowlistRepo, auth).Register(app)
 	handlers.NewTagsHandler(tagRepo, auth).Register(app)
@@ -437,6 +469,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// CON-93 FR4: per-post analytics snapshot behind GET /api/posts/:id/analytics,
 	// served from the DB (never live-calls the publisher).
 	postsHandler.SetAnalyticsRepo(postAnalyticsRepo)
+	postsHandler.SetActivityRecorder(activityWiring.recorder)
 	// Cascade post-attachment S3 cleanup on post delete (CON-73 §2.7).
 	// FK CASCADE handles the DB rows; this hook handles the bucket.
 	postsHandler.SetOnBeforeDelete(func(ctx context.Context, postID string) error {
