@@ -170,13 +170,19 @@ func (r *postAnalyticsRepository) List(ctx context.Context, opts PostAnalyticsLi
 	// latestForTenant builds a fresh Model query restricted to the LATEST
 	// snapshot per post (append-only: many rows per post) plus the publisher /
 	// platform filters. It stays a Model query so the TenantScoped hook adds
-	// `pa.tenant_id = <ctx tenant>`; the correlated MAX subquery re-scopes to
+	// `pa.tenant_id = <ctx tenant>`; the correlated subquery re-scopes to
 	// pa.tenant_id, so it never crosses tenants. Post display fields are the
 	// denormalised columns on the snapshot — no join to posts/platforms (they
 	// live in a different database now).
+	//
+	// The match is on the (occurred_at, id) tuple, not just MAX(occurred_at),
+	// with an id tiebreaker: if two snapshots for a post share the maximum
+	// occurred_at, a plain `= MAX(occurred_at)` would match BOTH and duplicate
+	// the item / double-count the overview totals. Ordering the correlated pick
+	// by (occurred_at DESC, id DESC) LIMIT 1 guarantees exactly one row per post.
 	latestForTenant := func() *bun.SelectQuery {
 		q := r.db.NewSelect().Model((*models.PostAnalytics)(nil)).
-			Where("pa.occurred_at = (SELECT MAX(s.occurred_at) FROM post_analytics_snapshots AS s WHERE s.post_id = pa.post_id AND s.tenant_id = pa.tenant_id)")
+			Where("(pa.occurred_at, pa.id) = (SELECT s.occurred_at, s.id FROM post_analytics_snapshots AS s WHERE s.post_id = pa.post_id AND s.tenant_id = pa.tenant_id ORDER BY s.occurred_at DESC, s.id DESC LIMIT 1)")
 		if opts.Publisher != "" {
 			q = q.Where("pa.publisher = ?", opts.Publisher)
 		}

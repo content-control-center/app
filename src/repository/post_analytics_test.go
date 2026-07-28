@@ -189,6 +189,51 @@ func TestPostAnalyticsListAndOverview(t *testing.T) {
 	}
 }
 
+func TestPostAnalyticsListTieBreak(t *testing.T) {
+	db := openMigratedDB(t)
+	ctx := tenantCtx()
+	repo := repository.NewPostAnalyticsRepository(db)
+	ts := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
+
+	insertSnapID := func(id string, impressions int) {
+		if err := repo.Insert(ctx, &models.PostAnalytics{
+			ID:                id,
+			PostID:            "p1",
+			PublisherPostID:   "z-1",
+			Publisher:         models.PublisherZernio,
+			Platform:          "linkedin",
+			Impressions:       impressions,
+			PlatformAnalytics: models.PlatformAnalyticsList{},
+			SyncStatus:        "synced",
+			RawJSON:           "{}",
+			OccurredAt:        ts,
+		}); err != nil {
+			t.Fatalf("insert %s: %v", id, err)
+		}
+	}
+
+	// Two snapshots for the SAME post at the SAME occurred_at (a tie at the max).
+	// The id DESC tiebreaker must select exactly "s-b" (> "s-a").
+	insertSnapID("s-a", 100)
+	insertSnapID("s-b", 200)
+
+	items, overview, err := repo.List(ctx, repository.PostAnalyticsListOptions{
+		Publisher: models.PublisherZernio, SortBy: "impressions", Order: "desc", Page: 1, Limit: 50,
+	})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("tie produced %d items, want 1 (no duplicate)", len(items))
+	}
+	if items[0].Analytics.Impressions != 200 {
+		t.Fatalf("tiebreak winner impressions=%d, want 200 (max id)", items[0].Analytics.Impressions)
+	}
+	if overview.PostCount != 1 || overview.Impressions != 200 {
+		t.Fatalf("overview double-counted the tie: count=%d imp=%d, want 1/200", overview.PostCount, overview.Impressions)
+	}
+}
+
 func TestListWithPublisherPostID(t *testing.T) {
 	db := openMigratedDB(t)
 	ctx := tenantCtx()
