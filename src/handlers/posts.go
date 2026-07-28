@@ -613,11 +613,14 @@ func (h *PostsHandler) ConvertToManual(c *fiber.Ctx) error {
 			seen[id] = true
 			post, err := h.repo.GetByID(c.Context(), id)
 			if err != nil {
+				reason := "could not load post: " + err.Error()
 				if errors.Is(err, sql.ErrNoRows) {
-					failed = append(failed, convertFailure{ID: id, Reason: "post not found"})
-					continue
+					reason = "post not found"
 				}
-				return err
+				// Report this id and keep going — one bad id must not sink the
+				// whole batch, matching the endpoint's per-post contract.
+				failed = append(failed, convertFailure{ID: id, Reason: reason})
+				continue
 			}
 			convert(post)
 		}
