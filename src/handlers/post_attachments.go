@@ -9,7 +9,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -32,6 +34,11 @@ const (
 	// maxPDFUploadBytes is the hard cap for PDF uploads (CON-75). 100 MB
 	// matches LinkedIn's documented carousel/document upper bound.
 	maxPDFUploadBytes int64 = 100 << 20
+
+	// maxAltTextLen bounds the accessibility alt text (CON-122). Generous
+	// relative to any single platform's limit; it only guards against abuse of
+	// the unbounded TEXT column, not per-platform correctness.
+	maxAltTextLen = 2000
 
 	// pdfThumbnailDPI is the resolution used when rendering the first-page
 	// preview for PDF attachments.
@@ -86,7 +93,7 @@ func (h *PostAttachmentsHandler) Register(app *fiber.App) {
 	// .../attachments/reorder isn't captured as id="reorder" (CON-124).
 	g.Patch("/reorder", h.ReorderAll)
 	g.Get("/:id", h.Get)
-	g.Patch("/:id", h.Reorder)
+	g.Patch("/:id", h.Update)
 	g.Delete("/:id", h.Delete)
 }
 
@@ -297,9 +304,15 @@ func (h *PostAttachmentsHandler) Upload(c *fiber.Ctx) error {
 		return err
 	}
 
+	altText, err := normalizeAltText(c.FormValue("alt_text"))
+	if err != nil {
+		return err
+	}
+
 	att := &models.PostAttachment{
 		ID:        id,
 		PostID:    post.ID,
+		AltText:   altText,
 		CreatedBy: session.UserID,
 	}
 	var data []byte
@@ -413,28 +426,44 @@ func (h *PostAttachmentsHandler) Upload(c *fiber.Ctx) error {
 	})
 }
 
-type reorderRequest struct {
-	Position *int `json:"position" validate:"required"`
+// normalizeAltText trims and length-bounds accessibility alt text (CON-122).
+// The cap is in characters (runes), so multibyte alt text isn't rejected early.
+func normalizeAltText(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if utf8.RuneCountInString(s) > maxAltTextLen {
+		return "", fiber.NewError(fiber.StatusBadRequest,
+			fmt.Sprintf("alt_text exceeds %d characters", maxAltTextLen))
+	}
+	return s, nil
 }
 
-// Reorder godoc
-// @Summary      Reorder a post attachment
-// @Description  Updates the `position` of an attachment. Last-write-wins;
-// @Description  no optimistic concurrency token (CON-73 §6 MVP decision).
+// updateAttachmentRequest is the PATCH body. Both fields are optional; at least
+// one must be present. position reorders (CON-73); alt_text sets accessibility
+// text (CON-122).
+type updateAttachmentRequest struct {
+	Position *int    `json:"position"`
+	AltText  *string `json:"alt_text"`
+}
+
+// Update godoc
+// @Summary      Update a post attachment
+// @Description  Updates an attachment's `position` and/or `alt_text` (at least
+// @Description  one required). Last-write-wins; no optimistic concurrency token
+// @Description  (CON-73 §6 MVP decision).
 // @Tags         post-attachments
 // @Accept       json
 // @Produce      json
 // @Security     CookieAuth
-// @Param        post_id  path      string          true  "Post Sqid"
-// @Param        id       path      string          true  "Attachment id"
-// @Param        body     body      reorderRequest  true  "New position"
+// @Param        post_id  path      string                   true  "Post Sqid"
+// @Param        id       path      string                   true  "Attachment id"
+// @Param        body     body      updateAttachmentRequest  true  "Fields to update"
 // @Success      200      {object}  attachmentResponse
 // @Failure      400      {object}  map[string]string
 // @Failure      401      {object}  map[string]string
 // @Failure      404      {object}  map[string]string
 // @Failure      409      {object}  map[string]string
 // @Router       /api/posts/{post_id}/attachments/{id} [patch]
-func (h *PostAttachmentsHandler) Reorder(c *fiber.Ctx) error {
+func (h *PostAttachmentsHandler) Update(c *fiber.Ctx) error {
 	post, err := h.loadPostOrErr(c)
 	if err != nil {
 		return err
@@ -454,27 +483,45 @@ func (h *PostAttachmentsHandler) Reorder(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "attachment not found")
 	}
 
-	var req reorderRequest
+	var req updateAttachmentRequest
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
-	}
-	if *req.Position < 0 {
-		return fiber.NewError(fiber.StatusBadRequest, "position must be non-negative")
+	if req.Position == nil && req.AltText == nil {
+		return fiber.NewError(fiber.StatusBadRequest, "at least one of position or alt_text is required")
 	}
 
-	if err := h.repo.UpdatePosition(c.Context(), att.ID, *req.Position); err != nil {
-		// UNIQUE(post_id, position): another attachment already holds the target
-		// position. Surface as 409 (not a raw 500) and point at the atomic
-		// reorder endpoint, which renumbers the whole list in one transaction
-		// (CON-124).
-		if isUniqueViolation(err) {
-			return fiber.NewError(fiber.StatusConflict,
-				"another attachment already holds that position; PATCH /attachments/reorder to reorder the whole list atomically")
+	// Validate + normalize both inputs before any mutation, so an invalid
+	// alt_text can't leave a partially-applied update (e.g. position already
+	// changed).
+	if req.Position != nil && *req.Position < 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "position must be non-negative")
+	}
+	var altText string
+	if req.AltText != nil {
+		normalized, err := normalizeAltText(*req.AltText)
+		if err != nil {
+			return err
 		}
-		return err
+		altText = normalized
+	}
+
+	if req.Position != nil {
+		if err := h.repo.UpdatePosition(c.Context(), att.ID, *req.Position); err != nil {
+			// UNIQUE(post_id, position): another attachment already holds the
+			// target position. Surface as 409 (not a raw 500) and point at the
+			// atomic reorder endpoint (CON-124).
+			if isUniqueViolation(err) {
+				return fiber.NewError(fiber.StatusConflict,
+					"another attachment already holds that position; PATCH /attachments/reorder to reorder the whole list atomically")
+			}
+			return err
+		}
+	}
+	if req.AltText != nil {
+		if err := h.repo.UpdateAltText(c.Context(), att.ID, altText); err != nil {
+			return err
+		}
 	}
 
 	updated, err := h.repo.GetByID(c.Context(), att.ID)

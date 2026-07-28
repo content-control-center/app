@@ -22,6 +22,7 @@ type PostAttachmentRepository interface {
 	// value on success.
 	CreateAtNextPosition(ctx context.Context, att *models.PostAttachment) error
 	UpdatePosition(ctx context.Context, id string, position int) error
+	UpdateAltText(ctx context.Context, id string, altText string) error
 	// ReorderPositions renumbers the post's attachments to 0..n-1 to match
 	// orderedIDs, in one transaction, without tripping UNIQUE(post_id, position)
 	// (CON-124). Callers must pass every current attachment of the post exactly
@@ -135,6 +136,15 @@ func (r *postAttachmentRepository) UpdatePosition(ctx context.Context, id string
 	_, err := r.db.NewUpdate().
 		Model((*models.PostAttachment)(nil)).
 		Set("position = ?", position).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
+func (r *postAttachmentRepository) UpdateAltText(ctx context.Context, id string, altText string) error {
+	_, err := r.db.NewUpdate().
+		Model((*models.PostAttachment)(nil)).
+		Set("alt_text = ?", altText).
 		Where("id = ?", id).
 		Exec(ctx)
 	return err

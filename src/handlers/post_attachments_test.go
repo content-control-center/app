@@ -141,6 +141,18 @@ func multipartBodyAttachment(filename string, content []byte) (*bytes.Buffer, st
 	return &buf, w.FormDataContentType()
 }
 
+// multipartBodyAttachmentAlt is multipartBodyAttachment plus an alt_text form
+// field (CON-122).
+func multipartBodyAttachmentAlt(filename string, content []byte, altText string) (*bytes.Buffer, string) {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	fw, _ := w.CreateFormFile("file", filename)
+	_, _ = fw.Write(content)
+	_ = w.WriteField("alt_text", altText)
+	w.Close()
+	return &buf, w.FormDataContentType()
+}
+
 var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 	var (
 		app        *fiber.App
@@ -660,6 +672,73 @@ var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(pResp.StatusCode).To(Equal(409))
 		})
+
+		It("updates alt_text (CON-122)", func() {
+			postID := createPostWithPlatform(linkedinPlatformID)
+			resp, err := uploadPNG(postID, minimalPNG())
+			Expect(err).NotTo(HaveOccurred())
+			var att map[string]any
+			Expect(json.NewDecoder(resp.Body).Decode(&att)).To(Succeed())
+			id := att["id"].(string)
+
+			body, _ := json.Marshal(fiber.Map{"alt_text": "  A red bicycle  "})
+			req := httptest.NewRequest("PATCH", "/api/posts/"+postID+"/attachments/"+id, bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(authCookie)
+			pResp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pResp.StatusCode).To(Equal(200))
+
+			var got map[string]any
+			Expect(json.NewDecoder(pResp.Body).Decode(&got)).To(Succeed())
+			Expect(got["alt_text"]).To(Equal("A red bicycle")) // trimmed
+			Expect(got["position"]).To(BeEquivalentTo(0))      // untouched
+		})
+
+		It("returns 400 when neither position nor alt_text is provided", func() {
+			postID := createPostWithPlatform(linkedinPlatformID)
+			resp, err := uploadPNG(postID, minimalPNG())
+			Expect(err).NotTo(HaveOccurred())
+			var att map[string]any
+			Expect(json.NewDecoder(resp.Body).Decode(&att)).To(Succeed())
+			id := att["id"].(string)
+
+			req := httptest.NewRequest("PATCH", "/api/posts/"+postID+"/attachments/"+id, bytes.NewReader([]byte("{}")))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(authCookie)
+			pResp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pResp.StatusCode).To(Equal(400))
+		})
+
+		It("does not change position when alt_text validation fails (CON-122)", func() {
+			postID := createPostWithPlatform(linkedinPlatformID)
+			resp, err := uploadPNG(postID, minimalPNG())
+			Expect(err).NotTo(HaveOccurred())
+			var att map[string]any
+			Expect(json.NewDecoder(resp.Body).Decode(&att)).To(Succeed())
+			id := att["id"].(string)
+
+			// Valid position + invalid (over-long) alt_text: the whole request
+			// must 400 without having applied the position change.
+			tooLong := string(bytes.Repeat([]byte("a"), 2001)) // exceeds maxAltTextLen
+			body, _ := json.Marshal(fiber.Map{"position": 3, "alt_text": tooLong})
+			req := httptest.NewRequest("PATCH", "/api/posts/"+postID+"/attachments/"+id, bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(authCookie)
+			pResp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pResp.StatusCode).To(Equal(400))
+
+			getReq := httptest.NewRequest("GET", "/api/posts/"+postID+"/attachments/"+id, nil)
+			getReq.AddCookie(authCookie)
+			getResp, err := app.Test(getReq)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(getResp.StatusCode).To(Equal(200))
+			var after map[string]any
+			Expect(json.NewDecoder(getResp.Body).Decode(&after)).To(Succeed())
+			Expect(after["position"]).To(BeEquivalentTo(0)) // unchanged
+		})
 	})
 
 	// ── PATCH /api/posts/:post_id/attachments/reorder (bulk, CON-124) ────────
@@ -709,6 +788,25 @@ var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 			resp, err := app.Test(req)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.StatusCode).To(Equal(400))
+		})
+	})
+
+	// ── alt text on upload (CON-122) ────────────────────────────────────────
+
+	Describe("POST with alt_text", func() {
+		It("stores and returns alt_text supplied on upload", func() {
+			postID := createPostWithPlatform(linkedinPlatformID)
+			body, ct := multipartBodyAttachmentAlt("img.png", minimalPNG(), "A blue sky")
+			req := httptest.NewRequest("POST", "/api/posts/"+postID+"/attachments", body)
+			req.Header.Set("Content-Type", ct)
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(201))
+
+			var got map[string]any
+			Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+			Expect(got["alt_text"]).To(Equal("A blue sky"))
 		})
 	})
 
