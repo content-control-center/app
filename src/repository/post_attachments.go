@@ -22,6 +22,11 @@ type PostAttachmentRepository interface {
 	// value on success.
 	CreateAtNextPosition(ctx context.Context, att *models.PostAttachment) error
 	UpdatePosition(ctx context.Context, id string, position int) error
+	// ReorderPositions renumbers the post's attachments to 0..n-1 to match
+	// orderedIDs, in one transaction, without tripping UNIQUE(post_id, position)
+	// (CON-124). Callers must pass every current attachment of the post exactly
+	// once.
+	ReorderPositions(ctx context.Context, postID string, orderedIDs []string) error
 	Delete(ctx context.Context, id string) (bool, error)
 }
 
@@ -133,6 +138,44 @@ func (r *postAttachmentRepository) UpdatePosition(ctx context.Context, id string
 		Where("id = ?", id).
 		Exec(ctx)
 	return err
+}
+
+func (r *postAttachmentRepository) ReorderPositions(ctx context.Context, postID string, orderedIDs []string) error {
+	// Model queries below fire the TenantScoped hooks, so every statement is
+	// auto-scoped to the caller's tenant (this runs in the request context).
+	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Shift every attachment of the post into a disjoint high range first.
+		// UNIQUE(post_id, position) is checked per row, so renumbering to 0..n-1
+		// directly would transiently collide with a sibling that still holds a
+		// target position. Choosing offset = maxPos+1 keeps the shifted range
+		// (> maxPos) disjoint from the target range (0..n-1), so the shift and
+		// the renumber are both collision-free row by row.
+		var maxPos int
+		if err := tx.NewSelect().
+			Model((*models.PostAttachment)(nil)).
+			ColumnExpr("COALESCE(MAX(position), -1)").
+			Where("post_id = ?", postID).
+			Scan(ctx, &maxPos); err != nil {
+			return err
+		}
+		if _, err := tx.NewUpdate().
+			Model((*models.PostAttachment)(nil)).
+			Set("position = position + ?", maxPos+1).
+			Where("post_id = ?", postID).
+			Exec(ctx); err != nil {
+			return err
+		}
+		for i, id := range orderedIDs {
+			if _, err := tx.NewUpdate().
+				Model((*models.PostAttachment)(nil)).
+				Set("position = ?", i).
+				Where("id = ?", id).
+				Exec(ctx); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (r *postAttachmentRepository) Delete(ctx context.Context, id string) (bool, error) {
