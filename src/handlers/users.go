@@ -7,6 +7,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/ogen-app/ogen/src/activity"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
 )
@@ -19,11 +20,17 @@ type UsersHandler struct {
 	// settings become per-tenant (PR3).
 	settingRepo repository.SettingRepository
 	auth        fiber.Handler
+	// activity records CON-125 authentication-category events (user_created,
+	// user_updated, user_deleted). nil is a no-op. Wired via SetActivityRecorder.
+	activity *activity.Recorder
 }
 
 func NewUsersHandler(repo repository.UserRepository, settingRepo repository.SettingRepository, auth fiber.Handler) *UsersHandler {
 	return &UsersHandler{repo: repo, settingRepo: settingRepo, auth: auth}
 }
+
+// SetActivityRecorder wires the CON-125 activity recorder (nil-safe no-op).
+func (h *UsersHandler) SetActivityRecorder(r *activity.Recorder) { h.activity = r }
 
 func (h *UsersHandler) Register(app *fiber.App) {
 	app.Get("/api/current_user", h.auth, h.CurrentUser) // always protected
@@ -147,6 +154,8 @@ func (h *UsersHandler) Create(c *fiber.Ctx) error {
 		return err
 	}
 
+	h.activity.Record(c.Context(), activity.CategoryAuthentication, "user_created",
+		activity.WithEntity("user", user.ID), activity.WithSource(activity.SourceAPI))
 	return c.Status(fiber.StatusCreated).JSON(user)
 }
 
@@ -223,6 +232,8 @@ func (h *UsersHandler) Update(c *fiber.Ctx) error {
 		return err
 	}
 
+	h.activity.Record(c.Context(), activity.CategoryAuthentication, "user_updated",
+		activity.WithEntity("user", user.ID), activity.WithSource(activity.SourceAPI))
 	return c.JSON(user)
 }
 
@@ -248,5 +259,7 @@ func (h *UsersHandler) Delete(c *fiber.Ctx) error {
 	if !deleted {
 		return fiber.NewError(fiber.StatusNotFound, "user not found")
 	}
+	h.activity.Record(c.Context(), activity.CategoryAuthentication, "user_deleted",
+		activity.WithEntity("user", c.Params("id")), activity.WithSource(activity.SourceAPI))
 	return c.SendStatus(fiber.StatusNoContent)
 }

@@ -17,6 +17,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
 
+	"github.com/ogen-app/ogen/src/database"
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/jobs/queues"
 	"github.com/ogen-app/ogen/src/models"
@@ -62,6 +63,7 @@ var _ = Describe("Post analytics — CON-93", Ordered, func() {
 		campaignID    string
 		postRepo      repository.PostRepository
 		analyticsRepo repository.PostAnalyticsRepository
+		platformRepo  repository.PlatformRepository
 
 		zernioCalls atomic.Int64
 		zernioStub  *httptest.Server
@@ -69,6 +71,9 @@ var _ = Describe("Post analytics — CON-93", Ordered, func() {
 
 	BeforeAll(func() {
 		db = mustOpenIntegrationDB()
+		// CON-125 Track B: post_analytics_snapshots lives in the analytics
+		// migration set; apply it on the same physical DB (names don't collide).
+		Expect(database.MigrateAnalytics(context.Background(), db)).To(Succeed())
 	})
 
 	BeforeEach(func() {
@@ -111,7 +116,7 @@ var _ = Describe("Post analytics — CON-93", Ordered, func() {
 		sessionRepo := repository.NewSessionRepository(db)
 		settingRepo := repository.NewSettingRepository(db)
 		tagRepo := repository.NewTagRepository(db)
-		platformRepo := repository.NewPlatformRepository(db)
+		platformRepo = repository.NewPlatformRepository(db)
 		campaignTypeRepo := repository.NewCampaignTypeRepository(db)
 		campaignRepo := repository.NewCampaignRepository(db, tagRepo, platformRepo, campaignTypeRepo)
 		postRepo = repository.NewPostRepository(db)
@@ -157,7 +162,7 @@ var _ = Describe("Post analytics — CON-93", Ordered, func() {
 			zernioStub.Close()
 		}
 		ctx := tenantCtx()
-		for _, t := range []string{"post_analytics", "post_versions", "post_logs", "post_assistant_messages", "posts", "campaigns", "sessions", "users"} {
+		for _, t := range []string{"post_analytics_snapshots", "post_versions", "post_logs", "post_assistant_messages", "posts", "campaigns", "sessions", "users"} {
 			_, _ = db.NewDelete().TableExpr(t).Where("1 = 1").Exec(ctx)
 		}
 	})
@@ -189,6 +194,7 @@ var _ = Describe("Post analytics — CON-93", Ordered, func() {
 			Deps: queues.ZernioDeps{
 				PostRepo:      postRepo,
 				AnalyticsRepo: analyticsRepo,
+				PlatformRepo:  platformRepo,
 				Client:        zernio.NewClient(zernio.StaticKey("k"), zernioStub.URL, zernio.ClientOpts{Timeout: 5 * time.Second}),
 			},
 			Settings:   newMemSettings(),

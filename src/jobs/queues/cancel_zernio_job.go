@@ -8,6 +8,7 @@ import (
 
 	"github.com/riverqueue/river"
 
+	"github.com/ogen-app/ogen/src/activity"
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/post_actions/logs"
@@ -151,6 +152,12 @@ func (p *CancelZernioJobProcessor) transition(ctx context.Context, post *models.
 		"post cancelled and transitioned", logs.MarshalCapped(map[string]any{
 			"target": string(to),
 		}))
+	p.Deps.ActivityRecorder.Record(ctx, activity.CategoryPublish, "publish_cancelled",
+		activity.WithEntity("post", post.ID),
+		activity.WithUser(task.Actor),
+		activity.WithSource(activity.SourceJob),
+		activity.WithStatus(string(from)+"->"+string(to)),
+	)
 	return nil
 }
 

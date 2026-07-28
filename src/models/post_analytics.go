@@ -79,38 +79,48 @@ func (l *PlatformAnalyticsList) Scan(src any) error {
 	}
 }
 
-// PostAnalytics is the latest engagement snapshot for a Post published
-// through a publisher (CON-93). Exactly one row per Post — the refresh
-// queue UPSERTs on post_id, so this always reflects the most recent
-// fetch.
+// PostAnalytics is one engagement snapshot for a Post published through a
+// publisher (CON-93, migrated to an append-only time series in CON-125). It
+// lives in the isolated analytics database (table post_analytics_snapshots):
+// the refresh queue INSERTs a new row per post per tick, so many rows
+// accumulate over time and reads select the latest per post_id. Retention
+// drops old chunks.
 //
-// The aggregate metrics are denormalised columns (sortable in the
-// list/overview); PlatformAnalytics holds the per-platform breakdown as
-// JSON. MetricsLastUpdated is the publisher's own "numbers last computed"
-// timestamp; LastRefreshedAt is when Ogen last fetched — together they
-// expose staleness. RawJSON keeps the verbatim publisher item.
+// The post display fields (Publisher/Platform/Title/PublishedAt) are
+// DENORMALISED here because the overview read can no longer JOIN to
+// posts/platforms across databases; they reflect the post at refresh time.
+// The aggregate metrics are their own columns (sortable in the list/overview);
+// PlatformAnalytics holds the per-platform breakdown as JSON. MetricsLastUpdated
+// is the publisher's own "numbers last computed" timestamp; OccurredAt is when
+// Ogen fetched — together they expose staleness. RawJSON keeps the verbatim
+// publisher item. Like UsageEvent, tenant_id carries no FK in this database.
 type PostAnalytics struct {
-	bun.BaseModel `bun:"table:post_analytics,alias:pa" swaggerignore:"true"`
-	TenantScoped  // CON-97: tenant_id column + central scoping hooks
+	bun.BaseModel `bun:"table:post_analytics_snapshots,alias:pa" swaggerignore:"true"`
+	TenantScoped  // CON-97: tenant_id column + central scoping hooks (no FK in the analytics DB)
 
-	PostID             string                `bun:"post_id,pk"                                   json:"post_id"`
-	PublisherPostID    string                `bun:"publisher_post_id,notnull"                    json:"publisher_post_id"`
-	Impressions        int                   `bun:"impressions,notnull"                          json:"impressions"`
-	Reach              int                   `bun:"reach,notnull"                                json:"reach"`
-	Likes              int                   `bun:"likes,notnull"                                json:"likes"`
-	Comments           int                   `bun:"comments,notnull"                             json:"comments"`
-	Shares             int                   `bun:"shares,notnull"                               json:"shares"`
-	Saves              int                   `bun:"saves,notnull"                                json:"saves"`
-	Clicks             int                   `bun:"clicks,notnull"                               json:"clicks"`
-	Views              int                   `bun:"views,notnull"                                json:"views"`
-	EngagementRate     float64               `bun:"engagement_rate,notnull"                      json:"engagement_rate"`
-	PlatformAnalytics  PlatformAnalyticsList `bun:"platform_analytics,notnull,type:jsonb"        json:"platform_analytics"`
-	SyncStatus         string                `bun:"sync_status,notnull"                          json:"sync_status"`
-	MetricsLastUpdated *time.Time            `bun:"metrics_last_updated"                         json:"metrics_last_updated"`
-	LastRefreshedAt    time.Time             `bun:"last_refreshed_at,notnull"                    json:"last_refreshed_at"`
-	RawJSON            string                `bun:"raw_json,notnull"                             json:"-"`
-	CreatedAt          time.Time             `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
-	UpdatedAt          time.Time             `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
+	ID                 string                `bun:"id,notnull"                            json:"-"`
+	PostID             string                `bun:"post_id,notnull"                       json:"post_id"`
+	PublisherPostID    string                `bun:"publisher_post_id,notnull"             json:"publisher_post_id"`
+	Publisher          string                `bun:"publisher,notnull"                     json:"-"`
+	Platform           string                `bun:"platform,nullzero"                     json:"-"`
+	Title              string                `bun:"title,nullzero"                        json:"-"`
+	PublishedAt        *time.Time            `bun:"published_at,nullzero"                 json:"-"`
+	Impressions        int                   `bun:"impressions,notnull"                   json:"impressions"`
+	Reach              int                   `bun:"reach,notnull"                         json:"reach"`
+	Likes              int                   `bun:"likes,notnull"                         json:"likes"`
+	Comments           int                   `bun:"comments,notnull"                      json:"comments"`
+	Shares             int                   `bun:"shares,notnull"                        json:"shares"`
+	Saves              int                   `bun:"saves,notnull"                         json:"saves"`
+	Clicks             int                   `bun:"clicks,notnull"                        json:"clicks"`
+	Views              int                   `bun:"views,notnull"                         json:"views"`
+	EngagementRate     float64               `bun:"engagement_rate,notnull"               json:"engagement_rate"`
+	PlatformAnalytics  PlatformAnalyticsList `bun:"platform_analytics,notnull,type:jsonb" json:"platform_analytics"`
+	SyncStatus         string                `bun:"sync_status,nullzero"                  json:"sync_status"`
+	MetricsLastUpdated *time.Time            `bun:"metrics_last_updated"                  json:"metrics_last_updated"`
+	RawJSON            string                `bun:"raw_json,nullzero"                     json:"-"`
+	// OccurredAt is the refresh time (replaces last_refreshed_at). The handler
+	// still exposes it to clients as last_refreshed_at for API compatibility.
+	OccurredAt time.Time `bun:"occurred_at,notnull,default:current_timestamp" json:"-"`
 }
 
 // Metrics assembles the denormalised aggregate columns into the response
