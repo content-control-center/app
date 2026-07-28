@@ -47,8 +47,9 @@ BEGIN
         );
         PERFORM add_compression_policy('activity_events', INTERVAL '7 days', if_not_exists => TRUE);
 
-        -- Default 90-day retention mirrors UsageRetentionDays. Operators who
-        -- raise ACTIVITY_RETENTION_DAYS adjust this policy out of band (CON-125).
+        -- Fixed 90-day retention (CON-125). ACTIVITY_RETENTION_DAYS documents the
+        -- intended window but is NOT read here — this migration hard-codes the
+        -- policy; changing retention is a manual out-of-band ALTER by operators.
         PERFORM add_retention_policy('activity_events', INTERVAL '90 days', if_not_exists => TRUE);
     END IF;
 END $$;
