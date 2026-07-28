@@ -55,7 +55,13 @@ type Recorder struct {
 
 	ch   chan *models.ActivityEvent
 	done chan struct{}
-	wg   sync.WaitGroup
+	// stopped is closed once the loop goroutine has fully drained and exited.
+	// closeOnce guards the single close(done) + waiter launch so Close is safe
+	// to call repeatedly or concurrently (e.g. a retried shutdown after an
+	// earlier ctx-timeout) without panicking on a double close.
+	stopped   chan struct{}
+	closeOnce sync.Once
+	wg        sync.WaitGroup
 
 	batchSize    int
 	flushEvery   time.Duration
@@ -72,6 +78,7 @@ func NewRecorder(w Writer, m *Metrics, cfg Config) *Recorder {
 		metrics:      m,
 		ch:           make(chan *models.ActivityEvent, cfg.BufferSize),
 		done:         make(chan struct{}),
+		stopped:      make(chan struct{}),
 		batchSize:    cfg.BatchSize,
 		flushEvery:   cfg.FlushEvery,
 		writeTimeout: cfg.WriteTimeout,
@@ -127,18 +134,25 @@ func (r *Recorder) Record(ctx context.Context, category, typ string, opts ...Opt
 // Close stops the writer, draining queued events first. It returns when the
 // drain completes or ctx is cancelled (whichever is first), so shutdown can
 // bound how long it waits on activity collection.
+//
+// Close is idempotent and safe under concurrent callers: closeOnce guards the
+// single close(done) and launches the one waiter that closes the shared stopped
+// channel, so a repeated or racing Close (e.g. a shutdown retried after an
+// earlier ctx-timeout) never double-closes. Every caller then waits on the same
+// stopped channel or returns ctx.Err() on cancellation.
 func (r *Recorder) Close(ctx context.Context) error {
 	if r == nil {
 		return nil
 	}
-	close(r.done)
-	stopped := make(chan struct{})
-	go func() {
-		r.wg.Wait()
-		close(stopped)
-	}()
+	r.closeOnce.Do(func() {
+		close(r.done)
+		go func() {
+			r.wg.Wait()
+			close(r.stopped)
+		}()
+	})
 	select {
-	case <-stopped:
+	case <-r.stopped:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

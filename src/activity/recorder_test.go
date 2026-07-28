@@ -136,6 +136,37 @@ func TestRecorder_NilSafe(t *testing.T) {
 	}
 }
 
+func TestRecorder_CloseIdempotent(t *testing.T) {
+	r := activity.NewRecorder(&fakeWriter{}, testMetrics(), activity.Config{FlushEvery: 5 * time.Millisecond})
+
+	// Concurrent Close calls must not panic on a double close(done); each
+	// returns once the loop has drained.
+	const callers = 5
+	errs := make(chan error, callers)
+	var wg sync.WaitGroup
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			errs <- r.Close(ctx)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent Close = %v, want nil", err)
+		}
+	}
+
+	// A further sequential Close after shutdown still returns nil, no panic.
+	if err := r.Close(context.Background()); err != nil {
+		t.Fatalf("post-shutdown Close = %v, want nil", err)
+	}
+}
+
 func TestRecorder_DropsOnFullBuffer(t *testing.T) {
 	w := &fakeWriter{block: make(chan struct{})}
 	m := testMetrics()
