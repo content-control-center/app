@@ -199,7 +199,9 @@ func (p *SubmitPostProcessor) Process(ctx context.Context, task SubmitPostTask) 
 				return ferr
 			case recovered != nil && !recovered.Status.IsTerminal():
 				// Still-pending earlier job (almost always this post's own prior
-				// attempt): adopt it and keep polling.
+				// attempt): adopt it and keep polling. Count it like the main
+				// success path (persistSuccess doesn't, so this is exactly once).
+				jobs.ZernioSubmitSucceeded.Add(1)
 				appendLog(ctx, p.Deps, post.ID, models.PostLogEventZernioSubmit, post.Status, post.Status,
 					"recovered pending Zernio job after 409 dedupe", logs.MarshalCapped(recovered))
 				return p.persistSuccess(ctx, post, recovered, accountID)
