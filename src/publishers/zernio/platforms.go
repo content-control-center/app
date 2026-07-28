@@ -114,3 +114,17 @@ func LookupSupportedBySqid(sqid string) *SupportedPlatform {
 	}
 	return LookupSupportedPlatform(zernioID)
 }
+
+// LookupSqidByZernioID returns the platform.id Sqid for a Zernio
+// platform identifier (the inverse of the sqidToZernioID map), or ""
+// when the Zernio id has no mapped Sqid. CON-130 uses it to resolve
+// the {platform:"linkedin"} convert-to-manual request — which speaks
+// Zernio ids like the allowlist does — to the Sqid stored on posts.
+func LookupSqidByZernioID(zernioID string) string {
+	for sqid, zid := range sqidToZernioID {
+		if zid == zernioID {
+			return sqid
+		}
+	}
+	return ""
+}

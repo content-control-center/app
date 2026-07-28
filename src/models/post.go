@@ -32,11 +32,20 @@ const (
 // Scheduled → ReadyForPublish and Scheduled → Draft were added for
 // CON-69 §9 to support user-initiated cancellation of a scheduled post
 // before Zernio publishes it.
+//
+// Scheduled → ScheduledForManualPublish and ScheduledForManualPublish →
+// Draft were added for CON-130. The first is the direct edge the
+// convert-to-manual flow lands on after cancelling the Zernio job, so
+// turning off a platform's auto-publish allowlist no longer detours a
+// scheduled post through ready_for_publish (leaving it unscheduled) to
+// reach manual publishing. The second lets a manually-scheduled post be
+// moved straight to drafts (channel removal / post-type switch-off)
+// without writing a misleading → not_published row to the audit log.
 var ValidPostTransitions = map[PostStatus][]PostStatus{
 	PostStatusDraft:                     {PostStatusReadyForPublish},
 	PostStatusReadyForPublish:           {PostStatusScheduled, PostStatusScheduledForManualPublish, PostStatusDraft},
-	PostStatusScheduled:                 {PostStatusFailed, PostStatusPublished, PostStatusReadyForPublish, PostStatusDraft},
-	PostStatusScheduledForManualPublish: {PostStatusPublished, PostStatusNotPublished},
+	PostStatusScheduled:                 {PostStatusFailed, PostStatusPublished, PostStatusReadyForPublish, PostStatusDraft, PostStatusScheduledForManualPublish},
+	PostStatusScheduledForManualPublish: {PostStatusPublished, PostStatusNotPublished, PostStatusDraft},
 	PostStatusFailed:                    {PostStatusReadyForPublish},
 	PostStatusNotPublished:              {PostStatusReadyForPublish, PostStatusScheduledForManualPublish},
 }

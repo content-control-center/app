@@ -11,10 +11,13 @@
 # Post status state machine:
 #   draft → ready_for_publish
 #   ready_for_publish → scheduled | scheduled_for_manual_publishing | draft
-#   scheduled → failed | published
-#   scheduled_for_manual_publishing → published | not_published
+#   scheduled → failed | published | ready_for_publish | draft | scheduled_for_manual_publishing
+#   scheduled_for_manual_publishing → published | not_published | draft
 #   failed → ready_for_publish
 #   not_published → ready_for_publish | scheduled_for_manual_publishing
+# (scheduled → scheduled_for_manual_publishing and
+#  scheduled_for_manual_publishing → draft added in CON-130; the first is
+#  what the convert-to-manual flow lands on — see posts/convert-to-manual.http.)
 
 @platformId = linkedin
 
