@@ -251,6 +251,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		PostLogRepo:        postLogRepo,
 		PostAttachmentRepo: postAttachmentRepo,
 		SocialAccountRepo:  socialAccountRepo,
+		Storage:            store,
 		SettingRepo:        settingRepo,
 		AnalyticsRepo:      postAnalyticsRepo,
 		PlatformRepo:       platformRepo,
