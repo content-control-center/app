@@ -1,0 +1,197 @@
+@baseUrl = http://localhost:9001
+
+# Convert scheduled posts to manual publishing — CON-130.
+# POST /api/posts/convert-to-manual moves posts from auto-publish
+# (`scheduled`, a live Zernio job that WILL publish) to
+# `scheduled_for_manual_publishing`, keeping scheduled_at. It's the
+# server-side, disconnect-safe replacement for the old client-side
+# cancel → poll → set-manual dance.
+#
+# Why it exists: turning OFF a platform's auto-publish allowlist entry
+# does not touch posts already scheduled — their Zernio jobs still fire.
+# This endpoint converts them in one call. Each post's Zernio job is
+# cancelled by a background cancel_zernio_job task that then lands the
+# post directly on scheduled_for_manual_publishing (no detour through
+# ready_for_publish), so a post is never left unscheduled if the client
+# disconnects mid-flight.
+#
+# All endpoints require authentication. Run "Login" from
+# sessions/sessions.http first — the HTTP client stores and replays the
+# cookie automatically.
+#
+# Prerequisites:
+#   - {{campaignId}} set (run campaigns/campaigns.http → createCampaign)
+#
+# Request shape — exactly one of:
+#   { "platform": "linkedin" }       every scheduled post for the platform
+#   { "post_ids": ["...", "..."] }   an explicit set
+# `platform` is Zernio's wire id ("linkedin", "instagram", …), the same
+# vocabulary the auto-publish allowlist uses — NOT the platform Sqid.
+#
+# Response — 202 with per-post outcomes:
+#   { "converted": [id, …],                accepted (or already manual)
+#     "failed":    [{ "id", "reason" }] }   not found / not convertible
+# A post that publishes before its cancel lands is handled by the worker
+# and recorded in the Post Log; it is not an error to swallow.
+
+@linkedinPlatformId = AXqWG7U2qnpt
+@futureAt = 2030-06-15T09:00:00Z
+
+###
+# ── Setup: stage two AUTO-scheduled LinkedIn posts ────────────────────────────
+###
+
+### Setup 1 — allowlist LinkedIn so scheduling routes to AUTO (scheduled)  [protected]
+PUT {{baseUrl}}/api/auto-publish-allowlist
+Content-Type: application/json
+
+{
+  "platforms": ["linkedin"]
+}
+
+### Helper A — create a ready-to-publish LinkedIn post  [protected]
+# @name convertReadyA
+POST {{baseUrl}}/api/posts
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedinPlatformId}}",
+  "platform_post_type": "article",
+  "title": "Auto post A",
+  "content": "Body A that already satisfies the publish rules.",
+  "status": "ready_for_publish",
+  "cta_type": "none"
+}
+
+> {% client.global.set("convertAId", response.body.id) %}
+
+### Helper A — schedule it (allowlist ON → status becomes `scheduled`)  [protected]
+POST {{baseUrl}}/api/posts/{{convertAId}}/schedule
+Content-Type: application/json
+
+{
+  "scheduled_at": "{{futureAt}}"
+}
+
+### Helper B — create a second ready-to-publish LinkedIn post  [protected]
+# @name convertReadyB
+POST {{baseUrl}}/api/posts
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedinPlatformId}}",
+  "platform_post_type": "article",
+  "title": "Auto post B",
+  "content": "Body B that already satisfies the publish rules.",
+  "status": "ready_for_publish",
+  "cta_type": "none"
+}
+
+> {% client.global.set("convertBId", response.body.id) %}
+
+### Helper B — schedule it (allowlist ON → status becomes `scheduled`)  [protected]
+POST {{baseUrl}}/api/posts/{{convertBId}}/schedule
+Content-Type: application/json
+
+{
+  "scheduled_at": "{{futureAt}}"
+}
+
+### Setup 2 — turn OFF the LinkedIn allowlist (the real trigger)  [protected]
+# From here on the setting reads "not allowed", but posts A and B are
+# already `scheduled` and would still auto-publish — that's what the
+# conversion below fixes.
+PUT {{baseUrl}}/api/auto-publish-allowlist
+Content-Type: application/json
+
+{
+  "platforms": []
+}
+
+###
+# ── Convert scenarios ─────────────────────────────────────────────────────────
+###
+
+### 1. Convert EVERY scheduled post for a platform  [protected]
+# Run Setup 1 + Helper A/B (create+schedule) first, then Setup 2.
+# → 202 { converted: [A, B], failed: [] }  (each gets a cancel→manual job;
+#   the posts stay `scheduled` until the worker lands them on
+#   scheduled_for_manual_publishing — scheduled_at preserved).
+POST {{baseUrl}}/api/posts/convert-to-manual
+Content-Type: application/json
+
+{
+  "platform": "linkedin"
+}
+
+### 2. Convert an EXPLICIT set of posts  [protected]
+# Same effect as (1) but for a hand-picked set rather than a whole platform.
+POST {{baseUrl}}/api/posts/convert-to-manual
+Content-Type: application/json
+
+{
+  "post_ids": ["{{convertAId}}", "{{convertBId}}"]
+}
+
+### 3. Mixed set — per-post outcomes  [protected]
+# Create a plain DRAFT first (not schedulable → not convertible), then mix it
+# with a scheduled post. → 202 { converted: [A], failed: [{ id: draft,
+# reason: "post is not scheduled (status: draft)" }] }.
+# @name convertDraft
+POST {{baseUrl}}/api/posts
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedinPlatformId}}",
+  "platform_post_type": "article",
+  "title": "Just a draft",
+  "content": "Not scheduled.",
+  "status": "draft",
+  "cta_type": "none"
+}
+
+> {% client.global.set("convertDraftId", response.body.id) %}
+
+### 3b. …now convert the scheduled post + the draft together  [protected]
+POST {{baseUrl}}/api/posts/convert-to-manual
+Content-Type: application/json
+
+{
+  "post_ids": ["{{convertAId}}", "{{convertDraftId}}"]
+}
+
+### 4. Unknown post id is reported as failed, not fatal  [protected]
+# → 202 { converted: [], failed: [{ id: "nope", reason: "post not found" }] }
+POST {{baseUrl}}/api/posts/convert-to-manual
+Content-Type: application/json
+
+{
+  "post_ids": ["nope"]
+}
+
+### 5. Unsupported platform (expects 400)  [protected]
+POST {{baseUrl}}/api/posts/convert-to-manual
+Content-Type: application/json
+
+{
+  "platform": "myspace"
+}
+
+### 6. Neither platform nor post_ids (expects 400)  [protected]
+POST {{baseUrl}}/api/posts/convert-to-manual
+Content-Type: application/json
+
+{}
+
+### 7. Both platform and post_ids (expects 400)  [protected]
+# Exactly one selector must be set.
+POST {{baseUrl}}/api/posts/convert-to-manual
+Content-Type: application/json
+
+{
+  "platform": "linkedin",
+  "post_ids": ["{{convertAId}}"]
+}
