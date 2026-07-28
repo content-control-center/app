@@ -58,7 +58,10 @@ func TestBackfillPostLogsToActivity_WatermarkTie(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("tie row migrated %d, want 1 (>= watermark + seen-map dedup)", n)
 	}
-	count, _ := db.NewSelect().Model((*models.ActivityEvent)(nil)).Count(ctx)
+	count, err := db.NewSelect().Model((*models.ActivityEvent)(nil)).Count(ctx)
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
 	if count != 3 {
 		t.Fatalf("rows after tie = %d, want 3 (w2 not duplicated, w3 added)", count)
 	}
@@ -135,7 +138,10 @@ func TestBackfillPostLogsToActivity(t *testing.T) {
 	if n2 != 0 {
 		t.Errorf("second run migrated %d, want 0 (idempotent)", n2)
 	}
-	count, _ := db.NewSelect().Model((*models.ActivityEvent)(nil)).Count(ctx)
+	count, err := db.NewSelect().Model((*models.ActivityEvent)(nil)).Count(ctx)
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
 	if count != 2 {
 		t.Errorf("activity rows after re-run = %d want 2", count)
 	}
