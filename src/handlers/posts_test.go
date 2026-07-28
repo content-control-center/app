@@ -1851,8 +1851,6 @@ var _ = Describe("PostsHandler", Ordered, func() {
 
 	// ── CON-130: POST /api/posts/convert-to-manual ────────────────────────────
 	Describe("POST /api/posts/convert-to-manual", func() {
-		const linkedInSqid = "AXqWG7U2qnpt" // seeded LinkedIn platform Sqid
-
 		var (
 			convertApp *fiber.App
 			enq        *fakeCancelEnqueuer
