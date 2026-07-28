@@ -10,6 +10,7 @@ import (
 
 	"github.com/riverqueue/river"
 
+	"github.com/ogen-app/ogen/src/activity"
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/post_actions/logs"
@@ -208,6 +209,11 @@ func (p *SubmitPostProcessor) persistSuccess(ctx context.Context, post *models.P
 			"publisher_status":  job.Status,
 		}))
 	p.recordPublish(ctx, post, accountID)
+	p.Deps.ActivityRecorder.Record(ctx, activity.CategoryPublish, "publish_submitted",
+		activity.WithEntity("post", post.ID),
+		activity.WithSource(activity.SourceJob),
+		activity.WithStatus("submitted"),
+	)
 	p.enqueuePoll(ctx, post)
 	return nil
 }

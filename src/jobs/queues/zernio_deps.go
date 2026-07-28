@@ -5,6 +5,7 @@ package queues
 import (
 	"context"
 
+	"github.com/ogen-app/ogen/src/activity"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/usage"
@@ -37,4 +38,8 @@ type ZernioDeps struct {
 	ProfileID     ProfileIDResolver
 	// Recorder meters publish/schedule usage events (CON-86). nil = no-op.
 	Recorder *usage.Recorder
+	// ActivityRecorder emits CON-125 publish-category activity events
+	// (publish_submitted/succeeded/failed/cancelled, analytics_refreshed).
+	// nil = no-op.
+	ActivityRecorder *activity.Recorder
 }

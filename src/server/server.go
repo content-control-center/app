@@ -244,6 +244,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		AnalyticsRepo:      postAnalyticsRepo,
 		Client:             zernioRT.Integration.Client,
 		Recorder:           usageWiring.recorder,
+		ActivityRecorder:   activityWiring.recorder,
 		ProfileID: func(ctx context.Context) (string, error) {
 			id, _, err := zernioRT.Settings.Get(ctx, pubzernio.SettingProfileID)
 			return id, err
