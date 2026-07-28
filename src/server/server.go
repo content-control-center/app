@@ -130,13 +130,17 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	handlers.NewEventsHandler(hub, sessionRepo, auth, 0).Register(app)
 
 	handlers.NewHealthHandler(db, secretStore).Register(app)
-	handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
+	usersHandler := handlers.NewUsersHandler(userRepo, settingRepo, auth)
+	usersHandler.SetActivityRecorder(activityWiring.recorder)
+	usersHandler.Register(app)
 	// CON-97 signup + CON-102 eager Zernio profile provisioning are registered
 	// below, after the River enqueuer is built (signup enqueues a bootstrap job
 	// in its transaction).
 	// Session cookies are marked Secure in production. Debug mode is the
 	// development escape hatch so localhost over plain HTTP still works.
-	handlers.NewSessionsHandler(userRepo, sessionRepo, cfg.SessionCookieName, !cfg.Debug).Register(app)
+	sessionsHandler := handlers.NewSessionsHandler(userRepo, sessionRepo, cfg.SessionCookieName, !cfg.Debug)
+	sessionsHandler.SetActivityRecorder(activityWiring.recorder)
+	sessionsHandler.Register(app)
 	handlers.NewSettingsHandler(settingRepo, auth).Register(app)
 	handlers.NewSecretsHandler(secretStore, auth).Register(app)
 	handlers.NewAutoPublishAllowlistHandler(autoPublishAllowlistRepo, auth).Register(app)
@@ -298,7 +302,9 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// CON-102: signup enqueues an eager Zernio profile-bootstrap job in its
 	// transaction via the enqueuer, so the registration here waits until the
 	// River client exists.
-	handlers.NewTenantsHandler(db, tenantRepo, userRepo, enqueuer, cfg.SessionCookieName, !cfg.Debug, auth).Register(app)
+	tenantsHandler := handlers.NewTenantsHandler(db, tenantRepo, userRepo, enqueuer, cfg.SessionCookieName, !cfg.Debug, auth)
+	tenantsHandler.SetActivityRecorder(activityWiring.recorder)
+	tenantsHandler.Register(app)
 
 	// Expose expvar counters for ops health dashboards (CON-69 §13).
 	// Gated by the same auth as the rest of the app so internal
