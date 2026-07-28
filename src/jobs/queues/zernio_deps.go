@@ -8,6 +8,7 @@ import (
 	"github.com/ogen-app/ogen/src/activity"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/storage"
 	"github.com/ogen-app/ogen/src/usage"
 )
 
@@ -27,6 +28,9 @@ type ZernioDeps struct {
 	PostLogRepo        repository.PostLogRepository
 	PostAttachmentRepo repository.PostAttachmentRepository
 	SocialAccountRepo  repository.SocialAccountRepository
+	// Storage reads attachment bytes so the submit worker can upload them to
+	// Zernio's media endpoint (CON-122). nil ⇒ posts are submitted text-only.
+	Storage storage.Storage
 	// SettingRepo backs the workspace timezone lookup used to stamp the
 	// Zernio submit's Timezone field (CON-78). nil falls back to UTC.
 	SettingRepo repository.SettingRepository

@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"path"
 	"time"
 
 	"github.com/riverqueue/river"
 
 	"github.com/ogen-app/ogen/src/activity"
 	"github.com/ogen-app/ogen/src/jobs"
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/post_actions/logs"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
@@ -154,11 +157,24 @@ func (p *SubmitPostProcessor) Process(ctx context.Context, task SubmitPostTask) 
 	// the workspace timezone (CON-78) is echoed so Zernio renders the
 	// schedule in the operator's zone. Defaults to UTC when unset.
 	_, tzName := settings.WorkspaceTimezone(ctx, p.Deps.SettingRepo)
+
+	// CON-122: upload the post's attachments to Zernio and reference them as
+	// mediaItems. A failure here is transient (network / Zernio media endpoint)
+	// so River retries; media isn't lost because the post stays Scheduled.
+	mediaItems, mediaErr := p.buildMediaItems(ctx, post)
+	if mediaErr != nil {
+		jobs.ZernioSubmitRetried.Add(1)
+		appendLog(ctx, p.Deps, post.ID, models.PostLogEventTaskRetried, post.Status, post.Status,
+			"transient error uploading media to Zernio; River will retry", `{"error":"`+mediaErr.Error()+`"}`)
+		return mediaErr
+	}
+
 	req := zernio.SubmitRequest{
 		Content:      post.Content,
 		Platforms:    []zernio.PlatformVariant{{Platform: supported.ZernioID, AccountID: accountID}},
 		ScheduledFor: when,
 		Timezone:     tzName,
+		MediaItems:   mediaItems,
 	}
 
 	appendLog(ctx, p.Deps, post.ID, models.PostLogEventZernioSubmit, post.Status, post.Status,
@@ -216,6 +232,64 @@ func (p *SubmitPostProcessor) persistSuccess(ctx context.Context, post *models.P
 	)
 	p.enqueuePoll(ctx, post)
 	return nil
+}
+
+// buildMediaItems uploads each of the post's attachments to Zernio (presign →
+// PUT bytes → publicUrl) and returns the mediaItems array for the submit
+// request, in position order, carrying altText (CON-122). Nil deps
+// (Storage/PostAttachmentRepo) or no attachments ⇒ nil (a text-only post).
+// Attachments whose MIME type Zernio doesn't accept are skipped, not fatal.
+func (p *SubmitPostProcessor) buildMediaItems(ctx context.Context, post *models.Post) ([]map[string]any, error) {
+	if p.Deps.Storage == nil || p.Deps.PostAttachmentRepo == nil {
+		return nil, nil
+	}
+	atts, err := p.Deps.PostAttachmentRepo.ListByPostID(ctx, post.ID)
+	if err != nil {
+		return nil, fmt.Errorf("submit: list attachments: %w", err)
+	}
+	if len(atts) == 0 {
+		return nil, nil
+	}
+	items := make([]map[string]any, 0, len(atts))
+	for i := range atts {
+		att := atts[i]
+		mediaType := zernio.MediaType(att.MimeType)
+		if mediaType == "" {
+			slog.WarnContext(ctx, "skipping attachment: unsupported media type for Zernio",
+				logging.AttrComponent, "jobs.submit", "post_id", post.ID, "attachment_id", att.ID, "mime", att.MimeType)
+			continue
+		}
+		item, err := p.uploadMedia(ctx, &att, mediaType)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+// uploadMedia streams one attachment from our storage to Zernio (presign + PUT)
+// and returns its mediaItems descriptor {url, type, altText?}.
+func (p *SubmitPostProcessor) uploadMedia(ctx context.Context, att *models.PostAttachment, mediaType string) (map[string]any, error) {
+	rc, err := p.Deps.Storage.Download(ctx, att.S3Key)
+	if err != nil {
+		return nil, fmt.Errorf("submit: download attachment %s: %w", att.ID, err)
+	}
+	defer rc.Close()
+
+	presign, err := p.Deps.Client.PresignMedia(ctx, path.Base(att.S3Key), att.MimeType)
+	if err != nil {
+		return nil, fmt.Errorf("submit: presign media %s: %w", att.ID, err)
+	}
+	if err := p.Deps.Client.UploadMedia(ctx, presign.UploadURL, att.MimeType, rc, att.SizeBytes); err != nil {
+		return nil, fmt.Errorf("submit: upload media %s: %w", att.ID, err)
+	}
+
+	item := map[string]any{"url": presign.PublicURL, "type": mediaType}
+	if att.AltText != "" {
+		item["altText"] = att.AltText
+	}
+	return item, nil
 }
 
 // recordPublish emits a CON-86 publish/schedule usage event (one post unit)
