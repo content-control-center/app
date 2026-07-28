@@ -14,6 +14,7 @@ import (
 
 	"github.com/uptrace/bun"
 
+	"github.com/ogen-app/ogen/src/activity"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_quality"
 	"github.com/ogen-app/ogen/src/jobs/queues"
@@ -100,6 +101,10 @@ type PostsHandler struct {
 	// schedule endpoint (503) and makes the PUT branch fall back to a
 	// plain status update (test fixtures that don't wire scheduling).
 	scheduleSvc *schedule.Service
+	// activity records CON-125 user-activity events (post_created,
+	// post_scheduled, …) to the analytics store. nil is a no-op (analytics
+	// disabled / fixtures). Wired via SetActivityRecorder.
+	activity *activity.Recorder
 }
 
 // SetOnBeforeDelete registers a hook that runs before a post is
@@ -178,6 +183,20 @@ func (h *PostsHandler) SetRestoreService(s *restore.Service) {
 // back to a plain status update.
 func (h *PostsHandler) SetScheduleService(s *schedule.Service) {
 	h.scheduleSvc = s
+}
+
+// SetActivityRecorder wires the CON-125 activity recorder. nil (analytics
+// disabled) makes every activity emission a no-op.
+func (h *PostsHandler) SetActivityRecorder(r *activity.Recorder) {
+	h.activity = r
+}
+
+// recordActivity emits a best-effort CON-125 "post" activity event. Tenant +
+// user are resolved from the request context (set by the auth middleware);
+// source defaults to api and can be overridden by a later option.
+func (h *PostsHandler) recordActivity(c *fiber.Ctx, typ string, opts ...activity.Option) {
+	h.activity.Record(c.Context(), activity.CategoryPost, typ,
+		append([]activity.Option{activity.WithSource(activity.SourceAPI)}, opts...)...)
 }
 
 // logEvent appends a PostLog entry, swallowing repo errors so logging
@@ -265,6 +284,10 @@ func (h *PostsHandler) validateReadyForPublish(c *fiber.Ctx, post *models.Post, 
 			"draft → ready_for_publish blocked by platform validation",
 			logs.MarshalCapped(map[string]any{"platform_validation": errsByPlatform}),
 		)
+		h.recordActivity(c, "post_validation_failed",
+			activity.WithEntity("post", post.ID),
+			activity.WithStatus("failed"),
+		)
 		if err := c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
 			"error":               "post is not ready for publish",
 			"platform_validation": errsByPlatform,
@@ -290,6 +313,10 @@ func (h *PostsHandler) logTransition(c *fiber.Ctx, post *models.Post, prev, next
 	}
 	h.logEvent(c, post.ID, models.PostLogEventStateTransition, &prev, &next,
 		"status changed via PUT /api/posts/:id", "{}",
+	)
+	h.recordActivity(c, "post_state_transition",
+		activity.WithEntity("post", post.ID),
+		activity.WithStatus(string(prev)+"->"+string(next)),
 	)
 	if prev == models.PostStatusFailed && next == models.PostStatusReadyForPublish {
 		h.logEvent(c, post.ID, models.PostLogEventUserRetry, &prev, &next,
@@ -378,6 +405,15 @@ func (h *PostsHandler) Schedule(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	h.recordActivity(c, "post_scheduled",
+		activity.WithEntity("post", updated.ID),
+		activity.WithStatus(string(res.Status)),
+		activity.WithPayload(map[string]any{
+			"scheduled_at": req.ScheduledAt,
+			"auto_publish": res.AutoPublish,
+			"promoted":     res.Promoted,
+		}),
+	)
 	return c.JSON(fiber.Map{
 		"post":         updated,
 		"status":       string(res.Status),
@@ -459,6 +495,10 @@ func (h *PostsHandler) Cancel(c *fiber.Ctx) error {
 	h.logEvent(c, post.ID, models.PostLogEventUserCancel, &post.Status, &post.Status,
 		"user requested cancellation; cancel_zernio_job enqueued",
 		logs.MarshalCapped(map[string]any{"target": string(target)}),
+	)
+	h.recordActivity(c, "post_schedule_cancelled",
+		activity.WithEntity("post", post.ID),
+		activity.WithPayload(map[string]any{"target": string(target)}),
 	)
 
 	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
@@ -610,6 +650,10 @@ func (h *PostsHandler) validateForCreate(c *fiber.Ctx, post *models.Post) (done 
 	if !hasAnyErrors(errsByPlatform) {
 		return false, nil
 	}
+	h.recordActivity(c, "post_validation_failed",
+		activity.WithEntity("post", post.ID),
+		activity.WithStatus("failed"),
+	)
 	if err := c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
 		"error":               "post is not ready for publish",
 		"platform_validation": errsByPlatform,
@@ -725,6 +769,10 @@ func (h *PostsHandler) Create(c *fiber.Ctx) error {
 	if err := h.repo.Create(c.Context(), post); err != nil {
 		return err
 	}
+	h.recordActivity(c, "post_created",
+		activity.WithEntity("post", post.ID),
+		activity.WithPayload(map[string]any{"status": string(post.Status), "campaign_id": post.CampaignID}),
+	)
 	return c.Status(fiber.StatusCreated).JSON(post)
 }
 
@@ -785,6 +833,10 @@ func (h *PostsHandler) Clone(c *fiber.Ctx) error {
 		}
 		return err
 	}
+	h.recordActivity(c, "post_cloned",
+		activity.WithEntity("post", res.Post.ID),
+		activity.WithPayload(map[string]any{"source_post_id": c.Params("id")}),
+	)
 	return c.Status(fiber.StatusCreated).JSON(res.Post)
 }
 
@@ -905,6 +957,10 @@ func (h *PostsHandler) Update(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	h.recordActivity(c, "post_updated",
+		activity.WithEntity("post", post.ID),
+		activity.WithStatus(string(updated.Status)),
+	)
 	return c.JSON(updated)
 }
 
@@ -936,6 +992,7 @@ func (h *PostsHandler) Delete(c *fiber.Ctx) error {
 	if !deleted {
 		return fiber.NewError(fiber.StatusNotFound, "post not found")
 	}
+	h.recordActivity(c, "post_deleted", activity.WithEntity("post", id))
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
@@ -1076,6 +1133,12 @@ func (h *PostsHandler) Assess(c *fiber.Ctx) error {
 	assess := h.assessQuality
 	tenantID, _ := c.Locals(tenantctx.Key).(string)
 	flowCtx := tenantctx.With(context.Background(), tenantID)
+	// Capture the actor now; the stream writer runs after the request context
+	// may be recycled, so the activity record can't read it from c.Context().
+	var actorID string
+	if sess, ok := c.Locals("session").(*models.Session); ok && sess != nil {
+		actorID = sess.UserID
+	}
 
 	c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
 		writeEvent := func(event string, data any) {
@@ -1106,6 +1169,12 @@ func (h *PostsHandler) Assess(c *fiber.Ctx) error {
 			return
 		}
 		// "complete" is emitted by the runner itself; nothing to write here.
+		h.activity.Record(flowCtx, activity.CategoryPost, "post_quality_assessed",
+			activity.WithUser(actorID),
+			activity.WithEntity("post", postID),
+			activity.WithSource(activity.SourceAPI),
+			activity.WithStatus("success"),
+		)
 	}))
 
 	return nil
@@ -1352,6 +1421,14 @@ func (h *PostsHandler) Restore(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	h.recordActivity(c, "post_restored",
+		activity.WithEntity("post", c.Params("id")),
+		activity.WithPayload(map[string]any{
+			"restored_from_version": res.RestoredFromVersion,
+			"new_version_number":    res.NewVersionNumber,
+			"no_op":                 res.NoOp,
+		}),
+	)
 	return c.JSON(fiber.Map{
 		"post":                  updated,
 		"restored_from_version": res.RestoredFromVersion,

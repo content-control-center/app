@@ -453,6 +453,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// CON-93 FR4: per-post analytics snapshot behind GET /api/posts/:id/analytics,
 	// served from the DB (never live-calls the publisher).
 	postsHandler.SetAnalyticsRepo(postAnalyticsRepo)
+	postsHandler.SetActivityRecorder(activityWiring.recorder)
 	// Cascade post-attachment S3 cleanup on post delete (CON-73 §2.7).
 	// FK CASCADE handles the DB rows; this hook handles the bucket.
 	postsHandler.SetOnBeforeDelete(func(ctx context.Context, postID string) error {

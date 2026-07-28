@@ -2,6 +2,16 @@ package activity
 
 import "github.com/ogen-app/ogen/src/models"
 
+// Category values name the primary activity tag — the main slice dimension
+// (CON-125 §8). Free-form is allowed, but call-sites should use these.
+const (
+	CategoryAuthentication = "authentication"
+	CategoryPost           = "post"
+	CategoryCampaign       = "campaign"
+	CategoryAIFlow         = "ai_flow"
+	CategoryPublish        = "publish"
+)
+
 // Source values name how an activity was triggered. Free-form is allowed, but
 // prefer these so the dimension stays queryable.
 const (
