@@ -28,6 +28,42 @@ func seedPostLog(t *testing.T, db *bun.DB, id, postID string, evt models.PostLog
 	}
 }
 
+// TestBackfillPostLogsToActivity_WatermarkTie proves the watermark window is
+// `>= watermark` (not `>`): a new meaningful post_log added at the EXACT
+// watermark timestamp is still migrated on a re-run, while the row that set the
+// watermark is not duplicated (seen-map dedup).
+func TestBackfillPostLogsToActivity_WatermarkTie(t *testing.T) {
+	db := openMigratedDB(t)
+	ctx := tenantCtx()
+
+	draft := models.PostStatusDraft
+	ready := models.PostStatusReadyForPublish
+	t0 := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
+	watermarkTS := t0.Add(time.Minute)
+
+	seedPostLog(t, db, "w1", "post-1", models.PostLogEventStateTransition, "user-1", &draft, &ready, t0, "")
+	seedPostLog(t, db, "w2", "post-1", models.PostLogEventPostCloned, "user-1", nil, nil, watermarkTS, "") // sets the watermark
+
+	if n, err := repository.BackfillPostLogsToActivity(ctx, db, db); err != nil || n != 2 {
+		t.Fatalf("first run: n=%d err=%v want 2", n, err)
+	}
+
+	// A NEW meaningful row at the exact watermark timestamp (a tie).
+	seedPostLog(t, db, "w3", "post-1", models.PostLogEventPostRestored, "user-1", nil, nil, watermarkTS, "")
+
+	n, err := repository.BackfillPostLogsToActivity(ctx, db, db)
+	if err != nil {
+		t.Fatalf("re-run: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("tie row migrated %d, want 1 (>= watermark + seen-map dedup)", n)
+	}
+	count, _ := db.NewSelect().Model((*models.ActivityEvent)(nil)).Count(ctx)
+	if count != 3 {
+		t.Fatalf("rows after tie = %d, want 3 (w2 not duplicated, w3 added)", count)
+	}
+}
+
 func TestBackfillPostLogsToActivity(t *testing.T) {
 	db := openMigratedDB(t)
 	ctx := tenantCtx()

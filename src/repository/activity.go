@@ -73,12 +73,16 @@ var postLogActivityMap = map[models.PostLogEventType]struct{ category, typ strin
 // (CON-125). It maps the meaningful event types onto the live activity taxonomy
 // (see postLogActivityMap) and skips operational noise.
 //
-// It is idempotent and restart-safe: each migrated row's id is the source
-// post_log id under postLogBackfillPrefix, and the run preloads the set of
-// already-migrated ids and skips them — so a re-run (or a resumed partial run)
-// neither duplicates rows nor double-counts against the live instrumentation.
-// The read is cross-tenant (each row carries its tenant_id, preserved on insert
-// under a system context). Returns the number of rows inserted.
+// It is idempotent and restart-safe without rescanning history: it only reads
+// post_logs at/after a watermark — the newest already-migrated event_timestamp,
+// derived from the migrated rows' occurred_at (so the watermark is persisted
+// with the data itself and advances automatically as rows insert) — and dedups
+// ties at the exact watermark via a seen-map. Each migrated row's id is the
+// source post_log id under postLogBackfillPrefix. So a re-run (or a resumed
+// partial run) neither rescans old rows, duplicates rows, nor double-counts
+// against the live instrumentation. The read is cross-tenant (each row carries
+// its tenant_id, preserved on insert under a system context). Returns the number
+// of rows inserted.
 func BackfillPostLogsToActivity(ctx context.Context, mainDB, analyticsDB *bun.DB) (int, error) {
 	if mainDB == nil || analyticsDB == nil {
 		return 0, nil
@@ -97,23 +101,41 @@ func BackfillPostLogsToActivity(ctx context.Context, mainDB, analyticsDB *bun.DB
 		Summary        string                  `bun:"summary"`
 	}
 
+	// Watermark: the newest already-migrated post_log timestamp (occurred_at on a
+	// migrated row IS its source event_timestamp). Only rows at/after it need
+	// reconsidering; everything older was migrated on an earlier boot. COALESCE
+	// handles the first run (nothing migrated yet ⇒ epoch ⇒ scan everything).
+	var watermark time.Time
+	if err := analyticsDB.NewRaw(
+		`SELECT COALESCE(MAX(occurred_at), 'epoch'::timestamptz) FROM activity_events WHERE id LIKE ?`,
+		postLogBackfillPrefix+`%`,
+	).Scan(ctx, &watermark); err != nil {
+		return 0, err
+	}
+
+	// Load only rows at/after the watermark. `>=` (not `>`) re-surfaces ties at
+	// the exact watermark timestamp, which the seen-map below dedups.
 	var logs []logRow
 	if err := mainDB.NewRaw(`
 		SELECT id, tenant_id, post_id, event_timestamp, event_type, actor,
 		       from_status, to_status, payload, summary
 		FROM post_logs
+		WHERE event_timestamp >= ?
 		ORDER BY event_timestamp
-	`).Scan(ctx, &logs); err != nil {
+	`, watermark).Scan(ctx, &logs); err != nil {
 		return 0, err
 	}
 	if len(logs) == 0 {
 		return 0, nil
 	}
 
-	// Idempotency: preload the ids already migrated (prefixed post_log ids).
+	// Idempotency at the boundary: preload the ids already migrated AT/AFTER the
+	// watermark — the only ones the windowed query can re-surface — so a row
+	// sharing the watermark timestamp is skipped, not re-inserted.
 	var migratedIDs []string
 	if err := analyticsDB.NewRaw(
-		`SELECT id FROM activity_events WHERE id LIKE ?`, postLogBackfillPrefix+`%`,
+		`SELECT id FROM activity_events WHERE id LIKE ? AND occurred_at >= ?`,
+		postLogBackfillPrefix+`%`, watermark,
 	).Scan(ctx, &migratedIDs); err != nil {
 		return 0, err
 	}
