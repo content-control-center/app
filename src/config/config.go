@@ -225,6 +225,12 @@ type Config struct {
 	// this value in the X-Admin-Token header. EMPTY (the default) FAILS CLOSED:
 	// the write route rejects everyone, so tenants cannot lift their own caps.
 	UsageAdminToken string `envconfig:"USAGE_ADMIN_TOKEN" default:""`
+
+	// ActivityRetentionDays mirrors UsageRetentionDays (CON-125): the
+	// activity_events retention policy drops chunks older than this. The current
+	// migration installs a fixed 90-day policy; operators adjust it out of band.
+	// Starts at 90 days, expandable later.
+	ActivityRetentionDays int `envconfig:"ACTIVITY_RETENTION_DAYS" default:"90"`
 }
 
 func Load() (*Config, error) {

@@ -118,6 +118,12 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	usageWiring := initUsage(cfg, db, analyticsDB)
 	handlers.NewUsageHandler(usageWiring.events, usageWiring.limits, usageWiring.defaults, auth, cfg.UsageAdminToken).Register(app)
 
+	// CON-125: centralised user-activity collection. Shares the analytics pool;
+	// the recorder is nil (a no-op) when analytics is disabled. Call-sites emit
+	// via activityWiring.recorder.Record(...). Drained on shutdown below, after
+	// the job producers stop.
+	activityWiring := initActivity(cfg, analyticsDB)
+
 	// In-process event hub: backend code publishes; the SSE endpoint
 	// fans events out to authenticated clients.
 	hub := eventhub.New(eventhub.Config{})
@@ -319,6 +325,16 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 			sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			return usageWiring.recorder.Close(sctx)
+		})
+	}
+	// Drain the activity recorder LAST, for the same reason as the usage
+	// recorder above (it too is fed by request handlers and background workers).
+	// Nil-safe when analytics is disabled.
+	if activityWiring.recorder != nil {
+		app.Hooks().OnShutdown(func() error {
+			sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			return activityWiring.recorder.Close(sctx)
 		})
 	}
 
