@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -216,14 +217,21 @@ func (c *Client) Retry(ctx context.Context, jobID string) (*Job, error) {
 	return &env.Post, nil
 }
 
-// FindByContent recovers the existing Zernio job after a 24h-dedupe
-// 409 by listing scheduled posts within a recent window and matching
-// on exact content. Used by the submit task's recovery path so the
-// owning Ogen Post still ends up with a job_id to poll.
+// FindByContent recovers the existing Zernio job after a 24h-dedupe 409 by
+// listing posts within the dedupe window and matching on exact content, so the
+// owning Ogen Post still ends up with a job_id to reason about.
 //
-// Returns nil if no match is found within the lookback window — the
-// caller should treat that as "submit truly failed" and surface to
-// the Post Log.
+// It does NOT filter by status: Zernio dedupes identical content across the
+// window regardless of what became of the earlier job (scheduled, published,
+// failed, cancelled), so the recovery search must span every status too —
+// otherwise a post whose earlier job has left `scheduled` dead-ends
+// (CON-129). The returned Job carries its Status so the caller can decide
+// whether to adopt (still pending) or report (already terminal). It paginates
+// so a busy workspace's older match isn't missed past the first page.
+//
+// Returns (nil, nil) if no match is found within the lookback window. Callers
+// should pass the exact content they submitted so the match still holds once
+// the API flattens Markdown before submit (CON-126).
 func (c *Client) FindByContent(ctx context.Context, content string, lookback time.Duration) (*Job, error) {
 	if c == nil {
 		return nil, errors.New("zernio: client is disabled")
@@ -231,19 +239,28 @@ func (c *Client) FindByContent(ctx context.Context, content string, lookback tim
 	if lookback <= 0 {
 		lookback = 24 * time.Hour
 	}
-	q := url.Values{}
-	q.Set("status", string(JobStatusScheduled))
-	q.Set("dateFrom", time.Now().UTC().Add(-lookback).Format(time.RFC3339))
-	q.Set("limit", "100")
-	q.Set("sortBy", "created-desc")
+	// maxDedupePages bounds the scan so recovery on a very busy workspace can't
+	// page unbounded; the dedupe window keeps the candidate set small anyway.
+	const maxDedupePages = 20
+	dateFrom := time.Now().UTC().Add(-lookback).Format(time.RFC3339)
+	for page := 1; page <= maxDedupePages; page++ {
+		q := url.Values{}
+		q.Set("dateFrom", dateFrom)
+		q.Set("limit", "100")
+		q.Set("sortBy", "created-desc")
+		q.Set("page", strconv.Itoa(page))
 
-	var env listEnvelope
-	if err := c.do(ctx, http.MethodGet, "/posts", q, nil, &env); err != nil {
-		return nil, err
-	}
-	for i := range env.Posts {
-		if env.Posts[i].Content == content {
-			return &env.Posts[i], nil
+		var env listEnvelope
+		if err := c.do(ctx, http.MethodGet, "/posts", q, nil, &env); err != nil {
+			return nil, err
+		}
+		for i := range env.Posts {
+			if env.Posts[i].Content == content {
+				return &env.Posts[i], nil
+			}
+		}
+		if env.Pagination.Pages == 0 || page >= env.Pagination.Pages {
+			break
 		}
 	}
 	return nil, nil
