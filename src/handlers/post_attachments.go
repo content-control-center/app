@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -423,9 +424,10 @@ func (h *PostAttachmentsHandler) Upload(c *fiber.Ctx) error {
 }
 
 // normalizeAltText trims and length-bounds accessibility alt text (CON-122).
+// The cap is in characters (runes), so multibyte alt text isn't rejected early.
 func normalizeAltText(s string) (string, error) {
 	s = strings.TrimSpace(s)
-	if len(s) > maxAltTextLen {
+	if utf8.RuneCountInString(s) > maxAltTextLen {
 		return "", fiber.NewError(fiber.StatusBadRequest,
 			fmt.Sprintf("alt_text exceeds %d characters", maxAltTextLen))
 	}
