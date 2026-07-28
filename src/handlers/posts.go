@@ -1042,6 +1042,11 @@ func (h *PostsHandler) Assistant(c *fiber.Ctx) error {
 	c.Set("Connection", "keep-alive")
 	c.Set("X-Accel-Buffering", "no")
 
+	h.activity.Record(c.Context(), activity.CategoryAIFlow, "post_assistant_turn",
+		activity.WithEntity("post", c.Params("id")),
+		activity.WithSource(activity.SourceAssistant),
+	)
+
 	postID := c.Params("id")
 	instruction := req.Instruction
 	assistant := h.assistant

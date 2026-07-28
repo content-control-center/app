@@ -891,6 +891,10 @@ func (h *CampaignsHandler) BriefReview(c *fiber.Ctx) error {
 
 	session := c.Locals("session").(*models.Session)
 	flowCtx := tenantctx.With(context.Background(), session.TenantID)
+	h.recordActivity(c, activity.CategoryAIFlow, "brief_review",
+		activity.WithEntity("campaign", c.Params("id")),
+	)
+
 	checkBrief := h.checkBrief
 	campaignID := c.Params("id")
 
@@ -965,6 +969,10 @@ func (h *CampaignsHandler) PostsReview(c *fiber.Ctx) error {
 
 	session := c.Locals("session").(*models.Session)
 	flowCtx := tenantctx.With(context.Background(), session.TenantID)
+	h.recordActivity(c, activity.CategoryAIFlow, "posts_review",
+		activity.WithEntity("campaign", c.Params("id")),
+	)
+
 	checkPosts := h.checkPosts
 	req := consistency.PostsCheckRequest{CampaignID: c.Params("id"), Max: body.Max}
 
