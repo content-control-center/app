@@ -330,3 +330,11 @@ func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
+
+// isUniqueViolationOn reports whether err is a unique-constraint violation on
+// the specifically-named constraint. Callers that special-case one constraint
+// use this so an unrelated unique conflict follows the normal error path.
+func isUniqueViolationOn(err error, constraint string) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == constraint
+}

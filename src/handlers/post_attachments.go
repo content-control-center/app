@@ -40,6 +40,11 @@ const (
 	// the unbounded TEXT column, not per-platform correctness.
 	maxAltTextLen = 2000
 
+	// postAttachmentsPositionConstraint is the name Postgres gives the inline
+	// UNIQUE (post_id, position) on post_attachments (baseline schema). Used to
+	// scope the reorder 409 to that specific collision (CON-124).
+	postAttachmentsPositionConstraint = "post_attachments_post_id_position_key"
+
 	// pdfThumbnailDPI is the resolution used when rendering the first-page
 	// preview for PDF attachments.
 	pdfThumbnailDPI = 96
@@ -511,7 +516,7 @@ func (h *PostAttachmentsHandler) Update(c *fiber.Ctx) error {
 			// UNIQUE(post_id, position): another attachment already holds the
 			// target position. Surface as 409 (not a raw 500) and point at the
 			// atomic reorder endpoint (CON-124).
-			if isUniqueViolation(err) {
+			if isUniqueViolationOn(err, postAttachmentsPositionConstraint) {
 				return fiber.NewError(fiber.StatusConflict,
 					"another attachment already holds that position; PATCH /attachments/reorder to reorder the whole list atomically")
 			}
