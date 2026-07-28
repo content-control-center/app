@@ -46,9 +46,11 @@ func newPostAnalyticsResponse(post *models.Post, a *models.PostAnalytics) postAn
 		PublisherPostID:    a.PublisherPostID,
 		SyncStatus:         a.SyncStatus,
 		MetricsLastUpdated: a.MetricsLastUpdated,
-		LastRefreshedAt:    a.LastRefreshedAt,
-		Analytics:          a.Metrics(),
-		PlatformAnalytics:  platforms,
+		// OccurredAt is the refresh time; exposed as last_refreshed_at for API
+		// compatibility (CON-125 Track B renamed the column).
+		LastRefreshedAt:   a.OccurredAt,
+		Analytics:         a.Metrics(),
+		PlatformAnalytics: platforms,
 	}
 }
 
@@ -106,6 +108,12 @@ type analyticsListResponse struct {
 // @Failure      401  {object}  map[string]string
 // @Router       /api/analytics/posts [get]
 func (h *AnalyticsHandler) ListPosts(c *fiber.Ctx) error {
+	// Fail-open when analytics is disabled (nil repo — ANALYTICS_DSN unset),
+	// mirroring the per-post endpoint's 503 (CON-125 Track B).
+	if h.repo == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "analytics is not available")
+	}
+
 	page := 1
 	if raw := c.Query("page"); raw != "" {
 		v, err := strconv.Atoi(raw)

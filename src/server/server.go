@@ -103,7 +103,14 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	postAttachmentRepo := repository.NewPostAttachmentRepository(db)
 	postLogRepo := repository.NewPostLogRepository(db)
 	postEvaluationRepo := repository.NewPostEvaluationRepository(db)
-	postAnalyticsRepo := repository.NewPostAnalyticsRepository(db)
+	// CON-125 Track B: post analytics snapshots live in the isolated analytics
+	// DB (append-only time series), so the repo is built on that pool. nil when
+	// analytics is disabled — the read endpoints then fail-open to 503, and the
+	// refresh job no-ops (its AnalyticsRepo is nil).
+	var postAnalyticsRepo repository.PostAnalyticsRepository
+	if analyticsDB != nil {
+		postAnalyticsRepo = repository.NewPostAnalyticsRepository(analyticsDB)
+	}
 	socialAccountRepo := repository.NewSocialAccountRepository(db)
 	autoPublishAllowlistRepo := repository.NewAutoPublishAllowlistRepository(db)
 	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
@@ -246,6 +253,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		SocialAccountRepo:  socialAccountRepo,
 		SettingRepo:        settingRepo,
 		AnalyticsRepo:      postAnalyticsRepo,
+		PlatformRepo:       platformRepo,
 		Client:             zernioRT.Integration.Client,
 		Recorder:           usageWiring.recorder,
 		ActivityRecorder:   activityWiring.recorder,

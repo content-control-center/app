@@ -30,12 +30,16 @@ type ZernioDeps struct {
 	// SettingRepo backs the workspace timezone lookup used to stamp the
 	// Zernio submit's Timezone field (CON-78). nil falls back to UTC.
 	SettingRepo repository.SettingRepository
-	// AnalyticsRepo persists the analytics snapshots the refresh queue
-	// upserts (CON-93 §6 FR2). Only the refresh queue uses it; nil on the
-	// submit/poll/cancel processors that share this bundle.
+	// AnalyticsRepo appends the analytics snapshots the refresh queue writes
+	// (CON-93 §6 FR2; append-only per CON-125). Only the refresh queue uses it;
+	// nil on the submit/poll/cancel processors that share this bundle.
 	AnalyticsRepo repository.PostAnalyticsRepository
-	Client        *zernio.Client
-	ProfileID     ProfileIDResolver
+	// PlatformRepo resolves platform_id → name so the refresh queue can
+	// denormalise the platform name onto each snapshot (CON-125 Track B). Only
+	// the refresh queue uses it.
+	PlatformRepo repository.PlatformRepository
+	Client       *zernio.Client
+	ProfileID    ProfileIDResolver
 	// Recorder meters publish/schedule usage events (CON-86). nil = no-op.
 	Recorder *usage.Recorder
 	// ActivityRecorder emits CON-125 publish-category activity events

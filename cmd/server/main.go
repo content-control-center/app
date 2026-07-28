@@ -71,6 +71,17 @@ func main() {
 			} else {
 				analyticsDB = adb
 				defer analyticsDB.Close()
+				// CON-125 Track B: one-time, idempotent backfill of the legacy
+				// main-DB post_analytics snapshots into the analytics DB. Best-
+				// effort — a failure must not take down boot (the legacy table
+				// is retained until a separate later migration drops it).
+				if n, berr := repository.BackfillPostAnalytics(context.Background(), db, adb); berr != nil {
+					slog.Warn("post_analytics backfill failed (non-fatal)",
+						logging.AttrComponent, "boot", logging.AttrError, berr)
+				} else if n > 0 {
+					slog.Info("post_analytics backfilled",
+						logging.AttrComponent, "boot", "rows", n)
+				}
 			}
 		}
 	}
