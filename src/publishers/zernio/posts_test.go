@@ -178,9 +178,14 @@ func TestFindByContentRecoversAfterDedupe(t *testing.T) {
 		if r.URL.Query().Get("dateFrom") == "" {
 			t.Error("dateFrom should be present")
 		}
+		// The status filter must be dropped so the search spans every status
+		// the earlier job could be in (CON-129).
+		if got := r.URL.Query().Get("status"); got != "" {
+			t.Errorf("status filter should be dropped, got %q", got)
+		}
 		writeJSON(w, http.StatusOK, listEnvelope{Posts: []Job{
 			{ID: "stale", Content: "other"},
-			{ID: "match", Content: "hello"},
+			{ID: "match", Content: "hello", Status: JobStatusPublished},
 		}})
 	})
 	c := newClient(s)
@@ -188,8 +193,37 @@ func TestFindByContentRecoversAfterDedupe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find: %v", err)
 	}
+	// A match is returned regardless of status (here: published), carrying its
+	// status so the caller can decide to adopt or report.
+	if job == nil || job.ID != "match" || job.Status != JobStatusPublished {
+		t.Errorf("expected published match, got %+v", job)
+	}
+}
+
+func TestFindByContentPaginatesPastFirstPage(t *testing.T) {
+	s := newStub()
+	defer s.Close()
+	s.handle("GET", "/posts", func(w http.ResponseWriter, r *http.Request) {
+		var env listEnvelope
+		switch r.URL.Query().Get("page") {
+		case "1":
+			env.Posts = []Job{{ID: "p1", Content: "other"}}
+			env.Pagination.Pages = 2
+		case "2":
+			env.Posts = []Job{{ID: "match", Content: "hello"}}
+			env.Pagination.Pages = 2
+		default:
+			t.Errorf("unexpected page %q", r.URL.Query().Get("page"))
+		}
+		writeJSON(w, http.StatusOK, env)
+	})
+	c := newClient(s)
+	job, err := c.FindByContent(context.Background(), "hello", time.Hour)
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
 	if job == nil || job.ID != "match" {
-		t.Errorf("expected match, got %+v", job)
+		t.Errorf("expected the page-2 match, got %+v", job)
 	}
 }
 

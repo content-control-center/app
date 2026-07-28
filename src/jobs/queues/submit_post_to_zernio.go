@@ -184,17 +184,42 @@ func (p *SubmitPostProcessor) Process(ctx context.Context, task SubmitPostTask) 
 	job, submitErr := p.Deps.Client.Submit(ctx, req)
 	jobs.ObserveZernioCall(time.Since(apiStart))
 	if submitErr != nil {
-		// 24h dedupe recovery: try to find the existing job by content
-		// and adopt it as if submit had succeeded.
+		// 24h dedupe recovery (CON-129). Search the whole dedupe window across all
+		// statuses, matching on the content we actually submitted (so it still
+		// holds once the API flattens Markdown, CON-126).
 		if errors.Is(submitErr, zernio.ErrDuplicateContent) {
-			recovered, ferr := p.Deps.Client.FindByContent(ctx, post.Content, 24*time.Hour)
-			if ferr == nil && recovered != nil {
+			recovered, ferr := p.Deps.Client.FindByContent(ctx, req.Content, 24*time.Hour)
+			switch {
+			case ferr != nil:
+				// Couldn't query Zernio to recover — transient; retry, which 409s
+				// again and re-attempts recovery rather than dead-ending the post.
+				jobs.ZernioSubmitRetried.Add(1)
+				appendLog(ctx, p.Deps, post.ID, models.PostLogEventTaskRetried, post.Status, post.Status,
+					"transient error locating dedupe match; River will retry", `{"error":"`+ferr.Error()+`"}`)
+				return ferr
+			case recovered != nil && !recovered.Status.IsTerminal():
+				// Still-pending earlier job (almost always this post's own prior
+				// attempt): adopt it and keep polling. Count it like the main
+				// success path (persistSuccess doesn't, so this is exactly once).
+				jobs.ZernioSubmitSucceeded.Add(1)
 				appendLog(ctx, p.Deps, post.ID, models.PostLogEventZernioSubmit, post.Status, post.Status,
-					"recovered Zernio job after 409 dedupe", logs.MarshalCapped(recovered))
+					"recovered pending Zernio job after 409 dedupe", logs.MarshalCapped(recovered))
 				return p.persistSuccess(ctx, post, recovered, accountID)
+			case recovered != nil:
+				// Match is terminal (published/failed/partial): the content already
+				// ran on Zernio in this window. Don't adopt a finished job — fail
+				// with the cause named so the user can act.
+				jobs.ZernioSubmitFailed.Add(1)
+				return p.terminal(ctx, post, "zernio_duplicate_content",
+					fmt.Sprintf("identical content was already %s on Zernio within the last 24h (job %s); edit the content to submit again",
+						recovered.Status, recovered.ID))
+			default:
+				// Duplicate per Zernio, but no matching job located (content
+				// normalisation mismatch, or beyond the search window). Name it.
+				jobs.ZernioSubmitFailed.Add(1)
+				return p.terminal(ctx, post, "zernio_duplicate_content",
+					"Zernio rejected this as duplicate content submitted within the last 24h; edit the content or wait for the dedupe window to pass")
 			}
-			return p.terminal(ctx, post, "zernio_dedupe_unrecoverable",
-				"Zernio reported duplicate content but no matching job was found")
 		}
 		if zernio.IsTerminalAPIError(submitErr) {
 			jobs.ZernioSubmitFailed.Add(1)
