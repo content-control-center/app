@@ -20,14 +20,31 @@ import (
 const CancelZernioJobQueue = "cancel_zernio_job"
 
 // CancelTarget is what the user wants the Post moved to once
-// cancellation succeeds — either back to the editing state
-// (ReadyForPublish) or all the way to Draft.
+// cancellation succeeds — back to the editing state (ReadyForPublish),
+// all the way to Draft, or converted to manual publishing
+// (ScheduledForManualPublish) which keeps scheduled_at but stops the
+// auto-publish (CON-130).
 type CancelTarget string
 
 const (
 	CancelTargetReadyForPublish CancelTarget = "ready_for_publish"
 	CancelTargetDraft           CancelTarget = "draft"
+	CancelTargetManualPublish   CancelTarget = "scheduled_for_manual_publishing"
 )
+
+// landingStatus maps a CancelTarget to the Post status the worker lands
+// the post on after a successful cancel. Unknown targets fall back to
+// ReadyForPublish, matching the pre-CON-130 default.
+func (t CancelTarget) landingStatus() models.PostStatus {
+	switch t {
+	case CancelTargetDraft:
+		return models.PostStatusDraft
+	case CancelTargetManualPublish:
+		return models.PostStatusScheduledForManualPublish
+	default:
+		return models.PostStatusReadyForPublish
+	}
+}
 
 // CancelZernioJobTask carries the post id and the user's chosen
 // post-cancel landing state.
@@ -135,24 +152,29 @@ func (p *CancelZernioJobProcessor) Process(ctx context.Context, task CancelZerni
 
 func (p *CancelZernioJobProcessor) transition(ctx context.Context, post *models.Post, task CancelZernioJobTask) error {
 	from := post.Status
-	to := models.PostStatusReadyForPublish
-	if task.Target == CancelTargetDraft {
-		to = models.PostStatusDraft
-	}
+	to := task.Target.landingStatus()
 	if !from.CanTransition(to) {
 		appendLogActor(ctx, p.Deps, post.ID, task.Actor, models.PostLogEventStateTransitionBlocked, from, to,
 			"cancel target rejected by state machine", `{"reason":"invalid_transition"}`)
 		return nil
 	}
+	// Converting to manual publishing keeps scheduled_at so the intended
+	// publish date still shows against the post — we only stop the
+	// auto-dispatch. transition() never touches scheduled_at, so this is
+	// automatic; the comment records the intent (CON-130).
 	post.Status = to
 	if err := p.Deps.PostRepo.Update(ctx, post); err != nil {
 		return fmt.Errorf("cancel: persist new status: %w", err)
 	}
+	summary, action := "post cancelled and transitioned", "publish_cancelled"
+	if task.Target == CancelTargetManualPublish {
+		summary, action = "converted to manual publishing", "converted_to_manual"
+	}
 	appendLogActor(ctx, p.Deps, post.ID, task.Actor, models.PostLogEventStateTransition, from, to,
-		"post cancelled and transitioned", logs.MarshalCapped(map[string]any{
+		summary, logs.MarshalCapped(map[string]any{
 			"target": string(to),
 		}))
-	p.Deps.ActivityRecorder.Record(ctx, activity.CategoryPublish, "publish_cancelled",
+	p.Deps.ActivityRecorder.Record(ctx, activity.CategoryPublish, action,
 		activity.WithEntity("post", post.ID),
 		activity.WithUser(task.Actor),
 		activity.WithSource(activity.SourceJob),

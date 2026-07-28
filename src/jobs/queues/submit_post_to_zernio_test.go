@@ -77,6 +77,17 @@ func (r *fakePostRepo) Delete(context.Context, string) (bool, error)      { retu
 func (r *fakePostRepo) ListStuckScheduled(context.Context, time.Time, int) ([]models.Post, error) {
 	return nil, nil
 }
+func (r *fakePostRepo) ListScheduledByPlatform(_ context.Context, platformID string) ([]models.Post, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []models.Post
+	for _, p := range r.posts {
+		if p.Status == models.PostStatusScheduled && p.PlatformID == platformID {
+			out = append(out, *p)
+		}
+	}
+	return out, nil
+}
 func (r *fakePostRepo) UpdateStatusAndReason(_ context.Context, id string, st models.PostStatus, reason string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -119,6 +130,19 @@ func (r *fakeLogRepo) eventTypes() []string {
 		out = append(out, string(e.EventType))
 	}
 	return out
+}
+
+// hasTransitionTo reports whether any recorded state_transition landed
+// on the given status.
+func (r *fakeLogRepo) hasTransitionTo(to models.PostStatus) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, e := range r.entries {
+		if e.EventType == models.PostLogEventStateTransition && e.ToStatus != nil && *e.ToStatus == to {
+			return true
+		}
+	}
+	return false
 }
 
 // fakeAccountRepo returns a fixed list per profile.

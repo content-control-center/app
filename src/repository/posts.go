@@ -24,6 +24,14 @@ type PostRepository interface {
 	// column of several posts atomically (CON-115 redistribution).
 	UpdateScheduledAtBatch(ctx context.Context, posts []*models.Post) error
 	Delete(ctx context.Context, id string) (bool, error)
+	// ListScheduledByPlatform returns every post in status='scheduled'
+	// for the given platform id (Sqid) — the posts that still carry a
+	// live auto-publish Zernio job. CON-130 uses it to convert all of a
+	// platform's upcoming auto-publish posts to manual publishing when its
+	// allowlist entry is turned off. No scheduled_at filter: a scheduled
+	// post that is overdue but not yet published would still auto-publish,
+	// so it must be converted too.
+	ListScheduledByPlatform(ctx context.Context, platformID string) ([]models.Post, error)
 	// CON-69 §8: reconciliation sweeper helpers.
 	ListStuckScheduled(ctx context.Context, cutoff time.Time, limit int) ([]models.Post, error)
 	UpdateStatusAndReason(ctx context.Context, postID string, status models.PostStatus, reason string) error
@@ -160,6 +168,24 @@ func (r *postRepository) ListStuckScheduled(ctx context.Context, cutoff time.Tim
 		Where("po.scheduled_at < ?", cutoff).
 		OrderExpr("po.scheduled_at ASC").
 		Limit(limit).
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return posts, nil
+}
+
+// ListScheduledByPlatform returns the tenant's posts in
+// status='scheduled' for platformID (a platform Sqid), oldest
+// scheduled_at first. See the interface doc for why scheduled_at is not
+// filtered (CON-130).
+func (r *postRepository) ListScheduledByPlatform(ctx context.Context, platformID string) ([]models.Post, error) {
+	var posts []models.Post
+	err := r.db.NewSelect().
+		Model(&posts).
+		Where("po.status = ?", models.PostStatusScheduled).
+		Where("po.platform_id = ?", platformID).
+		OrderExpr("po.scheduled_at ASC").
 		Scan(ctx)
 	if err != nil {
 		return nil, err

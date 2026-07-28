@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 
 	"github.com/gofiber/fiber/v2"
 	. "github.com/onsi/ginkgo/v2"
@@ -18,9 +19,39 @@ import (
 	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_quality"
 	"github.com/ogen-app/ogen/src/handlers"
+	"github.com/ogen-app/ogen/src/jobs/queues"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
 )
+
+// fakeCancelEnqueuer records EnqueueCancel calls so the convert-to-manual
+// tests can assert which posts were handed to the cancel queue and with
+// which target, without a running River (CON-130).
+type fakeCancelEnqueuer struct {
+	mu    sync.Mutex
+	calls []queues.CancelZernioJobTask
+	err   error
+}
+
+func (f *fakeCancelEnqueuer) EnqueueCancel(_ context.Context, postID string, target queues.CancelTarget, actor string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return f.err
+	}
+	f.calls = append(f.calls, queues.CancelZernioJobTask{PostID: postID, Target: target, Actor: actor})
+	return nil
+}
+
+func (f *fakeCancelEnqueuer) targets() map[string]queues.CancelTarget {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[string]queues.CancelTarget{}
+	for _, c := range f.calls {
+		out[c.PostID] = c.Target
+	}
+	return out
+}
 
 var _ = Describe("PostsHandler", Ordered, func() {
 	var (
@@ -1817,4 +1848,158 @@ var _ = Describe("PostsHandler", Ordered, func() {
 			Expect(resp.StatusCode).To(BeNumerically(">=", 400))
 		})
 	})
+
+	// ── CON-130: POST /api/posts/convert-to-manual ────────────────────────────
+	Describe("POST /api/posts/convert-to-manual", func() {
+		const linkedInSqid = "AXqWG7U2qnpt" // seeded LinkedIn platform Sqid
+
+		var (
+			convertApp *fiber.App
+			enq        *fakeCancelEnqueuer
+		)
+
+		// convertApp wires the posts handler with a fake cancel enqueuer so
+		// the endpoint's dep check passes and enqueues can be observed. It
+		// reuses the shared db + authCookie (sessions live in the DB).
+		BeforeEach(func() {
+			enq = &fakeCancelEnqueuer{}
+			convertApp = fiber.New(fiber.Config{
+				ErrorHandler: func(c *fiber.Ctx, err error) error {
+					code := fiber.StatusInternalServerError
+					if e, ok := err.(*fiber.Error); ok {
+						code = e.Code
+					}
+					return c.Status(code).JSON(fiber.Map{"error": err.Error()})
+				},
+			})
+			auth := handlers.RequireAuth(repository.NewSessionRepository(db), testCookieName)
+			ph := handlers.NewPostsHandler(
+				repository.NewPostRepository(db),
+				repository.NewPostVersionRepository(db),
+				repository.NewPostAssistantMessageRepository(db),
+				repository.NewPlatformRepository(db),
+				repository.NewPostAttachmentRepository(db),
+				auth, nil, nil,
+			)
+			ph.SetSchedulingDeps(nil, enq, db)
+			ph.SetPostLogRepo(repository.NewPostLogRepository(db))
+			ph.Register(convertApp)
+		})
+
+		// setStatus flips a post's status directly in the DB so tests can
+		// stage a `scheduled` (or other) post without driving the full
+		// schedule path.
+		setStatus := func(id string, st models.PostStatus) {
+			_, err := db.NewUpdate().Model((*models.Post)(nil)).
+				Set("status = ?", st).
+				Where("id = ?", id).Exec(tenantCtx())
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		postConvert := func(body fiber.Map) *http.Response {
+			raw, _ := json.Marshal(body)
+			req := httptest.NewRequest("POST", "/api/posts/convert-to-manual", bytes.NewReader(raw))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(authCookie)
+			resp, err := convertApp.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			return resp
+		}
+
+		decode := func(resp *http.Response) (converted []string, failed []convertFailureBody) {
+			var out struct {
+				Converted []string             `json:"converted"`
+				Failed    []convertFailureBody `json:"failed"`
+			}
+			Expect(json.NewDecoder(resp.Body).Decode(&out)).To(Succeed())
+			return out.Converted, out.Failed
+		}
+
+		It("converts every scheduled post for a platform (target = manual publishing)", func() {
+			p1 := createPost("Sched 1", nil)
+			p2 := createPost("Sched 2", nil)
+			setStatus(p1.ID, models.PostStatusScheduled)
+			setStatus(p2.ID, models.PostStatusScheduled)
+
+			resp := postConvert(fiber.Map{"platform": "linkedin"})
+			Expect(resp.StatusCode).To(Equal(fiber.StatusAccepted))
+			converted, failed := decode(resp)
+			Expect(converted).To(ConsistOf(p1.ID, p2.ID))
+			Expect(failed).To(BeEmpty())
+			Expect(enq.targets()).To(Equal(map[string]queues.CancelTarget{
+				p1.ID: queues.CancelTargetManualPublish,
+				p2.ID: queues.CancelTargetManualPublish,
+			}))
+		})
+
+		It("converts explicit post_ids and reports non-scheduled posts as failed", func() {
+			scheduled := createPost("Sched", nil)
+			draft := createPost("Draft", nil) // stays draft
+			setStatus(scheduled.ID, models.PostStatusScheduled)
+
+			resp := postConvert(fiber.Map{"post_ids": []string{scheduled.ID, draft.ID}})
+			Expect(resp.StatusCode).To(Equal(fiber.StatusAccepted))
+			converted, failed := decode(resp)
+			Expect(converted).To(ConsistOf(scheduled.ID))
+			Expect(failed).To(HaveLen(1))
+			Expect(failed[0].ID).To(Equal(draft.ID))
+			Expect(failed[0].Reason).To(ContainSubstring("not scheduled"))
+			Expect(enq.targets()).To(HaveKeyWithValue(scheduled.ID, queues.CancelTargetManualPublish))
+			Expect(enq.targets()).NotTo(HaveKey(draft.ID))
+		})
+
+		It("treats an already-manual post as an idempotent success without enqueuing", func() {
+			p := createPost("Already Manual", nil)
+			setStatus(p.ID, models.PostStatusScheduledForManualPublish)
+
+			resp := postConvert(fiber.Map{"post_ids": []string{p.ID}})
+			Expect(resp.StatusCode).To(Equal(fiber.StatusAccepted))
+			converted, failed := decode(resp)
+			Expect(converted).To(ConsistOf(p.ID))
+			Expect(failed).To(BeEmpty())
+			Expect(enq.calls).To(BeEmpty())
+		})
+
+		It("reports an unknown post id as failed, not found", func() {
+			resp := postConvert(fiber.Map{"post_ids": []string{"nope"}})
+			Expect(resp.StatusCode).To(Equal(fiber.StatusAccepted))
+			converted, failed := decode(resp)
+			Expect(converted).To(BeEmpty())
+			Expect(failed).To(HaveLen(1))
+			Expect(failed[0].Reason).To(ContainSubstring("not found"))
+		})
+
+		It("rejects an unsupported platform with 400", func() {
+			resp := postConvert(fiber.Map{"platform": "myspace"})
+			Expect(resp.StatusCode).To(Equal(400))
+		})
+
+		It("rejects a request that sets neither platform nor post_ids with 400", func() {
+			resp := postConvert(fiber.Map{})
+			Expect(resp.StatusCode).To(Equal(400))
+		})
+
+		It("rejects a request that sets both platform and post_ids with 400", func() {
+			resp := postConvert(fiber.Map{"platform": "linkedin", "post_ids": []string{"x"}})
+			Expect(resp.StatusCode).To(Equal(400))
+		})
+
+		It("returns 503 when the job runtime is not wired", func() {
+			// The shared app (BeforeEach) does not call SetSchedulingDeps.
+			raw, _ := json.Marshal(fiber.Map{"platform": "linkedin"})
+			req := httptest.NewRequest("POST", "/api/posts/convert-to-manual", bytes.NewReader(raw))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(503))
+		})
+	})
 })
+
+// convertFailureBody mirrors the handler's unexported convertFailure for
+// decoding the convert-to-manual response in tests.
+type convertFailureBody struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
+}

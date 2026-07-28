@@ -24,6 +24,7 @@ import (
 	"github.com/ogen-app/ogen/src/post_actions/logs"
 	"github.com/ogen-app/ogen/src/post_actions/restore"
 	"github.com/ogen-app/ogen/src/post_actions/schedule"
+	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/tenantctx"
 )
@@ -508,6 +509,134 @@ func (h *PostsHandler) Cancel(c *fiber.Ctx) error {
 	})
 }
 
+// convertToManualRequest is the body for POST /api/posts/convert-to-manual.
+// Exactly one of Platform / PostIDs must be set. Platform is a Zernio
+// platform id (e.g. "linkedin"), matching the auto-publish allowlist's
+// vocabulary; it selects every scheduled post for that platform.
+type convertToManualRequest struct {
+	Platform string   `json:"platform"`
+	PostIDs  []string `json:"post_ids"`
+}
+
+// convertFailure is one rejected post in the convert-to-manual response.
+type convertFailure struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
+}
+
+// ConvertToManual godoc
+// @Summary      Convert scheduled posts to manual publishing
+// @Description  Converts a set of posts — or every scheduled post for a
+// @Description  platform — from auto-publish (`scheduled`) to
+// @Description  `scheduled_for_manual_publishing`, keeping `scheduled_at`.
+// @Description  Each post's live Zernio job is cancelled server-side by a
+// @Description  cancel_zernio_job task, which then lands the post directly
+// @Description  on `scheduled_for_manual_publishing` — no detour through
+// @Description  `ready_for_publish`, so the post is never left unscheduled
+// @Description  if the client disconnects mid-flight. Returns per-post
+// @Description  outcomes: `converted` (accepted / already manual) and
+// @Description  `failed` (not found, or not in a convertible state). A
+// @Description  post that publishes before its cancel lands is handled by
+// @Description  the worker and recorded in the Post Log (CON-130).
+// @Tags         posts
+// @Accept       json
+// @Produce      json
+// @Security     CookieAuth
+// @Param        body  body      convertToManualRequest  true  "Platform or explicit post ids"
+// @Success      202   {object}  map[string]interface{}
+// @Failure      400   {object}  map[string]string
+// @Failure      401   {object}  map[string]string
+// @Failure      503   {object}  map[string]string
+// @Router       /api/posts/convert-to-manual [post]
+func (h *PostsHandler) ConvertToManual(c *fiber.Ctx) error {
+	if h.jobsClient == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "background job runtime not configured")
+	}
+	var req convertToManualRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	byPlatform := req.Platform != ""
+	byIDs := len(req.PostIDs) > 0
+	if byPlatform == byIDs {
+		return fiber.NewError(fiber.StatusBadRequest, `provide exactly one of "platform" or "post_ids"`)
+	}
+
+	actor := models.ActorSystem
+	if sess, ok := c.Locals("session").(*models.Session); ok && sess != nil {
+		actor = sess.UserID
+	}
+
+	converted := make([]string, 0)
+	failed := make([]convertFailure, 0)
+
+	// convert enqueues one durable cancel→manual task per still-scheduled
+	// post. Once enqueued the worker owns the cancel, the wait, and the
+	// final status, so the request can return without holding the post in
+	// an unscheduled limbo (CON-130).
+	convert := func(post *models.Post) {
+		switch post.Status {
+		case models.PostStatusScheduledForManualPublish:
+			// Already where the caller wants it — idempotent success.
+			converted = append(converted, post.ID)
+		case models.PostStatusScheduled:
+			if err := h.jobsClient.EnqueueCancel(c.Context(), post.ID, queues.CancelTargetManualPublish, actor); err != nil {
+				failed = append(failed, convertFailure{ID: post.ID, Reason: "could not enqueue conversion: " + err.Error()})
+				return
+			}
+			converted = append(converted, post.ID)
+		default:
+			failed = append(failed, convertFailure{ID: post.ID,
+				Reason: "post is not scheduled (status: " + string(post.Status) + ")"})
+		}
+	}
+
+	if byPlatform {
+		sqid := zernio.LookupSqidByZernioID(req.Platform)
+		if sqid == "" {
+			return fiber.NewError(fiber.StatusBadRequest,
+				fmt.Sprintf("platform %q is not in the Ogen-supported set", req.Platform))
+		}
+		posts, err := h.repo.ListScheduledByPlatform(c.Context(), sqid)
+		if err != nil {
+			return err
+		}
+		for i := range posts {
+			convert(&posts[i])
+		}
+	} else {
+		seen := make(map[string]bool, len(req.PostIDs))
+		for _, id := range req.PostIDs {
+			if id == "" || seen[id] {
+				continue
+			}
+			seen[id] = true
+			post, err := h.repo.GetByID(c.Context(), id)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					failed = append(failed, convertFailure{ID: id, Reason: "post not found"})
+					continue
+				}
+				return err
+			}
+			convert(post)
+		}
+	}
+
+	h.recordActivity(c, "posts_converted_to_manual",
+		activity.WithPayload(map[string]any{
+			"platform":  req.Platform,
+			"converted": len(converted),
+			"failed":    len(failed),
+		}),
+	)
+
+	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
+		"converted": converted,
+		"failed":    failed,
+	})
+}
+
 func NewPostsHandler(
 	repo repository.PostRepository,
 	versionRepo repository.PostVersionRepository,
@@ -534,6 +663,9 @@ func (h *PostsHandler) Register(app *fiber.App) {
 	g := app.Group("/api/posts")
 	g.Get("/", h.auth, h.List)
 	g.Post("/", h.auth, h.Create)
+	// Static route registered before "/:id/..." so it isn't shadowed by
+	// the id-parametrised routes (CON-130).
+	g.Post("/convert-to-manual", h.auth, h.ConvertToManual)
 	g.Get("/:id", h.auth, h.Get)
 	g.Put("/:id", h.auth, h.Update)
 	g.Delete("/:id", h.auth, h.Delete)
