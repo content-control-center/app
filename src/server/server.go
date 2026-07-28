@@ -425,6 +425,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	campaignsHandler.SetOverviewService(campaignOverviewSvc)
 	campaignsHandler.SetGeneratePosts(gkRuntime.GeneratePosts, cfg.GeneratePostsMax)
 	campaignsHandler.SetConsistency(gkRuntime.CheckBrief, gkRuntime.CheckPosts)
+	campaignsHandler.SetActivityRecorder(activityWiring.recorder)
 	campaignsHandler.Register(app)
 	handlers.NewPlatformsHandler(platformRepo, pubs, autoPublishAllowlistRepo, auth).Register(app)
 	handlers.NewTagsHandler(tagRepo, auth).Register(app)
