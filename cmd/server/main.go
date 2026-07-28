@@ -82,6 +82,16 @@ func main() {
 					slog.Info("post_analytics backfilled",
 						logging.AttrComponent, "boot", "rows", n)
 				}
+				// CON-125: one-time, idempotent migration of the historical
+				// post_logs audit trail into activity_events (curated to the
+				// activity taxonomy). Best-effort — never fatal to boot.
+				if n, berr := repository.BackfillPostLogsToActivity(context.Background(), db, adb); berr != nil {
+					slog.Warn("post_logs → activity_events backfill failed (non-fatal)",
+						logging.AttrComponent, "boot", logging.AttrError, berr)
+				} else if n > 0 {
+					slog.Info("post_logs migrated to activity_events",
+						logging.AttrComponent, "boot", "rows", n)
+				}
 			}
 		}
 	}
