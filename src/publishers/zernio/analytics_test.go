@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 // sampleAnalyticsItem is the documented per-post response object shape
@@ -159,6 +160,63 @@ func TestListAnalyticsTolerantShapes(t *testing.T) {
 		})
 	}
 }
+
+// TestListAnalyticsTolerantTimestamps guards the production incident where
+// Zernio returned a space-separated, zone-less `lastUpdated`
+// ("2026-07-29 12:47:25") that Go's stdlib time.Time.UnmarshalJSON rejects.
+// The old rigid *time.Time typing failed the whole item — and one bad item
+// fails the whole page — so a single such timestamp zeroed out that tenant's
+// entire analytics collection (the observed last_refresh_status error). Every
+// accepted shape must decode with metrics intact; an unparseable value must
+// degrade to a nil timestamp rather than erroring the page.
+func TestListAnalyticsTolerantTimestamps(t *testing.T) {
+	cases := []struct {
+		name        string
+		lastUpdated string // raw JSON value as it appears on the wire
+		want        *time.Time
+	}{
+		{"space separated zoneless (the incident)", `"2026-07-29 12:47:25"`, timePtr(time.Date(2026, 7, 29, 12, 47, 25, 0, time.UTC))},
+		{"rfc3339 still works", `"2026-06-15T09:00:00Z"`, timePtr(time.Date(2026, 6, 15, 9, 0, 0, 0, time.UTC))},
+		{"date only", `"2026-07-29"`, timePtr(time.Date(2026, 7, 29, 0, 0, 0, 0, time.UTC))},
+		{"unparseable degrades to nil", `"whenever"`, nil},
+		{"null degrades to nil", `null`, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"analytics":[{"postId":"p1","latePostId":"late-1","analytics":` +
+				`{"impressions":1234,"likes":56,"lastUpdated":` + tc.lastUpdated + `}}]}`
+			s := newStub()
+			defer s.Close()
+			s.handle("GET", "/analytics", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(body))
+			})
+
+			c := newClient(s)
+			items, _, err := c.ListAnalytics(context.Background(), AnalyticsQuery{Source: AnalyticsSourceLate})
+			if err != nil {
+				t.Fatalf("decode must tolerate lastUpdated %s, got error: %v", tc.lastUpdated, err)
+			}
+			if len(items) != 1 {
+				t.Fatalf("items: got %d want 1 (a bad timestamp must not drop the item)", len(items))
+			}
+			// Metrics always land, whatever the timestamp shape.
+			if items[0].Analytics.Impressions != 1234 || items[0].Analytics.Likes != 56 {
+				t.Errorf("metrics dropped: %+v", items[0].Analytics)
+			}
+			got := items[0].Analytics.LastUpdatedTime()
+			switch {
+			case tc.want == nil && got != nil:
+				t.Errorf("lastUpdated: got %v want nil", got)
+			case tc.want != nil && (got == nil || !got.Equal(*tc.want)):
+				t.Errorf("lastUpdated: got %v want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func timePtr(t time.Time) *time.Time { return &t }
 
 // TestListAnalyticsUnknownEnvelopeIsEmptyNotError ensures an object with no
 // recognizable array key and no post id decodes to an empty page rather than a

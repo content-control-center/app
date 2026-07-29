@@ -73,6 +73,68 @@ func (q AnalyticsQuery) values() url.Values {
 	return v
 }
 
+// flexTime wraps time.Time to tolerate every timestamp shape Zernio's
+// /analytics endpoint has shipped. Go's stdlib time.Time.UnmarshalJSON
+// accepts only RFC3339, but Zernio has been observed returning a
+// space-separated, zone-less timestamp ("2026-07-29 12:47:25") on the
+// analytics `lastUpdated` field. Decoding that into a plain *time.Time
+// fails the whole item — and because one bad item fails the whole page
+// (decodeAnalyticsItems is all-or-nothing), a single such timestamp
+// zeroes out that tenant's entire analytics collection. Tolerating the
+// format keeps collection resilient, matching the tolerant envelope and
+// pagination decode already in this file.
+type flexTime struct{ time.Time }
+
+// flexTimeLayouts are tried in order. RFC3339 first (the documented and
+// common shape); the space-separated variants cover the observed
+// deviation and its plausible zoned/fractional cousins.
+var flexTimeLayouts = []string{
+	time.RFC3339Nano,
+	time.RFC3339,
+	"2006-01-02T15:04:05",
+	"2006-01-02 15:04:05.999999999Z07:00",
+	"2006-01-02 15:04:05Z07:00",
+	"2006-01-02 15:04:05",
+	"2006-01-02",
+}
+
+// UnmarshalJSON parses the JSON string against each known layout. An
+// unparseable (or non-string) value leaves the zero time rather than
+// erroring: the raw item is preserved verbatim on the snapshot
+// (RawJSON), the numeric metrics are what matter, and failing here would
+// re-introduce the very whole-page wipeout this type exists to prevent.
+func (t *flexTime) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return nil // null / number / object — treat as absent
+	}
+	if s == "" {
+		return nil
+	}
+	for _, layout := range flexTimeLayouts {
+		if parsed, err := time.Parse(layout, s); err == nil {
+			t.Time = parsed
+			return nil
+		}
+	}
+	return nil
+}
+
+// ptr returns a *time.Time for assigning onto the analytics model, nil
+// when unset/unparseable so the column stays NULL rather than epoch-zero.
+func (t *flexTime) ptr() *time.Time {
+	if t == nil || t.Time.IsZero() {
+		return nil
+	}
+	tt := t.Time
+	return &tt
+}
+
+// LastUpdatedTime returns the metrics' lastUpdated as a plain *time.Time
+// (nil when unset or unparseable), so callers outside this package assign
+// onto the analytics model without touching the tolerant wire type.
+func (m Metrics) LastUpdatedTime() *time.Time { return m.LastUpdated.ptr() }
+
 // Metrics is Zernio's aggregate engagement block (`analytics{}`), shared
 // by the post-level rollup and each per-platform breakdown. Field names
 // mirror Zernio's exactly. IGReels* are Instagram-only and zero
@@ -90,7 +152,7 @@ type Metrics struct {
 	IGReelsAvgWatchTime       float64    `json:"igReelsAvgWatchTime,omitempty"`
 	IGReelsVideoViewTotalTime float64    `json:"igReelsVideoViewTotalTime,omitempty"`
 	EngagementRate            float64    `json:"engagementRate"`
-	LastUpdated               *time.Time `json:"lastUpdated,omitempty"`
+	LastUpdated               *flexTime  `json:"lastUpdated,omitempty"`
 }
 
 // PlatformAnalytics is one per-platform row inside an AnalyticsItem.
@@ -121,8 +183,8 @@ type AnalyticsItem struct {
 	LatePostID        string              `json:"latePostId,omitempty"`
 	Status            string              `json:"status,omitempty"`
 	Content           string              `json:"content,omitempty"`
-	ScheduledFor      *time.Time          `json:"scheduledFor,omitempty"`
-	PublishedAt       *time.Time          `json:"publishedAt,omitempty"`
+	ScheduledFor      *flexTime           `json:"scheduledFor,omitempty"`
+	PublishedAt       *flexTime           `json:"publishedAt,omitempty"`
 	Platform          string              `json:"platform,omitempty"`
 	PlatformPostURL   string              `json:"platformPostUrl,omitempty"`
 	IsExternal        bool                `json:"isExternal"`
