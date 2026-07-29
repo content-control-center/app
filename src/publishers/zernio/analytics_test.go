@@ -106,6 +106,79 @@ func TestListAnalyticsHappyPath(t *testing.T) {
 	}
 }
 
+// TestListAnalyticsTolerantShapes covers the top-level response shapes Zernio
+// has shipped or documented for GET /analytics. Every shape must decode to the
+// same one item — the rigid `{"analytics":[...]}`-only decoder silently
+// collected nothing when the endpoint returned a bare array or a differently
+// keyed envelope (CON-93 follow-up).
+func TestListAnalyticsTolerantShapes(t *testing.T) {
+	item := `{"postId":"p1","latePostId":"late-1","analytics":{"impressions":42,"likes":3,"follows":9}}`
+	cases := []struct {
+		name      string
+		body      string
+		wantPages int
+	}{
+		{"bare array", `[` + item + `]`, 0},
+		{"analytics envelope", `{"analytics":[` + item + `],"pagination":{"pages":1}}`, 1},
+		{"posts wrapper key", `{"posts":[` + item + `],"pagination":{"totalPages":2}}`, 2},
+		{"data wrapper key", `{"data":[` + item + `]}`, 0},
+		{"results wrapper key", `{"results":[` + item + `]}`, 0},
+		{"single post object", item, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newStub()
+			defer s.Close()
+			s.handle("GET", "/analytics", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(tc.body))
+			})
+
+			c := newClient(s)
+			items, page, err := c.ListAnalytics(context.Background(), AnalyticsQuery{Source: AnalyticsSourceLate})
+			if err != nil {
+				t.Fatalf("list: %v", err)
+			}
+			if len(items) != 1 {
+				t.Fatalf("items: got %d want 1 (shape %q)", len(items), tc.name)
+			}
+			it := items[0]
+			if it.PostID != "p1" || it.LatePostID != "late-1" {
+				t.Errorf("ids: got postId=%q latePostId=%q", it.PostID, it.LatePostID)
+			}
+			if it.Analytics.Impressions != 42 || it.Analytics.Follows != 9 {
+				t.Errorf("metrics: got impressions=%d follows=%d", it.Analytics.Impressions, it.Analytics.Follows)
+			}
+			if len(it.Raw) == 0 {
+				t.Errorf("Raw should retain the verbatim item")
+			}
+			if page.LastPage() != tc.wantPages {
+				t.Errorf("LastPage: got %d want %d", page.LastPage(), tc.wantPages)
+			}
+		})
+	}
+}
+
+// TestListAnalyticsUnknownEnvelopeIsEmptyNotError ensures an object with no
+// recognizable array key and no post id decodes to an empty page rather than a
+// hard error, so an unexpected wrapper degrades to a no-op tick.
+func TestListAnalyticsUnknownEnvelopeIsEmptyNotError(t *testing.T) {
+	s := newStub()
+	defer s.Close()
+	s.handle("GET", "/analytics", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"unexpected":{"nested":true},"pagination":{"pages":1}}`))
+	})
+	c := newClient(s)
+	items, _, err := c.ListAnalytics(context.Background(), AnalyticsQuery{Source: AnalyticsSourceLate})
+	if err != nil {
+		t.Fatalf("unknown envelope should not error: %v", err)
+	}
+	if len(items) != 0 {
+		t.Errorf("items: got %d want 0", len(items))
+	}
+}
+
 func TestListAnalyticsLegacy402MapsToSentinel(t *testing.T) {
 	s := newStub()
 	defer s.Close()

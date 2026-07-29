@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	"github.com/riverqueue/river"
@@ -90,11 +91,13 @@ func init() {
 	})
 }
 
-// Process runs one refresh tick.
+// Process runs one refresh tick across every tenant that owns Zernio-published
+// posts. Per-tenant health (zernio.analytics.last_refresh_*) is recorded inside
+// refresh under each tenant's context; the aggregate error here only drives the
+// tick-level metric and log line.
 func (p *RefreshZernioAnalyticsProcessor) Process(ctx context.Context, _ RefreshZernioAnalyticsTask) error {
 	tickStart := time.Now()
 	upserts, err := p.refresh(ctx, tickStart.UTC())
-	p.recordStatus(ctx, err)
 
 	if err != nil {
 		// Any failure (transient 429/5xx/network, 401, legacy 402, terminal
@@ -112,39 +115,72 @@ func (p *RefreshZernioAnalyticsProcessor) Process(ctx context.Context, _ Refresh
 	return nil
 }
 
-// refresh performs the batch fetch + match + upsert and returns the
-// number of snapshots written. The returned error is the first
-// page-level failure encountered; Process records it and reschedules
-// regardless (it never propagates the error to River).
+// refresh sweeps analytics once per tenant that owns Zernio-published posts,
+// scoping each fetch to that tenant's Zernio profile (CON-93 follow-up:
+// per-profile collection). A single cross-tenant read of the published-post
+// projection yields both the set of tenants to sweep and each tenant's match
+// map. Per-tenant health is recorded under that tenant's context; the returned
+// error is the first tenant-level failure — Process uses it only for the
+// tick-level metric, never propagating to River.
 func (p *RefreshZernioAnalyticsProcessor) refresh(ctx context.Context, now time.Time) (int, error) {
 	if p.Deps.AnalyticsRepo == nil || p.Deps.PostRepo == nil {
 		return 0, errors.New("refresh: analytics dependencies not configured")
 	}
 
-	posts, err := p.Deps.PostRepo.ListWithPublisherPostID(ctx)
+	// Enumerate under a system context so the scoping hook doesn't restrict the
+	// projection to one tenant — this single read spans every tenant.
+	posts, err := p.Deps.PostRepo.ListWithPublisherPostID(tenantctx.WithSystem(ctx))
 	if err != nil {
 		return 0, fmt.Errorf("refresh: list posts: %w", err)
 	}
 	if len(posts) == 0 {
 		return 0, nil
 	}
-	// Resolve platform_id → name once per tick (platforms is a small seeded
-	// reference table) so each snapshot can carry the denormalised platform
-	// name (CON-125 Track B). Best-effort: a lookup failure leaves names empty
-	// rather than failing the whole tick.
-	platformName := map[string]string{}
-	if p.Deps.PlatformRepo != nil {
-		if plats, perr := p.Deps.PlatformRepo.List(ctx); perr == nil {
-			for _, pl := range plats {
-				platformName[pl.ID] = pl.Name
+	platformName := p.platformNames(tenantctx.WithSystem(ctx))
+
+	byTenant := make(map[string][]models.Post)
+	for _, post := range posts {
+		byTenant[post.TenantID] = append(byTenant[post.TenantID], post)
+	}
+
+	total := 0
+	var firstErr error
+	for _, tenantID := range sortedTenantIDs(byTenant) {
+		tctx := tenantctx.With(ctx, tenantID)
+		n, terr := p.refreshTenant(tctx, byTenant[tenantID], platformName, now)
+		total += n
+		p.recordStatus(tctx, terr)
+		if terr != nil {
+			if firstErr == nil {
+				firstErr = terr
 			}
-		} else {
-			slog.WarnContext(ctx, "analytics refresh: platform list failed; platform names left empty", logging.AttrComponent, "jobs.refresh_analytics", logging.AttrError, perr)
+			slog.ErrorContext(tctx, "analytics refresh: tenant sweep failed", logging.AttrComponent, "jobs.refresh_analytics", "tenant_id", tenantID, logging.AttrError, terr)
 		}
 	}
-	// publisher_post_id → post_id match map, plus the per-post fields we
-	// denormalise onto the snapshot. Zernio returns analytics for every late
-	// post on the account; we write only the ones Ogen owns.
+	return total, firstErr
+}
+
+// refreshTenant fetches and upserts one tenant's analytics. ctx is already
+// tenant-scoped, so the Zernio fetch is filtered to this tenant's profile and
+// every write/event lands in the right tenant. A tenant with Zernio-published
+// posts but no profile id recorded is skipped (0, nil) rather than falling back
+// to an unscoped cross-profile fetch.
+func (p *RefreshZernioAnalyticsProcessor) refreshTenant(ctx context.Context, posts []models.Post, platformName map[string]string, now time.Time) (int, error) {
+	profileID := ""
+	if p.Deps.ProfileID != nil {
+		id, err := p.Deps.ProfileID(ctx)
+		if err != nil {
+			return 0, fmt.Errorf("resolve profile id: %w", err)
+		}
+		profileID = id
+	}
+	if profileID == "" {
+		return 0, nil
+	}
+
+	// publisher_post_id → post_id match map for this tenant, plus the per-post
+	// fields denormalised onto the snapshot. Zernio returns analytics for every
+	// late post under the profile; we write only the ones Ogen owns.
 	byPublisherID := make(map[string]string, len(posts))
 	postByID := make(map[string]models.Post, len(posts))
 	for _, post := range posts {
@@ -158,15 +194,16 @@ func (p *RefreshZernioAnalyticsProcessor) refresh(ctx context.Context, now time.
 	upserts := 0
 	for page := 1; page <= maxAnalyticsPages; page++ {
 		apiStart := time.Now()
-		items, pagination, err := p.Deps.Client.ListAnalytics(ctx, zernio.AnalyticsQuery{
-			Source:   zernio.AnalyticsSourceLate,
-			FromDate: from,
-			Limit:    limit,
-			Page:     page,
+		items, pagination, lerr := p.Deps.Client.ListAnalytics(ctx, zernio.AnalyticsQuery{
+			Source:    zernio.AnalyticsSourceLate,
+			ProfileID: profileID,
+			FromDate:  from,
+			Limit:     limit,
+			Page:      page,
 		})
 		jobs.ObserveZernioCall(time.Since(apiStart))
-		if err != nil {
-			return upserts, err
+		if lerr != nil {
+			return upserts, lerr
 		}
 
 		for i := range items {
@@ -174,28 +211,68 @@ func (p *RefreshZernioAnalyticsProcessor) refresh(ctx context.Context, now time.
 			if postID == "" {
 				continue
 			}
-			// Append + event within the post's tenant (CON-97 PR4); the post
-			// list above ran cross-tenant under the job's system context.
 			post := postByID[postID]
-			pctx := tenantctx.With(ctx, post.TenantID)
 			snapshot, berr := buildSnapshot(post, publisherPostID, platformName[post.PlatformID], &items[i], now)
 			if berr != nil {
-				slog.ErrorContext(pctx, "analytics snapshot build failed", logging.AttrComponent, "jobs.refresh_analytics", "post_id", postID, logging.AttrError, berr)
+				slog.ErrorContext(ctx, "analytics snapshot build failed", logging.AttrComponent, "jobs.refresh_analytics", "post_id", postID, logging.AttrError, berr)
 				continue
 			}
-			if uerr := p.Deps.AnalyticsRepo.Insert(pctx, snapshot); uerr != nil {
-				slog.ErrorContext(pctx, "analytics insert failed", logging.AttrComponent, "jobs.refresh_analytics", "post_id", postID, logging.AttrError, uerr)
+			if uerr := p.Deps.AnalyticsRepo.Insert(ctx, snapshot); uerr != nil {
+				slog.ErrorContext(ctx, "analytics insert failed", logging.AttrComponent, "jobs.refresh_analytics", "post_id", postID, logging.AttrError, uerr)
 				continue
 			}
 			upserts++
-			p.publishUpdated(pctx, snapshot)
+			p.publishUpdated(ctx, snapshot)
 		}
 
-		if pagination.Pages == 0 || page >= pagination.Pages {
+		// Stop paging on the last page, robust to whichever pagination shape the
+		// endpoint returns: an explicit last-page number, the cursor-style
+		// hasMore flag, or — absent both — a short/empty page.
+		if len(items) == 0 {
+			break
+		}
+		if last := pagination.LastPage(); last > 0 {
+			if page >= last {
+				break
+			}
+			continue
+		}
+		if !pagination.HasMore && len(items) < limit {
 			break
 		}
 	}
 	return upserts, nil
+}
+
+// platformNames resolves platform_id → display name once per tick (platforms is
+// a small seeded reference table) so each snapshot can carry the denormalised
+// platform name (CON-125 Track B). Best-effort: a lookup failure leaves names
+// empty rather than failing the tick.
+func (p *RefreshZernioAnalyticsProcessor) platformNames(ctx context.Context) map[string]string {
+	names := map[string]string{}
+	if p.Deps.PlatformRepo == nil {
+		return names
+	}
+	plats, err := p.Deps.PlatformRepo.List(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "analytics refresh: platform list failed; platform names left empty", logging.AttrComponent, "jobs.refresh_analytics", logging.AttrError, err)
+		return names
+	}
+	for _, pl := range plats {
+		names[pl.ID] = pl.Name
+	}
+	return names
+}
+
+// sortedTenantIDs returns the map keys in deterministic order so per-tenant
+// sweeps (and their logs/tests) run in a stable sequence.
+func sortedTenantIDs(byTenant map[string][]models.Post) []string {
+	ids := make([]string, 0, len(byTenant))
+	for id := range byTenant {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // matchPostID resolves a returned item to a local post by either of the

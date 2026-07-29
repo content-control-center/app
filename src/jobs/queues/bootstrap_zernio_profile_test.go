@@ -105,7 +105,7 @@ func TestBootstrapJobProvisionsNamedProfile(t *testing.T) {
 	}
 
 	// The profile was created and its id persisted to the tenant's settings.
-	id, ok, _ := store.Get(context.Background(), zernio.SettingProfileID)
+	id, ok, _ := store.Get(tctx("acme"), zernio.SettingProfileID)
 	if !ok || id == "" {
 		t.Fatalf("expected profile_id persisted, got ok=%v id=%q", ok, id)
 	}
@@ -130,7 +130,7 @@ func TestBootstrapJobSkipsWhenDisabled(t *testing.T) {
 	if n := stub.reqCount(); n != 0 {
 		t.Fatalf("expected no Zernio calls when disabled, got %d", n)
 	}
-	if _, ok, _ := store.Get(context.Background(), zernio.SettingProfileID); ok {
+	if _, ok, _ := store.Get(tctx("acme"), zernio.SettingProfileID); ok {
 		t.Fatalf("expected no profile persisted when disabled")
 	}
 }
