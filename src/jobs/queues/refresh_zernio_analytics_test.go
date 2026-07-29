@@ -314,6 +314,11 @@ func TestRefreshSkipsTenantWithoutProfile(t *testing.T) {
 	if len(analyticsRepo.upserted) != 0 {
 		t.Errorf("upserts: got %d want 0", len(analyticsRepo.upserted))
 	}
+	// A skipped (profile-less) tenant must not be reported healthy — no status
+	// write at all, rather than a misleading "ok".
+	if v, ok, _ := settings.Get(tctx("t1"), zernio.SettingAnalyticsLastRefreshStatus); ok {
+		t.Errorf("profile-less tenant should get no refresh status, got %q", v)
+	}
 }
 
 func TestRefreshRateLimitRecordedChainContinues(t *testing.T) {

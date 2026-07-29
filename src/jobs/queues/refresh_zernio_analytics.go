@@ -147,9 +147,14 @@ func (p *RefreshZernioAnalyticsProcessor) refresh(ctx context.Context, now time.
 	var firstErr error
 	for _, tenantID := range sortedTenantIDs(byTenant) {
 		tctx := tenantctx.With(ctx, tenantID)
-		n, terr := p.refreshTenant(tctx, byTenant[tenantID], platformName, now)
+		n, swept, terr := p.refreshTenant(tctx, byTenant[tenantID], platformName, now)
 		total += n
-		p.recordStatus(tctx, terr)
+		// Only record health for tenants we actually swept (or that errored);
+		// a profile-less tenant is skipped entirely, so writing "ok" would
+		// misreport an unconfigured tenant as healthy.
+		if swept || terr != nil {
+			p.recordStatus(tctx, terr)
+		}
 		if terr != nil {
 			if firstErr == nil {
 				firstErr = terr
@@ -162,20 +167,21 @@ func (p *RefreshZernioAnalyticsProcessor) refresh(ctx context.Context, now time.
 
 // refreshTenant fetches and upserts one tenant's analytics. ctx is already
 // tenant-scoped, so the Zernio fetch is filtered to this tenant's profile and
-// every write/event lands in the right tenant. A tenant with Zernio-published
-// posts but no profile id recorded is skipped (0, nil) rather than falling back
-// to an unscoped cross-profile fetch.
-func (p *RefreshZernioAnalyticsProcessor) refreshTenant(ctx context.Context, posts []models.Post, platformName map[string]string, now time.Time) (int, error) {
+// every write/event lands in the right tenant. The returned swept flag is false
+// when the tenant has Zernio-published posts but no profile id recorded — it is
+// skipped rather than falling back to an unscoped cross-profile fetch, and the
+// caller skips its health write so an unconfigured tenant isn't reported "ok".
+func (p *RefreshZernioAnalyticsProcessor) refreshTenant(ctx context.Context, posts []models.Post, platformName map[string]string, now time.Time) (upserts int, swept bool, err error) {
 	profileID := ""
 	if p.Deps.ProfileID != nil {
-		id, err := p.Deps.ProfileID(ctx)
-		if err != nil {
-			return 0, fmt.Errorf("resolve profile id: %w", err)
+		id, rerr := p.Deps.ProfileID(ctx)
+		if rerr != nil {
+			return 0, false, fmt.Errorf("resolve profile id: %w", rerr)
 		}
 		profileID = id
 	}
 	if profileID == "" {
-		return 0, nil
+		return 0, false, nil
 	}
 
 	// publisher_post_id → post_id match map for this tenant, plus the per-post
@@ -191,7 +197,6 @@ func (p *RefreshZernioAnalyticsProcessor) refreshTenant(ctx context.Context, pos
 	from := now.AddDate(0, 0, -p.windowDays()).Format("2006-01-02")
 	limit := p.pageLimit()
 
-	upserts := 0
 	for page := 1; page <= maxAnalyticsPages; page++ {
 		apiStart := time.Now()
 		items, pagination, lerr := p.Deps.Client.ListAnalytics(ctx, zernio.AnalyticsQuery{
@@ -203,7 +208,7 @@ func (p *RefreshZernioAnalyticsProcessor) refreshTenant(ctx context.Context, pos
 		})
 		jobs.ObserveZernioCall(time.Since(apiStart))
 		if lerr != nil {
-			return upserts, lerr
+			return upserts, true, lerr
 		}
 
 		for i := range items {
@@ -241,7 +246,7 @@ func (p *RefreshZernioAnalyticsProcessor) refreshTenant(ctx context.Context, pos
 			break
 		}
 	}
-	return upserts, nil
+	return upserts, true, nil
 }
 
 // platformNames resolves platform_id → display name once per tick (platforms is
