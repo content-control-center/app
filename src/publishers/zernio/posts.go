@@ -2,6 +2,7 @@ package zernio
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -50,6 +51,37 @@ type PlatformOutcome struct {
 	Status          string `json:"status"`
 	ErrorMessage    string `json:"error,omitempty"`
 	PlatformPostURL string `json:"platformPostUrl,omitempty"`
+}
+
+// UnmarshalJSON tolerates Zernio returning `accountId` as either a bare
+// ObjectId string or a populated account sub-document ({"_id": "...", ...}).
+// Which shape arrives depends on whether the upstream query populates the
+// reference — the same ambiguity handled for Account.profileId — so we project
+// down to the string ID either way. Without this, a populated account crashes
+// the whole submit flow at the FindByContent dedupe-recovery decode.
+func (o *PlatformOutcome) UnmarshalJSON(data []byte) error {
+	// Avoid recursion via a type alias that drops UnmarshalJSON.
+	type outcomeWire struct {
+		Platform        string          `json:"platform"`
+		AccountID       json.RawMessage `json:"accountId"`
+		Status          string          `json:"status"`
+		ErrorMessage    string          `json:"error"`
+		PlatformPostURL string          `json:"platformPostUrl"`
+	}
+	var w outcomeWire
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
+	}
+	o.Platform = w.Platform
+	o.Status = w.Status
+	o.ErrorMessage = w.ErrorMessage
+	o.PlatformPostURL = w.PlatformPostURL
+	id, err := decodeRefID(w.AccountID)
+	if err != nil {
+		return fmt.Errorf("zernio: platformOutcome.accountId: %w", err)
+	}
+	o.AccountID = id
+	return nil
 }
 
 // SubmitRequest is the body for POST /api/v1/posts. Either ScheduledFor

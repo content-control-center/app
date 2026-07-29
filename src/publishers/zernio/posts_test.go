@@ -227,6 +227,63 @@ func TestFindByContentPaginatesPastFirstPage(t *testing.T) {
 	}
 }
 
+func TestPlatformOutcomeAccountIDTolerantOfObject(t *testing.T) {
+	// Zernio populates `accountId` as either a bare ObjectId string or a
+	// full account sub-document depending on whether the upstream query
+	// populates the reference. Both must decode down to the string ID —
+	// the object shape previously crashed the submit flow at the
+	// FindByContent dedupe-recovery decode.
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"bare string", `{"platform":"linkedin","accountId":"acc-1","status":"published"}`, "acc-1"},
+		{"populated object", `{"platform":"linkedin","accountId":{"_id":"acc-1","username":"foo"},"status":"published"}`, "acc-1"},
+		{"absent", `{"platform":"linkedin","status":"failed","error":"boom"}`, ""},
+		{"null", `{"platform":"linkedin","accountId":null,"status":"failed"}`, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var o PlatformOutcome
+			if err := json.Unmarshal([]byte(tc.in), &o); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if o.AccountID != tc.want {
+				t.Errorf("accountId: got %q want %q", o.AccountID, tc.want)
+			}
+			if o.Platform != "linkedin" {
+				t.Errorf("platform: got %q want linkedin", o.Platform)
+			}
+		})
+	}
+}
+
+func TestFindByContentDecodesPopulatedAccount(t *testing.T) {
+	// Reproduces the reported failure: a listed post whose per-platform
+	// outcome carries a populated `accountId` object must decode cleanly
+	// through the listEnvelope path rather than aborting the submit job.
+	s := newStub()
+	defer s.Close()
+	s.handle("GET", "/posts", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, json.RawMessage(`{"posts":[
+			{"_id":"match","content":"hello","status":"published",
+			 "platforms":[{"platform":"linkedin","accountId":{"_id":"acc-9","username":"foo"},"status":"published"}]}
+		]}`))
+	})
+	c := newClient(s)
+	job, err := c.FindByContent(context.Background(), "hello", time.Hour)
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	if job == nil || job.ID != "match" {
+		t.Fatalf("expected match, got %+v", job)
+	}
+	if job.Platforms[0].AccountID != "acc-9" {
+		t.Errorf("accountId: got %q want acc-9", job.Platforms[0].AccountID)
+	}
+}
+
 func TestIsTerminalAPIError(t *testing.T) {
 	cases := []struct {
 		err  error
