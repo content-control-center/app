@@ -91,22 +91,30 @@ type PeriodicConfig struct {
 	IncludeAnalytics bool // only when the Zernio integration is configured
 }
 
-// PeriodicJobs builds the River periodic-job set. Each fires one interval
-// after start (River's default; no RunOnStart), matching the old
-// seed-with-Wait(every) behaviour.
+// PeriodicJobs builds the River periodic-job set. Every job runs once on
+// start (RunOnStart) and then every interval. Without RunOnStart the first
+// tick fires only one full interval after the client starts, and each process
+// restart re-bases that timer from zero — so a long-interval sweep (analytics
+// at 30m, cleanup at 1h) can be starved indefinitely in a frequently-restarting
+// environment (dev live-reload, crash-loops, rapid deploys) and never fire its
+// first tick. RunOnStart makes each boot deterministically produce one tick;
+// the active-state UniqueOpts dedupe overlapping inserts across a fast restart,
+// and every sweep is idempotent (upserts) or a no-op when there's nothing to
+// do, so the extra boot tick is harmless in a stable process too.
 func (cfg PeriodicConfig) PeriodicJobs() []*river.PeriodicJob {
+	runOnStart := &river.PeriodicJobOpts{RunOnStart: true}
 	jobs := []*river.PeriodicJob{
 		river.NewPeriodicJob(river.PeriodicInterval(cfg.CleanupEvery), func() (river.JobArgs, *river.InsertOpts) {
 			return CleanupPostLogsTask{}, nil
-		}, nil),
+		}, runOnStart),
 		river.NewPeriodicJob(river.PeriodicInterval(cfg.ReconcileEvery), func() (river.JobArgs, *river.InsertOpts) {
 			return ReconcileScheduledPostsTask{}, nil
-		}, nil),
+		}, runOnStart),
 	}
 	if cfg.IncludeAnalytics {
 		jobs = append(jobs, river.NewPeriodicJob(river.PeriodicInterval(cfg.AnalyticsEvery), func() (river.JobArgs, *river.InsertOpts) {
 			return RefreshZernioAnalyticsTask{}, nil
-		}, nil))
+		}, runOnStart))
 	}
 	return jobs
 }
