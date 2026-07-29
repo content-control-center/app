@@ -329,7 +329,7 @@ func buildSnapshot(post models.Post, publisherPostID, platformName string, item 
 		EngagementRate:     item.Analytics.EngagementRate,
 		PlatformAnalytics:  mapPlatformAnalytics(item.PlatformAnalytics),
 		SyncStatus:         item.SyncStatus,
-		MetricsLastUpdated: item.Analytics.LastUpdated,
+		MetricsLastUpdated: item.Analytics.LastUpdatedTime(),
 		RawJSON:            rawOrEmpty(item.Raw),
 		OccurredAt:         now,
 	}
