@@ -19,7 +19,7 @@ import (
 // system context with TenantID pre-set (preserved by BeforeAppendModel), and
 // read queries run in the caller's tenant context so they auto-scope.
 type ActivityEvent struct {
-	bun.BaseModel `bun:"table:activity_events,alias:ae" swaggerignore:"true"`
+	bun.BaseModel `bun:"table:tenant_activity_events,alias:ae" swaggerignore:"true"`
 	TenantScoped  // tenant_id column + central scoping hooks (no FK in the analytics DB)
 
 	ID     string `bun:"id,notnull"       json:"id"`

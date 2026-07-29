@@ -20,7 +20,7 @@ import (
 // publisher kinds post/api_call/account) live in the ExtraUnits jsonb so a
 // new vendor never needs a schema change (CON-86 D6/FR2).
 type UsageEvent struct {
-	bun.BaseModel `bun:"table:usage_events,alias:ue" swaggerignore:"true"`
+	bun.BaseModel `bun:"table:vendor_usage_events,alias:ue" swaggerignore:"true"`
 	TenantScoped  // tenant_id column + central scoping hooks (no FK in the analytics DB)
 
 	ID        string `bun:"id,notnull"        json:"id"`

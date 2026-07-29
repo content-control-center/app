@@ -43,7 +43,7 @@ services:
             timeout: 2s
             retries: 30
 
-    # Isolated analytics database (CON-86): TimescaleDB on PG17 for usage_events
+    # Isolated analytics database (CON-86): TimescaleDB on PG17 for vendor_usage_events
     # — the hypertable + continuous-aggregate rollups + compression/retention.
     # Kept SEPARATE from the control-plane postgres above so the extension
     # dependency stays quarantined and the control plane stays vanilla. The API

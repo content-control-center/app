@@ -27,7 +27,7 @@ type PostAnalyticsMetrics struct {
 }
 
 // PostPlatformAnalytics is one per-platform row of the breakdown stored
-// in post_analytics.platform_analytics (CON-93 §7). SyncStatus /
+// in post_analytics_snapshots.platform_analytics (CON-93 §7). SyncStatus /
 // ErrorMessage / ReauthorizeURL carry the per-platform scope-gap nuance
 // (412/reauthorizeUrl): a platform connected before analytics scopes
 // were granted surfaces its error here without failing the whole

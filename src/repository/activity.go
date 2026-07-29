@@ -11,7 +11,7 @@ import (
 	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
-// ActivityRepository persists activity_events in the isolated analytics
+// ActivityRepository persists tenant_activity_events in the isolated analytics
 // database (CON-125). It is constructed with the analytics *bun.DB, not the
 // main pool. Writes come from the async activity.Recorder in a system context
 // (tenant pre-set per row). A read/query surface is deferred to the consumers
@@ -38,7 +38,7 @@ func (r *activityRepository) Insert(ctx context.Context, events []*models.Activi
 	return err
 }
 
-// postLogBackfillPrefix marks activity_events rows that were migrated from
+// postLogBackfillPrefix marks tenant_activity_events rows that were migrated from
 // post_logs. Migrated rows reuse the source post_log id (prefixed) as their
 // activity id, which makes the backfill idempotent and restart-safe: a re-run
 // preloads the already-migrated ids and skips them. The prefix also
@@ -49,7 +49,7 @@ const postLogBackfillPrefix = "plog_"
 // and how they map onto the live activity taxonomy (CON-125). Types absent from
 // this map — the internal River task lifecycle (task_*), Zernio polling/retry,
 // and rejected (blocked) transitions — are operational noise and are skipped, so
-// activity_events stays a clean behavioural stream whose type names match the
+// tenant_activity_events stays a clean behavioural stream whose type names match the
 // live instrumentation.
 var postLogActivityMap = map[models.PostLogEventType]struct{ category, typ string }{
 	models.PostLogEventStateTransition:       {"post", "post_state_transition"},
@@ -68,7 +68,7 @@ var postLogActivityMap = map[models.PostLogEventType]struct{ category, typ strin
 }
 
 // BackfillPostLogsToActivity migrates the historical post_logs audit trail
-// (main DB) into activity_events (analytics DB) so the behavioural stream has
+// (main DB) into tenant_activity_events (analytics DB) so the behavioural stream has
 // real history, not just events recorded since the live instrumentation shipped
 // (CON-125). It maps the meaningful event types onto the live activity taxonomy
 // (see postLogActivityMap) and skips operational noise.
@@ -107,7 +107,7 @@ func BackfillPostLogsToActivity(ctx context.Context, mainDB, analyticsDB *bun.DB
 	// handles the first run (nothing migrated yet ⇒ epoch ⇒ scan everything).
 	var watermark time.Time
 	if err := analyticsDB.NewRaw(
-		`SELECT COALESCE(MAX(occurred_at), 'epoch'::timestamptz) FROM activity_events WHERE id LIKE ?`,
+		`SELECT COALESCE(MAX(occurred_at), 'epoch'::timestamptz) FROM tenant_activity_events WHERE id LIKE ?`,
 		postLogBackfillPrefix+`%`,
 	).Scan(ctx, &watermark); err != nil {
 		return 0, err
@@ -134,7 +134,7 @@ func BackfillPostLogsToActivity(ctx context.Context, mainDB, analyticsDB *bun.DB
 	// sharing the watermark timestamp is skipped, not re-inserted.
 	var migratedIDs []string
 	if err := analyticsDB.NewRaw(
-		`SELECT id FROM activity_events WHERE id LIKE ? AND occurred_at >= ?`,
+		`SELECT id FROM tenant_activity_events WHERE id LIKE ? AND occurred_at >= ?`,
 		postLogBackfillPrefix+`%`, watermark,
 	).Scan(ctx, &migratedIDs); err != nil {
 		return 0, err

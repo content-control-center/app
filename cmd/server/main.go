@@ -53,7 +53,7 @@ func main() {
 		fatal("run migrations", err)
 	}
 
-	// CON-86: the isolated analytics (TimescaleDB) pool for usage_events. When
+	// CON-86: the isolated analytics (TimescaleDB) pool for vendor_usage_events. When
 	// ANALYTICS_DSN is unset, analytics is disabled. A connect/migrate failure
 	// at boot is NOT fatal — usage is analytics-grade and must never take down
 	// the API (fail-open, FR10) — so we log and proceed with it disabled.
@@ -73,37 +73,23 @@ func main() {
 				analyticsDB = adb
 				defer analyticsDB.Close()
 
-				// CON-125: one-time, idempotent backfills into the analytics DB.
-				// Best-effort — never fatal to boot. Each runs under a bounded
+				// CON-125: one-time, idempotent backfill into the analytics DB.
+				// Best-effort — never fatal to boot. It runs under a bounded
 				// context so a slow/unresponsive analytics DB can't hang boot; the
-				// backfills are restart-safe, so a timed-out run simply resumes on
+				// backfill is restart-safe, so a timed-out run simply resumes on
 				// the next boot.
 				const backfillTimeout = 2 * time.Minute
 
-				// Track B: legacy main-DB post_analytics → analytics DB snapshots.
-				// The legacy table is retained until a separate later migration.
-				func() {
-					ctx, cancel := context.WithTimeout(context.Background(), backfillTimeout)
-					defer cancel()
-					if n, berr := repository.BackfillPostAnalytics(ctx, db, adb); berr != nil {
-						slog.Warn("post_analytics backfill failed (non-fatal)",
-							logging.AttrComponent, "boot", logging.AttrError, berr)
-					} else if n > 0 {
-						slog.Info("post_analytics backfilled",
-							logging.AttrComponent, "boot", "rows", n)
-					}
-				}()
-
-				// Historical post_logs audit trail → activity_events (curated to
+				// Historical post_logs audit trail → tenant_activity_events (curated to
 				// the activity taxonomy).
 				func() {
 					ctx, cancel := context.WithTimeout(context.Background(), backfillTimeout)
 					defer cancel()
 					if n, berr := repository.BackfillPostLogsToActivity(ctx, db, adb); berr != nil {
-						slog.Warn("post_logs → activity_events backfill failed (non-fatal)",
+						slog.Warn("post_logs → tenant_activity_events backfill failed (non-fatal)",
 							logging.AttrComponent, "boot", logging.AttrError, berr)
 					} else if n > 0 {
-						slog.Info("post_logs migrated to activity_events",
+						slog.Info("post_logs migrated to tenant_activity_events",
 							logging.AttrComponent, "boot", "rows", n)
 					}
 				}()

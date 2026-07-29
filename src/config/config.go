@@ -204,7 +204,7 @@ type Config struct {
 	AnalyticsDSN string `envconfig:"ANALYTICS_DSN" default:""`
 
 	// UsageRetentionDays mirrors PostLogRetentionDays; the analytics-DB
-	// retention policy drops usage_events chunks older than this. (The current
+	// retention policy drops vendor_usage_events chunks older than this. (The current
 	// migration installs a fixed 90-day policy; operators adjust it out of band.)
 	UsageRetentionDays int `envconfig:"USAGE_RETENTION_DAYS" default:"90"`
 	// Global default spend caps in USD-micros, applied to any tenant without a
@@ -227,7 +227,7 @@ type Config struct {
 	UsageAdminToken string `envconfig:"USAGE_ADMIN_TOKEN" default:""`
 
 	// ActivityRetentionDays mirrors UsageRetentionDays (CON-125): the
-	// activity_events retention policy drops chunks older than this. The current
+	// tenant_activity_events retention policy drops chunks older than this. The current
 	// migration installs a fixed 90-day policy; operators adjust it out of band.
 	// Starts at 90 days, expandable later.
 	ActivityRetentionDays int `envconfig:"ACTIVITY_RETENTION_DAYS" default:"90"`
