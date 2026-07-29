@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -292,9 +293,9 @@ func TestRefreshSkipsTenantWithoutProfile(t *testing.T) {
 	stub := newStubZernio()
 	defer stub.Close()
 
-	var called bool
+	var called atomic.Bool
 	stub.handle("GET", "/analytics", func(w http.ResponseWriter, r *http.Request) {
-		called = true
+		called.Store(true)
 		writeJSON(w, http.StatusOK, map[string]any{"analytics": []any{}})
 	})
 
@@ -307,7 +308,7 @@ func TestRefreshSkipsTenantWithoutProfile(t *testing.T) {
 	if err := proc.Process(context.Background(), queues.RefreshZernioAnalyticsTask{}); err != nil {
 		t.Fatalf("process: %v", err)
 	}
-	if called {
+	if called.Load() {
 		t.Errorf("analytics endpoint should not be called for a profile-less tenant")
 	}
 	if len(analyticsRepo.upserted) != 0 {
