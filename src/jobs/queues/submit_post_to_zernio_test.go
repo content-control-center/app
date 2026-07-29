@@ -66,7 +66,17 @@ func (r *fakePostRepo) ListWithPublisherPostID(context.Context) ([]models.Post, 
 	var out []models.Post
 	for _, p := range r.posts {
 		if p.Publisher == models.PublisherZernio && p.PublisherPostID != "" {
-			out = append(out, models.Post{ID: p.ID, PublisherPostID: p.PublisherPostID})
+			// Mirror the real repo's projection, including tenant_id — the
+			// analytics refresh groups by it to sweep per-profile.
+			out = append(out, models.Post{
+				ID:              p.ID,
+				TenantScoped:    models.TenantScoped{TenantID: p.TenantID},
+				PublisherPostID: p.PublisherPostID,
+				Title:           p.Title,
+				PublishedAt:     p.PublishedAt,
+				PlatformID:      p.PlatformID,
+				Publisher:       p.Publisher,
+			})
 		}
 	}
 	return out, nil

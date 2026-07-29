@@ -1,9 +1,11 @@
 package zernio
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -84,6 +86,7 @@ type Metrics struct {
 	Saves                     int        `json:"saves"`
 	Clicks                    int        `json:"clicks"`
 	Views                     int        `json:"views"`
+	Follows                   int        `json:"follows"`
 	IGReelsAvgWatchTime       float64    `json:"igReelsAvgWatchTime,omitempty"`
 	IGReelsVideoViewTotalTime float64    `json:"igReelsVideoViewTotalTime,omitempty"`
 	EngagementRate            float64    `json:"engagementRate"`
@@ -135,50 +138,139 @@ type AnalyticsItem struct {
 	Raw json.RawMessage `json:"-"`
 }
 
-// AnalyticsPagination mirrors Zernio's standard pagination block (the
-// same shape posts list uses).
+// AnalyticsPagination mirrors Zernio's pagination block. Both field spellings
+// Zernio has shipped for the last-page count are tolerated (`pages` and
+// `totalPages`), plus the cursor-style `hasMore` flag, so the refresh loop can
+// page correctly regardless of which the endpoint returns. See LastPage.
 type AnalyticsPagination struct {
-	Page  int `json:"page"`
-	Limit int `json:"limit"`
-	Total int `json:"total"`
-	Pages int `json:"pages"`
+	Page       int  `json:"page"`
+	Limit      int  `json:"limit"`
+	Total      int  `json:"total"`
+	Pages      int  `json:"pages"`
+	TotalPages int  `json:"totalPages"`
+	HasMore    bool `json:"hasMore"`
 }
 
-// listAnalyticsEnvelope mirrors Zernio's list-response shape:
-// `{"analytics": [...], "pagination": {...}}`. The single-key envelope
-// is consistent across every Zernio list endpoint (profiles, accounts,
-// posts). Items are decoded individually so each retains its Raw bytes.
-type listAnalyticsEnvelope struct {
-	Analytics  []json.RawMessage   `json:"analytics"`
-	Pagination AnalyticsPagination `json:"pagination"`
+// LastPage returns the highest known last-page number across the two field
+// names Zernio has used (`pages`, `totalPages`), or 0 when neither is present
+// (e.g. a bare-array or cursor-style response) — callers then fall back to the
+// returned item count / HasMore to decide whether to keep paging.
+func (p AnalyticsPagination) LastPage() int {
+	if p.Pages > p.TotalPages {
+		return p.Pages
+	}
+	return p.TotalPages
 }
+
+// analyticsListKeys are the wrapper keys under which Zernio has returned (or
+// might return) the analytics array. The endpoint is documented as returning
+// post objects and has shipped both as a bare top-level array and wrapped in a
+// single-key envelope; accepting all of these means an upstream shape change
+// can't silently zero out collection (CON-93 follow-up). `analytics` first
+// because it is the historically-assumed key.
+var analyticsListKeys = []string{"analytics", "posts", "data", "results", "items"}
 
 // ListAnalytics fetches one page of post analytics from GET /analytics,
 // mirroring Status. The refresh queue pages through with Source=late.
 //
 // The legacy 402 is translated to ErrAnalyticsUnavailable; all other
 // non-2xx responses surface as the usual *APIError so the worker can
-// reuse IsStatus(err, 401|429).
+// reuse IsStatus(err, 401|429). The body is decoded tolerantly — see
+// decodeAnalyticsList — so either the bare-array or enveloped shape works.
 func (c *Client) ListAnalytics(ctx context.Context, q AnalyticsQuery) ([]AnalyticsItem, AnalyticsPagination, error) {
 	if c == nil {
 		return nil, AnalyticsPagination{}, errors.New("zernio: client is disabled")
 	}
-	var env listAnalyticsEnvelope
-	if err := c.do(ctx, http.MethodGet, "/analytics", q.values(), nil, &env); err != nil {
+	var raw json.RawMessage
+	if err := c.do(ctx, http.MethodGet, "/analytics", q.values(), nil, &raw); err != nil {
 		if IsStatus(err, http.StatusPaymentRequired) {
 			return nil, AnalyticsPagination{}, ErrAnalyticsUnavailable
 		}
 		return nil, AnalyticsPagination{}, err
 	}
-	out := make([]AnalyticsItem, 0, len(env.Analytics))
-	for _, raw := range env.Analytics {
+	return decodeAnalyticsList(raw)
+}
+
+// decodeAnalyticsList tolerates every top-level shape GET /analytics has been
+// observed or documented to return:
+//   - a bare array of post objects:            [ {item}, {item} ]
+//   - an object envelope wrapping the array:   { "<key>": [ {item} ], "pagination": {...} }
+//   - a single post object (the ?postId shape): { "postId": ..., "analytics": ... }
+//
+// Pagination is returned as its zero value when absent (bare array / single
+// object). An object with none of the known array keys and no post id decodes
+// to an empty list rather than an error, so a genuinely empty page is a no-op.
+func decodeAnalyticsList(raw json.RawMessage) ([]AnalyticsItem, AnalyticsPagination, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return nil, AnalyticsPagination{}, nil
+	}
+	switch trimmed[0] {
+	case '[':
+		var rawItems []json.RawMessage
+		if err := json.Unmarshal(trimmed, &rawItems); err != nil {
+			return nil, AnalyticsPagination{}, fmt.Errorf("zernio: decode analytics array: %w", err)
+		}
+		items, err := decodeAnalyticsItems(rawItems)
+		return items, AnalyticsPagination{}, err
+	case '{':
+		var env map[string]json.RawMessage
+		if err := json.Unmarshal(trimmed, &env); err != nil {
+			return nil, AnalyticsPagination{}, fmt.Errorf("zernio: decode analytics envelope: %w", err)
+		}
+		var pag AnalyticsPagination
+		if p, ok := env["pagination"]; ok && len(p) > 0 {
+			// Pagination is advisory; a decode failure must not sink the page.
+			_ = json.Unmarshal(p, &pag)
+		}
+		for _, key := range analyticsListKeys {
+			arr, ok := env[key]
+			if !ok || len(arr) == 0 || string(arr) == "null" {
+				continue
+			}
+			if bytes.TrimSpace(arr)[0] != '[' {
+				continue // e.g. the metrics object at the "analytics" key of a single post
+			}
+			var rawItems []json.RawMessage
+			if err := json.Unmarshal(arr, &rawItems); err != nil {
+				return nil, pag, fmt.Errorf("zernio: decode analytics %q array: %w", key, err)
+			}
+			items, err := decodeAnalyticsItems(rawItems)
+			return items, pag, err
+		}
+		// No wrapper array — but the object may itself be a single post (the
+		// documented ?postId shape). Decode it as a one-item list when it
+		// carries a post id; otherwise it's an empty page.
+		if _, ok := env["postId"]; ok {
+			item, err := decodeAnalyticsItem(trimmed)
+			if err != nil {
+				return nil, pag, err
+			}
+			return []AnalyticsItem{*item}, pag, nil
+		}
+		if _, ok := env["latePostId"]; ok {
+			item, err := decodeAnalyticsItem(trimmed)
+			if err != nil {
+				return nil, pag, err
+			}
+			return []AnalyticsItem{*item}, pag, nil
+		}
+		return nil, pag, nil
+	default:
+		return nil, AnalyticsPagination{}, fmt.Errorf("zernio: analytics response is neither array nor object (starts with %q)", trimmed[0])
+	}
+}
+
+func decodeAnalyticsItems(rawItems []json.RawMessage) ([]AnalyticsItem, error) {
+	out := make([]AnalyticsItem, 0, len(rawItems))
+	for _, raw := range rawItems {
 		item, err := decodeAnalyticsItem(raw)
 		if err != nil {
-			return nil, AnalyticsPagination{}, err
+			return nil, err
 		}
 		out = append(out, *item)
 	}
-	return out, env.Pagination, nil
+	return out, nil
 }
 
 func decodeAnalyticsItem(raw json.RawMessage) (*AnalyticsItem, error) {
