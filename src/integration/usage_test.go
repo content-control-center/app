@@ -56,7 +56,7 @@ func seedTenant(db *bun.DB, id, name, slug string) {
 	Expect(err).NotTo(HaveOccurred())
 }
 
-// mkEvent builds a usage_events row with an explicit tenant. The recorder writes
+// mkEvent builds a vendor_usage_events row with an explicit tenant. The recorder writes
 // these in a system context where BeforeAppendModel preserves the set TenantID
 // (models/tenant_scoped.go), which the test mirrors via insertEvents.
 func mkEvent(tenantID, vendor, family, model, op, feature string, inputTokens, cost int64, at time.Time) *models.UsageEvent {
@@ -94,9 +94,9 @@ var _ = Describe("Usage metering (CON-86)", Ordered, func() {
 
 	BeforeAll(func() {
 		db = mustOpenIntegrationDB()
-		// usage_events lives in the analytics migration set (the main migrations
+		// vendor_usage_events lives in the analytics migration set (the main migrations
 		// pgtest already ran created tenant_usage_limits). On vanilla Postgres the
-		// guarded TimescaleDB DDL is skipped and usage_events is a plain table.
+		// guarded TimescaleDB DDL is skipped and vendor_usage_events is a plain table.
 		Expect(database.MigrateAnalytics(context.Background(), db)).To(Succeed())
 		events = repository.NewUsageRepository(db)
 		limits = repository.NewUsageLimitsRepository(db)
@@ -107,7 +107,7 @@ var _ = Describe("Usage metering (CON-86)", Ordered, func() {
 		seedTenant(db, "tn-d", "Tenant D", "tenant-d")
 	})
 
-	Describe("usage_events repository", func() {
+	Describe("vendor_usage_events repository", func() {
 		It("records and reads period-to-date spend + a grouped breakdown", func() {
 			now := time.Now().UTC()
 			at := now.Add(-time.Minute)

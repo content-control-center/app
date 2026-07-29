@@ -59,7 +59,7 @@ func (s *CampaignPlatforms) Scan(src any) error {
 }
 
 // JSONMap is a free-form map[string]any that serialises as a JSON object in a
-// jsonb column. Used for the activity_events payload (CON-125), where each
+// jsonb column. Used for the tenant_activity_events payload (CON-125), where each
 // activity type carries its own small bag of fields.
 type JSONMap map[string]any
 

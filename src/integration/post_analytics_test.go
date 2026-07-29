@@ -187,7 +187,7 @@ var _ = Describe("Post analytics — CON-93", Ordered, func() {
 	}
 
 	// runRefresh runs one background refresh tick against the stub Zernio,
-	// populating post_analytics from the wire — exactly as the recurring
+	// populating post_analytics_snapshots from the wire — exactly as the recurring
 	// queue does at runtime.
 	runRefresh := func() {
 		// Per-profile collection (CON-93 follow-up): the sweep scopes each fetch

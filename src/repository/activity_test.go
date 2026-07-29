@@ -91,7 +91,7 @@ func TestBackfillPostLogsToActivity(t *testing.T) {
 
 	var events []models.ActivityEvent
 	if err := db.NewSelect().Model(&events).OrderExpr("ae.occurred_at").Scan(ctx); err != nil {
-		t.Fatalf("scan activity_events: %v", err)
+		t.Fatalf("scan tenant_activity_events: %v", err)
 	}
 	if len(events) != 2 {
 		t.Fatalf("activity rows = %d want 2", len(events))

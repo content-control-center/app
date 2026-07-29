@@ -1,5 +1,5 @@
 // Package usage is the vendor-neutral metering layer for CON-86: an async
-// Recorder that snapshots cost and writes usage_events without adding latency
+// Recorder that snapshots cost and writes vendor_usage_events without adding latency
 // to the calling flow, and a Checker that gates synchronous flows against a
 // tenant's spend caps. It depends only on narrow consumer interfaces (Writer,
 // LimitsReader, SpendReader) that the repositories satisfy, plus the vendor
