@@ -190,14 +190,24 @@ var _ = Describe("Post analytics — CON-93", Ordered, func() {
 	// populating post_analytics from the wire — exactly as the recurring
 	// queue does at runtime.
 	runRefresh := func() {
+		// Per-profile collection (CON-93 follow-up): the sweep scopes each fetch
+		// to the tenant's Zernio profile, so a profile id must be present or the
+		// tenant is skipped. The stub ignores profileId; the value only needs to
+		// be non-empty.
+		settings := newMemSettings()
+		Expect(settings.Set(tenantCtx(), zernio.SettingProfileID, "prof-int")).To(Succeed())
 		proc := &queues.RefreshZernioAnalyticsProcessor{
 			Deps: queues.ZernioDeps{
 				PostRepo:      postRepo,
 				AnalyticsRepo: analyticsRepo,
 				PlatformRepo:  platformRepo,
 				Client:        zernio.NewClient(zernio.StaticKey("k"), zernioStub.URL, zernio.ClientOpts{Timeout: 5 * time.Second}),
+				ProfileID: func(ctx context.Context) (string, error) {
+					v, _, err := settings.Get(ctx, zernio.SettingProfileID)
+					return v, err
+				},
 			},
-			Settings:   newMemSettings(),
+			Settings:   settings,
 			WindowDays: 90,
 		}
 		Expect(proc.Process(tenantCtx(), queues.RefreshZernioAnalyticsTask{})).To(Succeed())
