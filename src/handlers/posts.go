@@ -330,6 +330,17 @@ func (h *PostsHandler) logTransition(c *fiber.Ctx, post *models.Post, prev, next
 	}
 }
 
+// writeAccountSelectionError renders a CON-150 account-selection failure as a
+// 422 carrying the stable machine reason, the platform, and — for the
+// ambiguous case — the connected accounts the client can offer as a picker.
+func writeAccountSelectionError(c *fiber.Ctx, e *schedule.AccountSelectionError) error {
+	body := fiber.Map{"error": e.Reason, "platform": e.Platform}
+	if e.Candidates != nil {
+		body["candidates"] = e.Candidates
+	}
+	return c.Status(fiber.StatusUnprocessableEntity).JSON(body)
+}
+
 // scheduleRequest is the body for POST /api/posts/:id/schedule. The
 // instant is absolute (relative expressions like "tomorrow 9am" are
 // resolved by the assistant before it calls the shared service; the
@@ -383,9 +394,12 @@ func (h *PostsHandler) Schedule(c *fiber.Ctx) error {
 	})
 	if err != nil {
 		var verr *schedule.ValidationError
+		var aerr *schedule.AccountSelectionError
 		switch {
 		case errors.Is(err, schedule.ErrPostNotFound):
 			return fiber.NewError(fiber.StatusNotFound, "post not found")
+		case errors.As(err, &aerr):
+			return writeAccountSelectionError(c, aerr)
 		case errors.As(err, &verr):
 			return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
 				"error":               "post is not ready for publish",
@@ -692,8 +706,12 @@ type postRequest struct {
 	// PlatformID + PlatformPostType are required only when status is not
 	// "draft" — see requirePlatformIfNotDraft below. Drafts can be saved
 	// before the user has picked a platform (CON-60).
-	PlatformID          string             `json:"platform_id"`
-	PlatformPostType    string             `json:"platform_post_type"`
+	PlatformID       string `json:"platform_id"`
+	PlatformPostType string `json:"platform_post_type"`
+	// SocialAccountID (CON-150) names which same-platform account the post
+	// publishes to. Optional: omit it and the submit worker auto-selects the
+	// platform's single account, or requires a choice when there are several.
+	SocialAccountID     string             `json:"social_account_id"`
 	Title               string             `json:"title"`
 	Content             string             `json:"content"`
 	MediaURLs           models.StringSlice `json:"media_urls"`
@@ -729,6 +747,7 @@ func (r *postRequest) apply(post *models.Post, status models.PostStatus, ctaType
 	post.CampaignID = r.CampaignID
 	post.PlatformID = r.PlatformID
 	post.PlatformPostType = r.PlatformPostType
+	post.SocialAccountID = r.SocialAccountID
 	post.Title = r.Title
 	post.Content = r.Content
 	post.MediaURLs = nullSlice(r.MediaURLs)
@@ -1074,6 +1093,10 @@ func (h *PostsHandler) Update(c *fiber.Ctx) error {
 		}
 		routed, err := h.scheduleSvc.RouteAndPersist(c.Context(), post, prevStatus, actor)
 		if err != nil {
+			var aerr *schedule.AccountSelectionError
+			if errors.As(err, &aerr) {
+				return writeAccountSelectionError(c, aerr)
+			}
 			return err
 		}
 		if routed != "" {

@@ -64,6 +64,32 @@ func (e *ValidationError) Error() string {
 	return "post failed pre-publish validation"
 }
 
+// AccountCandidate identifies one connected same-platform account the user
+// may choose between (CON-150). Serialised into the 422 body so the client
+// can render an account picker.
+type AccountCandidate struct {
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"displayName"`
+}
+
+// AccountSelectionError is returned by the CON-150 gate when an auto-publish
+// post's account selection is missing (with 2+ candidates), unknown, or on
+// the wrong platform. Reason is a stable machine code:
+//   - account_selection_required — no account chosen but 2+ are connected
+//     (Candidates lists them)
+//   - account_unavailable — the chosen account is not connected
+//   - account_platform_mismatch — the chosen account is on another platform
+//
+// The REST layer maps it to 422; the assistant declines with the reason.
+type AccountSelectionError struct {
+	Reason     string
+	Platform   string
+	Candidates []AccountCandidate
+}
+
+func (e *AccountSelectionError) Error() string { return e.Reason }
+
 // Options controls a single schedule.
 type Options struct {
 	// ScheduledAt is the absolute instant to publish at. Required; relative
@@ -114,6 +140,12 @@ type Service struct {
 	jobs        SubmitEnqueuer
 	hub         eventhub.Hub
 
+	// accounts + profileID back the CON-150 account-selection gate. Both nil
+	// (unset) disables the gate — the submit worker remains the authoritative
+	// backstop. Wired via SetAccountGate.
+	accounts  repository.SocialAccountRepository
+	profileID func(ctx context.Context) (string, error)
+
 	// now is injectable so tests can pin "current time" for future-time
 	// validation. nil → time.Now().UTC().
 	now func() time.Time
@@ -142,6 +174,17 @@ func New(
 		jobs:        jobs,
 		hub:         hub,
 	}
+}
+
+// SetAccountGate wires the CON-150 account-selection gate: when a post
+// routes to auto-publish, verify an explicit account selection (if any) is
+// valid and require an explicit choice when the platform has more than one
+// connected account. accounts resolves the tenant's connected accounts;
+// profileID resolves the tenant's Zernio profile id. Leaving either nil
+// disables the gate (the submit worker still enforces it at publish time).
+func (s *Service) SetAccountGate(accounts repository.SocialAccountRepository, profileID func(ctx context.Context) (string, error)) {
+	s.accounts = accounts
+	s.profileID = profileID
 }
 
 // SetClock overrides the time source (tests only).
@@ -217,6 +260,14 @@ func (s *Service) Schedule(ctx context.Context, postID string, opts Options) (*R
 		return nil, err
 	}
 
+	// CON-150: only auto-publish posts submit through Zernio, so only they
+	// need an unambiguous account. Runs before we mutate/persist the post.
+	if autoPublish {
+		if err := s.checkAccountSelection(ctx, post, supported.ZernioID); err != nil {
+			return nil, err
+		}
+	}
+
 	post.Status = target
 	post.ScheduledAt = &scheduledAt
 	post.UpdatedAt = s.clock()
@@ -257,6 +308,12 @@ func (s *Service) RouteAndPersist(ctx context.Context, post *models.Post, prevSt
 	if err != nil {
 		return "", err
 	}
+	// CON-150 gate (see Schedule): auto-publish posts need an unambiguous account.
+	if autoPublish {
+		if err := s.checkAccountSelection(ctx, post, supported.ZernioID); err != nil {
+			return "", err
+		}
+	}
 	post.Status = target
 	post.UpdatedAt = s.clock()
 
@@ -289,6 +346,53 @@ func (s *Service) route(ctx context.Context, platformID string) (autoPublish boo
 		target = models.PostStatusScheduled
 	}
 	return autoPublish, target, supported, nil
+}
+
+// checkAccountSelection is the CON-150 write-time gate. It only runs for
+// auto-publish posts (manual-publish posts never route through our submit
+// worker, so the account is irrelevant). Returns an *AccountSelectionError
+// (→ 422) when an explicit selection is invalid or when the platform has
+// 2+ accounts and none was chosen. A missing gate or profile is a no-op —
+// the submit worker stays the authoritative backstop.
+func (s *Service) checkAccountSelection(ctx context.Context, post *models.Post, zernioPlatform string) error {
+	if s.accounts == nil || s.profileID == nil {
+		return nil
+	}
+	profileID, err := s.profileID(ctx)
+	if err != nil || profileID == "" {
+		return nil // no profile yet — can't validate here; submit worker will.
+	}
+
+	// Explicit selection: verify it is connected and on the right platform.
+	if post.SocialAccountID != "" {
+		acc, err := s.accounts.GetActive(ctx, profileID, post.SocialAccountID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return &AccountSelectionError{Reason: "account_unavailable", Platform: zernioPlatform}
+			}
+			return err
+		}
+		if acc.Platform != zernioPlatform {
+			return &AccountSelectionError{Reason: "account_platform_mismatch", Platform: zernioPlatform}
+		}
+		return nil
+	}
+
+	// No choice made: require one only when the platform is ambiguous (2+).
+	// 0 or 1 account falls through — the submit worker auto-selects the one
+	// or terminally fails "no_account_connected", preserving prior behaviour.
+	accounts, err := s.accounts.ListActiveByPlatform(ctx, profileID, zernioPlatform)
+	if err != nil {
+		return err
+	}
+	if len(accounts) >= 2 {
+		candidates := make([]AccountCandidate, 0, len(accounts))
+		for _, a := range accounts {
+			candidates = append(candidates, AccountCandidate{ID: a.ID, Username: a.Username, DisplayName: a.DisplayName})
+		}
+		return &AccountSelectionError{Reason: "account_selection_required", Platform: zernioPlatform, Candidates: candidates}
+	}
+	return nil
 }
 
 // persist writes the post row, every supplied log entry, and (when

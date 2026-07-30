@@ -2,10 +2,12 @@ package queues_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -165,6 +167,23 @@ func (r *fakeAccountRepo) ListAll(context.Context, string) ([]models.SocialAccou
 }
 func (r *fakeAccountRepo) ListActive(_ context.Context, profileID string) ([]models.SocialAccount, error) {
 	return r.accounts[profileID], nil
+}
+func (r *fakeAccountRepo) ListActiveByPlatform(_ context.Context, profileID, platform string) ([]models.SocialAccount, error) {
+	var out []models.SocialAccount
+	for _, a := range r.accounts[profileID] {
+		if a.Platform == platform && a.DeletedAt == nil {
+			out = append(out, a)
+		}
+	}
+	return out, nil
+}
+func (r *fakeAccountRepo) GetActive(_ context.Context, profileID, id string) (*models.SocialAccount, error) {
+	for i := range r.accounts[profileID] {
+		if a := r.accounts[profileID][i]; a.ID == id && a.DeletedAt == nil {
+			return &a, nil
+		}
+	}
+	return nil, sql.ErrNoRows
 }
 func (r *fakeAccountRepo) ApplyPlan(context.Context, []models.SocialAccount, []string, time.Time) error {
 	return nil
@@ -354,5 +373,120 @@ func TestSubmitNoAccountConnectedFails(t *testing.T) {
 	got, _ := postRepo.GetByID(context.Background(), post.ID)
 	if got.Status != models.PostStatusFailed {
 		t.Errorf("status: got %q want failed", got.Status)
+	}
+}
+
+// CON-150: two LinkedIn accounts, no explicit choice → terminal
+// account_selection_required (never submitted, so the stub is never hit).
+func TestSubmitMultipleAccountsRequiresSelection(t *testing.T) {
+	stub := newStubZernio()
+	defer stub.Close()
+	deps, postRepo, _ := makeDeps(stub, map[string][]models.SocialAccount{
+		"p_test": {
+			{ID: "acc-1", Platform: "linkedin"},
+			{ID: "acc-2", Platform: "linkedin"},
+		},
+	})
+	post := seedScheduledPost(postRepo)
+
+	proc := &queues.SubmitPostProcessor{Deps: deps}
+	if err := proc.Process(context.Background(), queues.SubmitPostTask{PostID: post.ID}); err != nil {
+		t.Fatalf("process should swallow terminal: %v", err)
+	}
+	got, _ := postRepo.GetByID(context.Background(), post.ID)
+	if got.Status != models.PostStatusFailed {
+		t.Fatalf("status: got %q want failed", got.Status)
+	}
+	if !strings.HasPrefix(got.FailureReason, "account_selection_required") {
+		t.Errorf("failure_reason: got %q want account_selection_required prefix", got.FailureReason)
+	}
+}
+
+// CON-150: an explicit account choice is sent to Zernio verbatim, even when
+// the platform has several connected accounts.
+func TestSubmitExplicitAccountSelectionIsUsed(t *testing.T) {
+	stub := newStubZernio()
+	defer stub.Close()
+	var gotAccountID string
+	stub.handle("POST", "/posts", func(w http.ResponseWriter, r *http.Request) {
+		var body zernio.SubmitRequest
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if len(body.Platforms) == 1 {
+			gotAccountID = body.Platforms[0].AccountID
+		}
+		writeJSON(w, http.StatusCreated, zernio.PostEnvelope{Post: zernio.Job{ID: "z-1", Status: zernio.JobStatusScheduled}})
+	})
+	deps, postRepo, _ := makeDeps(stub, map[string][]models.SocialAccount{
+		"p_test": {
+			{ID: "acc-1", Platform: "linkedin"},
+			{ID: "acc-2", Platform: "linkedin"},
+		},
+	})
+	post := seedScheduledPost(postRepo)
+	post.SocialAccountID = "acc-2"
+	postRepo.put(post)
+
+	proc := &queues.SubmitPostProcessor{Deps: deps}
+	if err := proc.Process(context.Background(), queues.SubmitPostTask{PostID: post.ID}); err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if gotAccountID != "acc-2" {
+		t.Errorf("submitted accountId: got %q want acc-2", gotAccountID)
+	}
+	got, _ := postRepo.GetByID(context.Background(), post.ID)
+	if got.PublisherPostID != "z-1" {
+		t.Errorf("publisher_post_id: got %q want z-1", got.PublisherPostID)
+	}
+}
+
+// CON-150: an explicit choice on the wrong platform is a terminal mismatch.
+func TestSubmitExplicitAccountPlatformMismatchFails(t *testing.T) {
+	stub := newStubZernio()
+	defer stub.Close()
+	deps, postRepo, _ := makeDeps(stub, map[string][]models.SocialAccount{
+		"p_test": {
+			{ID: "acc-1", Platform: "linkedin"},
+			{ID: "acc-x", Platform: "twitter"},
+		},
+	})
+	post := seedScheduledPost(postRepo) // LinkedIn post
+	post.SocialAccountID = "acc-x"      // ...pointed at a Twitter account
+	postRepo.put(post)
+
+	proc := &queues.SubmitPostProcessor{Deps: deps}
+	if err := proc.Process(context.Background(), queues.SubmitPostTask{PostID: post.ID}); err != nil {
+		t.Fatalf("process should swallow terminal: %v", err)
+	}
+	got, _ := postRepo.GetByID(context.Background(), post.ID)
+	if got.Status != models.PostStatusFailed {
+		t.Fatalf("status: got %q want failed", got.Status)
+	}
+	if !strings.HasPrefix(got.FailureReason, "account_platform_mismatch") {
+		t.Errorf("failure_reason: got %q want account_platform_mismatch prefix", got.FailureReason)
+	}
+}
+
+// CON-150: an explicit choice that is no longer connected is a terminal
+// account_unavailable.
+func TestSubmitExplicitAccountUnavailableFails(t *testing.T) {
+	stub := newStubZernio()
+	defer stub.Close()
+	deps, postRepo, _ := makeDeps(stub, map[string][]models.SocialAccount{
+		"p_test": {{ID: "acc-1", Platform: "linkedin"}},
+	})
+	post := seedScheduledPost(postRepo)
+	post.SocialAccountID = "ghost" // never connected
+	postRepo.put(post)
+
+	proc := &queues.SubmitPostProcessor{Deps: deps}
+	if err := proc.Process(context.Background(), queues.SubmitPostTask{PostID: post.ID}); err != nil {
+		t.Fatalf("process should swallow terminal: %v", err)
+	}
+	got, _ := postRepo.GetByID(context.Background(), post.ID)
+	if got.Status != models.PostStatusFailed {
+		t.Fatalf("status: got %q want failed", got.Status)
+	}
+	if !strings.HasPrefix(got.FailureReason, "account_unavailable") {
+		t.Errorf("failure_reason: got %q want account_unavailable prefix", got.FailureReason)
 	}
 }

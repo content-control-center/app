@@ -124,8 +124,10 @@ func (p *SubmitPostProcessor) Process(ctx context.Context, task SubmitPostTask) 
 			fmt.Sprintf("platform %s (%s) is not Zernio-supported", platform.Name, platform.ID))
 	}
 
-	// One Zernio account per (profile, platform) for the single-tenant
-	// MVP. Multi-account selection is a follow-up.
+	// CON-150: resolve which same-platform account this post publishes to.
+	// An explicit selection (post.SocialAccountID) is validated and used
+	// verbatim; otherwise auto-select when the platform has exactly one
+	// active account, and require an explicit choice when it has more.
 	if p.Deps.ProfileID == nil {
 		return p.terminal(ctx, post, "integration_disabled", "Zernio integration is not configured")
 	}
@@ -133,20 +135,12 @@ func (p *SubmitPostProcessor) Process(ctx context.Context, task SubmitPostTask) 
 	if perr != nil || profileID == "" {
 		return p.terminal(ctx, post, "no_profile", "Zernio profile id not yet bootstrapped")
 	}
-	accounts, err := p.Deps.SocialAccountRepo.ListActive(ctx, profileID)
-	if err != nil {
-		return fmt.Errorf("submit: list accounts: %w", err)
-	}
-	var accountID string
-	for _, a := range accounts {
-		if a.Platform == supported.ZernioID {
-			accountID = a.ID
-			break
-		}
-	}
+	accountID, aerr := p.resolveAccountID(ctx, post, profileID, supported.ZernioID)
 	if accountID == "" {
-		return p.terminal(ctx, post, "no_account_connected",
-			fmt.Sprintf("no active Zernio account connected for platform %s", supported.ZernioID))
+		// resolveAccountID has either written a terminal PostLog (aerr == nil,
+		// so this returns nil and River does not retry) or hit a transient
+		// error River should retry (aerr != nil). An account id is never "".
+		return aerr
 	}
 
 	when := time.Now().UTC().Add(time.Minute)
@@ -234,6 +228,49 @@ func (p *SubmitPostProcessor) Process(ctx context.Context, task SubmitPostTask) 
 
 	jobs.ZernioSubmitSucceeded.Add(1)
 	return p.persistSuccess(ctx, post, job, accountID)
+}
+
+// resolveAccountID picks the Zernio accountId this post publishes to
+// (CON-150). It returns a non-empty id on success. On failure it returns
+// "" plus either nil — a terminal PostLog was written and River must not
+// retry — or a transient error River should retry. That distinction rides
+// the error value, mirroring terminal()'s "always nil" contract, so the
+// caller can branch on the empty id alone.
+func (p *SubmitPostProcessor) resolveAccountID(ctx context.Context, post *models.Post, profileID, zernioPlatform string) (string, error) {
+	// Explicit selection wins: validate it belongs to the profile, is still
+	// connected, and matches the post's platform.
+	if post.SocialAccountID != "" {
+		acc, err := p.Deps.SocialAccountRepo.GetActive(ctx, profileID, post.SocialAccountID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return "", p.terminal(ctx, post, "account_unavailable",
+					fmt.Sprintf("selected account %s is not connected", post.SocialAccountID))
+			}
+			return "", fmt.Errorf("submit: load selected account: %w", err)
+		}
+		if acc.Platform != zernioPlatform {
+			return "", p.terminal(ctx, post, "account_platform_mismatch",
+				fmt.Sprintf("selected account %s is a %s account, not %s", acc.ID, acc.Platform, zernioPlatform))
+		}
+		return acc.ID, nil
+	}
+
+	// No explicit choice: auto-select the platform's single account; require
+	// a choice when it has more than one (Zernio's own disambiguation rule).
+	accounts, err := p.Deps.SocialAccountRepo.ListActiveByPlatform(ctx, profileID, zernioPlatform)
+	if err != nil {
+		return "", fmt.Errorf("submit: list accounts: %w", err)
+	}
+	switch len(accounts) {
+	case 0:
+		return "", p.terminal(ctx, post, "no_account_connected",
+			fmt.Sprintf("no active Zernio account connected for platform %s", zernioPlatform))
+	case 1:
+		return accounts[0].ID, nil
+	default:
+		return "", p.terminal(ctx, post, "account_selection_required",
+			fmt.Sprintf("%d %s accounts connected; select one before publishing", len(accounts), zernioPlatform))
+	}
 }
 
 func (p *SubmitPostProcessor) persistSuccess(ctx context.Context, post *models.Post, job *zernio.Job, accountID string) error {

@@ -86,14 +86,20 @@ type Post struct {
 	// `nullzero` makes bun send NULL (not "") for empty values, which is
 	// required for platform_id because the FK to platforms can't match
 	// an empty string. We use it on platform_post_type too for symmetry.
-	PlatformID       string      `bun:"platform_id,nullzero"                         json:"platform_id"`
-	PlatformPostType string      `bun:"platform_post_type,nullzero"                  json:"platform_post_type"`
-	Title            string      `bun:"title"                                        json:"title"`
-	Content          string      `bun:"content,notnull"                              json:"content"`
-	MediaURLs        StringSlice `bun:"media_urls,notnull,type:jsonb"                json:"media_urls"`
-	ScheduledAt      *time.Time  `bun:"scheduled_at"                                 json:"scheduled_at"`
-	PublishedAt      *time.Time  `bun:"published_at"                                 json:"published_at"`
-	Status           PostStatus  `bun:"status,notnull"                               json:"status"`
+	PlatformID       string `bun:"platform_id,nullzero"                         json:"platform_id"`
+	PlatformPostType string `bun:"platform_post_type,nullzero"                  json:"platform_post_type"`
+	// SocialAccountID names which same-platform account this post
+	// publishes to (CON-150). NULL when unspecified — the submit worker
+	// then auto-selects the platform's single account, or fails
+	// `account_selection_required` when the platform has more than one.
+	// `nullzero` sends NULL (not "") so the FK to social_accounts holds.
+	SocialAccountID string      `bun:"social_account_id,nullzero" json:"social_account_id"`
+	Title           string      `bun:"title"                                        json:"title"`
+	Content         string      `bun:"content,notnull"                              json:"content"`
+	MediaURLs       StringSlice `bun:"media_urls,notnull,type:jsonb"                json:"media_urls"`
+	ScheduledAt     *time.Time  `bun:"scheduled_at"                                 json:"scheduled_at"`
+	PublishedAt     *time.Time  `bun:"published_at"                                 json:"published_at"`
+	Status          PostStatus  `bun:"status,notnull"                               json:"status"`
 	// Publisher integration fields (CON-69 §6/§7, generalized to
 	// publisher-agnostic names in CON-93 §14).
 	// Publisher marks which publisher adapter owns the external identity
@@ -129,6 +135,7 @@ type Post struct {
 	// Hydrated relations — not stored in the database.
 	Campaign          *Campaign          `bun:"-" json:"campaign"`
 	Platform          *Platform          `bun:"-" json:"platform"`
+	SocialAccount     *SocialAccount     `bun:"-" json:"social_account,omitempty"`
 	UsedAssets        []Asset            `bun:"-" json:"used_assets"`
 	CampaignTypePhase *CampaignTypePhase `bun:"-" json:"campaign_type_phase,omitempty"`
 }

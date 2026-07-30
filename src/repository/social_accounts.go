@@ -23,6 +23,17 @@ type SocialAccountRepository interface {
 	// a profile. Used by GET /api/integrations/zernio/accounts.
 	ListActive(ctx context.Context, profileID string) ([]models.SocialAccount, error)
 
+	// ListActiveByPlatform returns the active (deleted_at IS NULL) accounts
+	// for one Zernio platform slug (e.g. "linkedin") under a profile,
+	// oldest-connected first. Backs the CON-150 auto-vs-require account
+	// selection: 0 → no account, 1 → auto-select, ≥2 → require a choice.
+	ListActiveByPlatform(ctx context.Context, profileID, platform string) ([]models.SocialAccount, error)
+
+	// GetActive returns the single active account with the given id under a
+	// profile, or sql.ErrNoRows when it is missing, soft-deleted, or belongs
+	// to another profile. Backs validation of an explicit CON-150 selection.
+	GetActive(ctx context.Context, profileID, id string) (*models.SocialAccount, error)
+
 	// ApplyPlan persists the reconciler's three sets in a single
 	// transaction. Inserts and revives upsert on the primary key
 	// (an existing soft-deleted row is brought back to life by
@@ -60,6 +71,31 @@ func (r *socialAccountRepository) ListActive(ctx context.Context, profileID stri
 		return nil, err
 	}
 	return out, nil
+}
+
+func (r *socialAccountRepository) ListActiveByPlatform(ctx context.Context, profileID, platform string) ([]models.SocialAccount, error) {
+	var out []models.SocialAccount
+	if err := r.db.NewSelect().Model(&out).
+		Where("sa.profile_id = ?", profileID).
+		Where("sa.platform = ?", platform).
+		Where("sa.deleted_at IS NULL").
+		OrderExpr("connected_at ASC").
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (r *socialAccountRepository) GetActive(ctx context.Context, profileID, id string) (*models.SocialAccount, error) {
+	acc := new(models.SocialAccount)
+	if err := r.db.NewSelect().Model(acc).
+		Where("sa.id = ?", id).
+		Where("sa.profile_id = ?", profileID).
+		Where("sa.deleted_at IS NULL").
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+	return acc, nil
 }
 
 func (r *socialAccountRepository) ApplyPlan(
