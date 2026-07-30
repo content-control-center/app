@@ -151,7 +151,7 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 			return nil
 		})
 		postsHandler.Register(app)
-		handlers.NewPostAttachmentsHandler(postAttRepo, postRepo, store, fakePDFRenderer{}, auth).Register(app)
+		handlers.NewPostAttachmentsHandler(postAttRepo, postRepo, store, fakePDFRenderer{}, nil, auth).Register(app)
 
 		seedTenantUser(db, "Admin", "it@example.com", "it-password")
 

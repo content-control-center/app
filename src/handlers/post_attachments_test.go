@@ -198,7 +198,7 @@ var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 		postVersionRepo := repository.NewPostVersionRepository(db)
 		postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 		handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, repository.NewPlatformRepository(db), postAttRepo, auth, nil, nil).Register(app)
-		handlers.NewPostAttachmentsHandler(postAttRepo, postRepo, stub, fakePDFRenderer{}, auth).Register(app)
+		handlers.NewPostAttachmentsHandler(postAttRepo, postRepo, stub, fakePDFRenderer{}, nil, auth).Register(app)
 
 		seedTenantUser(db, "Admin", "att@example.com", "att-password")
 

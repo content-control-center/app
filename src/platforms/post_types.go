@@ -128,6 +128,19 @@ func ValidatePostType(post *models.Post, p *models.Platform, atts []models.PostA
 		}
 	}
 
+	// CON-148: a video post type on a platform that requires a title (YouTube)
+	// can't publish untitled. Only fires for video post types so image/text
+	// posts are unaffected.
+	if contains(rule.AllowedKinds, KindVideo) && p.VideoConstraints.RequiresVideoTitle && strings.TrimSpace(post.Title) == "" {
+		errs = append(errs, ValidationError{
+			Platform: p.ID,
+			Rule:     RuleRequiresVideoTitle,
+			Expected: "non-empty title",
+			Actual:   "empty",
+			Message:  fmt.Sprintf("%s requires a title for %s posts", p.Name, post.PlatformPostType),
+		})
+	}
+
 	return errs
 }
 

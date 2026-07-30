@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -62,6 +63,21 @@ func (s *stubStorage) PublicURL(key string) string { return "https://pub.example
 
 func (s *stubStorage) PresignedGetURL(_ context.Context, key string, _ time.Duration) (string, error) {
 	return "https://pub.example.com/signed/" + key, nil
+}
+
+func (s *stubStorage) PresignedPutURL(_ context.Context, key, _ string, _ time.Duration) (string, error) {
+	return "https://pub.example.com/put/" + key, nil
+}
+
+func (s *stubStorage) Head(_ context.Context, key string) (*storage.ObjectInfo, error) {
+	if s.objects == nil {
+		return nil, s.returnErr
+	}
+	b, ok := s.objects[key]
+	if !ok {
+		return nil, fmt.Errorf("stubStorage: object %q not found", key)
+	}
+	return &storage.ObjectInfo{Size: int64(len(b)), ContentType: "video/mp4"}, nil
 }
 
 func (s *stubStorage) Download(_ context.Context, key string) (io.ReadCloser, error) {

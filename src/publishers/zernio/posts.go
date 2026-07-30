@@ -98,6 +98,13 @@ type SubmitRequest struct {
 	// as Zernio expects). Populated by the queue handler from the Post's
 	// PostAttachment rows.
 	MediaItems []map[string]any `json:"mediaItems,omitempty"`
+	// Title carries the post title for platforms that need one explicitly —
+	// principally YouTube video (CON-148 §6.6). Omitted when empty; platforms
+	// that derive a title from the caption ignore it. SPIKE-PENDING: the exact
+	// Zernio shape (top-level vs per-PlatformVariant, plus description/tags/
+	// privacy/thumbnail) is unconfirmed against docs.zernio.com — this is the
+	// minimal field; extend once the §6.6 spike lands.
+	Title string `json:"title,omitempty"`
 }
 
 // PostEnvelope mirrors Zernio's standard `{post: {...}}` response

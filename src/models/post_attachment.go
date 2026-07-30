@@ -16,13 +16,19 @@ type PostAttachment struct {
 	// AltText is the accessibility description for the media (CON-122). Empty
 	// means "no alt text". Editable on upload and via PATCH; sent to Zernio as
 	// mediaItems[].altText.
-	AltText        string    `bun:"alt_text,notnull,default:''"                  json:"alt_text"`
-	MimeType       string    `bun:"mime_type,notnull"                            json:"mime_type"`
-	SizeBytes      int64     `bun:"size_bytes,notnull"                           json:"size_bytes"`
-	Width          int       `bun:"width,notnull"                                json:"width"`
-	Height         int       `bun:"height,notnull"                                json:"height"`
-	IsAnimated     bool      `bun:"is_animated,notnull"                          json:"is_animated"`
-	PageCount      int       `bun:"page_count,notnull"                           json:"page_count"`
+	AltText    string `bun:"alt_text,notnull,default:''"                  json:"alt_text"`
+	MimeType   string `bun:"mime_type,notnull"                            json:"mime_type"`
+	SizeBytes  int64  `bun:"size_bytes,notnull"                           json:"size_bytes"`
+	Width      int    `bun:"width,notnull"                                json:"width"`
+	Height     int    `bun:"height,notnull"                                json:"height"`
+	IsAnimated bool   `bun:"is_animated,notnull"                          json:"is_animated"`
+	PageCount  int    `bun:"page_count,notnull"                           json:"page_count"`
+	// DurationMs and Codec carry video metadata probed by video-service
+	// (CON-148). Zero/empty for non-video attachments and when the probe
+	// is unavailable (graceful degradation). Width/Height are reused for
+	// the video's frame size.
+	DurationMs     int64     `bun:"duration_ms,notnull,default:0" json:"duration_ms"`
+	Codec          string    `bun:"codec,notnull,default:''"      json:"codec"`
 	ChecksumSHA256 string    `bun:"checksum_sha256,notnull"                      json:"checksum_sha256"`
 	S3Key          string    `bun:"s3_key,notnull"                               json:"s3_key"`
 	ThumbnailS3Key string    `bun:"thumbnail_s3_key"                             json:"thumbnail_s3_key,omitempty"`
