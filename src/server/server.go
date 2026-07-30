@@ -380,6 +380,13 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// assistant's schedulePost tool, and the PUT scheduling branch. Owns
 	// allowlist routing + transactional persist + Zernio submit enqueue.
 	scheduleSvc := schedule.New(db, postRepo, platformRepo, postAttachmentRepo, autoPublishAllowlistRepo, postLogRepo, enqueuer, hub)
+	// CON-150: reject ambiguous / invalid same-platform account selections at
+	// schedule time (auto-publish posts only). Reuses the Zernio profile-id
+	// resolver so it degrades to the submit-worker backstop before bootstrap.
+	scheduleSvc.SetAccountGate(socialAccountRepo, func(ctx context.Context) (string, error) {
+		id, _, err := zernioRT.Settings.Get(ctx, pubzernio.SettingProfileID)
+		return id, err
+	})
 
 	gkRuntime, err := newGenkitRuntime(ctx, genkitDeps{
 		cfg:      cfg,

@@ -243,6 +243,7 @@ func (r *postRepository) hydrateRelations(ctx context.Context, posts []models.Po
 
 	campaignIDs := collectIDs(posts, func(p models.Post) string { return p.CampaignID })
 	platformIDs := collectIDs(posts, func(p models.Post) string { return p.PlatformID })
+	socialAccountIDs := collectIDs(posts, func(p models.Post) string { return p.SocialAccountID })
 	assetIDs := collectIDsFlat(posts, func(p models.Post) []string { return p.UsedAssetIDs })
 	phaseIDs := collectIDsPtr(posts, func(p models.Post) *string { return p.CampaignTypePhaseID })
 
@@ -255,6 +256,14 @@ func (r *postRepository) hydrateRelations(ctx context.Context, posts []models.Po
 	}
 
 	platformByID, err := fetchByIDs[models.Platform](ctx, r.db, platformIDs, func(p *models.Platform) string { return p.ID })
+	if err != nil {
+		return err
+	}
+
+	// CON-150: hydrate the chosen same-platform account. Soft-deleted
+	// (disconnected) rows are still fetched so the UI can show which
+	// account a historical post targeted.
+	socialAccountByID, err := fetchByIDs[models.SocialAccount](ctx, r.db, socialAccountIDs, func(a *models.SocialAccount) string { return a.ID })
 	if err != nil {
 		return err
 	}
@@ -275,6 +284,7 @@ func (r *postRepository) hydrateRelations(ctx context.Context, posts []models.Po
 	for i, p := range posts {
 		posts[i].Campaign = campaignByID[p.CampaignID]
 		posts[i].Platform = platformByID[p.PlatformID]
+		posts[i].SocialAccount = socialAccountByID[p.SocialAccountID]
 		for _, id := range p.UsedAssetIDs {
 			if asset, ok := assetByID[id]; ok {
 				posts[i].UsedAssets = append(posts[i].UsedAssets, *asset)

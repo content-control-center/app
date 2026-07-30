@@ -202,6 +202,76 @@ Content-Type: application/json
 }
 
 ###
+# ── Multiple same-platform accounts — CON-150 ─────────────────────────────────
+###
+# When a platform has 2+ connected accounts, an AUTO-publish post must name one
+# via social_account_id (set on the POST /api/posts body, NOT the schedule body
+# below). Scheduling an auto-publish post that leaves it unset is rejected with
+# 422 "account_selection_required" listing the candidate accounts. The gate only
+# fires for auto-publish — a manual-publish post (Setup B) never submits through
+# Zernio, so it schedules fine without an account.
+#
+# Prereqs: Setup A (allowlist LinkedIn) + connect TWO LinkedIn accounts
+# (publishers/zernio/zernio.http), then run its "List accounts" to populate
+# {{linkedinAccountId}}.
+
+### Helper — ready LinkedIn post with NO account chosen  [protected]
+# @name createReadyPostNoAccount
+POST {{baseUrl}}/api/posts
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedinPlatformId}}",
+  "platform_post_type": "article",
+  "title": "Ambiguous account",
+  "content": "Which LinkedIn account should this go to?",
+  "status": "ready_for_publish",
+  "cta_type": "none"
+}
+
+> {% client.global.set("scheduleNoAccountId", response.body.id) %}
+
+### Helper — ready LinkedIn post targeting a specific account  [protected]
+# @name createReadyPostWithAccount
+POST {{baseUrl}}/api/posts
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedinPlatformId}}",
+  "platform_post_type": "article",
+  "title": "Chosen account",
+  "content": "This one names its LinkedIn account.",
+  "social_account_id": "{{linkedinAccountId}}",
+  "status": "ready_for_publish",
+  "cta_type": "none"
+}
+
+> {% client.global.set("scheduleWithAccountId", response.body.id) %}
+
+### 10. Schedule AUTO with 2+ accounts and none chosen (expects 422)  [protected]
+# Run Setup A + connect two LinkedIn accounts + createReadyPostNoAccount first.
+# → 422 { error: "account_selection_required", platform: "linkedin",
+#         candidates: [ { id, username, displayName }, … ] }
+POST {{baseUrl}}/api/posts/{{scheduleNoAccountId}}/schedule
+Content-Type: application/json
+
+{
+  "scheduled_at": "{{futureAt}}"
+}
+
+### 11. Schedule AUTO with an explicit account (expects 200 scheduled)  [protected]
+# Run Setup A + createReadyPostWithAccount first.
+# → 200 { status: "scheduled", auto_publish: true } — submits to that account.
+POST {{baseUrl}}/api/posts/{{scheduleWithAccountId}}/schedule
+Content-Type: application/json
+
+{
+  "scheduled_at": "{{futureAt}}"
+}
+
+###
 # ── Schedule via the Post Assistant (SSE) — CON-78 ────────────────────────────
 ###
 # Natural-language scheduling is a TWO-TURN, confirm-then-commit flow.

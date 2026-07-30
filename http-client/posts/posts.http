@@ -95,6 +95,55 @@ Content-Type: application/json
   "title": "Missing campaign and platform"
 }
 
+###
+# ── Multiple same-platform accounts — CON-150 ─────────────────────────────────
+###
+# A post may name WHICH connected account it publishes to via social_account_id
+# (the Zernio accountId). Omit it and the submit worker auto-selects the
+# platform's single account, or fails "account_selection_required" when the
+# platform has more than one. GET responses hydrate the chosen account under
+# `social_account`.
+#
+# Get an account id first: run publishers/zernio/zernio.http → "List local
+# social-account mirror …", which stores the first two LinkedIn account ids in
+# {{linkedinAccountId}} / {{linkedinAccountId2}}.
+
+### Create post — target a specific LinkedIn account  [protected]
+# @name createPostForAccount
+POST {{baseUrl}}/api/posts
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{platformId}}",
+  "platform_post_type": "article",
+  "title": "Posted from a specific account",
+  "content": "This goes to one chosen LinkedIn account.",
+  "social_account_id": "{{linkedinAccountId}}",
+  "status": "draft",
+  "cta_type": "none"
+}
+
+> {% client.global.set("postId", response.body.id) %}
+
+### Update post — switch to the second LinkedIn account  [protected]
+PUT {{baseUrl}}/api/posts/{{postId}}
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{platformId}}",
+  "platform_post_type": "article",
+  "title": "Now posting from the second account",
+  "content": "This goes to one chosen LinkedIn account.",
+  "social_account_id": "{{linkedinAccountId2}}",
+  "status": "draft",
+  "cta_type": "none"
+}
+
+# Verify with "Get post by ID" below — the response hydrates the chosen account
+# under `social_account` (id / platform / username / display_name / avatar_url).
+
 ### Get post by ID  [protected]
 GET {{baseUrl}}/api/posts/{{postId}}
 Accept: application/json
