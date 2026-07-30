@@ -54,6 +54,19 @@ Content-Type: application/json
 
 > {% client.global.set("zernioConnectURL", response.body.connectUrl) %}
 
+### Create connect link — LinkedIn (SECOND same-platform account) — CON-150  [protected]
+# Connecting the same platform again adds ANOTHER account to the profile
+# (Zernio's agency model — multiple accounts per platform). After authorizing a
+# different LinkedIn login, the tenant has two LinkedIn accounts; "List accounts"
+# below returns both, and posts must then choose between them via
+# social_account_id (see posts/posts.http and posts/schedule.http).
+POST {{baseUrl}}/api/integrations/zernio/connect-links
+Content-Type: application/json
+
+{
+  "platform": "linkedin"
+}
+
 ### Create connect link — Twitter (Zernio uses "twitter", not "x-twitter")  [protected]
 POST {{baseUrl}}/api/integrations/zernio/connect-links
 Content-Type: application/json
@@ -136,8 +149,20 @@ Content-Type: application/json
 }
 
 ### List local social-account mirror + last sync metadata (caller's tenant)  [protected]
+# @name listZernioAccounts
+# CON-150: multiple accounts on the SAME platform now appear here (e.g. two
+# LinkedIn rows). Captures the first two LinkedIn account ids into
+# {{linkedinAccountId}} / {{linkedinAccountId2}} so posts.http / schedule.http
+# can target a specific account via social_account_id.
 GET {{baseUrl}}/api/integrations/zernio/accounts
 Accept: application/json
+
+> {%
+    const accounts = (response.body && response.body.accounts) || [];
+    const linkedin = accounts.filter(a => a.platform === "linkedin");
+    if (linkedin[0]) client.global.set("linkedinAccountId", linkedin[0].id);
+    if (linkedin[1]) client.global.set("linkedinAccountId2", linkedin[1].id);
+%}
 
 ### Trigger an immediate sync tick  [protected]
 # Nudges the background worker, which sweeps every tenant that has a profile;
