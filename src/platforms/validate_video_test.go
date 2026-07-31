@@ -1,6 +1,7 @@
 package platforms
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ogen-app/ogen/src/models"
@@ -91,6 +92,33 @@ func TestValidateVideoAttachment_Resolution(t *testing.T) {
 	att := &models.PostAttachment{ID: "a1", MimeType: "video/mp4", SizeBytes: 100, Width: 3840, Height: 2160, DurationMs: 30_000}
 	if errs := validateVideoAttachment(att, p); !hasRule(errs, RuleMaxResolution) {
 		t.Errorf("want max_resolution for 4K on 1080p platform, got %+v", errs)
+	}
+}
+
+func TestValidateVideoAttachment_UnboundedAxisLabel(t *testing.T) {
+	// Width unbounded (0), height capped: the violation message must render the
+	// unbounded axis as "∞", not a misleading "0".
+	p := videoPlatform()
+	p.VideoConstraints.MaxWidth = 0
+	p.VideoConstraints.MaxHeight = 1080
+	att := &models.PostAttachment{ID: "a1", MimeType: "video/mp4", SizeBytes: 100, Width: 9999, Height: 2160, DurationMs: 30_000}
+
+	var res *ValidationError
+	for _, e := range validateVideoAttachment(att, p) {
+		if e.Rule == RuleMaxResolution {
+			e := e
+			res = &e
+			break
+		}
+	}
+	if res == nil {
+		t.Fatal("want max_resolution error")
+	}
+	if !strings.Contains(res.Expected, "∞") || strings.Contains(res.Expected, "0x") {
+		t.Errorf("unbounded width should render as ∞, got Expected=%q", res.Expected)
+	}
+	if !strings.Contains(res.Message, "∞") {
+		t.Errorf("message should render unbounded width as ∞, got %q", res.Message)
 	}
 }
 

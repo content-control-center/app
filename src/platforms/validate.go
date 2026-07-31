@@ -205,9 +205,9 @@ func validateVideoAttachment(att *models.PostAttachment, p *models.Platform) []V
 				Platform:     p.ID,
 				AttachmentID: att.ID,
 				Rule:         RuleMaxResolution,
-				Expected:     fmt.Sprintf("<= %dx%d", c.MaxWidth, c.MaxHeight),
+				Expected:     fmt.Sprintf("<= %sx%s", dimLabel(c.MaxWidth), dimLabel(c.MaxHeight)),
 				Actual:       fmt.Sprintf("%dx%d", att.Width, att.Height),
-				Message:      fmt.Sprintf("video is %dx%d; platform allows up to %dx%d", att.Width, att.Height, c.MaxWidth, c.MaxHeight),
+				Message:      fmt.Sprintf("video is %dx%d; platform allows up to %sx%s", att.Width, att.Height, dimLabel(c.MaxWidth), dimLabel(c.MaxHeight)),
 			})
 		}
 		if len(c.AllowedAspectRatios) > 0 && !aspectRatioAllowed(att.Width, att.Height, c.AllowedAspectRatios) {
@@ -413,6 +413,15 @@ func aspectRatioAllowed(w, h int, allowed []string) bool {
 		}
 	}
 	return false
+}
+
+// dimLabel renders one resolution-axis bound. A zero value means the axis is
+// unbounded, so it shows as "∞" instead of a misleading "0".
+func dimLabel(v int) string {
+	if v == 0 {
+		return "∞"
+	}
+	return strconv.Itoa(v)
 }
 
 func contains(haystack []string, needle string) bool {
