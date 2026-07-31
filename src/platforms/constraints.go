@@ -31,6 +31,8 @@ const (
 	RuleMaxAttachments      = "max_attachments"       // CON-74: too many attachments for the type
 	RuleAttachmentKind      = "attachment_kind"       // CON-74: wrong attachment kind for the type
 	RuleRequiresVideoTitle  = "requires_video_title"  // CON-148: platform needs a title for video (YouTube)
+	RuleMaxContentChars     = "max_content_chars"     // CON-91: body text exceeds the platform/post-type cap
+	RuleMaxTitleChars       = "max_title_chars"       // CON-91: title exceeds the platform cap
 )
 
 // Attachment kinds, returned by AttachmentKind. PDF, image, and video

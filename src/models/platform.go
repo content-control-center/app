@@ -164,6 +164,75 @@ func (c VideoConstraints) IsZero() bool {
 		!c.RequiresVideoTitle
 }
 
+// TextConstraints is the sibling rule set for post text length (CON-91).
+// The opaque `constraints` prose column still feeds the model prompt; this
+// carries the machine-readable limits the composer's Validations panel (and
+// the publish gate) check against.
+//
+// Char limits vary by platform AND by post type — LinkedIn feed posts cap at
+// 3000 while native articles allow ~100k — so the default lives here with
+// PerPostType overriding it per slug. Counts are Unicode code points
+// (runes), not bytes. A zero value means "no text limit on this platform".
+type TextConstraints struct {
+	// MaxContentChars is the default body-text ceiling applied to every post
+	// type that PerPostType doesn't override. 0 = unbounded.
+	MaxContentChars int `json:"max_content_chars"`
+	// MaxTitleChars caps the title on platforms with a distinct title field
+	// (YouTube, LinkedIn article). 0 = no separate title limit.
+	MaxTitleChars int `json:"max_title_chars"`
+	// PerPostType overrides MaxContentChars for specific post-type slugs —
+	// e.g. LinkedIn {"article": 100000} while its feed posts stay at 3000.
+	PerPostType map[string]int `json:"per_post_type,omitempty"`
+}
+
+func (c TextConstraints) Value() (driver.Value, error) {
+	b, err := json.Marshal(c)
+	return string(b), err
+}
+
+func (c *TextConstraints) Scan(src any) error {
+	switch v := src.(type) {
+	case string:
+		if v == "" {
+			*c = TextConstraints{}
+			return nil
+		}
+		// Reset first: json.Unmarshal merges into an existing PerPostType map
+		// (and leaves omitted scalars untouched), so a reused receiver would
+		// otherwise carry state from a prior scan.
+		*c = TextConstraints{}
+		return json.Unmarshal([]byte(v), c)
+	case []byte:
+		if len(v) == 0 {
+			*c = TextConstraints{}
+			return nil
+		}
+		*c = TextConstraints{}
+		return json.Unmarshal(v, c)
+	case nil:
+		*c = TextConstraints{}
+		return nil
+	default:
+		return fmt.Errorf("TextConstraints: cannot scan %T", src)
+	}
+}
+
+func (c TextConstraints) IsZero() bool {
+	return c.MaxContentChars == 0 &&
+		c.MaxTitleChars == 0 &&
+		len(c.PerPostType) == 0
+}
+
+// ContentLimitFor returns the resolved body-text ceiling for a post-type
+// slug: the PerPostType override when present, otherwise MaxContentChars.
+// A zero return means "unbounded" — callers skip the check.
+func (c TextConstraints) ContentLimitFor(slug string) int {
+	if v, ok := c.PerPostType[slug]; ok {
+		return v
+	}
+	return c.MaxContentChars
+}
+
 type Platform struct {
 	bun.BaseModel `bun:"table:platforms,alias:pl" swaggerignore:"true"`
 
@@ -175,6 +244,7 @@ type Platform struct {
 	ImageConstraints ImageConstraints `bun:"image_constraints,notnull,type:jsonb"         json:"image_constraints"`
 	PDFConstraints   PDFConstraints   `bun:"pdf_constraints,notnull,type:jsonb"           json:"pdf_constraints"`
 	VideoConstraints VideoConstraints `bun:"video_constraints,notnull,type:jsonb"         json:"video_constraints"`
+	TextConstraints  TextConstraints  `bun:"text_constraints,notnull,type:jsonb"          json:"text_constraints"`
 	CreatedAt        time.Time        `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
 	UpdatedAt        time.Time        `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
 }

@@ -1,0 +1,170 @@
+@baseUrl = http://localhost:9001
+
+# Per-platform / per-post-type character limits (CON-91).
+# All endpoints require authentication. Run "Login" from sessions/sessions.http first.
+#
+# Two surfaces:
+#   1. Exposure — the platform response carries a structured `text_constraints`
+#      object, and each entry of GET .../post-type-rules carries the resolved
+#      `max_content_chars` for that slug (null = unbounded). The composer's
+#      Validations panel reads these instead of hardcoding limits.
+#   2. Enforcement — the Draft→ReadyForPublish gate (CON-74) counts the body
+#      (and title) and fails over-length posts. Counts are Unicode code points
+#      (runes), matching the character counter, NOT bytes.
+#
+# On failure: HTTP 422, same shape as post-type-validation.http, with
+# rule = "max_content_chars" or "max_title_chars":
+#   { "platform": "...", "attachment_id": "", "rule": "max_content_chars",
+#     "expected": "<= 3000 characters", "actual": "3001", "message": "..." }
+#
+# Enforcement runs for structurally-recognized post types (text-post,
+# article, poll, thread, video, ...). Whitelist-only slugs skip the gate.
+#
+# Prerequisites:
+#   - A campaign ID in {{campaignId}} (campaigns/campaigns.http → createCampaign)
+
+@linkedInId = AXqWG7U2qnpt
+@threadsId  = pQ4yxT3SuE57
+@youTubeId  = 8S8bWQTG6qD
+
+# ─────────────────────────────────────────────────────────────────────
+# Exposure — read the limits the way the client does
+# ─────────────────────────────────────────────────────────────────────
+
+### LinkedIn platform — inspect text_constraints  [protected]
+# Expect: "text_constraints": { "max_content_chars": 3000,
+#          "max_title_chars": 0, "per_post_type": { "article": 100000 } }
+GET {{baseUrl}}/api/platforms/{{linkedInId}}
+Accept: application/json
+
+### LinkedIn post-type-rules — resolved per-slug max_content_chars  [protected]
+# Expect text-post → rule.max_content_chars = 3000, article → 100000,
+# and whitelist-only slugs (e.g. live-video) → rule: null.
+GET {{baseUrl}}/api/platforms/{{linkedInId}}/post-type-rules
+Accept: application/json
+
+### YouTube post-type-rules — description ceiling + title cap on the platform  [protected]
+# Expect video/short → rule.max_content_chars = 5000. The 100-char title cap
+# lives on the platform object's text_constraints.max_title_chars.
+GET {{baseUrl}}/api/platforms/{{youTubeId}}/post-type-rules
+Accept: application/json
+
+# ─────────────────────────────────────────────────────────────────────
+# Enforcement — seed a draft to mutate
+# ─────────────────────────────────────────────────────────────────────
+
+### Seed: create a draft post  [protected]
+# @name seedDraft
+POST {{baseUrl}}/api/posts
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "title": "CON-91 char-limit fixture"
+}
+
+> {% client.global.set("postId", response.body.id) %}
+
+# ─────────────────────────────────────────────────────────────────────
+# Body ceiling — LinkedIn text-post caps at 3000
+# ─────────────────────────────────────────────────────────────────────
+
+### text-post over 3000 chars (expects 422 with rule=max_content_chars)  [protected]
+< {%
+    // 3001 'x' — one over LinkedIn's default feed ceiling.
+    request.variables.set("overBody", "x".repeat(3001));
+%}
+PUT {{baseUrl}}/api/posts/{{postId}}
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedInId}}",
+  "platform_post_type": "text-post",
+  "content": "{{overBody}}",
+  "status": "ready_for_publish"
+}
+
+### text-post within limit (expects 200)  [protected]
+PUT {{baseUrl}}/api/posts/{{postId}}
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedInId}}",
+  "platform_post_type": "text-post",
+  "content": "Short and sweet.",
+  "status": "ready_for_publish"
+}
+
+### article with 4000 chars (expects 200 — per-post-type override lifts to 100000)  [protected]
+# Same body that fails as a text-post passes as an article: the
+# per_post_type override wins over the platform default.
+< {%
+    request.variables.set("articleBody", "x".repeat(4000));
+%}
+PUT {{baseUrl}}/api/posts/{{postId}}
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedInId}}",
+  "platform_post_type": "article",
+  "content": "{{articleBody}}",
+  "status": "ready_for_publish"
+}
+
+### Threads text-post over 500 chars (expects 422 with rule=max_content_chars)  [protected]
+< {%
+    request.variables.set("threadsBody", "y".repeat(501));
+%}
+PUT {{baseUrl}}/api/posts/{{postId}}
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{threadsId}}",
+  "platform_post_type": "text-post",
+  "content": "{{threadsBody}}",
+  "status": "ready_for_publish"
+}
+
+# ─────────────────────────────────────────────────────────────────────
+# Title cap — YouTube titles cap at 100
+# ─────────────────────────────────────────────────────────────────────
+
+### YouTube video, 101-char title (expects 422; list includes rule=max_title_chars)  [protected]
+# A YouTube video post also needs a video attachment, so the 422 list will
+# carry min_attachments alongside max_title_chars — the point here is that
+# the title cap fires. Attach a video via post-attachments to isolate it.
+< {%
+    request.variables.set("longTitle", "T".repeat(101));
+%}
+POST {{baseUrl}}/api/posts
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{youTubeId}}",
+  "platform_post_type": "video",
+  "title": "{{longTitle}}",
+  "content": "Launch recap.",
+  "status": "ready_for_publish"
+}
+
+### Multibyte sanity — 3000 CJK runes on LinkedIn (expects 200, not a byte overflow)  [protected]
+# 3000 code points = 9000 bytes. The counter is runes, so this sits exactly
+# at the limit and passes; the byte length is irrelevant.
+< {%
+    request.variables.set("cjkBody", "文".repeat(3000));
+%}
+PUT {{baseUrl}}/api/posts/{{postId}}
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedInId}}",
+  "platform_post_type": "text-post",
+  "content": "{{cjkBody}}",
+  "status": "ready_for_publish"
+}
