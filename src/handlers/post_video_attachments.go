@@ -280,7 +280,7 @@ func (h *PostAttachmentsHandler) FinalizeVideo(c *fiber.Ctx) error {
 // resolveVideoMIME picks the canonical video MIME for a finalized upload.
 func resolveVideoMIME(probe *videoclient.ProbeResult, storedContentType, key string) string {
 	if probe != nil {
-		if m := containerToVideoMIME(probe.Container); m != "" {
+		if m := containerToVideoMIME(probe.Container, path.Ext(key)); m != "" {
 			return m
 		}
 	}
@@ -337,16 +337,28 @@ func extToVideoMIME(ext string) string {
 
 // containerToVideoMIME maps a video-service ffprobe container name (which can
 // be a comma list, e.g. "mov,mp4,m4a,3gp,3g2,mj2") to a canonical video MIME.
-func containerToVideoMIME(container string) string {
+// Matroska and WebM share a demuxer, so ffprobe reports both as
+// "matroska,webm"; ext (the attachment's file extension) disambiguates that
+// case — ".mkv" is Matroska, otherwise WebM.
+func containerToVideoMIME(container, ext string) string {
 	c := strings.ToLower(strings.TrimSpace(container))
+	ext = strings.ToLower(ext)
+	hasMatroska := strings.Contains(c, "matroska") || c == "mkv"
+	hasWebM := strings.Contains(c, "webm")
 	switch {
 	case c == "":
 		return ""
 	case strings.Contains(c, "mp4") || c == "m4v" || c == "mov" || c == "quicktime":
 		return "video/mp4"
-	case strings.Contains(c, "webm"):
+	case hasMatroska && hasWebM:
+		// Ambiguous shared demuxer — decide by extension, defaulting to WebM.
+		if ext == ".mkv" {
+			return "video/x-matroska"
+		}
 		return "video/webm"
-	case strings.Contains(c, "matroska") || c == "mkv":
+	case hasWebM:
+		return "video/webm"
+	case hasMatroska:
 		return "video/x-matroska"
 	case c == "avi":
 		return "video/x-msvideo"
