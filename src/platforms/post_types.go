@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/ogen-app/ogen/src/models"
 )
@@ -141,6 +142,33 @@ func ValidatePostType(post *models.Post, p *models.Platform, atts []models.PostA
 		})
 	}
 
+	// CON-91: enforce the same char limits the composer surfaces client-side,
+	// so a client bug can't slip an over-length post past the publish gate.
+	// Counts are runes (code points), matching what the character counter
+	// shows. A zero limit means unbounded → skip.
+	if limit := p.TextConstraints.ContentLimitFor(post.PlatformPostType); limit > 0 {
+		if n := utf8.RuneCountInString(post.Content); n > limit {
+			errs = append(errs, ValidationError{
+				Platform: p.ID,
+				Rule:     RuleMaxContentChars,
+				Expected: fmt.Sprintf("<= %d characters", limit),
+				Actual:   strconv.Itoa(n),
+				Message:  fmt.Sprintf("%s post allows up to %d characters; content is %d", p.Name, limit, n),
+			})
+		}
+	}
+	if limit := p.TextConstraints.MaxTitleChars; limit > 0 {
+		if n := utf8.RuneCountInString(post.Title); n > limit {
+			errs = append(errs, ValidationError{
+				Platform: p.ID,
+				Rule:     RuleMaxTitleChars,
+				Expected: fmt.Sprintf("<= %d characters", limit),
+				Actual:   strconv.Itoa(n),
+				Message:  fmt.Sprintf("%s title allows up to %d characters; title is %d", p.Name, limit, n),
+			})
+		}
+	}
+
 	return errs
 }
 
@@ -163,6 +191,11 @@ type ResolvedPostTypeRule struct {
 	AllowedKinds    []string `json:"allowed_kinds"`
 	MinAttachments  int      `json:"min_attachments"`
 	MaxAttachments  *int     `json:"max_attachments"`
+	// MaxContentChars is the body-text ceiling for this post type, resolved
+	// from the platform's TextConstraints (per-post-type override, else the
+	// platform default). nil means unbounded — the UI shows no counter cap.
+	// Counts are Unicode code points, matching the server-side check (CON-91).
+	MaxContentChars *int `json:"max_content_chars"`
 }
 
 // PostTypeRuleView is one entry in the platform-scoped rules response.
@@ -201,6 +234,7 @@ func ResolvePostTypeRules(p *models.Platform) []PostTypeRuleView {
 			AllowedKinds:    ensureKinds(rule.AllowedKinds),
 			MinAttachments:  rule.MinAttachments,
 			MaxAttachments:  resolveMaxAttachments(rule, p),
+			MaxContentChars: resolveMaxContentChars(slug, p),
 		}
 		out = append(out, view)
 	}
@@ -226,6 +260,15 @@ func resolveMaxAttachments(r PostTypeRule, p *models.Platform) *int {
 	if contains(r.AllowedKinds, KindPDF) && p.PDFConstraints.MaxAttachmentsPerPost > 0 {
 		v := p.PDFConstraints.MaxAttachmentsPerPost
 		return &v
+	}
+	return nil
+}
+
+// resolveMaxContentChars projects the platform's text limit for one slug
+// into the nil-means-unbounded pointer shape the client expects.
+func resolveMaxContentChars(slug string, p *models.Platform) *int {
+	if limit := p.TextConstraints.ContentLimitFor(slug); limit > 0 {
+		return &limit
 	}
 	return nil
 }

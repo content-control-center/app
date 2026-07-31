@@ -39,11 +39,15 @@
 # Response: [
 #   { "slug": "...", "label": "...", "whitelist_only": false,
 #     "rule": { "requires_content": bool, "allowed_kinds": ["image", ...],
-#               "min_attachments": int, "max_attachments": int|null } },
+#               "min_attachments": int, "max_attachments": int|null,
+#               "max_content_chars": int|null } },
 #   ...
 # ]
 # `max_attachments: null` means unbounded; `whitelist_only: true` means
 # the platform accepts the slug but Ogen enforces no structural rules.
+# `max_content_chars` (CON-91) is the resolved body-text ceiling for the
+# slug — the platform default or its per-post-type override — or null when
+# unbounded. The char-limit enforcement examples live in char-limits.http.
 GET {{baseUrl}}/api/platforms/{{linkedInId}}/post-type-rules
 Accept: application/json
 
