@@ -12,6 +12,7 @@ import (
 	"github.com/ogen-app/ogen/src/jobs/queues"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
+	"github.com/ogen-app/ogen/src/storage"
 )
 
 // fakeAttachmentRepo returns a fixed attachment list (CON-122 media tests).
@@ -45,6 +46,12 @@ func (s *fakeStorage) Delete(context.Context, string) error       { return nil }
 func (s *fakeStorage) PublicURL(string) string                    { return "" }
 func (s *fakeStorage) PresignedGetURL(context.Context, string, time.Duration) (string, error) {
 	return "", nil
+}
+func (s *fakeStorage) PresignedPutURL(context.Context, string, string, time.Duration) (string, error) {
+	return "", nil
+}
+func (s *fakeStorage) Head(context.Context, string) (*storage.ObjectInfo, error) {
+	return &storage.ObjectInfo{}, nil
 }
 func (s *fakeStorage) Download(_ context.Context, key string) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(s.objects[key])), nil

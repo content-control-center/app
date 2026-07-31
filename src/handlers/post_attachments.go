@@ -53,6 +53,18 @@ const (
 	// slow or unreachable service never blocks the upload request for long — on
 	// failure the attachment is created without page count / thumbnail.
 	pdfRenderTimeout = 30 * time.Second
+
+	// maxVideoUploadBytes is the hard system cap for a single video upload
+	// (CON-148). 5 GiB is also S3's single-PUT ceiling — larger files would
+	// need multipart, which is a follow-up. Per-platform caps (usually far
+	// smaller) live in VideoConstraints and are enforced at validation time.
+	maxVideoUploadBytes int64 = 5 << 30
+
+	// videoProbeTimeout caps the video-service Probe call at finalize. Header
+	// probing is fast, but the service range-reads a remote URL, so a
+	// generous cap absorbs seek/network latency without hanging the request.
+	// On failure the attachment is created unprobed (no duration/poster).
+	videoProbeTimeout = 60 * time.Second
 )
 
 // PDFRenderer renders an attachment PDF to a page count + first-page thumbnail
@@ -77,6 +89,7 @@ type PostAttachmentsHandler struct {
 	postRepo repository.PostRepository
 	storage  storage.Storage
 	pdf      PDFRenderer
+	video    VideoProber
 	auth     fiber.Handler
 }
 
@@ -85,15 +98,21 @@ func NewPostAttachmentsHandler(
 	postRepo repository.PostRepository,
 	store storage.Storage,
 	renderer PDFRenderer,
+	prober VideoProber,
 	auth fiber.Handler,
 ) *PostAttachmentsHandler {
-	return &PostAttachmentsHandler{repo: repo, postRepo: postRepo, storage: store, pdf: renderer, auth: auth}
+	return &PostAttachmentsHandler{repo: repo, postRepo: postRepo, storage: store, pdf: renderer, video: prober, auth: auth}
 }
 
 func (h *PostAttachmentsHandler) Register(app *fiber.App) {
 	g := app.Group("/api/posts/:post_id/attachments", h.auth)
 	g.Get("/", h.List)
 	g.Post("/", h.Upload)
+	// Large-file video ingest (CON-148): presign a direct-to-S3 PUT, then
+	// finalize (probe + validate + persist). Static paths are registered
+	// before the /:id param route so they aren't captured as id="presign".
+	g.Post("/presign", h.PresignVideo)
+	g.Post("/finalize", h.FinalizeVideo)
 	// Static /reorder is registered before the /:id param route so a PATCH to
 	// .../attachments/reorder isn't captured as id="reorder" (CON-124).
 	g.Patch("/reorder", h.ReorderAll)

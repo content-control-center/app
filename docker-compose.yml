@@ -138,6 +138,23 @@ services:
         expose:
             - "50051"
 
+    # Video probing microservice (CON-148), mirrors pdf-service. Probes uploaded
+    # video for duration/codec/resolution and captures a poster frame via
+    # ffmpeg/ffprobe. Built and published from the separate ogen-app/video-service
+    # repo. The API reaches it over the private network ONLY — no host `ports:` —
+    # at video-service:50051 (VIDEO_SERVICE_ADDR in .env).
+    #
+    # Gated behind the `video` profile until that image is published, so the
+    # default `docker compose up` keeps working (the API degrades gracefully:
+    # video uploads accepted but unprobed). Once the image exists, enable with:
+    #   docker compose --profile video up
+    video-service:
+        image: alephbetai/video-service:latest
+        platform: linux/amd64
+        profiles: ["video"]
+        expose:
+            - "50051"
+
 volumes:
     postgres-data:
     timescale-data:

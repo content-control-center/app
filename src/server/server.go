@@ -40,6 +40,7 @@ import (
 	"github.com/ogen-app/ogen/src/secrets"
 	"github.com/ogen-app/ogen/src/storage"
 	"github.com/ogen-app/ogen/src/usage"
+	"github.com/ogen-app/ogen/src/videoclient"
 )
 
 // TODO: refactor this function
@@ -206,6 +207,20 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	}
 	if pdfClient != nil {
 		app.Hooks().OnShutdown(func() error { return pdfClient.Close() })
+	}
+
+	// CON-148: gRPC client for the video probing microservice over the Railway
+	// private network. nil when VIDEO_SERVICE_ADDR is unset; closed on shutdown.
+	videoClient, err := videoclient.New(videoclient.Config{
+		Addr:         cfg.VideoServiceAddr,
+		Timeout:      cfg.VideoServiceTimeout,
+		MaxRecvBytes: cfg.VideoServiceMaxRecvBytes,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if videoClient != nil {
+		app.Hooks().OnShutdown(func() error { return videoClient.Close() })
 	}
 
 	// Embedding (Gemini) is initialised here — before the River registry —
@@ -512,7 +527,15 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	if pdfClient != nil {
 		attachmentRenderer = pdfClient
 	}
-	handlers.NewPostAttachmentsHandler(postAttachmentRepo, postRepo, store, attachmentRenderer, auth).Register(app)
+	// CON-148: video attachment probing (duration/codec/resolution + poster)
+	// comes from video-service. nil videoClient (VIDEO_SERVICE_ADDR unset)
+	// degrades gracefully (uploads accepted unprobed), so it's wired only when
+	// present.
+	var attachmentProber handlers.VideoProber
+	if videoClient != nil {
+		attachmentProber = videoClient
+	}
+	handlers.NewPostAttachmentsHandler(postAttachmentRepo, postRepo, store, attachmentRenderer, attachmentProber, auth).Register(app)
 
 	// The React SPA is deployed separately (CON-98) — the API serves only
 	// /api/* (plus SSE). Non-API routes fall through to a 404.

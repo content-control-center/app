@@ -142,6 +142,18 @@ type Config struct {
 	PDFServiceTimeout      time.Duration `envconfig:"PDF_SERVICE_TIMEOUT"        default:"2m"`
 	PDFServiceMaxRecvBytes int           `envconfig:"PDF_SERVICE_MAX_RECV_BYTES" default:"67108864"`
 
+	// Video probing microservice (CON-148), mirroring pdf-service. The API
+	// hands video-service a short-lived presigned GET URL over gRPC — over the
+	// Railway private network — and gets back duration/codec/resolution + a
+	// poster frame. Empty VideoServiceAddr disables probing (uploads accepted
+	// but unprobed: no duration/poster, weaker validation), mirroring the
+	// empty-addr pattern above. Prod: video-service.railway.internal:50051;
+	// compose/tests: video-service:50051. MaxRecvBytes raises the gRPC client
+	// receive cap so a poster PNG can exceed gRPC's 4MB default — 64 MiB here.
+	VideoServiceAddr         string        `envconfig:"VIDEO_SERVICE_ADDR"           default:""`
+	VideoServiceTimeout      time.Duration `envconfig:"VIDEO_SERVICE_TIMEOUT"        default:"2m"`
+	VideoServiceMaxRecvBytes int           `envconfig:"VIDEO_SERVICE_MAX_RECV_BYTES" default:"67108864"`
+
 	// Zernio integration. Empty ZernioAPIKey disables the
 	// integration entirely; everything else stays defaulted.
 	ZernioAPIKey           string        `envconfig:"ZERNIO_API_KEY"            default:""`

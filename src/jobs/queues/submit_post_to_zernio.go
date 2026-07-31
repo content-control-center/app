@@ -169,6 +169,9 @@ func (p *SubmitPostProcessor) Process(ctx context.Context, task SubmitPostTask) 
 		ScheduledFor: when,
 		Timezone:     tzName,
 		MediaItems:   mediaItems,
+		// CON-148 §6.6: pass the title through for platforms that need it
+		// explicitly (YouTube video). omitempty drops it for the common case.
+		Title: post.Title,
 	}
 
 	appendLog(ctx, p.Deps, post.ID, models.PostLogEventZernioSubmit, post.Status, post.Status,

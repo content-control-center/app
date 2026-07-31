@@ -105,6 +105,65 @@ func (c PDFConstraints) IsZero() bool {
 		c.MaxAttachmentsPerPost == 0
 }
 
+// VideoConstraints is the sibling rule set for video post attachments
+// (CON-148). A zero value means "this platform does not accept video",
+// which the validator surfaces as a soft warning — mirroring the PDF
+// branch. Duration/resolution/aspect fields are only enforced when
+// non-zero, so a platform can opt into just the checks it cares about.
+type VideoConstraints struct {
+	MaxFileSizeBytes      int64    `json:"max_file_size_bytes"`
+	AllowedFormats        []string `json:"allowed_formats"` // e.g. ["mp4","mov","webm"]
+	MaxDurationSeconds    int      `json:"max_duration_seconds"`
+	MinDurationSeconds    int      `json:"min_duration_seconds"` // Reels/Shorts have floors
+	MaxWidth              int      `json:"max_width"`            // 0 = unbounded
+	MaxHeight             int      `json:"max_height"`           // 0 = unbounded
+	AllowedAspectRatios   []string `json:"allowed_aspect_ratios"`
+	MaxAttachmentsPerPost int      `json:"max_attachments_per_post"` // usually 1
+	// RequiresVideoTitle blocks publishing a video post whose title is empty
+	// (CON-148 §9). YouTube requires a title; most feed/Reel platforms derive
+	// one from the caption, so this stays false for them.
+	RequiresVideoTitle bool `json:"requires_video_title"`
+}
+
+func (c VideoConstraints) Value() (driver.Value, error) {
+	b, err := json.Marshal(c)
+	return string(b), err
+}
+
+func (c *VideoConstraints) Scan(src any) error {
+	switch v := src.(type) {
+	case string:
+		if v == "" {
+			*c = VideoConstraints{}
+			return nil
+		}
+		return json.Unmarshal([]byte(v), c)
+	case []byte:
+		if len(v) == 0 {
+			*c = VideoConstraints{}
+			return nil
+		}
+		return json.Unmarshal(v, c)
+	case nil:
+		*c = VideoConstraints{}
+		return nil
+	default:
+		return fmt.Errorf("VideoConstraints: cannot scan %T", src)
+	}
+}
+
+func (c VideoConstraints) IsZero() bool {
+	return c.MaxFileSizeBytes == 0 &&
+		len(c.AllowedFormats) == 0 &&
+		c.MaxDurationSeconds == 0 &&
+		c.MinDurationSeconds == 0 &&
+		c.MaxWidth == 0 &&
+		c.MaxHeight == 0 &&
+		len(c.AllowedAspectRatios) == 0 &&
+		c.MaxAttachmentsPerPost == 0 &&
+		!c.RequiresVideoTitle
+}
+
 type Platform struct {
 	bun.BaseModel `bun:"table:platforms,alias:pl" swaggerignore:"true"`
 
@@ -115,6 +174,7 @@ type Platform struct {
 	Constraints      string           `bun:"constraints,notnull"                          json:"constraints"`
 	ImageConstraints ImageConstraints `bun:"image_constraints,notnull,type:jsonb"         json:"image_constraints"`
 	PDFConstraints   PDFConstraints   `bun:"pdf_constraints,notnull,type:jsonb"           json:"pdf_constraints"`
+	VideoConstraints VideoConstraints `bun:"video_constraints,notnull,type:jsonb"         json:"video_constraints"`
 	CreatedAt        time.Time        `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
 	UpdatedAt        time.Time        `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
 }

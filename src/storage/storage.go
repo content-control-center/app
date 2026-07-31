@@ -27,6 +27,14 @@ func TenantKey(ctx context.Context, key string) string {
 	return key
 }
 
+// ObjectInfo is the subset of stored-object metadata callers need without
+// downloading the object (CON-148 finalize). Size is the authoritative byte
+// count; ContentType is whatever was set on PUT.
+type ObjectInfo struct {
+	Size        int64
+	ContentType string
+}
+
 // Storage is the interface for object storage backends.
 type Storage interface {
 	// Upload writes r to the bucket under key and returns the public URL.
@@ -44,6 +52,15 @@ type Storage interface {
 	// at key. Used for serving private images to the browser and for
 	// handing image bytes to Zernio at publish time (CON-73).
 	PresignedGetURL(ctx context.Context, key string, ttl time.Duration) (string, error)
+	// PresignedPutURL returns a short-lived signed PUT URL for uploading an
+	// object directly to storage under key, bypassing the API process — the
+	// large-file video ingest path (CON-148). contentType binds the
+	// Content-Type header the client must send on the PUT.
+	PresignedPutURL(ctx context.Context, key, contentType string, ttl time.Duration) (string, error)
+	// Head returns metadata for the object at key without downloading it.
+	// Used by video finalize to read the authoritative uploaded size before
+	// probing (CON-148).
+	Head(ctx context.Context, key string) (*ObjectInfo, error)
 	// Download returns a reader over the object at key; the caller must close
 	// it. Used by the PDF ingestion job (CON-103) to re-read original.pdf from
 	// the bucket on each attempt.
@@ -119,6 +136,39 @@ func (s *s3Storage) Delete(ctx context.Context, key string) error {
 		return fmt.Errorf("storage: delete %s: %w", key, err)
 	}
 	return nil
+}
+
+func (s *s3Storage) PresignedPutURL(ctx context.Context, key, contentType string, ttl time.Duration) (string, error) {
+	in := &s3.PutObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	}
+	if contentType != "" {
+		in.ContentType = aws.String(contentType)
+	}
+	req, err := s.presign.PresignPutObject(ctx, in, s3.WithPresignExpires(ttl))
+	if err != nil {
+		return "", fmt.Errorf("storage: presign put %s: %w", key, err)
+	}
+	return req.URL, nil
+}
+
+func (s *s3Storage) Head(ctx context.Context, key string) (*ObjectInfo, error) {
+	out, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("storage: head %s: %w", key, err)
+	}
+	info := &ObjectInfo{}
+	if out.ContentLength != nil {
+		info.Size = *out.ContentLength
+	}
+	if out.ContentType != nil {
+		info.ContentType = *out.ContentType
+	}
+	return info, nil
 }
 
 func (s *s3Storage) Download(ctx context.Context, key string) (io.ReadCloser, error) {
