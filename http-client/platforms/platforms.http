@@ -8,7 +8,16 @@
 # which publishing backends (e.g. Zernio) support it, the post types
 # each publisher can post in, and any social accounts the user has
 # connected. Empty `publishers: []` means no integration is configured
-# or none of them support that platform. Example shape:
+# or none of them support that platform.
+#
+# `constraints` is opaque prose fed to the model. The machine-readable
+# rules are the structured sibling objects: `image_constraints`,
+# `pdf_constraints`, `video_constraints`, and `text_constraints` (CON-91,
+# character limits). A zero/empty object means "no rules of that kind".
+# text_constraints.max_content_chars is the default body ceiling;
+# per_post_type overrides it per slug (e.g. LinkedIn articles); the
+# per-slug value is also projected into the post-type-rules response
+# (see post-type-validation/char-limits.http). Example shape:
 #
 #   {
 #     "id": "linkedin",
@@ -16,6 +25,10 @@
 #     "post_types": { "text-post": "...", ... },
 #     "cadence": "...",
 #     "constraints": "...",
+#     "image_constraints": { "max_file_size_bytes": 10485760, "allowed_formats": ["jpeg","png","gif"], "animated_gif_supported": false, "max_attachments_per_post": 9 },
+#     "pdf_constraints":   { "max_file_size_bytes": 104857600, "allowed_formats": ["pdf"], "max_pages": 300, "max_attachments_per_post": 1 },
+#     "video_constraints": { "max_file_size_bytes": 5368709120, "allowed_formats": ["mp4"], ... },
+#     "text_constraints":  { "max_content_chars": 3000, "max_title_chars": 0, "per_post_type": { "article": 100000 } },
 #     "publishers": [
 #       {
 #         "id": "zernio",
