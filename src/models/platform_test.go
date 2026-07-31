@@ -33,6 +33,41 @@ func TestTextConstraints_ScanEmptyIsZero(t *testing.T) {
 	}
 }
 
+func TestTextConstraints_ScanReplacesPriorState(t *testing.T) {
+	// A fully populated value (map override + title cap) followed by a leaner
+	// one that omits both must not leak the prior state — regression for a
+	// receiver reused across scans (json.Unmarshal merges into maps).
+	full := `{"max_content_chars":3000,"max_title_chars":100,"per_post_type":{"article":100000}}`
+	lean := `{"max_content_chars":500}`
+
+	for _, tc := range []struct {
+		name         string
+		first, later any
+	}{
+		{"string", full, lean},
+		{"bytes", []byte(full), []byte(lean)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var c TextConstraints
+			if err := c.Scan(tc.first); err != nil {
+				t.Fatalf("first Scan: %v", err)
+			}
+			if err := c.Scan(tc.later); err != nil {
+				t.Fatalf("second Scan: %v", err)
+			}
+			if c.MaxContentChars != 500 {
+				t.Errorf("max_content_chars: want 500, got %d", c.MaxContentChars)
+			}
+			if c.MaxTitleChars != 0 {
+				t.Errorf("max_title_chars: prior value leaked, want 0, got %d", c.MaxTitleChars)
+			}
+			if c.PerPostType != nil {
+				t.Errorf("per_post_type: prior map leaked, want nil, got %+v", c.PerPostType)
+			}
+		})
+	}
+}
+
 func TestTextConstraints_ContentLimitFor(t *testing.T) {
 	c := TextConstraints{MaxContentChars: 280, PerPostType: map[string]int{"long-form-post": 25000}}
 	if got := c.ContentLimitFor("text-post"); got != 280 {

@@ -197,12 +197,17 @@ func (c *TextConstraints) Scan(src any) error {
 			*c = TextConstraints{}
 			return nil
 		}
+		// Reset first: json.Unmarshal merges into an existing PerPostType map
+		// (and leaves omitted scalars untouched), so a reused receiver would
+		// otherwise carry state from a prior scan.
+		*c = TextConstraints{}
 		return json.Unmarshal([]byte(v), c)
 	case []byte:
 		if len(v) == 0 {
 			*c = TextConstraints{}
 			return nil
 		}
+		*c = TextConstraints{}
 		return json.Unmarshal(v, c)
 	case nil:
 		*c = TextConstraints{}
