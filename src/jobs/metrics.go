@@ -38,6 +38,16 @@ var (
 	ZernioAnalyticsRefreshFailed    = expvar.NewInt("ogen_jobs_zernio_analytics_refresh_failed")
 	ZernioAnalyticsPostsUpserted    = expvar.NewInt("ogen_jobs_zernio_analytics_posts_upserted")
 
+	// Follower refresh lifecycle (CON-153).
+	ZernioFollowerRefreshSucceeded = expvar.NewInt("ogen_jobs_zernio_follower_refresh_succeeded")
+	ZernioFollowerRefreshFailed    = expvar.NewInt("ogen_jobs_zernio_follower_refresh_failed")
+	ZernioFollowerPointsInserted   = expvar.NewInt("ogen_jobs_zernio_follower_points_inserted")
+
+	// External-post verification lifecycle (CON-153).
+	ZernioExternalVerifySucceeded = expvar.NewInt("ogen_jobs_zernio_external_verify_succeeded")
+	ZernioExternalVerifyFailed    = expvar.NewInt("ogen_jobs_zernio_external_verify_failed")
+	ZernioExternalVerifyNotFound  = expvar.NewInt("ogen_jobs_zernio_external_verify_not_found")
+
 	// Post Log lifecycle.
 	PostLogTruncations = expvar.NewInt("ogen_jobs_postlog_truncations")
 	PostLogCleaned     = expvar.NewInt("ogen_jobs_postlog_cleaned")

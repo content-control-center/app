@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/repository"
 )
 
 // fakeAccountRepo is a tiny in-memory repository.SocialAccountRepository for
@@ -41,6 +42,9 @@ func (r *fakeAccountRepo) GetActive(_ context.Context, profileID, id string) (*m
 }
 func (r *fakeAccountRepo) ApplyPlan(context.Context, []models.SocialAccount, []string, time.Time) error {
 	return nil
+}
+func (r *fakeAccountRepo) ListActiveTenantProfiles(context.Context) ([]repository.TenantProfile, error) {
+	return nil, nil
 }
 
 func gateService(accounts map[string][]models.SocialAccount) *Service {

@@ -112,6 +112,13 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	if analyticsDB != nil {
 		postAnalyticsRepo = repository.NewPostAnalyticsRepository(analyticsDB)
 	}
+	// CON-153: follower snapshots share the isolated analytics DB. nil when
+	// analytics is disabled — the /followers read fails-open to 503 and the
+	// follower refresh job no-ops (its FollowerRepo is nil).
+	var followerStatsRepo repository.FollowerStatsRepository
+	if analyticsDB != nil {
+		followerStatsRepo = repository.NewFollowerStatsRepository(analyticsDB)
+	}
 	socialAccountRepo := repository.NewSocialAccountRepository(db)
 	autoPublishAllowlistRepo := repository.NewAutoPublishAllowlistRepository(db)
 	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
@@ -261,6 +268,13 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// ProfileID resolves lazily so this wiring runs before the
 	// bootstrapper has finished, and so a profile id added later via the
 	// secrets API is picked up on the next dispatch.
+	// profileIDResolver reads the current tenant's Zernio profile id from the
+	// tenant-scoped settings on each call (shared by the jobs, the analytics
+	// insight endpoints, and verify-external — CON-153).
+	profileIDResolver := func(ctx context.Context) (string, error) {
+		id, _, err := zernioRT.Settings.Get(ctx, pubzernio.SettingProfileID)
+		return id, err
+	}
 	zernioDeps := queues.ZernioDeps{
 		PostRepo:           postRepo,
 		PostLogRepo:        postLogRepo,
@@ -269,14 +283,12 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		Storage:            store,
 		SettingRepo:        settingRepo,
 		AnalyticsRepo:      postAnalyticsRepo,
+		FollowerRepo:       followerStatsRepo,
 		PlatformRepo:       platformRepo,
 		Client:             zernioRT.Integration.Client,
 		Recorder:           usageWiring.recorder,
 		ActivityRecorder:   activityWiring.recorder,
-		ProfileID: func(ctx context.Context) (string, error) {
-			id, _, err := zernioRT.Settings.Get(ctx, pubzernio.SettingProfileID)
-			return id, err
-		},
+		ProfileID:          profileIDResolver,
 	}
 
 	// The six workers self-register from their init()s; RegisterAll wires them
@@ -315,6 +327,10 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 			ReconcileEvery:   reconcileEvery,
 			AnalyticsEvery:   cfg.ZernioAnalyticsRefreshInterval,
 			IncludeAnalytics: true,
+			// CON-153: daily follower-stats snapshot sweep. Like analytics, it is
+			// profile-driven, so it no-ops when Zernio is unconfigured.
+			FollowerEvery:    cfg.ZernioFollowerRefreshInterval,
+			IncludeFollowers: true,
 		}.PeriodicJobs(),
 	})
 	if err != nil {
@@ -492,6 +508,10 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// CON-93 FR4: per-post analytics snapshot behind GET /api/posts/:id/analytics,
 	// served from the DB (never live-calls the publisher).
 	postsHandler.SetAnalyticsRepo(postAnalyticsRepo)
+	// CON-153: POST /api/posts/:id/verify-external — confirm a manually
+	// published post via Zernio's sync-external, back-fill publisher_post_id +
+	// a first analytics snapshot, and emit post.analytics.updated.
+	postsHandler.SetVerifyExternalDeps(zernioRT.Integration.Client, socialAccountRepo, profileIDResolver, hub)
 	postsHandler.SetActivityRecorder(activityWiring.recorder)
 	// Cascade post-attachment S3 cleanup on post delete (CON-73 §2.7).
 	// FK CASCADE handles the DB rows; this hook handles the bucket.
@@ -515,9 +535,10 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	})
 	postsHandler.Register(app)
 	handlers.NewPostLogsHandler(postLogRepo, postRepo, auth).Register(app)
-	// CON-93 FR5: cross-post analytics overview under its own /api/analytics
-	// group (avoids the /api/posts/:id route collision), served from the DB.
-	handlers.NewAnalyticsHandler(postAnalyticsRepo, auth).Register(app)
+	// CON-93 FR5 + CON-153: analytics surface under its own /api/analytics group
+	// (avoids the /api/posts/:id route collision). The post overview + follower
+	// series are served from the DB; the insight aggregates live-proxy to Zernio.
+	handlers.NewAnalyticsHandler(postAnalyticsRepo, followerStatsRepo, zernioRT.Integration.Client, profileIDResolver, auth).Register(app)
 
 	handlers.NewImagesHandler(store, auth).Register(app)
 	// CON-103: PDF attachment page-count + thumbnail now come from pdf-service.

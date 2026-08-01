@@ -12,13 +12,17 @@ import (
 	"time"
 )
 
-// ErrAnalyticsUnavailable maps Zernio's legacy 402 ("analytics add-on
-// required") to a typed sentinel. Under Zernio's current bundled
-// pricing — analytics is on every tier, re-verified 2026-06-15 — this
-// is never expected; the refresh queue handles it defensively only
-// (CON-93 §2/§9). Kept as a sentinel so that branch is explicit rather
-// than a bare status check.
-var ErrAnalyticsUnavailable = errors.New("zernio: analytics unavailable (legacy add-on required)")
+// ErrAnalyticsUnavailable maps Zernio's analytics paywall to a typed
+// sentinel: the legacy 402 ("analytics add-on required") on GET
+// /analytics, and the current 403 (`{"requiresAddon":true}`) returned by
+// the aggregate analytics endpoints (best-time / content-decay /
+// posting-frequency / follower-stats, CON-153). Under Zernio's bundled
+// pricing on GET /analytics — analytics is on every tier, re-verified
+// 2026-06-15 — the 402 is never expected; the refresh queue handles it
+// defensively only (CON-93 §2/§9). The 403 IS expected on the CON-153
+// endpoints for tenants without the add-on and is surfaced gracefully.
+// See IsAddonRequired for the shared status check.
+var ErrAnalyticsUnavailable = errors.New("zernio: analytics unavailable (add-on required)")
 
 // Analytics source filters (CON-93). Ogen only ever requests `late` —
 // posts Zernio itself published, which is the entire CON-93 scope. The
@@ -235,9 +239,9 @@ var analyticsListKeys = []string{"analytics", "posts", "data", "results", "items
 // ListAnalytics fetches one page of post analytics from GET /analytics,
 // mirroring Status. The refresh queue pages through with Source=late.
 //
-// The legacy 402 is translated to ErrAnalyticsUnavailable; all other
-// non-2xx responses surface as the usual *APIError so the worker can
-// reuse IsStatus(err, 401|429). The body is decoded tolerantly — see
+// The add-on paywall (402/403) is translated to ErrAnalyticsUnavailable;
+// all other non-2xx responses surface as the usual *APIError so the worker
+// can reuse IsStatus(err, 401|429). The body is decoded tolerantly — see
 // decodeAnalyticsList — so either the bare-array or enveloped shape works.
 func (c *Client) ListAnalytics(ctx context.Context, q AnalyticsQuery) ([]AnalyticsItem, AnalyticsPagination, error) {
 	if c == nil {
@@ -245,7 +249,7 @@ func (c *Client) ListAnalytics(ctx context.Context, q AnalyticsQuery) ([]Analyti
 	}
 	var raw json.RawMessage
 	if err := c.do(ctx, http.MethodGet, "/analytics", q.values(), nil, &raw); err != nil {
-		if IsStatus(err, http.StatusPaymentRequired) {
+		if IsAddonRequired(err) {
 			return nil, AnalyticsPagination{}, ErrAnalyticsUnavailable
 		}
 		return nil, AnalyticsPagination{}, err

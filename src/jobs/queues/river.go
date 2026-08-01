@@ -89,6 +89,8 @@ type PeriodicConfig struct {
 	ReconcileEvery   time.Duration
 	AnalyticsEvery   time.Duration
 	IncludeAnalytics bool // only when the Zernio integration is configured
+	FollowerEvery    time.Duration
+	IncludeFollowers bool // CON-153: only when the Zernio integration is configured
 }
 
 // PeriodicJobs builds the River periodic-job set. Every job runs once on
@@ -114,6 +116,11 @@ func (cfg PeriodicConfig) PeriodicJobs() []*river.PeriodicJob {
 	if cfg.IncludeAnalytics {
 		jobs = append(jobs, river.NewPeriodicJob(river.PeriodicInterval(cfg.AnalyticsEvery), func() (river.JobArgs, *river.InsertOpts) {
 			return RefreshZernioAnalyticsTask{}, nil
+		}, runOnStart))
+	}
+	if cfg.IncludeFollowers {
+		jobs = append(jobs, river.NewPeriodicJob(river.PeriodicInterval(cfg.FollowerEvery), func() (river.JobArgs, *river.InsertOpts) {
+			return RefreshZernioFollowersTask{}, nil
 		}, runOnStart))
 	}
 	return jobs

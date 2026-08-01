@@ -175,6 +175,15 @@ type Config struct {
 	ZernioAnalyticsRefreshInterval time.Duration `envconfig:"ZERNIO_ANALYTICS_REFRESH_INTERVAL" default:"30m"`
 	ZernioAnalyticsWindowDays      int           `envconfig:"ZERNIO_ANALYTICS_WINDOW_DAYS"      default:"90"`
 
+	// Follower-stats refresh (CON-153). The refresh_zernio_followers queue
+	// snapshots each connected account's follower count on this cadence. Zernio
+	// refreshes follower counts once per day, so a 24h default matches the
+	// upstream granularity. ZernioFollowerRetentionDays carries the retention
+	// default for parity with the analytics-DB policy; the migration installs a
+	// fixed policy (operators adjust it out of band, like UsageRetentionDays).
+	ZernioFollowerRefreshInterval time.Duration `envconfig:"ZERNIO_FOLLOWER_REFRESH_INTERVAL" default:"24h"`
+	ZernioFollowerRetentionDays   int           `envconfig:"ZERNIO_FOLLOWER_RETENTION_DAYS"   default:"365"`
+
 	// Optional post-OAuth redirect target. When set, every connect
 	// link Zernio issues will send the user here after authorization
 	// succeeds, with ?connected=<platform>&profileId=<id>&accountId=<id>&username=<name>

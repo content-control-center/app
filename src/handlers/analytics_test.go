@@ -16,6 +16,7 @@ import (
 	"github.com/ogen-app/ogen/src/database"
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
 )
 
@@ -24,10 +25,12 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 		app           *fiber.App
 		db            *bun.DB
 		authCookie    *http.Cookie
-		campaignID    string
-		userID        string
-		postRepo      repository.PostRepository
-		analyticsRepo repository.PostAnalyticsRepository
+		campaignID        string
+		userID            string
+		postRepo          repository.PostRepository
+		analyticsRepo     repository.PostAnalyticsRepository
+		socialAccountRepo repository.SocialAccountRepository
+		postsHandlerRef   *handlers.PostsHandler
 	)
 
 	const linkedinSqid = "AXqWG7U2qnpt"
@@ -59,6 +62,7 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 		campaignRepo := repository.NewCampaignRepository(db, tagRepo, repository.NewPlatformRepository(db), campaignTypeRepo)
 		postRepo = repository.NewPostRepository(db)
 		analyticsRepo = repository.NewPostAnalyticsRepository(db)
+		socialAccountRepo = repository.NewSocialAccountRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 
 		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
@@ -70,7 +74,8 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 			repository.NewPostAttachmentRepository(db), auth, nil, nil)
 		ph.SetAnalyticsRepo(analyticsRepo)
 		ph.Register(app)
-		handlers.NewAnalyticsHandler(analyticsRepo, auth).Register(app)
+		postsHandlerRef = ph
+		handlers.NewAnalyticsHandler(analyticsRepo, nil, nil, nil, auth).Register(app)
 
 		// Auth user + login.
 		createdUser := seedTenantUser(db, "Admin", "admin@example.com", "admin-password")
@@ -100,6 +105,7 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 	AfterEach(func() {
 		ctx := tenantCtx()
 		_, _ = db.NewDelete().TableExpr("post_analytics_snapshots").Where("1 = 1").Exec(ctx)
+		_, _ = db.NewDelete().TableExpr("social_accounts").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("posts").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("campaigns").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(ctx)
@@ -249,6 +255,100 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 
 		It("rejects an unknown order with 400", func() {
 			Expect(get("/api/analytics/posts?order=sideways").StatusCode).To(Equal(400))
+		})
+	})
+
+	Describe("POST /api/posts/:id/verify-external", func() {
+		var (
+			stub      *httptest.Server
+			responder http.HandlerFunc
+		)
+
+		seedAccount := func(id, platform, profileID string) {
+			_, err := db.NewInsert().Model(&models.SocialAccount{
+				ID: id, Platform: platform, ProfileID: profileID,
+				Username: "acme", DisplayName: "Acme", AvatarURL: "",
+				IsActive: true, RawJSON: "{}",
+				ConnectedAt: time.Now().UTC(), LastSyncedAt: time.Now().UTC(),
+			}).Exec(tenantCtx())
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		post := func(path, body string) *http.Response {
+			req := httptest.NewRequest("POST", path, bytes.NewReader([]byte(body)))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			return resp
+		}
+
+		BeforeEach(func() {
+			// Default responder: a found post. Individual specs may override.
+			responder = func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"synced":{"postsFound":1,"postsSynced":1,"skipped":false},"found":true,"post":{"platform":"linkedin","platformPostId":"LI-999","platformPostUrl":"https://li/999","content":"hi","publishedAt":"2026-07-30T10:00:00Z","analytics":{"likes":12,"comments":3,"reach":0,"impressions":0,"engagementRate":0.0,"lastUpdated":"2026-07-30T11:00:00Z"}}}`))
+			}
+			stub = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/posts/sync-external" {
+					responder(w, r)
+					return
+				}
+				http.NotFound(w, r)
+			}))
+			client := zernio.NewClient(zernio.StaticKey("k"), stub.URL, zernio.ClientOpts{Timeout: 5 * time.Second})
+			postsHandlerRef.SetVerifyExternalDeps(client, socialAccountRepo,
+				func(ctx context.Context) (string, error) { return "prof-1", nil }, nil)
+		})
+
+		AfterEach(func() { stub.Close() })
+
+		It("confirms a manual post, back-fills publisher_post_id, and writes a snapshot", func() {
+			seedAccount("acc-li", "linkedin", "prof-1")
+			seedPost("p-manual", "", "", time.Now().UTC())
+
+			resp := post("/api/posts/p-manual/verify-external", `{"url":"https://li/999"}`)
+			Expect(resp.StatusCode).To(Equal(200))
+			var out map[string]any
+			Expect(json.NewDecoder(resp.Body).Decode(&out)).To(Succeed())
+			Expect(out["found"]).To(Equal(true))
+			p := out["post"].(map[string]any)
+			Expect(p["publisher_post_id"]).To(Equal("LI-999"))
+
+			// The per-post analytics endpoint now returns the back-filled snapshot.
+			aResp := get("/api/posts/p-manual/analytics")
+			Expect(aResp.StatusCode).To(Equal(200))
+			var a map[string]any
+			Expect(json.NewDecoder(aResp.Body).Decode(&a)).To(Succeed())
+			Expect(a["publisher_post_id"]).To(Equal("LI-999"))
+		})
+
+		It("returns found:false when the platform has no such post (404 upstream)", func() {
+			seedAccount("acc-li", "linkedin", "prof-1")
+			seedPost("p-missing", "", "", time.Now().UTC())
+			responder = func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"error":"Post not found"}`))
+			}
+			resp := post("/api/posts/p-missing/verify-external", `{"url":"https://li/nope"}`)
+			Expect(resp.StatusCode).To(Equal(200))
+			var out map[string]any
+			Expect(json.NewDecoder(resp.Body).Decode(&out)).To(Succeed())
+			Expect(out["found"]).To(Equal(false))
+		})
+
+		It("returns 409 no_account_connected when the platform has no connected account", func() {
+			seedPost("p-noacct", "", "", time.Now().UTC()) // no account seeded
+			resp := post("/api/posts/p-noacct/verify-external", `{"url":"https://li/999"}`)
+			Expect(resp.StatusCode).To(Equal(409))
+			var out map[string]any
+			Expect(json.NewDecoder(resp.Body).Decode(&out)).To(Succeed())
+			Expect(out["error"]).To(Equal("no_account_connected"))
+		})
+
+		It("rejects a body with neither url nor post_id (400)", func() {
+			seedPost("p-empty", "", "", time.Now().UTC())
+			Expect(post("/api/posts/p-empty/verify-external", `{}`).StatusCode).To(Equal(400))
 		})
 	})
 })

@@ -188,6 +188,24 @@ func (r *fakeAccountRepo) GetActive(_ context.Context, profileID, id string) (*m
 func (r *fakeAccountRepo) ApplyPlan(context.Context, []models.SocialAccount, []string, time.Time) error {
 	return nil
 }
+func (r *fakeAccountRepo) ListActiveTenantProfiles(context.Context) ([]repository.TenantProfile, error) {
+	seen := map[string]bool{}
+	var out []repository.TenantProfile
+	for profileID, accs := range r.accounts {
+		for _, a := range accs {
+			if a.DeletedAt != nil || profileID == "" {
+				continue
+			}
+			key := a.TenantID + "\x00" + profileID
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, repository.TenantProfile{TenantID: a.TenantID, ProfileID: profileID})
+		}
+	}
+	return out, nil
+}
 
 // stubZernio is the route-table HTTP server reused across queue tests.
 type stubZernio struct {
