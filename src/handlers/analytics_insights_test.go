@@ -50,12 +50,13 @@ func insightApp(handler http.HandlerFunc, profileID func(context.Context) (strin
 
 func doGet(t *testing.T, app *fiber.App, path string) (*http.Response, map[string]any) {
 	t.Helper()
-	resp, err := app.Test(httptest.NewRequest("GET", path, nil))
+	resp, err := app.Test(httptest.NewRequestWithContext(t.Context(), "GET", path, nil))
 	if err != nil {
 		t.Fatalf("request %s: %v", path, err)
 	}
 	var body map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&body)
+	_ = resp.Body.Close()
 	return resp, body
 }
 
