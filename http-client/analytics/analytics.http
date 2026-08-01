@@ -128,3 +128,116 @@ Accept: application/json
 ### Overview — invalid order → 400  [protected]
 GET {{baseUrl}}/api/analytics/posts?order=sideways
 Accept: application/json
+
+###
+# ═════════════════════════════════════════════════════════════════════════════
+# CON-153 — Zernio analytics suite: insight aggregates + follower history
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Four NEW read surfaces (the on-demand external-post verify lives in
+# posts/verify-external.http):
+#   - GET /api/analytics/best-times          day×hour engagement grid
+#   - GET /api/analytics/content-decay       engagement-accrual buckets
+#   - GET /api/analytics/posting-frequency   cadence↔engagement per platform
+#   - GET /api/analytics/followers           follower history + growth per account
+#
+# best-times / content-decay / posting-frequency are LIVE read-through proxies:
+# the request path calls Zernio, scoped to the tenant's Zernio profile. followers
+# is served ENTIRELY from local snapshots — a daily refresh_zernio_followers job
+# (ZERNIO_FOLLOWER_REFRESH_INTERVAL=24h) populates follower_stats_snapshots.
+#
+# Graceful add-on gating (the three proxies + followers upstream need Zernio's
+# Analytics add-on):
+#   - success            → 200 { "available": true,  "data": { ... } }
+#   - add-on missing     → 200 { "available": false, "reason": "addon_required",  "data": null }
+#   - Zernio not set up  → 200 { "available": false, "reason": "not_configured",  "data": null }
+# These are 200s, NOT errors, so the UI renders an upsell/empty state directly.
+#
+# Shared query params for the three proxies: platform (Zernio slug, e.g.
+# "instagram"), account_id, source ∈ all|late|external (default all).
+#
+# Set {{accountId}} to a connected Zernio social-account id (capture it from
+# publishers/zernio/zernio.http → list accounts). Leave empty to span all.
+
+@accountId =
+
+###
+# ── Best times to post — GET /api/analytics/best-times ────────────────────────
+###
+
+### Best times — all platforms/accounts  [protected]
+# → 200 { available: true, data: { slots: [ { day_of_week (0=Sun, UTC),
+#         hour (0-23, UTC), avg_engagement, post_count } ] } }
+GET {{baseUrl}}/api/analytics/best-times
+Accept: application/json
+
+### Best times — filter by platform, account, source  [protected]
+GET {{baseUrl}}/api/analytics/best-times?platform=instagram&account_id={{accountId}}&source=all
+Accept: application/json
+
+### Best times — invalid source → 400  [protected]
+GET {{baseUrl}}/api/analytics/best-times?source=bogus
+Accept: application/json
+
+###
+# ── Content performance decay — GET /api/analytics/content-decay ──────────────
+###
+
+### Content decay — all platforms  [protected]
+# → 200 { available: true, data: { buckets: [ { bucket_order, bucket_label
+#         (e.g. "0-6h"), avg_pct_of_final, post_count } ] } }
+GET {{baseUrl}}/api/analytics/content-decay
+Accept: application/json
+
+### Content decay — one platform  [protected]
+GET {{baseUrl}}/api/analytics/content-decay?platform=instagram
+Accept: application/json
+
+###
+# ── Posting frequency vs engagement — GET /api/analytics/posting-frequency ────
+###
+
+### Posting frequency — all platforms  [protected]
+# → 200 { available: true, data: { frequency: [ { platform, posts_per_week,
+#         avg_engagement_rate, avg_engagement, weeks_count } ] } }
+GET {{baseUrl}}/api/analytics/posting-frequency
+Accept: application/json
+
+### Posting frequency — one platform  [protected]
+GET {{baseUrl}}/api/analytics/posting-frequency?platform=instagram
+Accept: application/json
+
+###
+# ── Follower stats — GET /api/analytics/followers ─────────────────────────────
+###
+# Served from local daily snapshots (no publisher call on the request path).
+# When analytics storage is disabled (ANALYTICS_DSN unset) → 503.
+#   account_id  (optional) restrict to one account
+#   from / to   (optional) YYYY-MM-DD window on the point date
+#   granularity ∈ daily | weekly | monthly (default daily; weekly/monthly keep
+#               the last point per ISO-week / calendar month)
+
+### Follower stats — summary + daily series, all accounts  [protected]
+# → 200 { available: true, data: {
+#     accounts: [ { account_id, platform, username, current_followers, growth,
+#                   growth_percentage, data_points } ],
+#     series:   { "<account_id>": [ { date, followers } ] },
+#     granularity } }
+GET {{baseUrl}}/api/analytics/followers
+Accept: application/json
+
+### Follower stats — one account, windowed, weekly downsample  [protected]
+GET {{baseUrl}}/api/analytics/followers?account_id={{accountId}}&from=2026-07-01&to=2026-07-31&granularity=weekly
+Accept: application/json
+
+### Follower stats — monthly rollup  [protected]
+GET {{baseUrl}}/api/analytics/followers?granularity=monthly
+Accept: application/json
+
+### Follower stats — invalid granularity → 400  [protected]
+GET {{baseUrl}}/api/analytics/followers?granularity=hourly
+Accept: application/json
+
+### Follower stats — malformed date → 400  [protected]
+GET {{baseUrl}}/api/analytics/followers?from=07-2026
+Accept: application/json
