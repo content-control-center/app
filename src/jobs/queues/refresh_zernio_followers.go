@@ -172,7 +172,13 @@ func buildFollowerSnapshots(stats zernio.FollowerStats, now time.Time) []models.
 	}
 	var rows []models.FollowerSnapshot
 	for accountID, points := range stats.Stats {
-		acc := summaryByID[accountID]
+		// Skip an account whose series has no matching summary block — without
+		// it platform/username and growth are unknown, and stamping the
+		// zero-value would store a misleading "no growth" row.
+		acc, ok := summaryByID[accountID]
+		if !ok {
+			continue
+		}
 		for _, pt := range points {
 			pd, perr := time.Parse("2006-01-02", pt.Date)
 			if perr != nil {

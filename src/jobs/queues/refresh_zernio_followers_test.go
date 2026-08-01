@@ -177,3 +177,41 @@ func TestFollowerRefreshNoAccountsNoCall(t *testing.T) {
 		t.Errorf("rows: got %d want 0", len(fr.rows))
 	}
 }
+
+// TestFollowerRefreshSkipsUnmatchedAccounts: a series entry with no matching
+// summary account is skipped entirely (no row with empty platform/misleading
+// zero growth), while matched accounts are still recorded.
+func TestFollowerRefreshSkipsUnmatchedAccounts(t *testing.T) {
+	stub := newStubZernio()
+	defer stub.Close()
+
+	stub.handle("GET", "/accounts/follower-stats", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"accounts": []any{
+				map[string]any{"_id": "acc-1", "platform": "instagram", "username": "acme",
+					"currentFollowers": 128, "growth": 28, "growthPercentage": 28.0, "dataPoints": 1},
+			},
+			"stats": map[string]any{
+				"acc-1":     []any{map[string]any{"date": "2026-07-01", "followers": 100}},
+				"acc-ghost": []any{map[string]any{"date": "2026-07-01", "followers": 999}},
+			},
+			"granularity": "daily",
+		})
+	})
+
+	acct := &fakeAccountRepo{accounts: map[string][]models.SocialAccount{
+		"prof-1": {{ID: "acc-1", Platform: "instagram", ProfileID: "prof-1", TenantScoped: models.TenantScoped{TenantID: "t1"}}},
+	}}
+	fr := &fakeFollowerRepo{}
+	proc := newFollowerProcessor(stub, acct, fr, newFakeSettings())
+	if err := proc.Process(context.Background(), queues.RefreshZernioFollowersTask{}); err != nil {
+		t.Fatalf("process: %v", err)
+	}
+
+	if len(fr.rows) != 1 {
+		t.Fatalf("rows: got %d want 1 (acc-ghost must be skipped)", len(fr.rows))
+	}
+	if fr.rows[0].SocialAccountID != "acc-1" {
+		t.Errorf("unexpected account persisted: %+v", fr.rows[0])
+	}
+}
