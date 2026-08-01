@@ -1504,9 +1504,9 @@ func (h *PostsHandler) VerifyExternal(c *fiber.Ctx) error {
 	}
 	zernioPlatform := supported.ZernioID
 
-	accountID, resp := h.resolveExternalAccountID(c, post, profileID, zernioPlatform)
-	if resp != nil {
-		return resp
+	accountID, handled, err := h.resolveExternalAccountID(c, post, profileID, zernioPlatform)
+	if handled {
+		return err
 	}
 
 	result, err := h.zernioClient.SyncExternalPost(c.Context(), zernio.SyncExternalRequest{
@@ -1575,43 +1575,48 @@ func (h *PostsHandler) VerifyExternal(c *fiber.Ctx) error {
 }
 
 // resolveExternalAccountID resolves the Zernio account id to read the platform
-// with, applying the CON-150 rules. On any failure it writes the response and
-// returns ("", <result>); on success it returns (accountID, nil).
-func (h *PostsHandler) resolveExternalAccountID(c *fiber.Ctx, post *models.Post, profileID, zernioPlatform string) (string, error) {
+// with, applying the CON-150 rules. It returns (accountID, handled, err): when
+// handled is true the caller must return err immediately — either a response
+// has already been written (in which case err is the fiber write result, which
+// is nil on success) or err is a real failure. When handled is false, accountID
+// is non-empty and safe to use. The explicit handled flag is required because
+// c.Status(...).JSON(...) / writeAccountSelectionError return nil on a
+// successful write, so a nil error alone cannot signal "already responded".
+func (h *PostsHandler) resolveExternalAccountID(c *fiber.Ctx, post *models.Post, profileID, zernioPlatform string) (string, bool, error) {
 	if h.socialAccountRepo == nil {
-		return "", fiber.NewError(fiber.StatusServiceUnavailable, "social accounts are not available")
+		return "", true, fiber.NewError(fiber.StatusServiceUnavailable, "social accounts are not available")
 	}
 	// Explicit account on the post wins; verify it's connected and on-platform.
 	if post.SocialAccountID != "" {
 		acc, err := h.socialAccountRepo.GetActive(c.Context(), profileID, post.SocialAccountID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return "", writeAccountSelectionError(c, &schedule.AccountSelectionError{Reason: "account_unavailable", Platform: zernioPlatform})
+				return "", true, writeAccountSelectionError(c, &schedule.AccountSelectionError{Reason: "account_unavailable", Platform: zernioPlatform})
 			}
-			return "", err
+			return "", true, err
 		}
 		if acc.Platform != zernioPlatform {
-			return "", writeAccountSelectionError(c, &schedule.AccountSelectionError{Reason: "account_platform_mismatch", Platform: zernioPlatform})
+			return "", true, writeAccountSelectionError(c, &schedule.AccountSelectionError{Reason: "account_platform_mismatch", Platform: zernioPlatform})
 		}
-		return acc.ID, nil
+		return acc.ID, false, nil
 	}
 	// No explicit choice: auto-select the single account, require a choice at
 	// 2+, terminally fail at 0 (CON-150).
 	accounts, err := h.socialAccountRepo.ListActiveByPlatform(c.Context(), profileID, zernioPlatform)
 	if err != nil {
-		return "", err
+		return "", true, err
 	}
 	switch len(accounts) {
 	case 0:
-		return "", c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "no_account_connected", "platform": zernioPlatform})
+		return "", true, c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "no_account_connected", "platform": zernioPlatform})
 	case 1:
-		return accounts[0].ID, nil
+		return accounts[0].ID, false, nil
 	default:
 		candidates := make([]schedule.AccountCandidate, 0, len(accounts))
 		for _, a := range accounts {
 			candidates = append(candidates, schedule.AccountCandidate{ID: a.ID, Username: a.Username, DisplayName: a.DisplayName})
 		}
-		return "", writeAccountSelectionError(c, &schedule.AccountSelectionError{Reason: "account_selection_required", Platform: zernioPlatform, Candidates: candidates})
+		return "", true, writeAccountSelectionError(c, &schedule.AccountSelectionError{Reason: "account_selection_required", Platform: zernioPlatform, Candidates: candidates})
 	}
 }
 
