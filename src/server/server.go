@@ -179,6 +179,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		zernioRT.Settings,
 		platformRepo,
 		socialAccountRepo,
+		postRepo,
 		zernioRT.Worker,
 		zernioRT.RateLimiter,
 		auth,

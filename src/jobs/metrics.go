@@ -48,6 +48,10 @@ var (
 	ZernioExternalVerifyFailed    = expvar.NewInt("ogen_jobs_zernio_external_verify_failed")
 	ZernioExternalVerifyNotFound  = expvar.NewInt("ogen_jobs_zernio_external_verify_not_found")
 
+	// Account disconnect lifecycle (CON-133, user-initiated via the API).
+	ZernioAccountDisconnectSucceeded = expvar.NewInt("ogen_jobs_zernio_account_disconnect_succeeded")
+	ZernioAccountDisconnectFailed    = expvar.NewInt("ogen_jobs_zernio_account_disconnect_failed")
+
 	// Post Log lifecycle.
 	PostLogTruncations = expvar.NewInt("ogen_jobs_postlog_truncations")
 	PostLogCleaned     = expvar.NewInt("ogen_jobs_postlog_cleaned")

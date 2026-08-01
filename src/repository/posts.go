@@ -44,6 +44,12 @@ type PostRepository interface {
 	// (CON-152), with no relation hydration. One batched read replaces the N
 	// per-card GET /campaigns/:id/posts requests the list used to fire.
 	ListSummaryProjections(ctx context.Context) ([]models.Post, error)
+	// CountPendingByAccount returns how many of the tenant's posts still
+	// reference the given social account in a not-yet-published, committed-to-
+	// publish state (scheduled or scheduled_for_manual_publishing). CON-133
+	// disconnect uses it to guard against stranding queued posts: a non-zero
+	// count blocks the disconnect with 409 unless the caller forces it.
+	CountPendingByAccount(ctx context.Context, socialAccountID string) (int, error)
 }
 
 type postRepository struct {
@@ -111,6 +117,19 @@ func (r *postRepository) GetByID(ctx context.Context, id string) (*models.Post, 
 func (r *postRepository) Update(ctx context.Context, post *models.Post) error {
 	_, err := r.db.NewUpdate().Model(post).WherePK().Exec(ctx)
 	return err
+}
+
+func (r *postRepository) CountPendingByAccount(ctx context.Context, socialAccountID string) (int, error) {
+	// BeforeSelect adds the tenant predicate; the status filter is the set of
+	// states that would still attempt to publish against this account. draft /
+	// ready_for_publish are excluded — they're freely editable, not committed.
+	return r.db.NewSelect().Model((*models.Post)(nil)).
+		Where("po.social_account_id = ?", socialAccountID).
+		Where("po.status IN (?)", bun.In([]models.PostStatus{
+			models.PostStatusScheduled,
+			models.PostStatusScheduledForManualPublish,
+		})).
+		Count(ctx)
 }
 
 func (r *postRepository) UpdateScheduledAtBatch(ctx context.Context, posts []*models.Post) error {
