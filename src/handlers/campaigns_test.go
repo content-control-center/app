@@ -17,6 +17,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/ogen-app/ogen/src/campaign_actions/overview"
+	"github.com/ogen-app/ogen/src/campaign_actions/summaries"
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/consistency"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
@@ -1459,6 +1460,144 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 					statusTotal += b.Count
 				}
 				Expect(statusTotal).To(Equal(3), "byStatus should reconcile with totalPosts")
+			})
+		})
+	})
+
+	// ── Batched summaries (CON-152) ─────────────────────────────────────────────
+
+	Describe("GET /api/campaigns/summaries", func() {
+		errorHandler := func(c *fiber.Ctx, err error) error {
+			code := fiber.StatusInternalServerError
+			if e, ok := err.(*fiber.Error); ok {
+				code = e.Code
+			}
+			return c.Status(code).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		// buildSummariesApp wires an app whose campaigns handler has the summaries
+		// service set, and returns a post repository for seeding.
+		buildSummariesApp := func() (*fiber.App, repository.PostRepository) {
+			a := fiber.New(fiber.Config{ErrorHandler: errorHandler})
+			ctRepo := repository.NewCampaignTypeRepository(db)
+			cRepo := repository.NewCampaignRepository(db, repository.NewTagRepository(db), repository.NewPlatformRepository(db), ctRepo)
+			postRepo := repository.NewPostRepository(db)
+			sRepo := repository.NewSessionRepository(db)
+			setRepo := repository.NewSettingRepository(db)
+			uRepo := repository.NewUserRepository(db)
+			a2 := handlers.RequireAuth(sRepo, testCookieName)
+			handlers.NewUsersHandler(uRepo, setRepo, a2).Register(a)
+			handlers.NewSessionsHandler(uRepo, sRepo, testCookieName, false).Register(a)
+			ch := handlers.NewCampaignsHandler(cRepo, ctRepo, a2, nil, nil, nil, nil, nil)
+			ch.SetSummariesService(summaries.New(postRepo))
+			ch.Register(a)
+			return a, postRepo
+		}
+
+		seedCookie := func(a *fiber.App, email string) *http.Cookie {
+			seedTenantUser(db, "Summaries User", email, "summaries-password")
+			loginBody, _ := json.Marshal(fiber.Map{"email": email, "password": "summaries-password"})
+			loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
+			loginReq.Header.Set("Content-Type", "application/json")
+			loginResp, err := a.Test(loginReq)
+			Expect(err).NotTo(HaveOccurred())
+			var ck *http.Cookie
+			for _, c := range loginResp.Cookies() {
+				ck = c
+			}
+			return ck
+		}
+
+		createCampaignOn := func(a *fiber.App, ck *http.Cookie, name, typeID string) models.Campaign {
+			body, _ := json.Marshal(fiber.Map{"name": name, "campaign_type_id": typeID})
+			req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(ck)
+			resp, err := a.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+			var c models.Campaign
+			Expect(json.NewDecoder(resp.Body).Decode(&c)).To(Succeed())
+			return c
+		}
+
+		Context("when not authenticated", func() {
+			It("returns 401", func() {
+				req := httptest.NewRequest("GET", "/api/campaigns/summaries", nil)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+		})
+
+		Context("when authenticated", func() {
+			It("returns 503 when unset — proving /summaries is not shadowed by /:id", func() {
+				// The default app registers the route but never calls
+				// SetSummariesService. A 503 (not a 404 "campaign not found")
+				// proves the static /summaries segment resolves to the Summaries
+				// handler rather than being captured as an :id by GET /:id.
+				req := httptest.NewRequest("GET", "/api/campaigns/summaries", nil)
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(503))
+			})
+
+			It("returns slim post projections grouped by campaign, omitting empty campaigns", func() {
+				a, postRepo := buildSummariesApp()
+				ck := seedCookie(a, "sumok@example.com")
+				withPosts := createCampaignOn(a, ck, "Has Posts", "Uk")
+				empty := createCampaignOn(a, ck, "No Posts", "Uk")
+
+				tctx := tenantctx.With(context.Background(), models.DefaultTenantID)
+				scheduled := time.Date(2026, 8, 2, 9, 0, 0, 0, time.UTC)
+				seedPost := func(id string, status models.PostStatus, at *time.Time) {
+					Expect(postRepo.Create(tctx, &models.Post{
+						ID:               id,
+						CampaignID:       withPosts.ID,
+						PlatformID:       "AXqWG7U2qnpt",
+						PlatformPostType: "text-post",
+						Title:            "title " + id,
+						Content:          "body " + id,
+						Status:           status,
+						ScheduledAt:      at,
+						MediaURLs:        models.StringSlice{},
+						UsedAssetIDs:     models.StringSlice{},
+						CTAType:          models.CTATypeNone,
+						CreatedBy:        withPosts.CreatedBy,
+					})).To(Succeed())
+				}
+				seedPost("sum-a", models.PostStatusDraft, nil)
+				seedPost("sum-b", models.PostStatusScheduled, &scheduled)
+
+				req := httptest.NewRequest("GET", "/api/campaigns/summaries", nil)
+				req.AddCookie(ck)
+				resp, err := a.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+
+				var out summaries.Summaries
+				Expect(json.NewDecoder(resp.Body).Decode(&out)).To(Succeed())
+				Expect(out.GeneratedAt).NotTo(BeZero())
+
+				// Only the campaign with posts appears; the empty one is absent.
+				Expect(out.Summaries).To(HaveLen(1))
+				Expect(out.Summaries[0].CampaignID).To(Equal(withPosts.ID))
+				for _, s := range out.Summaries {
+					Expect(s.CampaignID).NotTo(Equal(empty.ID), "a campaign with no posts must be absent")
+				}
+
+				posts := out.Summaries[0].Posts
+				Expect(posts).To(HaveLen(2))
+				byID := map[string]summaries.PostSummary{}
+				for _, p := range posts {
+					byID[p.ID] = p
+					// media_urls serialises as [] not null.
+					Expect(p.MediaURLs).NotTo(BeNil())
+				}
+				Expect(byID["sum-a"].Status).To(Equal("draft"))
+				Expect(byID["sum-b"].Status).To(Equal("scheduled"))
+				Expect(byID["sum-b"].ScheduledAt).NotTo(BeNil())
 			})
 		})
 	})
