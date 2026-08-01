@@ -84,13 +84,18 @@ type PostingFrequency struct {
 	Raw       json.RawMessage       `json:"-"`
 }
 
-// IsAddonRequired reports whether err is the analytics paywall from a
-// Zernio analytics endpoint: the legacy 402 or the current
-// 403 (`{"requiresAddon":true}`). Those endpoints only 403 for a missing
-// add-on — 401 is a bad key — so the status alone is a sufficient signal
-// without parsing the body. Callers map this to ErrAnalyticsUnavailable.
+// IsAddonRequired reports whether err is the analytics add-on paywall: the
+// legacy 402 (always), or a 403 that carries Zernio's `"requiresAddon": true`
+// flag. A 403 WITHOUT that flag (a proxy/WAF/gateway block, a revoked token,
+// etc.) is deliberately NOT classified here, so it stays a plain *APIError the
+// caller can surface rather than being masked as "add-on required". Callers map
+// a true result to ErrAnalyticsUnavailable.
 func IsAddonRequired(err error) bool {
-	return IsStatus(err, http.StatusPaymentRequired) || IsStatus(err, http.StatusForbidden)
+	if IsStatus(err, http.StatusPaymentRequired) {
+		return true
+	}
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && apiErr.Status == http.StatusForbidden && apiErr.RequiresAddon
 }
 
 // getAddonGated GETs an add-on-gated analytics endpoint, translating the

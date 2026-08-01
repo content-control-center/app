@@ -114,6 +114,7 @@ func TestInsightsAddonGating(t *testing.T) {
 		wantSentin bool
 	}{
 		{"403 requiresAddon", http.StatusForbidden, `{"error":"Analytics add-on required","requiresAddon":true}`, true},
+		{"403 without requiresAddon (proxy/WAF)", http.StatusForbidden, `{"error":"Forbidden"}`, false},
 		{"legacy 402", http.StatusPaymentRequired, `{"error":"analytics add-on required"}`, true},
 		{"401 unauthorized", http.StatusUnauthorized, `{"error":"Unauthorized"}`, false},
 	}
