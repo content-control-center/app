@@ -11,6 +11,17 @@
 GET {{baseUrl}}/api/campaigns
 Accept: application/json
 
+### Campaigns list summaries — batched post projections  [protected]  (CON-152)
+# One request for the whole Campaigns list instead of one GET /:id/posts per
+# card (fixes the CON-127 N+1). Returns a slim per-post projection grouped by
+# campaign — only the fields the client's readiness rules read (status,
+# scheduled_at / published_at, platform_id, platform_post_type,
+# campaign_type_phase_id, media_urls, created_at / updated_at). No title,
+# content, or hydrated relations. Campaigns with no posts are omitted.
+# Synchronous JSON (not SSE). 503 when the summaries service is unwired.
+GET {{baseUrl}}/api/campaigns/summaries
+Accept: application/json
+
 ### Create campaign — minimal  [protected]
 # @name createCampaign
 POST {{baseUrl}}/api/campaigns

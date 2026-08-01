@@ -61,6 +61,9 @@ func (r *fakePostRepo) List(context.Context) ([]models.Post, error) { return nil
 func (r *fakePostRepo) ListByCampaign(context.Context, string) ([]models.Post, error) {
 	return nil, nil
 }
+func (r *fakePostRepo) ListSummaryProjections(context.Context) ([]models.Post, error) {
+	return nil, nil
+}
 func (r *fakePostRepo) UpdateScheduledAtBatch(context.Context, []*models.Post) error { return nil }
 func (r *fakePostRepo) ListWithPublisherPostID(context.Context) ([]models.Post, error) {
 	r.mu.Lock()

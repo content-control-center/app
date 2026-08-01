@@ -39,6 +39,11 @@ type PostRepository interface {
 	// analytics refresh keys off. Returns id + publisher_post_id only,
 	// for Zernio-published posts that actually carry a publisher post id.
 	ListWithPublisherPostID(ctx context.Context) ([]models.Post, error)
+	// ListSummaryProjections returns a slim projection of every post in the
+	// tenant — only the columns the Campaigns-list readiness rules read
+	// (CON-152), with no relation hydration. One batched read replaces the N
+	// per-card GET /campaigns/:id/posts requests the list used to fire.
+	ListSummaryProjections(ctx context.Context) ([]models.Post, error)
 }
 
 type postRepository struct {
@@ -229,6 +234,33 @@ func (r *postRepository) ListWithPublisherPostID(ctx context.Context) ([]models.
 		Where("po.publisher = ?", models.PublisherZernio).
 		Where("po.publisher_post_id IS NOT NULL").
 		Where("po.publisher_post_id <> ''").
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return posts, nil
+}
+
+// ListSummaryProjections returns a lightweight projection of every post in the
+// caller's tenant — only the columns lib/campaignReadiness reads to score a
+// campaign on the Campaigns list (CON-152): status + schedule/publish times +
+// platform, post-type, and phase ids + media presence. It deliberately skips
+// relation hydration and the heavy title/content columns, so one batched read
+// replaces the N per-card GET /campaigns/:id/posts requests without shipping
+// Markdown bodies or hydrated campaign/platform/asset graphs.
+//
+// Rows are ordered by campaign so the caller groups them in a single pass.
+// Tenant scoping is applied by the TenantScoped BeforeSelect hook on
+// models.Post — hence the real model rather than a bespoke struct, which would
+// bypass the hook and leak across tenants.
+func (r *postRepository) ListSummaryProjections(ctx context.Context) ([]models.Post, error) {
+	var posts []models.Post
+	err := r.db.NewSelect().
+		Model(&posts).
+		Column("id", "campaign_id", "status", "scheduled_at", "published_at",
+			"platform_id", "platform_post_type", "campaign_type_phase_id",
+			"media_urls", "created_at", "updated_at").
+		OrderExpr("campaign_id ASC, created_at ASC").
 		Scan(ctx)
 	if err != nil {
 		return nil, err
