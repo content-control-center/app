@@ -1566,8 +1566,10 @@ func (h *PostsHandler) VerifyExternal(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"found": true,
 		"post": fiber.Map{
-			"id":                post.ID,
-			"publisher_post_id": post.PublisherPostID,
+			"id": post.ID,
+			// The confirmed external post's own id — the one ext.Analytics
+			// belong to (post.PublisherPostID is left as-is when already set).
+			"publisher_post_id": ext.PlatformPostID,
 			"sync_status":       "synced",
 		},
 		"analytics": metrics,
@@ -1654,9 +1656,11 @@ func (h *PostsHandler) buildExternalSnapshot(post *models.Post, ext *zernio.Exte
 		rawJSON = string(b)
 	}
 	return &models.PostAnalytics{
-		ID:              id,
-		PostID:          post.ID,
-		PublisherPostID: post.PublisherPostID,
+		ID:     id,
+		PostID: post.ID,
+		// The synced external post's id — kept consistent with the metrics
+		// below (ext.Analytics), not the post's possibly-preexisting linkage.
+		PublisherPostID: ext.PlatformPostID,
 		Publisher:       models.PublisherZernio,
 		Platform:        platformName,
 		Title:           post.Title,
