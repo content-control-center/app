@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"strconv"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
 )
 
@@ -54,22 +56,42 @@ func newPostAnalyticsResponse(post *models.Post, a *models.PostAnalytics) postAn
 	}
 }
 
-// AnalyticsHandler serves the cross-post analytics overview (CON-93 FR5).
-// It lives under a separate /api/analytics group so the list route does
-// not collide with /api/posts/:id. Reads are served entirely from the
-// database — the request path never calls the publisher.
+// ProfileIDResolver returns the current tenant's Zernio profile id, read
+// from the tenant-scoped settings on each call, or "" when the tenant has
+// no profile (integration not configured for them).
+type ProfileIDResolver func(ctx context.Context) (string, error)
+
+// AnalyticsHandler serves the analytics surface under /api/analytics
+// (CON-93 FR5 + CON-153). The post overview (/posts) and follower series
+// (/followers) are served entirely from the database; the three insight
+// aggregates (best-times/content-decay/posting-frequency) are live
+// read-through proxies to Zernio, scoped to the tenant's profile. It lives
+// under a separate /api/analytics group so its routes don't collide with
+// /api/posts/:id.
 type AnalyticsHandler struct {
-	repo repository.PostAnalyticsRepository
-	auth fiber.Handler
+	repo         repository.PostAnalyticsRepository
+	followerRepo repository.FollowerStatsRepository
+	client       *zernio.Client
+	profileID    ProfileIDResolver
+	auth         fiber.Handler
 }
 
-func NewAnalyticsHandler(repo repository.PostAnalyticsRepository, auth fiber.Handler) *AnalyticsHandler {
-	return &AnalyticsHandler{repo: repo, auth: auth}
+// NewAnalyticsHandler wires the handler. followerRepo/client/profileID are
+// CON-153 additions; a nil client (or nil resolver) makes the live-proxy
+// insight endpoints report {available:false, reason:"not_configured"}, and a
+// nil followerRepo makes /followers return 503 — matching the existing
+// analytics-disabled behaviour.
+func NewAnalyticsHandler(repo repository.PostAnalyticsRepository, followerRepo repository.FollowerStatsRepository, client *zernio.Client, profileID ProfileIDResolver, auth fiber.Handler) *AnalyticsHandler {
+	return &AnalyticsHandler{repo: repo, followerRepo: followerRepo, client: client, profileID: profileID, auth: auth}
 }
 
 func (h *AnalyticsHandler) Register(app *fiber.App) {
 	g := app.Group("/api/analytics")
 	g.Get("/posts", h.auth, h.ListPosts)
+	g.Get("/best-times", h.auth, h.BestTimes)
+	g.Get("/content-decay", h.auth, h.ContentDecay)
+	g.Get("/posting-frequency", h.auth, h.PostingFrequency)
+	g.Get("/followers", h.auth, h.Followers)
 }
 
 // validAnalyticsSorts is the closed set of sort_by values (CON-93 §5).

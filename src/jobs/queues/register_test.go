@@ -11,7 +11,7 @@ import (
 // River registry without panicking (river.AddWorker panics on duplicate kinds,
 // so this also proves the kinds are distinct).
 func TestAllWorkersSelfRegister(t *testing.T) {
-	const wantWorkers = 8 // submit, poll, cancel, cleanup, reconcile, analytics, bootstrap-profile, process-pdf
+	const wantWorkers = 9 // submit, poll, cancel, cleanup, reconcile, analytics, followers, bootstrap-profile, process-pdf
 	if len(registrars) != wantWorkers {
 		t.Fatalf("self-registered workers: got %d, want %d", len(registrars), wantWorkers)
 	}

@@ -34,6 +34,14 @@ type SocialAccountRepository interface {
 	// to another profile. Backs validation of an explicit CON-150 selection.
 	GetActive(ctx context.Context, profileID, id string) (*models.SocialAccount, error)
 
+	// ListActiveTenantProfiles returns the distinct (tenant_id, profile_id)
+	// pairs across EVERY tenant with at least one active connected account.
+	// MUST be called under a system context (tenantctx.WithSystem) — the
+	// TenantScoped hook otherwise restricts it to a single tenant. The
+	// CON-153 follower-refresh sweep uses it to enumerate which tenants and
+	// profiles to fetch follower stats for.
+	ListActiveTenantProfiles(ctx context.Context) ([]TenantProfile, error)
+
 	// ApplyPlan persists the reconciler's three sets in a single
 	// transaction. Inserts and revives upsert on the primary key
 	// (an existing soft-deleted row is brought back to life by
@@ -42,12 +50,36 @@ type SocialAccountRepository interface {
 	ApplyPlan(ctx context.Context, upserts []models.SocialAccount, softDeleteIDs []string, now time.Time) error
 }
 
+// TenantProfile pairs a tenant with its Zernio profile, derived from the
+// social_accounts that tenant owns. Used by cross-tenant sweeps (CON-153) to
+// enumerate which tenants/profiles to act on without a per-tenant settings
+// read.
+type TenantProfile struct {
+	TenantID  string `bun:"tenant_id"`
+	ProfileID string `bun:"profile_id"`
+}
+
 type socialAccountRepository struct {
 	db *bun.DB
 }
 
 func NewSocialAccountRepository(db *bun.DB) SocialAccountRepository {
 	return &socialAccountRepository{db: db}
+}
+
+func (r *socialAccountRepository) ListActiveTenantProfiles(ctx context.Context) ([]TenantProfile, error) {
+	var out []TenantProfile
+	// System context skips the tenant predicate (scopeQuery), so this spans
+	// every tenant. profile_id != '' guards against a half-provisioned row.
+	if err := r.db.NewSelect().Model((*models.SocialAccount)(nil)).
+		ColumnExpr("DISTINCT sa.tenant_id, sa.profile_id").
+		Where("sa.deleted_at IS NULL").
+		Where("sa.profile_id != ''").
+		OrderExpr("sa.tenant_id").
+		Scan(ctx, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (r *socialAccountRepository) ListAll(ctx context.Context, profileID string) ([]models.SocialAccount, error) {

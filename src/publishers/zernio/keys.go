@@ -24,6 +24,10 @@ const (
 	// post-side columns are publisher-agnostic.
 	SettingAnalyticsLastRefreshAt     = "zernio.analytics.last_refresh_at"
 	SettingAnalyticsLastRefreshStatus = "zernio.analytics.last_refresh_status"
+	// Follower-stats refresh health (CON-153), mirroring the analytics
+	// keys above for the daily follower snapshot sweep.
+	SettingFollowersLastRefreshAt     = "zernio.followers.last_refresh_at"
+	SettingFollowersLastRefreshStatus = "zernio.followers.last_refresh_status"
 )
 
 // SettingPrefix is the namespace shared by every Zernio-managed key.

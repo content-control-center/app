@@ -144,6 +144,11 @@ func (c *Client) BaseURL() string {
 type APIError struct {
 	Status  int
 	Message string
+	// RequiresAddon mirrors the `"requiresAddon": true` flag Zernio sets on
+	// the analytics add-on paywall body (CON-153). It lets callers tell an
+	// add-on 403 apart from any other 403 (proxy/WAF/gateway) rather than
+	// treating every 403 the same. False for bodies without the flag.
+	RequiresAddon bool
 }
 
 func (e *APIError) Error() string {
@@ -220,7 +225,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 
 	if resp.StatusCode >= 400 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, errorBodyLimit))
-		return &APIError{Status: resp.StatusCode, Message: shortErrorMessage(raw)}
+		return &APIError{Status: resp.StatusCode, Message: shortErrorMessage(raw), RequiresAddon: errorRequiresAddon(raw)}
 	}
 	if out != nil {
 		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
@@ -252,4 +257,14 @@ func shortErrorMessage(raw []byte) string {
 		raw = raw[:200]
 	}
 	return string(raw)
+}
+
+// errorRequiresAddon reports whether a Zernio error body carries the analytics
+// add-on paywall flag (`"requiresAddon": true`, CON-153). A malformed or
+// flag-less body reads as false.
+func errorRequiresAddon(raw []byte) bool {
+	var env struct {
+		RequiresAddon bool `json:"requiresAddon"`
+	}
+	return json.Unmarshal(raw, &env) == nil && env.RequiresAddon
 }

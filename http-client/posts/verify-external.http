@@ -1,0 +1,115 @@
+@baseUrl = http://localhost:9001
+
+# Verify a manually-published post — CON-153.
+# POST /api/posts/:id/verify-external confirms a post that was published
+# by hand ON the platform (outside Ogen) exists, using Zernio's on-demand
+# sync-external (POST /posts/sync-external). On a match it:
+#   - resolves the post's connected Zernio account (CON-150 rules),
+#   - back-fills posts.publisher_post_id + marks the post `published`,
+#   - writes a first analytics snapshot (so GET /api/posts/:id/analytics
+#     starts returning it — see analytics/analytics.http), and
+#   - emits post.analytics.updated on the SSE stream.
+# It's the fast path to start tracking a manual post's analytics instead of
+# waiting ~90 min for the background external sync.
+#
+# Body — at least one locator:
+#   { "url": "https://..." }         any format the platform uses
+#   { "post_id": "platform-media-id" }
+#
+# Responses:
+#   200 { found: true, post: { id, publisher_post_id, sync_status: "synced" },
+#         analytics: { impressions, reach, likes, comments, shares, saves,
+#                      clicks, views, engagement_rate } }
+#   200 { found: false }                 platform has no such post (upstream 404)
+#   400 url or post_id required          empty body
+#   404 post not found                   unknown Ogen post id
+#   409 { error: "no_account_connected", platform }   no account for the platform
+#   422 { error: "account_selection_required", platform, candidates: [...] }
+#         2+ same-platform accounts and the post carries no social_account_id
+#   502                                  sync-external upstream failure
+#   503                                  Zernio not configured / no profile
+#
+# All endpoints require authentication. Run "Login" from sessions/sessions.http
+# first — the HTTP client stores and replays the cookie automatically.
+#
+# Prerequisites:
+#   - {{campaignId}} set (run campaigns/campaigns.http → createCampaign).
+#   - At least one Zernio account connected for the post's platform (run the
+#     connect flow in publishers/zernio/zernio.http). With exactly ONE account
+#     the endpoint auto-selects it; with two or more and no explicit
+#     social_account_id on the post it returns 422 account_selection_required.
+
+@linkedinPlatformId = AXqWG7U2qnpt
+
+###
+# ── Setup ─────────────────────────────────────────────────────────────────────
+###
+
+### Helper — create a LinkedIn post published manually on the platform  [protected]
+# @name createManualPost
+# A plain draft stands in for "created in Ogen but published by hand": it has a
+# platform but no publisher_post_id yet — exactly what verify-external back-fills.
+POST {{baseUrl}}/api/posts
+Content-Type: application/json
+
+{
+  "campaign_id": "{{campaignId}}",
+  "platform_id": "{{linkedinPlatformId}}",
+  "platform_post_type": "article",
+  "title": "Published by hand on LinkedIn",
+  "content": "This post was published manually on the platform, outside Ogen.",
+  "status": "draft",
+  "cta_type": "none"
+}
+
+> {% client.global.set("manualPostId", response.body.id) %}
+
+###
+# ── Verify scenarios ──────────────────────────────────────────────────────────
+###
+
+### 1. Verify by URL — matched → 200 found  [protected]
+# Paste the URL the user copied after publishing on the platform.
+POST {{baseUrl}}/api/posts/{{manualPostId}}/verify-external
+Content-Type: application/json
+
+{
+  "url": "https://www.linkedin.com/feed/update/urn:li:activity:1234567890"
+}
+
+### 2. Verify by platform post id — alternative locator  [protected]
+POST {{baseUrl}}/api/posts/{{manualPostId}}/verify-external
+Content-Type: application/json
+
+{
+  "post_id": "urn:li:activity:1234567890"
+}
+
+### 3. Not found on the platform → 200 { found: false }  [protected]
+# A URL/id the account's recent posts don't include.
+POST {{baseUrl}}/api/posts/{{manualPostId}}/verify-external
+Content-Type: application/json
+
+{
+  "url": "https://www.linkedin.com/feed/update/urn:li:activity:0000000000"
+}
+
+### 4. Neither url nor post_id → 400  [protected]
+POST {{baseUrl}}/api/posts/{{manualPostId}}/verify-external
+Content-Type: application/json
+
+{}
+
+### 5. Unknown Ogen post id → 404  [protected]
+POST {{baseUrl}}/api/posts/nonexistent/verify-external
+Content-Type: application/json
+
+{
+  "url": "https://www.linkedin.com/feed/update/urn:li:activity:1234567890"
+}
+
+### 6. Confirm the back-fill — the snapshot is now readable  [protected]
+# After scenario 1 succeeds, the per-post analytics endpoint returns the
+# freshly-written snapshot instead of 409/pending (see analytics/analytics.http).
+GET {{baseUrl}}/api/posts/{{manualPostId}}/analytics
+Accept: application/json

@@ -15,8 +15,10 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/ogen-app/ogen/src/activity"
+	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_quality"
+	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/jobs/queues"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/platforms"
@@ -106,6 +108,26 @@ type PostsHandler struct {
 	// post_scheduled, …) to the analytics store. nil is a no-op (analytics
 	// disabled / fixtures). Wired via SetActivityRecorder.
 	activity *activity.Recorder
+	// verify-external deps (CON-153): confirm a manually-published post via
+	// Zernio's sync-external, then back-fill publisher_post_id + a first
+	// analytics snapshot. A nil zernioClient disables POST /:id/verify-external
+	// (503). Wired via SetVerifyExternalDeps.
+	zernioClient      *zernio.Client
+	socialAccountRepo repository.SocialAccountRepository
+	profileID         func(ctx context.Context) (string, error)
+	// analyticsHub emits the post.analytics.updated event after a successful
+	// verify-external so open analytics streams refresh (CON-93 §8). nil = no-op.
+	analyticsHub eventhub.Hub
+}
+
+// SetVerifyExternalDeps wires the CON-153 external-post verification path. Kept
+// a setter so existing NewPostsHandler call sites and fixtures stay unchanged;
+// a nil client leaves POST /:id/verify-external at 503.
+func (h *PostsHandler) SetVerifyExternalDeps(client *zernio.Client, accounts repository.SocialAccountRepository, profileID func(ctx context.Context) (string, error), hub eventhub.Hub) {
+	h.zernioClient = client
+	h.socialAccountRepo = accounts
+	h.profileID = profileID
+	h.analyticsHub = hub
 }
 
 // SetOnBeforeDelete registers a hook that runs before a post is
@@ -690,6 +712,7 @@ func (h *PostsHandler) Register(app *fiber.App) {
 	g.Post("/:id/assess", h.auth, h.Assess)
 	g.Get("/:id/assessment", h.auth, h.GetAssessment)
 	g.Get("/:id/analytics", h.auth, h.GetAnalytics)
+	g.Post("/:id/verify-external", h.auth, h.VerifyExternal)
 	g.Post("/:id/clone", h.auth, h.Clone)
 	g.Get("/:id/messages", h.auth, h.ListMessages)
 	g.Get("/:id/versions", h.auth, h.ListVersions)
@@ -1418,6 +1441,270 @@ func (h *PostsHandler) GetAnalytics(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "pending", "post_id": post.ID})
 	}
 	return c.JSON(newPostAnalyticsResponse(post, snapshot))
+}
+
+// verifyExternalRequest is the body for POST /:id/verify-external. At least
+// one locator (url or post_id) is required.
+type verifyExternalRequest struct {
+	URL    string `json:"url"`
+	PostID string `json:"post_id"`
+}
+
+// VerifyExternal godoc
+// @Summary      Verify a manually-published post
+// @Description  Confirms an externally/manually published post exists via Zernio's on-demand sync (CON-153), resolving the post's connected account (CON-150 rules). On a match it back-fills publisher_post_id, marks the post published, writes a first analytics snapshot, and emits post.analytics.updated. Returns {found:false} when the post can't be located.
+// @Tags         posts
+// @Accept       json
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id    path  string                 true  "Post Sqid"
+// @Param        body  body  handlers.verifyExternalRequest  true  "Post URL or platform post id"
+// @Success      200  {object}  map[string]interface{}
+// @Failure      400  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Failure      409  {object}  map[string]string
+// @Failure      422  {object}  map[string]string
+// @Failure      502  {object}  map[string]string
+// @Failure      503  {object}  map[string]string
+// @Router       /api/posts/{id}/verify-external [post]
+func (h *PostsHandler) VerifyExternal(c *fiber.Ctx) error {
+	if h.zernioClient == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "external verification is not available")
+	}
+	var body verifyExternalRequest
+	if err := c.BodyParser(&body); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
+	}
+	if body.URL == "" && body.PostID == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "url or post_id is required")
+	}
+
+	post, err := h.repo.GetByID(c.Context(), c.Params("id"))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "post not found")
+		}
+		return err
+	}
+
+	profileID := ""
+	if h.profileID != nil {
+		if profileID, err = h.profileID(c.Context()); err != nil {
+			return err
+		}
+	}
+	if profileID == "" {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "zernio integration is not configured")
+	}
+
+	// Resolve the connected account whose token reads the platform (CON-150).
+	supported := zernio.LookupSupportedBySqid(post.PlatformID)
+	if supported == nil {
+		return fiber.NewError(fiber.StatusConflict, "post has no supported platform")
+	}
+	zernioPlatform := supported.ZernioID
+
+	accountID, handled, err := h.resolveExternalAccountID(c, post, profileID, zernioPlatform)
+	if handled {
+		return err
+	}
+
+	result, err := h.zernioClient.SyncExternalPost(c.Context(), zernio.SyncExternalRequest{
+		AccountID: accountID,
+		URL:       body.URL,
+		PostID:    body.PostID,
+	})
+	if err != nil {
+		// A 404 means the platform has no such post — a normal "not found",
+		// not a server error.
+		if zernio.IsStatus(err, fiber.StatusNotFound) {
+			jobs.ZernioExternalVerifyNotFound.Add(1)
+			return c.JSON(fiber.Map{"found": false})
+		}
+		jobs.ZernioExternalVerifyFailed.Add(1)
+		return fiber.NewError(fiber.StatusBadGateway, "sync-external upstream error")
+	}
+	if !result.Found || result.Post == nil {
+		jobs.ZernioExternalVerifyNotFound.Add(1)
+		return c.JSON(fiber.Map{"found": false})
+	}
+	ext := result.Post
+
+	// Back-fill the publisher linkage so per-post analytics resolve, and mark
+	// the post published-external.
+	if post.PublisherPostID == "" {
+		post.PublisherPostID = ext.PlatformPostID
+	}
+	if post.Publisher == "" {
+		post.Publisher = models.PublisherZernio
+	}
+	if post.PublishedAt == nil {
+		if pa := ext.PublishedAtTime(); pa != nil {
+			post.PublishedAt = pa
+		}
+	}
+	post.Status = models.PostStatusPublished
+	post.UpdatedAt = time.Now().UTC()
+	if err := h.repo.Update(c.Context(), post); err != nil {
+		jobs.ZernioExternalVerifyFailed.Add(1)
+		return err
+	}
+
+	// Write a first analytics snapshot (best-effort) and emit the update event
+	// so open analytics streams refresh. The response carries the fetched
+	// metrics regardless of whether persistence is available.
+	metrics := externalMetrics(ext.Analytics)
+	if h.analyticsRepo != nil {
+		if snap, berr := h.buildExternalSnapshot(post, ext); berr == nil {
+			if ierr := h.analyticsRepo.Insert(c.Context(), snap); ierr == nil {
+				h.publishAnalyticsUpdated(c.Context(), snap)
+			}
+		}
+	}
+
+	jobs.ZernioExternalVerifySucceeded.Add(1)
+	return c.JSON(fiber.Map{
+		"found": true,
+		"post": fiber.Map{
+			"id": post.ID,
+			// The confirmed external post's own id — the one ext.Analytics
+			// belong to (post.PublisherPostID is left as-is when already set).
+			"publisher_post_id": ext.PlatformPostID,
+			"sync_status":       "synced",
+		},
+		"analytics": metrics,
+	})
+}
+
+// resolveExternalAccountID resolves the Zernio account id to read the platform
+// with, applying the CON-150 rules. It returns (accountID, handled, err): when
+// handled is true the caller must return err immediately — either a response
+// has already been written (in which case err is the fiber write result, which
+// is nil on success) or err is a real failure. When handled is false, accountID
+// is non-empty and safe to use. The explicit handled flag is required because
+// c.Status(...).JSON(...) / writeAccountSelectionError return nil on a
+// successful write, so a nil error alone cannot signal "already responded".
+func (h *PostsHandler) resolveExternalAccountID(c *fiber.Ctx, post *models.Post, profileID, zernioPlatform string) (string, bool, error) {
+	if h.socialAccountRepo == nil {
+		return "", true, fiber.NewError(fiber.StatusServiceUnavailable, "social accounts are not available")
+	}
+	// Explicit account on the post wins; verify it's connected and on-platform.
+	if post.SocialAccountID != "" {
+		acc, err := h.socialAccountRepo.GetActive(c.Context(), profileID, post.SocialAccountID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return "", true, writeAccountSelectionError(c, &schedule.AccountSelectionError{Reason: "account_unavailable", Platform: zernioPlatform})
+			}
+			return "", true, err
+		}
+		if acc.Platform != zernioPlatform {
+			return "", true, writeAccountSelectionError(c, &schedule.AccountSelectionError{Reason: "account_platform_mismatch", Platform: zernioPlatform})
+		}
+		return acc.ID, false, nil
+	}
+	// No explicit choice: auto-select the single account, require a choice at
+	// 2+, terminally fail at 0 (CON-150).
+	accounts, err := h.socialAccountRepo.ListActiveByPlatform(c.Context(), profileID, zernioPlatform)
+	if err != nil {
+		return "", true, err
+	}
+	switch len(accounts) {
+	case 0:
+		return "", true, c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "no_account_connected", "platform": zernioPlatform})
+	case 1:
+		return accounts[0].ID, false, nil
+	default:
+		candidates := make([]schedule.AccountCandidate, 0, len(accounts))
+		for _, a := range accounts {
+			candidates = append(candidates, schedule.AccountCandidate{ID: a.ID, Username: a.Username, DisplayName: a.DisplayName})
+		}
+		return "", true, writeAccountSelectionError(c, &schedule.AccountSelectionError{Reason: "account_selection_required", Platform: zernioPlatform, Candidates: candidates})
+	}
+}
+
+// externalMetrics maps a synced external post's analytics onto the shared
+// metrics block.
+func externalMetrics(a zernio.ExternalPostAnalytics) models.PostAnalyticsMetrics {
+	return models.PostAnalyticsMetrics{
+		Impressions:    a.Impressions,
+		Reach:          a.Reach,
+		Likes:          a.Likes,
+		Comments:       a.Comments,
+		Shares:         a.Shares,
+		Saves:          a.Saves,
+		Clicks:         a.Clicks,
+		Views:          a.Views,
+		EngagementRate: a.EngagementRate,
+	}
+}
+
+// buildExternalSnapshot builds a first analytics snapshot from a synced
+// external post, denormalising the post's display fields exactly like the
+// refresh job (CON-125 Track B).
+func (h *PostsHandler) buildExternalSnapshot(post *models.Post, ext *zernio.ExternalPost) (*models.PostAnalytics, error) {
+	id, err := models.NewID()
+	if err != nil {
+		return nil, err
+	}
+	m := externalMetrics(ext.Analytics)
+	platformName := ext.Platform
+	if post.Platform != nil && post.Platform.Name != "" {
+		platformName = post.Platform.Name
+	}
+	rawJSON := "{}"
+	if b, merr := json.Marshal(ext); merr == nil {
+		rawJSON = string(b)
+	}
+	return &models.PostAnalytics{
+		ID:     id,
+		PostID: post.ID,
+		// The synced external post's id — kept consistent with the metrics
+		// below (ext.Analytics), not the post's possibly-preexisting linkage.
+		PublisherPostID: ext.PlatformPostID,
+		Publisher:       models.PublisherZernio,
+		Platform:        platformName,
+		Title:           post.Title,
+		PublishedAt:     post.PublishedAt,
+		Impressions:     m.Impressions,
+		Reach:           m.Reach,
+		Likes:           m.Likes,
+		Comments:        m.Comments,
+		Shares:          m.Shares,
+		Saves:           m.Saves,
+		Clicks:          m.Clicks,
+		Views:           m.Views,
+		EngagementRate:  m.EngagementRate,
+		PlatformAnalytics: models.PlatformAnalyticsList{{
+			Platform:        ext.Platform,
+			PlatformPostID:  ext.PlatformPostID,
+			PlatformPostURL: ext.PlatformPostURL,
+			SyncStatus:      "synced",
+			Analytics:       m,
+		}},
+		SyncStatus:         "synced",
+		MetricsLastUpdated: ext.Analytics.LastUpdatedTime(),
+		RawJSON:            rawJSON,
+		OccurredAt:         time.Now().UTC(),
+	}, nil
+}
+
+// publishAnalyticsUpdated emits the post.analytics.updated event (CON-93 §8)
+// after a verify-external snapshot. No-op when no Hub is wired.
+func (h *PostsHandler) publishAnalyticsUpdated(ctx context.Context, a *models.PostAnalytics) {
+	if h.analyticsHub == nil {
+		return
+	}
+	tid, _ := tenantctx.From(ctx)
+	_ = h.analyticsHub.Publish(ctx, eventhub.Event{
+		Topic:    fmt.Sprintf("entity:post:%s", a.PostID),
+		TenantID: tid,
+		Type:     "post.analytics.updated",
+		Payload: map[string]any{
+			"post_id":     a.PostID,
+			"sync_status": a.SyncStatus,
+			"analytics":   a.Metrics(),
+		},
+	})
 }
 
 // ── Messages ─────────────────────────────────────────────────────────────────

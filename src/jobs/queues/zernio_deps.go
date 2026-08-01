@@ -38,6 +38,9 @@ type ZernioDeps struct {
 	// (CON-93 §6 FR2; append-only per CON-125). Only the refresh queue uses it;
 	// nil on the submit/poll/cancel processors that share this bundle.
 	AnalyticsRepo repository.PostAnalyticsRepository
+	// FollowerRepo upserts the daily follower snapshots the follower-refresh
+	// queue writes (CON-153). Only that queue uses it; nil disables the sweep.
+	FollowerRepo repository.FollowerStatsRepository
 	// PlatformRepo resolves platform_id → name so the refresh queue can
 	// denormalise the platform name onto each snapshot (CON-125 Track B). Only
 	// the refresh queue uses it.
