@@ -19,6 +19,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/ogen-app/ogen/src/campaign_actions/overview"
+	"github.com/ogen-app/ogen/src/campaign_actions/summaries"
 	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
@@ -101,6 +102,9 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// Campaign Assistant's getCampaignOverview tool. Not gated by the Anthropic
 	// key — it's a plain tenant-scoped DB read.
 	campaignOverviewSvc := overview.New(campaignRepo, postRepo, platformRepo)
+	// CON-152: batched Campaigns-list summaries — one tenant-scoped read that
+	// replaces the per-card GET /:id/posts N+1 (CON-127).
+	campaignSummariesSvc := summaries.New(postRepo)
 	postAttachmentRepo := repository.NewPostAttachmentRepository(db)
 	postLogRepo := repository.NewPostLogRepository(db)
 	postEvaluationRepo := repository.NewPostEvaluationRepository(db)
@@ -461,6 +465,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	handlers.NewCampaignTypesHandler(campaignTypeRepo, auth).Register(app)
 	campaignsHandler := handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, gkRuntime.GenerateDraft, gkRuntime.IsAnthropicAvailable, gkRuntime.EnrichBrief, campaignMessageRepo, gkRuntime.RunCampaignAssistant)
 	campaignsHandler.SetOverviewService(campaignOverviewSvc)
+	campaignsHandler.SetSummariesService(campaignSummariesSvc)
 	campaignsHandler.SetGeneratePosts(gkRuntime.GeneratePosts, cfg.GeneratePostsMax)
 	campaignsHandler.SetConsistency(gkRuntime.CheckBrief, gkRuntime.CheckPosts)
 	campaignsHandler.SetActivityRecorder(activityWiring.recorder)

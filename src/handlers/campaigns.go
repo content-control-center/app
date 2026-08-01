@@ -14,6 +14,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/activity"
 	"github.com/ogen-app/ogen/src/campaign_actions/overview"
+	"github.com/ogen-app/ogen/src/campaign_actions/summaries"
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/consistency"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
@@ -60,6 +61,11 @@ type CampaignsHandler struct {
 	// NewCampaignsHandler call sites stay unchanged. nil → the endpoint 503s.
 	// Not gated by the Anthropic key — it's a plain tenant-scoped DB read.
 	overview *overview.Service
+	// summaries backs GET /summaries (CON-152), the batched Campaigns-list
+	// read that replaces the per-card GET /:id/posts N+1. Set via
+	// SetSummariesService (late-bound optional dep, like overview). nil → the
+	// endpoint 503s. A plain tenant-scoped DB read, not gated by any AI key.
+	summaries *summaries.Service
 	// generatePosts backs POST /:id/generate-posts (CON-114); generatePostsMax
 	// caps the count. Set via SetGeneratePosts. nil → the endpoint 503s.
 	generatePosts    func(ctx context.Context, req content_plan.GeneratePostsRequest, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)
@@ -105,6 +111,13 @@ func (h *CampaignsHandler) SetOverviewService(svc *overview.Service) {
 	h.overview = svc
 }
 
+// SetSummariesService wires the batched Campaigns-list summary service
+// (CON-152). Setter, not a constructor arg, so existing NewCampaignsHandler
+// call sites and fixtures stay unchanged.
+func (h *CampaignsHandler) SetSummariesService(svc *summaries.Service) {
+	h.summaries = svc
+}
+
 // SetGeneratePosts wires the CON-114 targeted generation callback + its per-call
 // cap. Setter, not a constructor arg, so existing call sites stay unchanged.
 func (h *CampaignsHandler) SetGeneratePosts(fn func(ctx context.Context, req content_plan.GeneratePostsRequest, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error), max int) {
@@ -148,6 +161,9 @@ func (h *CampaignsHandler) Register(app *fiber.App) {
 	g := app.Group("/api/campaigns")
 	g.Get("/", h.auth, h.List)
 	g.Post("/", h.auth, h.Create)
+	// CON-152: batched Campaigns-list summaries. Registered before /:id so the
+	// static "summaries" segment is not captured as a campaign id param.
+	g.Get("/summaries", h.auth, h.Summaries)
 	g.Get("/:id", h.auth, h.Get)
 	g.Put("/:id", h.auth, h.Update)
 	g.Delete("/:id", h.auth, h.Delete)
@@ -740,6 +756,31 @@ func (h *CampaignsHandler) Overview(c *fiber.Ctx) error {
 		return err
 	}
 	return c.JSON(ov)
+}
+
+// Summaries godoc
+// @Summary      Batched campaign post summaries
+// @Description  Returns a slim per-post projection for every campaign in the
+// @Description  tenant, grouped by campaign (CON-152). The Campaigns list runs
+// @Description  its readiness rules on this single response instead of firing
+// @Description  one GET /campaigns/:id/posts per card. Carries only the fields
+// @Description  the rules read — no title, content, or hydrated relations.
+// @Tags         campaigns
+// @Produce      json
+// @Security     CookieAuth
+// @Success      200  {object}  summaries.Summaries
+// @Failure      401  {object}  map[string]string
+// @Failure      503  {object}  map[string]string
+// @Router       /api/campaigns/summaries [get]
+func (h *CampaignsHandler) Summaries(c *fiber.Ctx) error {
+	if h.summaries == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "campaign summaries are not available")
+	}
+	out, err := h.summaries.Summaries(c.Context())
+	if err != nil {
+		return err
+	}
+	return c.JSON(out)
 }
 
 // GeneratePosts godoc
