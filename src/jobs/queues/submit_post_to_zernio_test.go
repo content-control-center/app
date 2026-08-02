@@ -86,9 +86,10 @@ func (r *fakePostRepo) ListWithPublisherPostID(context.Context) ([]models.Post, 
 	}
 	return out, nil
 }
-func (r *fakePostRepo) Create(context.Context, *models.Post) error        { return nil }
-func (r *fakePostRepo) CreateBatch(context.Context, []*models.Post) error { return nil }
-func (r *fakePostRepo) Delete(context.Context, string) (bool, error)      { return false, nil }
+func (r *fakePostRepo) CountPendingByAccount(context.Context, string) (int, error) { return 0, nil }
+func (r *fakePostRepo) Create(context.Context, *models.Post) error                 { return nil }
+func (r *fakePostRepo) CreateBatch(context.Context, []*models.Post) error          { return nil }
+func (r *fakePostRepo) Delete(context.Context, string) (bool, error)               { return false, nil }
 func (r *fakePostRepo) ListStuckScheduled(context.Context, time.Time, int) ([]models.Post, error) {
 	return nil, nil
 }
@@ -190,6 +191,9 @@ func (r *fakeAccountRepo) GetActive(_ context.Context, profileID, id string) (*m
 }
 func (r *fakeAccountRepo) ApplyPlan(context.Context, []models.SocialAccount, []string, time.Time) error {
 	return nil
+}
+func (r *fakeAccountRepo) SoftDelete(context.Context, string, time.Time) (bool, error) {
+	return false, nil
 }
 func (r *fakeAccountRepo) ListActiveTenantProfiles(context.Context) ([]repository.TenantProfile, error) {
 	seen := map[string]bool{}

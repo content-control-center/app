@@ -8,13 +8,14 @@ import "github.com/ogen-app/ogen/src/vendors"
 const VendorZernio = "zernio"
 
 // Operations recorded for Zernio actions. status_poll/cancel/retry are
-// api_call-grade and not yet wired (a follow-up); publish + account_connect
-// are the high-value, fully-dimensioned events.
+// api_call-grade and not yet wired (a follow-up); publish + account_connect +
+// account_disconnect are the high-value, fully-dimensioned events.
 const (
-	OpPublish          = "publish"
-	OpSchedule         = "schedule"
-	OpAnalyticsRefresh = "analytics_refresh"
-	OpAccountConnect   = "account_connect"
+	OpPublish           = "publish"
+	OpSchedule          = "schedule"
+	OpAnalyticsRefresh  = "analytics_refresh"
+	OpAccountConnect    = "account_connect"
+	OpAccountDisconnect = "account_disconnect"
 )
 
 // init registers the Zernio publisher vendor. It is count-only for now (empty

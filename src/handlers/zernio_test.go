@@ -208,7 +208,7 @@ var _ = Describe("ZernioHandler", Ordered, func() {
 		})
 
 		handlers.NewZernioHandler(
-			integ, bootstrapper, store, platformRepo, accountRepo, worker,
+			integ, bootstrapper, store, platformRepo, accountRepo, repository.NewPostRepository(db), worker,
 			zernio.NewConnectLinkRateLimiter(),
 			auth,
 		).Register(app)
@@ -232,6 +232,9 @@ var _ = Describe("ZernioHandler", Ordered, func() {
 			stub.Close()
 		}
 		ctx := tenantCtx()
+		_, _ = db.NewDelete().TableExpr("posts").Where("1 = 1").Exec(ctx)
+		_, _ = db.NewDelete().TableExpr("campaigns").Where("1 = 1").Exec(ctx)
+		_, _ = db.NewDelete().TableExpr("campaigns_types").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("social_accounts").Where("1 = 1").Exec(ctx)
@@ -369,6 +372,159 @@ var _ = Describe("ZernioHandler", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.StatusCode).To(Equal(202))
 		})
+
+		Describe("DELETE /accounts/:id (CON-133)", func() {
+			seedAccount := func(id string) {
+				now := time.Now().UTC()
+				Expect(accountRepo.ApplyPlan(tenantCtx(), []models.SocialAccount{{
+					ID:           id,
+					Platform:     "linkedin",
+					ProfileID:    "p_test",
+					Username:     "alice",
+					DisplayName:  "Alice",
+					IsActive:     true,
+					RawJSON:      `{"_id":"` + id + `"}`,
+					ConnectedAt:  now,
+					LastSyncedAt: now,
+				}}, nil, now)).To(Succeed())
+			}
+
+			// seedScheduledPost inserts a campaign_type + campaign + one
+			// scheduled post that publishes to accountID, so the disconnect
+			// guard has something to count.
+			seedScheduledPost := func(accountID string) {
+				ctx := tenantCtx()
+				var admin models.User
+				Expect(db.NewSelect().Model(&admin).Where("email = ?", "admin@example.com").Scan(ctx)).To(Succeed())
+
+				ctID, err := models.NewID()
+				Expect(err).NotTo(HaveOccurred())
+				_, err = db.NewInsert().Model(&models.CampaignType{ID: ctID, Name: "seed-" + ctID}).Exec(ctx)
+				Expect(err).NotTo(HaveOccurred())
+
+				campID, err := models.NewID()
+				Expect(err).NotTo(HaveOccurred())
+				_, err = db.NewInsert().Model(&models.Campaign{
+					ID:              campID,
+					Name:            "Seed",
+					AssetIDs:        models.StringSlice{},
+					TargetPlatforms: models.CampaignPlatforms{},
+					TagIDs:          models.StringSlice{},
+					CampaignTypeID:  ctID,
+					Status:          models.StatusDraft,
+					CreatedBy:       admin.ID,
+				}).Exec(ctx)
+				Expect(err).NotTo(HaveOccurred())
+
+				when := time.Now().UTC().Add(time.Hour)
+				postID, err := models.NewID()
+				Expect(err).NotTo(HaveOccurred())
+				_, err = db.NewInsert().Model(&models.Post{
+					ID:              postID,
+					CampaignID:      campID,
+					SocialAccountID: accountID,
+					Content:         "hi",
+					MediaURLs:       models.StringSlice{},
+					UsedAssetIDs:    models.StringSlice{},
+					Status:          models.PostStatusScheduled,
+					ScheduledAt:     &when,
+					CTAType:         models.CTATypeNone,
+					CreatedBy:       admin.ID,
+				}).Exec(ctx)
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			del := func(path string) *http.Response {
+				req := httptest.NewRequest("DELETE", path, nil)
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				return resp
+			}
+
+			isActiveLocally := func(id string) bool {
+				_, err := accountRepo.GetActive(tenantCtx(), "p_test", id)
+				return err == nil
+			}
+
+			It("removes the account upstream, soft-deletes locally, and returns 204", func() {
+				seedAccount("acc1")
+				var deleted bool
+				stub.handle("DELETE", "/accounts/acc1", func(w http.ResponseWriter, r *http.Request) {
+					deleted = true
+					writeJSON(w, http.StatusOK, map[string]string{"message": "Account disconnected successfully"})
+				})
+
+				Expect(del("/api/integrations/zernio/accounts/acc1").StatusCode).To(Equal(204))
+				Expect(deleted).To(BeTrue(), "should call Zernio DELETE upstream")
+				Expect(isActiveLocally("acc1")).To(BeFalse(), "row should be soft-deleted")
+			})
+
+			It("returns 404 for an unknown account without calling Zernio", func() {
+				var called bool
+				stub.handle("DELETE", "/accounts/nope", func(w http.ResponseWriter, r *http.Request) {
+					called = true
+					writeJSON(w, http.StatusOK, map[string]string{})
+				})
+				Expect(del("/api/integrations/zernio/accounts/nope").StatusCode).To(Equal(404))
+				Expect(called).To(BeFalse())
+			})
+
+			It("treats an upstream 404 as an idempotent success and heals local state", func() {
+				seedAccount("acc1")
+				stub.handle("DELETE", "/accounts/acc1", func(w http.ResponseWriter, r *http.Request) {
+					writeJSON(w, http.StatusNotFound, map[string]string{"error": "Not found"})
+				})
+				Expect(del("/api/integrations/zernio/accounts/acc1").StatusCode).To(Equal(204))
+				Expect(isActiveLocally("acc1")).To(BeFalse())
+			})
+
+			It("returns 502 and leaves the row active when the upstream delete fails", func() {
+				seedAccount("acc1")
+				stub.handle("DELETE", "/accounts/acc1", func(w http.ResponseWriter, r *http.Request) {
+					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "boom"})
+				})
+				Expect(del("/api/integrations/zernio/accounts/acc1").StatusCode).To(Equal(502))
+				Expect(isActiveLocally("acc1")).To(BeTrue(), "must not soft-delete on upstream failure")
+			})
+
+			It("is idempotent: a second disconnect returns 404", func() {
+				seedAccount("acc1")
+				stub.handle("DELETE", "/accounts/acc1", func(w http.ResponseWriter, r *http.Request) {
+					writeJSON(w, http.StatusOK, map[string]string{})
+				})
+				Expect(del("/api/integrations/zernio/accounts/acc1").StatusCode).To(Equal(204))
+				Expect(del("/api/integrations/zernio/accounts/acc1").StatusCode).To(Equal(404))
+			})
+
+			It("blocks with 409 when scheduled posts reference the account, unless forced", func() {
+				seedAccount("acc1")
+				seedScheduledPost("acc1")
+				var upstreamHits int
+				stub.handle("DELETE", "/accounts/acc1", func(w http.ResponseWriter, r *http.Request) {
+					upstreamHits++
+					writeJSON(w, http.StatusOK, map[string]string{})
+				})
+
+				// Without force → 409 with the count, and no upstream call.
+				resp := del("/api/integrations/zernio/accounts/acc1")
+				Expect(resp.StatusCode).To(Equal(409))
+				var body struct {
+					Error          string `json:"error"`
+					ScheduledPosts int    `json:"scheduledPosts"`
+				}
+				Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
+				Expect(body.Error).To(Equal("account_has_scheduled_posts"))
+				Expect(body.ScheduledPosts).To(Equal(1))
+				Expect(upstreamHits).To(Equal(0))
+				Expect(isActiveLocally("acc1")).To(BeTrue())
+
+				// With force=true → disconnect proceeds.
+				Expect(del("/api/integrations/zernio/accounts/acc1?force=true").StatusCode).To(Equal(204))
+				Expect(upstreamHits).To(Equal(1))
+				Expect(isActiveLocally("acc1")).To(BeFalse())
+			})
+		})
 	})
 
 	Describe("with no API key", func() {
@@ -388,6 +544,14 @@ var _ = Describe("ZernioHandler", Ordered, func() {
 
 		It("POST /profile/repair returns 409 integration_disabled", func() {
 			req := httptest.NewRequest("POST", "/api/integrations/zernio/profile/repair", nil)
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(409))
+		})
+
+		It("DELETE /accounts/:id returns 409 integration_disabled", func() {
+			req := httptest.NewRequest("DELETE", "/api/integrations/zernio/accounts/acc1", nil)
 			req.AddCookie(authCookie)
 			resp, err := app.Test(req)
 			Expect(err).NotTo(HaveOccurred())

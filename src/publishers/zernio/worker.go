@@ -474,6 +474,28 @@ func (w *Worker) recordAccountConnect(ctx context.Context, account models.Social
 	})
 }
 
+// PublishAccountDisconnected fires the account.disconnected eventhub event for
+// a user-initiated disconnect (CON-133), reusing the same topic + payload shape
+// the reconciler emits when Zernio drops an account so subscribers can't tell
+// the two apart. The ctx must be tenant-scoped (the hub derives TenantID from
+// it). Best-effort: publish failures are logged, not returned.
+func (w *Worker) PublishAccountDisconnected(ctx context.Context, account models.SocialAccount) {
+	w.publishAccountEvent(ctx, EventTypeDisconnected, account, "")
+}
+
+// RecordAccountDisconnect emits a CON-133 account_disconnect usage event,
+// mirroring recordAccountConnect: count-only, dimensioned by platform +
+// social_account_id. The ctx must be tenant-scoped; a nil recorder is a no-op.
+func (w *Worker) RecordAccountDisconnect(ctx context.Context, account models.SocialAccount) {
+	w.recorder.Record(ctx, VendorZernio, "zernio_sync", vendors.MeterEvent{
+		Model:           account.Platform,
+		Operation:       OpAccountDisconnect,
+		Usage:           vendors.Usage{vendors.KindAccount: 1},
+		Platform:        account.Platform,
+		SocialAccountID: account.ID,
+	})
+}
+
 // publishAccountEvent fires an eventhub event for one account change.
 // Topic shape matches the in-tree convention (entity:<kind>:<id>).
 func (w *Worker) publishAccountEvent(ctx context.Context, eventType string, account models.SocialAccount, errMsg string) {

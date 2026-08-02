@@ -42,6 +42,13 @@ type SocialAccountRepository interface {
 	// profiles to fetch follower stats for.
 	ListActiveTenantProfiles(ctx context.Context) ([]TenantProfile, error)
 
+	// SoftDelete marks the active account with the given id as disconnected
+	// (deleted_at = now), scoped to the caller's tenant by the TenantScoped
+	// hook and to rows that are still active. Returns true when a row was
+	// updated, false when the id was unknown or already soft-deleted — so a
+	// repeat disconnect is idempotent. Backs the CON-133 disconnect endpoint.
+	SoftDelete(ctx context.Context, id string, now time.Time) (bool, error)
+
 	// ApplyPlan persists the reconciler's three sets in a single
 	// transaction. Inserts and revives upsert on the primary key
 	// (an existing soft-deleted row is brought back to life by
@@ -128,6 +135,25 @@ func (r *socialAccountRepository) GetActive(ctx context.Context, profileID, id s
 		return nil, err
 	}
 	return acc, nil
+}
+
+func (r *socialAccountRepository) SoftDelete(ctx context.Context, id string, now time.Time) (bool, error) {
+	// The TenantScoped BeforeUpdate hook adds `tenant_id = <ctx tenant>`, and
+	// `deleted_at IS NULL` makes a repeat call a no-op — together they keep the
+	// write both tenant-safe and idempotent. Mirrors the ApplyPlan soft-delete.
+	res, err := r.db.NewUpdate().Model((*models.SocialAccount)(nil)).
+		Set("deleted_at = ?", now).
+		Where("id = ?", id).
+		Where("deleted_at IS NULL").
+		Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func (r *socialAccountRepository) ApplyPlan(

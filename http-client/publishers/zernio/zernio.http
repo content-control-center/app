@@ -164,6 +164,36 @@ Accept: application/json
     if (linkedin[1]) client.global.set("linkedinAccountId2", linkedin[1].id);
 %}
 
+# ── Disconnect an account — CON-133 ───────────────────────────────────────────
+# DELETE /accounts/:id removes ONE connected account from the caller's tenant.
+# It deletes the account upstream on Zernio (DELETE /accounts/{id}) FIRST, then
+# soft-deletes the local mirror row — order matters: the sync reconciler revives
+# any soft-deleted row Zernio still returns, so a local-only delete would bounce
+# back on the next tick. An upstream 404 is treated as an idempotent success
+# (already gone there); any other upstream failure returns 502 and leaves the
+# row active so Ogen and Zernio can't diverge.
+#
+# Guard: if the account still has scheduled posts (status scheduled /
+# scheduled_for_manual_publishing), the call returns 409 with the count. Pass
+# ?force=true to disconnect anyway. Run "List accounts" above first so
+# {{linkedinAccountId}} is populated.
+#
+# Responses: 204 disconnected · 404 account_not_found · 409 integration_disabled
+# | account_has_scheduled_posts{scheduledPosts} · 502 integration_degraded.
+
+### Disconnect a LinkedIn account (blocked by scheduled posts → 409, else 204)  [protected]
+# @name disconnectAccount
+DELETE {{baseUrl}}/api/integrations/zernio/accounts/{{linkedinAccountId}}
+Accept: application/json
+
+### Disconnect a LinkedIn account — force past the scheduled-post guard → 204  [protected]
+DELETE {{baseUrl}}/api/integrations/zernio/accounts/{{linkedinAccountId}}?force=true
+Accept: application/json
+
+### Disconnect an unknown account id → 404 account_not_found  [protected]
+DELETE {{baseUrl}}/api/integrations/zernio/accounts/does-not-exist
+Accept: application/json
+
 ### Trigger an immediate sync tick  [protected]
 # Nudges the background worker, which sweeps every tenant that has a profile;
 # results land per tenant.

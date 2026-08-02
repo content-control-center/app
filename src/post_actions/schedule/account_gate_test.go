@@ -43,6 +43,9 @@ func (r *fakeAccountRepo) GetActive(_ context.Context, profileID, id string) (*m
 func (r *fakeAccountRepo) ApplyPlan(context.Context, []models.SocialAccount, []string, time.Time) error {
 	return nil
 }
+func (r *fakeAccountRepo) SoftDelete(context.Context, string, time.Time) (bool, error) {
+	return false, nil
+}
 func (r *fakeAccountRepo) ListActiveTenantProfiles(context.Context) ([]repository.TenantProfile, error) {
 	return nil, nil
 }

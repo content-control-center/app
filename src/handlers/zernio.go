@@ -12,6 +12,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
@@ -34,6 +35,7 @@ type ZernioHandler struct {
 	settings     zernio.SettingsStore
 	platforms    repository.PlatformRepository
 	accounts     repository.SocialAccountRepository
+	posts        repository.PostRepository
 	worker       *zernio.Worker
 	rateLimiter  *zernio.RateLimiter
 	auth         fiber.Handler
@@ -45,6 +47,7 @@ func NewZernioHandler(
 	settings zernio.SettingsStore,
 	platforms repository.PlatformRepository,
 	accounts repository.SocialAccountRepository,
+	posts repository.PostRepository,
 	worker *zernio.Worker,
 	rateLimiter *zernio.RateLimiter,
 	auth fiber.Handler,
@@ -55,6 +58,7 @@ func NewZernioHandler(
 		settings:     settings,
 		platforms:    platforms,
 		accounts:     accounts,
+		posts:        posts,
 		worker:       worker,
 		rateLimiter:  rateLimiter,
 		auth:         auth,
@@ -70,6 +74,7 @@ func (h *ZernioHandler) Register(app *fiber.App) {
 	g.Get("/platforms", h.ListPlatforms)
 	g.Post("/connect-links", h.CreateConnectLink)
 	g.Get("/accounts", h.ListAccounts)
+	g.Delete("/accounts/:id", h.DisconnectAccount)
 	g.Post("/sync", h.TriggerSync)
 	g.Post("/profile/repair", h.RepairProfile)
 }
@@ -379,6 +384,120 @@ func (h *ZernioHandler) ListAccounts(c *fiber.Ctx) error {
 		LastSyncAt:     lastAt,
 		LastSyncStatus: lastStatus,
 	})
+}
+
+// DisconnectAccount godoc
+// @Summary      Disconnect a Zernio social account from the tenant
+// @Description  Removes a connected social account: deletes it upstream on
+// @Description  Zernio (DELETE /accounts/{id}), then soft-deletes the local
+// @Description  mirror row so a later sync doesn't revive it. Blocked with 409
+// @Description  when the account still has scheduled posts, unless force=true.
+// @Description  Idempotent: an unknown or already-disconnected id returns 404.
+// @Tags         zernio
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id     path   string  true   "Social account id"
+// @Param        force  query  boolean false  "Disconnect even if scheduled posts reference the account"
+// @Success      204  "Disconnected"
+// @Failure      401  {object}  map[string]string
+// @Failure      404  {object}  map[string]string  "account_not_found"
+// @Failure      409  {object}  map[string]string  "integration_disabled | account_has_scheduled_posts"
+// @Failure      502  {object}  map[string]string  "integration_degraded"
+// @Router       /api/integrations/zernio/accounts/{id} [delete]
+func (h *ZernioHandler) DisconnectAccount(c *fiber.Ctx) error {
+	if !h.integ.Enabled() {
+		return fiber.NewError(fiber.StatusConflict, "integration_disabled")
+	}
+
+	id := c.Params("id")
+	if id == "" {
+		return fiber.NewError(fiber.StatusNotFound, "account_not_found")
+	}
+	force := c.QueryBool("force", false)
+
+	profileID, _, err := h.settings.Get(c.Context(), zernio.SettingProfileID)
+	if err != nil {
+		return err
+	}
+	if profileID == "" {
+		// No profile → this tenant has never connected anything to disconnect.
+		return fiber.NewError(fiber.StatusNotFound, "account_not_found")
+	}
+
+	account, err := h.accounts.GetActive(c.Context(), profileID, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "account_not_found")
+		}
+		return err
+	}
+
+	// Refuse to strand scheduled posts unless the caller forces it.
+	if !force {
+		pending, err := h.posts.CountPendingByAccount(c.Context(), id)
+		if err != nil {
+			return err
+		}
+		if pending > 0 {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error":          "account_has_scheduled_posts",
+				"scheduledPosts": pending,
+			})
+		}
+	}
+
+	// Remove upstream first so the local soft-delete sticks: the reconciler
+	// revives any soft-deleted row Zernio still returns (reconcile.go), so a
+	// local-only delete would bounce back on the next sync. A 404 upstream means
+	// the account is already gone there — treat it as an idempotent no-op and
+	// proceed to heal local state. Any other upstream failure stops here (no
+	// local write) so Ogen and Zernio can't diverge.
+	if err := h.integ.Client.DeleteAccount(c.Context(), id); err != nil {
+		if !zernio.IsStatus(err, http.StatusNotFound) {
+			jobs.ZernioAccountDisconnectFailed.Add(1)
+			slog.ErrorContext(c.Context(), "zernio account delete failed",
+				logging.AttrComponent, "zernio",
+				"account_id", id,
+				"platform", account.Platform,
+				logging.AttrError, err)
+			return fiber.NewError(http.StatusBadGateway, "integration_degraded")
+		}
+		slog.InfoContext(c.Context(), "zernio account already absent upstream; healing local state",
+			logging.AttrComponent, "zernio",
+			"account_id", id)
+	}
+
+	updated, err := h.accounts.SoftDelete(c.Context(), id, time.Now().UTC())
+	if err != nil {
+		jobs.ZernioAccountDisconnectFailed.Add(1)
+		return err
+	}
+	if !updated {
+		// A concurrent disconnect (another request, or the reconciler seeing the
+		// account gone upstream) already soft-deleted this row between GetActive
+		// and here. The account is gone, so the caller's intent holds — return
+		// success, but skip the event / usage / success telemetry so the
+		// concurrent winner isn't double-counted.
+		slog.InfoContext(c.Context(), "account already disconnected concurrently; skipping duplicate side effects",
+			logging.AttrComponent, "zernio",
+			"account_id", id)
+		return c.SendStatus(fiber.StatusNoContent)
+	}
+
+	// Best-effort event + usage; skipped when no worker is wired (e.g. in tests).
+	if h.worker != nil {
+		h.worker.PublishAccountDisconnected(c.Context(), *account)
+		h.worker.RecordAccountDisconnect(c.Context(), *account)
+	}
+
+	jobs.ZernioAccountDisconnectSucceeded.Add(1)
+	slog.InfoContext(c.Context(), "account disconnected (user-initiated)",
+		logging.AttrComponent, "zernio",
+		"profile_id", profileID,
+		"platform", account.Platform,
+		"account_id", id,
+		"forced", force)
+	return c.SendStatus(fiber.StatusNoContent)
 }
 
 // TriggerSync godoc
