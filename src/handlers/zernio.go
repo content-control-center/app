@@ -467,9 +467,21 @@ func (h *ZernioHandler) DisconnectAccount(c *fiber.Ctx) error {
 			"account_id", id)
 	}
 
-	if _, err := h.accounts.SoftDelete(c.Context(), id, time.Now().UTC()); err != nil {
+	updated, err := h.accounts.SoftDelete(c.Context(), id, time.Now().UTC())
+	if err != nil {
 		jobs.ZernioAccountDisconnectFailed.Add(1)
 		return err
+	}
+	if !updated {
+		// A concurrent disconnect (another request, or the reconciler seeing the
+		// account gone upstream) already soft-deleted this row between GetActive
+		// and here. The account is gone, so the caller's intent holds — return
+		// success, but skip the event / usage / success telemetry so the
+		// concurrent winner isn't double-counted.
+		slog.InfoContext(c.Context(), "account already disconnected concurrently; skipping duplicate side effects",
+			logging.AttrComponent, "zernio",
+			"account_id", id)
+		return c.SendStatus(fiber.StatusNoContent)
 	}
 
 	// Best-effort event + usage; skipped when no worker is wired (e.g. in tests).
