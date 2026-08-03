@@ -96,6 +96,12 @@ func (f *fakeSuppRepo) IsSuppressed(_ context.Context, addr string, kind models.
 	}
 	return false, nil
 }
+func (f *fakeSuppRepo) RemoveMarketing(_ context.Context, email string) error {
+	if set := f.entries[repository.NormalizeEmail(email)]; set != nil {
+		delete(set, models.EmailSuppressionScopeMarketing)
+	}
+	return nil
+}
 
 type fakeEmailLogRepo struct{ rows []*models.EmailLog }
 
@@ -123,6 +129,7 @@ func newProcessor(sender email.Sender, supp *fakeSuppRepo, logs *fakeEmailLogRep
 		Logs:         logs,
 		From:         "Ogen <hello@ogen.test>",
 		AppBaseURL:   "https://app.example",
+		LinkBaseURL:  "https://app.example",
 		LinkSecret:   func(context.Context) (string, error) { return "link-secret", nil },
 	}}
 }
@@ -211,6 +218,21 @@ func TestSendEmailAllScopeBlocksTransactional(t *testing.T) {
 	}
 	if logs.rows[0].Status != models.EmailLogSkippedSuppressed {
 		t.Fatalf("want skipped_suppressed, got %s", logs.rows[0].Status)
+	}
+}
+
+func TestSendEmailTransactionalNoUnsubscribeHeader(t *testing.T) {
+	sender := &fakeSender{id: "t"}
+	p := newProcessor(sender, newFakeSuppRepo(), &fakeEmailLogRepo{}, "<p>hi [[ .Name ]]</p>")
+
+	if err := p.Process(context.Background(), task("welcome", models.EmailKindTransactional)); err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("sent %d, want 1", len(sender.sent))
+	}
+	if _, ok := sender.sent[0].Headers["List-Unsubscribe"]; ok {
+		t.Error("transactional mail must not carry a List-Unsubscribe header")
 	}
 }
 
