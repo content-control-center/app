@@ -1,0 +1,130 @@
+package repository_test
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/repository"
+)
+
+func TestEmailTemplateRepoInsertIfAbsent(t *testing.T) {
+	db := openMigratedDB(t)
+	repo := repository.NewEmailTemplateRepository(db)
+	ctx := context.Background()
+
+	tmpl := &models.EmailTemplate{Key: "welcome", Subject: "Hi", HTML: "<p>[[ .Name ]]</p>", Text: "hi", Kind: models.EmailKindTransactional, Version: 1}
+
+	created, err := repo.InsertIfAbsent(ctx, tmpl)
+	if err != nil || !created {
+		t.Fatalf("first insert: created=%v err=%v", created, err)
+	}
+
+	// A second insert with an edited body must be a no-op (DB row wins).
+	created2, err := repo.InsertIfAbsent(ctx, &models.EmailTemplate{Key: "welcome", Subject: "Edited", HTML: "x", Text: "x", Kind: models.EmailKindTransactional, Version: 1})
+	if err != nil || created2 {
+		t.Fatalf("second insert: created=%v err=%v (want false, nil)", created2, err)
+	}
+
+	got, err := repo.GetByKey(ctx, "welcome")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Subject != "Hi" {
+		t.Fatalf("subject: got %q, want original 'Hi' (re-seed must not clobber)", got.Subject)
+	}
+
+	if _, err := repo.GetByKey(ctx, "nope"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("missing key: got %v, want sql.ErrNoRows", err)
+	}
+}
+
+func TestEmailSuppressionRepoGate(t *testing.T) {
+	db := openMigratedDB(t)
+	repo := repository.NewEmailSuppressionRepository(db)
+	ctx := context.Background()
+
+	// Marketing unsubscribe for a mixed-case address.
+	if err := repo.Upsert(ctx, &models.EmailSuppression{ID: mustID(t), Email: "User@X.com", Scope: models.EmailSuppressionScopeMarketing, Reason: models.EmailSuppressionReasonUnsubscribe, Source: models.EmailSuppressionSourceUser}); err != nil {
+		t.Fatalf("upsert marketing: %v", err)
+	}
+
+	// Marketing is blocked; transactional is not (normalised match).
+	if ok, err := repo.IsSuppressed(ctx, "user@x.com", models.EmailKindMarketing); err != nil || !ok {
+		t.Fatalf("marketing suppressed: ok=%v err=%v", ok, err)
+	}
+	if ok, err := repo.IsSuppressed(ctx, "USER@x.com", models.EmailKindTransactional); err != nil || ok {
+		t.Fatalf("transactional must not be blocked by a marketing unsubscribe: ok=%v err=%v", ok, err)
+	}
+
+	// Idempotent upsert on (email, scope): no error, still blocks marketing.
+	if err := repo.Upsert(ctx, &models.EmailSuppression{ID: mustID(t), Email: "user@x.com", Scope: models.EmailSuppressionScopeMarketing, Reason: models.EmailSuppressionReasonManual, Source: models.EmailSuppressionSourceOps}); err != nil {
+		t.Fatalf("re-upsert: %v", err)
+	}
+
+	// A hard bounce (all scope) now blocks transactional too.
+	if err := repo.Upsert(ctx, &models.EmailSuppression{ID: mustID(t), Email: "user@x.com", Scope: models.EmailSuppressionScopeAll, Reason: models.EmailSuppressionReasonBounce, Source: models.EmailSuppressionSourceWebhook}); err != nil {
+		t.Fatalf("upsert all: %v", err)
+	}
+	if ok, err := repo.IsSuppressed(ctx, "user@x.com", models.EmailKindTransactional); err != nil || !ok {
+		t.Fatalf("all-scope must block transactional: ok=%v err=%v", ok, err)
+	}
+
+	// A clean address is never suppressed.
+	if ok, err := repo.IsSuppressed(ctx, "fresh@x.com", models.EmailKindMarketing); err != nil || ok {
+		t.Fatalf("clean address: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestEmailLogRepo(t *testing.T) {
+	db := openMigratedDB(t)
+	repo := repository.NewEmailLogRepository(db)
+	ctx := context.Background()
+
+	insert := func(idem, msgID string, status models.EmailLogStatus) {
+		t.Helper()
+		if err := repo.Insert(ctx, &models.EmailLog{
+			ID: mustID(t), TemplateID: "welcome", Kind: models.EmailKindTransactional,
+			ToEmail: "a@b.com", Status: status, Provider: models.ProviderResend,
+			ProviderMessageID: msgID, IdempotencyKey: idem,
+		}); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+
+	insert("welcome:u1", "msg_1", models.EmailLogSent)
+
+	// Webhook updates the row by provider message id.
+	updated, err := repo.UpdateStatusByProviderMessageID(ctx, "msg_1", models.EmailLogBounced)
+	if err != nil || !updated {
+		t.Fatalf("update by msg id: updated=%v err=%v", updated, err)
+	}
+	if noMatch, _ := repo.UpdateStatusByProviderMessageID(ctx, "nope", models.EmailLogBounced); noMatch {
+		t.Fatal("update matched a non-existent message id")
+	}
+
+	// Partial unique index: a second row with the same idempotency key is rejected.
+	if err := repo.Insert(ctx, &models.EmailLog{
+		ID: mustID(t), TemplateID: "welcome", Kind: models.EmailKindTransactional,
+		ToEmail: "a@b.com", Status: models.EmailLogSent, Provider: models.ProviderResend,
+		IdempotencyKey: "welcome:u1",
+	}); err == nil {
+		t.Fatal("duplicate idempotency_key was accepted; want unique violation")
+	}
+
+	// Empty idempotency keys are NULL, so they don't collide.
+	insert("", "", models.EmailLogSkippedDisabled)
+	insert("", "", models.EmailLogSkippedDisabled)
+
+	// Retention sweep removes everything older than the cutoff.
+	n, err := repo.DeleteOlderThan(ctx, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if n < 3 {
+		t.Fatalf("deleted %d rows, want >= 3", n)
+	}
+}

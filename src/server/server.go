@@ -125,6 +125,10 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	}
 	socialAccountRepo := repository.NewSocialAccountRepository(db)
 	autoPublishAllowlistRepo := repository.NewAutoPublishAllowlistRepository(db)
+	// CON-154: email subsystem repositories (templates, suppression list, send audit).
+	emailTemplateRepo := repository.NewEmailTemplateRepository(db)
+	emailSuppressionRepo := repository.NewEmailSuppressionRepository(db)
+	emailLogRepo := repository.NewEmailLogRepository(db)
 	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
 
 	// CON-86: apply any operator price-map override (USAGE_MODEL_PRICES) before
@@ -301,6 +305,14 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// job is always scheduled; it is profile-driven, so when Zernio is disabled
 	// (no key / no profiles) each tick is a harmless no-op, and it starts
 	// producing once a key is set via the secrets API — no reboot.
+	// CON-154: transactional + marketing email. Seeds default templates and
+	// builds the Resend sender (per-call key resolution, so a key set/rotated via
+	// the secrets API takes effect with no reboot; an unset key = skipped_disabled).
+	emailRT, err := initEmail(ctx, cfg, secretStore, emailTemplateRepo, emailSuppressionRepo, emailLogRepo, userRepo)
+	if err != nil {
+		return nil, err
+	}
+
 	cleanupEvery := time.Hour
 	reconcileEvery := 5 * time.Minute
 	workers := river.NewWorkers()
@@ -316,6 +328,8 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		Integration:         zernioRT.Integration,
 		// CON-103: PDF ingestion worker deps.
 		PDF: pdfDeps,
+		// CON-154: email send + cleanup worker deps.
+		Email: emailRT.Deps,
 	})
 
 	if err := jobs.MigrateRiver(ctx, db.DB); err != nil {
@@ -328,10 +342,11 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		Queues:  map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: cfg.JobWorkers}},
 		Workers: workers,
 		PeriodicJobs: queues.PeriodicConfig{
-			CleanupEvery:     cleanupEvery,
-			ReconcileEvery:   reconcileEvery,
-			AnalyticsEvery:   cfg.ZernioAnalyticsRefreshInterval,
-			IncludeAnalytics: true,
+			CleanupEvery:      cleanupEvery,
+			EmailCleanupEvery: cleanupEvery,
+			ReconcileEvery:    reconcileEvery,
+			AnalyticsEvery:    cfg.ZernioAnalyticsRefreshInterval,
+			IncludeAnalytics:  true,
 			// CON-153: daily follower-stats snapshot sweep. Like analytics, it is
 			// profile-driven, so it no-ops when Zernio is unconfigured.
 			FollowerEvery:    cfg.ZernioFollowerRefreshInterval,
@@ -349,7 +364,15 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// River client exists.
 	tenantsHandler := handlers.NewTenantsHandler(db, tenantRepo, userRepo, enqueuer, cfg.SessionCookieName, !cfg.Debug, auth)
 	tenantsHandler.SetActivityRecorder(activityWiring.recorder)
+	// CON-154: signup enqueues the welcome email + onboarding drip in its tx.
+	tenantsHandler.SetEmailEnqueuer(enqueuer)
 	tenantsHandler.Register(app)
+
+	// CON-154: public unsubscribe (token-gated) + Resend delivery webhook
+	// (signature-gated). Registered unconditionally; both degrade safely when
+	// the relevant secret is unset.
+	emailRT.Handler.Register(app)
+	emailRT.Webhook.Register(app)
 
 	// Expose expvar counters for ops health dashboards (CON-69 §13).
 	// Gated by the same auth as the rest of the app so internal

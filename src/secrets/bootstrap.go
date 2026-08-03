@@ -2,6 +2,8 @@ package secrets
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -96,6 +98,29 @@ func MigrateFromEnv(ctx context.Context, store Store, sources []EnvSource) (Boot
 		}
 	}
 	return out, nil
+}
+
+// EnsureGenerated makes sure an app-managed secret exists, generating a random
+// 32-byte value (hex-encoded) and storing it when absent. Unlike MigrateFromEnv
+// there is no operator-provided source: it is for secrets the app owns end to
+// end, e.g. the HMAC key that signs unsubscribe links (CON-154). Idempotent —
+// an existing value (seeded from env or a prior boot) is left untouched, so the
+// signing key stays stable across restarts.
+func EnsureGenerated(ctx context.Context, store Store, name string) error {
+	if _, err := store.Get(ctx, name); err == nil {
+		return nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("secrets: check %s: %w", name, err)
+	}
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return fmt.Errorf("secrets: generate %s: %w", name, err)
+	}
+	if _, _, err := store.Set(ctx, name, hex.EncodeToString(buf)); err != nil {
+		return fmt.Errorf("secrets: store %s: %w", name, err)
+	}
+	slog.InfoContext(ctx, "generated app-managed secret", logging.AttrComponent, "secrets", "name", name)
+	return nil
 }
 
 // LogBootSummary emits the single boot-time summary line. Counts only,

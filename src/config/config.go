@@ -191,6 +191,29 @@ type Config struct {
 	// default success page.
 	ZernioRedirectURL string `envconfig:"ZERNIO_REDIRECT_URL" default:""`
 
+	// Email (CON-154). Transactional + marketing mail via Resend. ResendAPIKey,
+	// ResendWebhookSecret, and EmailLinkSecret are first-boot seed sources only:
+	// migrated into the encrypted `secret` table on startup and thereafter read
+	// from — and rotated via — the secrets API, mirroring the Anthropic / Zernio
+	// keys. Empty ResendAPIKey disables sending entirely (the send job logs
+	// skipped_disabled and succeeds); the app still boots. EmailLinkSecret signs
+	// unsubscribe links; when unset it is auto-generated and stored on first boot
+	// (secrets.EnsureGenerated), so one-click unsubscribe works out of the box.
+	ResendAPIKey        string `envconfig:"RESEND_API_KEY"           default:""`
+	ResendWebhookSecret string `envconfig:"RESEND_WEBHOOK_SECRET"    default:""`
+	EmailLinkSecret     string `envconfig:"EMAIL_LINK_SECRET"        default:""`
+	// EmailFrom is the RFC 5322 From header; operators must point it at a
+	// Resend-verified sending domain (SPF/DKIM). EmailBaseURL is Resend's API
+	// root. AppBaseURL builds absolute unsubscribe / CTA links in emails.
+	EmailFrom        string        `envconfig:"EMAIL_FROM"                default:"Ogen <hello@getogen.com>"`
+	EmailReplyTo     string        `envconfig:"EMAIL_REPLY_TO"            default:""`
+	EmailBaseURL     string        `envconfig:"EMAIL_BASE_URL"            default:"https://api.resend.com"`
+	EmailHTTPTimeout time.Duration `envconfig:"EMAIL_HTTP_TIMEOUT"        default:"15s"`
+	AppBaseURL       string        `envconfig:"APP_BASE_URL"              default:"https://app.getogen.com"`
+	// EmailLogRetentionDays mirrors PostLogRetentionDays: the cleanup_email_logs
+	// periodic task drops older rows. 0 disables cleanup entirely.
+	EmailLogRetentionDays int `envconfig:"EMAIL_LOG_RETENTION_DAYS" default:"90"`
+
 	// Envelope encryption. KEKPath points at a Docker-volume directory;
 	// the actual key file lives at <KEKPath>/kek.v1. The versioned
 	// filename leaves room for KEK rotation later without a path
