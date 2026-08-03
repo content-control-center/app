@@ -3,10 +3,13 @@ package queues
 import (
 	"context"
 	"database/sql"
+	"expvar"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/ogen-app/ogen/src/activity"
 	"github.com/ogen-app/ogen/src/email"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
@@ -113,6 +116,39 @@ func (f *fakeEmailLogRepo) UpdateStatusByProviderMessageID(context.Context, stri
 	return false, nil
 }
 func (f *fakeEmailLogRepo) DeleteOlderThan(context.Context, time.Time) (int64, error) { return 0, nil }
+
+// fakeActivityWriter satisfies activity.Writer so a real Recorder can be driven
+// against an in-memory sink. Close drains onto the loop goroutine, so reads are
+// only safe after the recorder is closed; the mutex keeps the race detector
+// happy regardless.
+type fakeActivityWriter struct {
+	mu     sync.Mutex
+	events []*models.ActivityEvent
+}
+
+func (w *fakeActivityWriter) Insert(_ context.Context, events []*models.ActivityEvent) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.events = append(w.events, events...)
+	return nil
+}
+
+func (w *fakeActivityWriter) all() []*models.ActivityEvent {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]*models.ActivityEvent(nil), w.events...)
+}
+
+// testActivityMetrics builds counters that are NOT registered on the global
+// expvar registry, so many recorders can be built in one test binary without a
+// duplicate-registration panic.
+func testActivityMetrics() *activity.Metrics {
+	return &activity.Metrics{
+		EventsRecorded: new(expvar.Int),
+		EventsDropped:  new(expvar.Int),
+		WriteErrors:    new(expvar.Int),
+	}
+}
 
 // --- harness -------------------------------------------------------------
 
@@ -234,6 +270,91 @@ func TestSendEmailTransactionalNoUnsubscribeHeader(t *testing.T) {
 	if _, ok := sender.sent[0].Headers["List-Unsubscribe"]; ok {
 		t.Error("transactional mail must not carry a List-Unsubscribe header")
 	}
+}
+
+// recordedFor drives p.Process against a real activity.Recorder and returns the
+// drained events, so tests assert exactly what the analytics DB would receive.
+func recordedFor(t *testing.T, p *SendEmailProcessor, tk SendEmailTask) []*models.ActivityEvent {
+	t.Helper()
+	w := &fakeActivityWriter{}
+	rec := activity.NewRecorder(w, testActivityMetrics(), activity.Config{FlushEvery: time.Millisecond})
+	p.Deps.ActivityRecorder = rec
+	if err := p.Process(context.Background(), tk); err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := rec.Close(ctx); err != nil { // drain
+		t.Fatalf("close recorder: %v", err)
+	}
+	return w.all()
+}
+
+// TestSendEmailRecordsActivity asserts every terminal send outcome writes one
+// email-category event into the tenant activity log (CON-125), tenant/user
+// scoped, mirroring the email_logs status.
+func TestSendEmailRecordsActivity(t *testing.T) {
+	assertOne := func(t *testing.T, events []*models.ActivityEvent, wantType, wantStatus string) *models.ActivityEvent {
+		t.Helper()
+		if len(events) != 1 {
+			t.Fatalf("recorded %d activity events, want 1: %+v", len(events), events)
+		}
+		e := events[0]
+		if e.Category != activity.CategoryEmail {
+			t.Errorf("category = %q, want %q", e.Category, activity.CategoryEmail)
+		}
+		if e.Type != wantType {
+			t.Errorf("type = %q, want %q", e.Type, wantType)
+		}
+		if e.Status != wantStatus {
+			t.Errorf("status = %q, want %q", e.Status, wantStatus)
+		}
+		if e.TenantID != "t1" {
+			t.Errorf("tenant = %q, want t1", e.TenantID)
+		}
+		if e.UserID != "u1" {
+			t.Errorf("user = %q, want u1", e.UserID)
+		}
+		if e.Source != activity.SourceJob {
+			t.Errorf("source = %q, want %q", e.Source, activity.SourceJob)
+		}
+		return e
+	}
+
+	t.Run("sent", func(t *testing.T) {
+		p := newProcessor(&fakeSender{id: "msg_1"}, newFakeSuppRepo(), &fakeEmailLogRepo{}, "<p>Hi [[ .Name ]]</p>")
+		e := assertOne(t, recordedFor(t, p, task("welcome", models.EmailKindTransactional)), "email_sent", string(models.EmailLogSent))
+		if e.EntityType != "email" || e.EntityID != "welcome" {
+			t.Errorf("entity = %s/%s, want email/welcome", e.EntityType, e.EntityID)
+		}
+		if e.Payload["provider_message_id"] != "msg_1" {
+			t.Errorf("payload provider_message_id = %v, want msg_1", e.Payload["provider_message_id"])
+		}
+		if e.Payload["template"] != "welcome" || e.Payload["kind"] != string(models.EmailKindTransactional) {
+			t.Errorf("payload = %+v", e.Payload)
+		}
+	})
+
+	t.Run("skipped_disabled", func(t *testing.T) {
+		p := newProcessor(nil, newFakeSuppRepo(), &fakeEmailLogRepo{}, "<p>x</p>")
+		assertOne(t, recordedFor(t, p, task("welcome", models.EmailKindTransactional)), "email_skipped", string(models.EmailLogSkippedDisabled))
+	})
+
+	t.Run("skipped_suppressed", func(t *testing.T) {
+		supp := newFakeSuppRepo()
+		supp.add("ann@example.com", models.EmailSuppressionScopeMarketing)
+		p := newProcessor(&fakeSender{id: "m"}, supp, &fakeEmailLogRepo{}, "<p>x [[ .UnsubscribeURL ]]</p>")
+		assertOne(t, recordedFor(t, p, task("drip_day2", models.EmailKindMarketing)), "email_skipped", string(models.EmailLogSkippedSuppressed))
+	})
+
+	t.Run("failed", func(t *testing.T) {
+		p := newProcessor(&fakeSender{id: "x"}, newFakeSuppRepo(), &fakeEmailLogRepo{}, "<p>x</p>")
+		e := assertOne(t, recordedFor(t, p, task("does_not_exist", models.EmailKindTransactional)), "email_send_failed", string(models.EmailLogFailed))
+		reason, _ := e.Payload["error"].(string)
+		if !strings.Contains(reason, "template not found") {
+			t.Errorf("payload error = %q, want it to mention 'template not found'", reason)
+		}
+	})
 }
 
 func TestSendEmailMarketingBuildsUnsubscribe(t *testing.T) {

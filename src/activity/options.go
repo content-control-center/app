@@ -10,6 +10,7 @@ const (
 	CategoryCampaign       = "campaign"
 	CategoryAIFlow         = "ai_flow"
 	CategoryPublish        = "publish"
+	CategoryEmail          = "email"
 )
 
 // Source values name how an activity was triggered. Free-form is allowed, but

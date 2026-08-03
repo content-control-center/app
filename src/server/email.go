@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/ogen-app/ogen/src/activity"
 	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/email/resend"
 	"github.com/ogen-app/ogen/src/email/templates"
@@ -39,6 +40,7 @@ func initEmail(
 	suppressionRepo repository.EmailSuppressionRepository,
 	logRepo repository.EmailLogRepository,
 	userRepo repository.UserRepository,
+	activityRecorder *activity.Recorder,
 ) (emailRuntime, error) {
 	apiKey := func(ctx context.Context) (string, error) { return secretStore.Get(ctx, secrets.NameResendAPIKey) }
 	linkSecret := func(ctx context.Context) (string, error) { return secretStore.Get(ctx, secrets.NameEmailLinkSecret) }
@@ -66,6 +68,8 @@ func initEmail(
 		LinkBaseURL:  cmp.Or(cfg.EmailLinkBaseURL, cfg.AppBaseURL),
 		LinkSecret:   linkSecret,
 		Retention:    time.Duration(cfg.EmailLogRetentionDays) * 24 * time.Hour,
+		// CON-125: mirror every terminal send outcome into tenant_activity_events.
+		ActivityRecorder: activityRecorder,
 	}
 
 	return emailRuntime{
