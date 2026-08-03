@@ -28,6 +28,15 @@ type ProfileBootstrapEnqueuer interface {
 	EnqueueBootstrapProfileTx(ctx context.Context, tx *sql.Tx, tenantID string) error
 }
 
+// EmailEnqueuer enqueues the CON-154 lifecycle emails (welcome + onboarding
+// drip) in the signup transaction, so they commit atomically with the new
+// tenant/user. Implemented by *queues.Enqueuer; a narrow interface here keeps
+// the handler out of the jobs package and unit-testable.
+type EmailEnqueuer interface {
+	EnqueueWelcomeEmailTx(ctx context.Context, tx *sql.Tx, userID, tenantID string) error
+	EnqueueDripTx(ctx context.Context, tx *sql.Tx, userID, tenantID string) error
+}
+
 // TenantsHandler owns tenant provisioning (public self-service signup) and the
 // tenant CRU surface (no delete). Tenants are the isolation boundary, so the
 // read/update endpoints only ever operate on the caller's own tenant (CON-97).
@@ -36,6 +45,7 @@ type TenantsHandler struct {
 	tenantRepo   repository.TenantRepository
 	userRepo     repository.UserRepository
 	profileJobs  ProfileBootstrapEnqueuer
+	emailJobs    EmailEnqueuer
 	cookieName   string
 	secureCookie bool
 	auth         fiber.Handler
@@ -59,6 +69,10 @@ func NewTenantsHandler(db *bun.DB, tenantRepo repository.TenantRepository, userR
 
 // SetActivityRecorder wires the CON-125 activity recorder (nil-safe no-op).
 func (h *TenantsHandler) SetActivityRecorder(r *activity.Recorder) { h.activity = r }
+
+// SetEmailEnqueuer wires the CON-154 lifecycle-email enqueuer (nil-safe no-op).
+// When unset, signup simply sends no welcome/drip mail.
+func (h *TenantsHandler) SetEmailEnqueuer(e EmailEnqueuer) { h.emailJobs = e }
 
 func (h *TenantsHandler) Register(app *fiber.App) {
 	app.Post("/api/tenants", h.Signup) // public self-service signup
@@ -158,6 +172,19 @@ func (h *TenantsHandler) Signup(c *fiber.Ctx) error {
 		// Zernio reachability.
 		if h.profileJobs != nil {
 			if err := h.profileJobs.EnqueueBootstrapProfileTx(ctx, tx.Tx, tenantID); err != nil {
+				return err
+			}
+		}
+		// CON-154: welcome (immediate) + onboarding drip (day 2/5/7) enqueued in
+		// this same tx, so a rolled-back signup queues no mail and a committed one
+		// durably queues exactly one welcome + drip. The enqueues are local DB
+		// inserts — the Resend calls happen later in the worker — so signup never
+		// blocks on Resend reachability.
+		if h.emailJobs != nil {
+			if err := h.emailJobs.EnqueueWelcomeEmailTx(ctx, tx.Tx, userID, tenantID); err != nil {
+				return err
+			}
+			if err := h.emailJobs.EnqueueDripTx(ctx, tx.Tx, userID, tenantID); err != nil {
 				return err
 			}
 		}

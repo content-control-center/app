@@ -10,8 +10,10 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 
+	"github.com/ogen-app/ogen/src/email/templates"
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 )
 
@@ -45,6 +47,11 @@ type Deps struct {
 	// embedder, storage, asset repos). A nil Client (no PDF_SERVICE_ADDR) makes
 	// the job a no-op.
 	PDF PDFDeps
+
+	// CON-154: the send_email + cleanup_email_logs workers' dependencies
+	// (Resend sender, template/suppression/log repos, addressing config). A nil
+	// Sender (no RESEND_API_KEY) makes send_email log skipped_disabled.
+	Email EmailDeps
 }
 
 // registrars is appended to by each worker file's init(). A job is registered
@@ -85,12 +92,13 @@ func periodicUniqueOpts() river.UniqueOpts {
 // than self-rescheduling tasks; River's scheduler owns the cadence and the
 // chain can't die on a single failed tick.
 type PeriodicConfig struct {
-	CleanupEvery     time.Duration
-	ReconcileEvery   time.Duration
-	AnalyticsEvery   time.Duration
-	IncludeAnalytics bool // only when the Zernio integration is configured
-	FollowerEvery    time.Duration
-	IncludeFollowers bool // CON-153: only when the Zernio integration is configured
+	CleanupEvery      time.Duration
+	EmailCleanupEvery time.Duration
+	ReconcileEvery    time.Duration
+	AnalyticsEvery    time.Duration
+	IncludeAnalytics  bool // only when the Zernio integration is configured
+	FollowerEvery     time.Duration
+	IncludeFollowers  bool // CON-153: only when the Zernio integration is configured
 }
 
 // PeriodicJobs builds the River periodic-job set. Every job runs once on
@@ -112,6 +120,13 @@ func (cfg PeriodicConfig) PeriodicJobs() []*river.PeriodicJob {
 		river.NewPeriodicJob(river.PeriodicInterval(cfg.ReconcileEvery), func() (river.JobArgs, *river.InsertOpts) {
 			return ReconcileScheduledPostsTask{}, nil
 		}, runOnStart),
+	}
+	// CON-154: email_logs retention sweep, gated on a configured interval so a
+	// zero value (e.g. in tests) can't create an invalid periodic job.
+	if cfg.EmailCleanupEvery > 0 {
+		jobs = append(jobs, river.NewPeriodicJob(river.PeriodicInterval(cfg.EmailCleanupEvery), func() (river.JobArgs, *river.InsertOpts) {
+			return CleanupEmailLogsTask{}, nil
+		}, runOnStart))
 	}
 	if cfg.IncludeAnalytics {
 		jobs = append(jobs, river.NewPeriodicJob(river.PeriodicInterval(cfg.AnalyticsEvery), func() (river.JobArgs, *river.InsertOpts) {
@@ -207,6 +222,61 @@ func (e *Enqueuer) EnqueueBootstrapProfileTx(ctx context.Context, tx *sql.Tx, te
 	}
 	_, err := e.Client.InsertTx(ctx, tx, BootstrapZernioProfileTask{TenantID: tenantID}, insertOptsWithRequestID(ctx, nil))
 	return err
+}
+
+// dripSchedule is the marketing onboarding drip cadence (CON-154 FR5): one
+// in-code table, so rescheduling the whole sequence is a single edit. Offsets
+// are relative to signup.
+var dripSchedule = []struct {
+	Key    string
+	Offset time.Duration
+}{
+	{templates.KeyDripDay2, 2 * 24 * time.Hour},
+	{templates.KeyDripDay5, 5 * 24 * time.Hour},
+	{templates.KeyDripDay7, 7 * 24 * time.Hour},
+}
+
+// EnqueueWelcomeEmailTx enqueues the transactional welcome email inside the
+// signup transaction, so the job exists iff the tenant/user do (CON-154 FR4).
+// The enqueue is a local DB insert — the Resend call happens later in the
+// worker — so signup never blocks on Resend reachability. A nil enqueuer (email
+// queue unwired) is a no-op.
+func (e *Enqueuer) EnqueueWelcomeEmailTx(ctx context.Context, tx *sql.Tx, userID, tenantID string) error {
+	if e == nil || e.Client == nil {
+		return nil
+	}
+	_, err := e.Client.InsertTx(ctx, tx, SendEmailTask{
+		UserID:         userID,
+		TenantID:       tenantID,
+		TemplateKey:    templates.KeyWelcome,
+		EmailKind:      models.EmailKindTransactional,
+		IdempotencyKey: "welcome:" + userID,
+	}, insertOptsWithRequestID(ctx, nil))
+	return err
+}
+
+// EnqueueDripTx enqueues the marketing onboarding drip (day 2/5/7) as delayed
+// jobs inside the signup transaction (CON-154 FR5). Each step fires at its
+// ScheduledAt; unsubscribes are honoured at send time, so no scheduled job ever
+// needs cancelling. A nil enqueuer is a no-op.
+func (e *Enqueuer) EnqueueDripTx(ctx context.Context, tx *sql.Tx, userID, tenantID string) error {
+	if e == nil || e.Client == nil {
+		return nil
+	}
+	now := time.Now().UTC()
+	for _, step := range dripSchedule {
+		opts := insertOptsWithRequestID(ctx, &river.InsertOpts{ScheduledAt: now.Add(step.Offset)})
+		if _, err := e.Client.InsertTx(ctx, tx, SendEmailTask{
+			UserID:         userID,
+			TenantID:       tenantID,
+			TemplateKey:    step.Key,
+			EmailKind:      models.EmailKindMarketing,
+			IdempotencyKey: step.Key + ":" + userID,
+		}, opts); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // EnqueueProcessPDFTx enqueues a PDF-ingestion task inside the given

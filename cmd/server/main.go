@@ -114,9 +114,20 @@ func main() {
 		// field) — first-boot seed only; thereafter set/rotated via the secrets
 		// API (CON-104).
 		{Name: secrets.NameGeminiAPIKey, EnvValue: os.Getenv("GEMINI_API_KEY")},
+		// CON-154 email subsystem: first-boot seed of the Resend send key +
+		// webhook signing secret (empty is fine — sending/webhook degrade off).
+		{Name: secrets.NameResendAPIKey, EnvValue: cfg.ResendAPIKey},
+		{Name: secrets.NameResendWebhookSecret, EnvValue: cfg.ResendWebhookSecret},
+		{Name: secrets.NameEmailLinkSecret, EnvValue: cfg.EmailLinkSecret},
 	})
 	if err != nil {
 		fatal("migrate secrets from env", err)
+	}
+	// CON-154: the unsubscribe-link HMAC key has no operator source; generate and
+	// store one on first boot if none was seeded, so one-click unsubscribe works
+	// out of the box and the key stays stable across restarts.
+	if err := secrets.EnsureGenerated(context.Background(), store, secrets.NameEmailLinkSecret); err != nil {
+		fatal("ensure email link secret", err)
 	}
 	secrets.LogBootSummary(kekSrc, filepath.Join(cfg.KEKPath, secrets.KEKFilename), bootResult)
 

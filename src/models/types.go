@@ -115,3 +115,38 @@ func (m *PostTypeMap) Scan(src any) error {
 		return fmt.Errorf("PostTypeMap: cannot scan %T", src)
 	}
 }
+
+// StringMap is a generic map[string]string that serialises as a JSON object in
+// a jsonb column. Used for the email_templates variables docs (CON-154): key =
+// the [[ .Var ]] placeholder name, value = a human explanation.
+type StringMap map[string]string
+
+func (m StringMap) Value() (driver.Value, error) {
+	if m == nil {
+		return "{}", nil
+	}
+	b, err := json.Marshal(m)
+	return string(b), err
+}
+
+func (m *StringMap) Scan(src any) error {
+	switch v := src.(type) {
+	case string:
+		if v == "" {
+			*m = StringMap{}
+			return nil
+		}
+		return json.Unmarshal([]byte(v), m)
+	case []byte:
+		if len(v) == 0 {
+			*m = StringMap{}
+			return nil
+		}
+		return json.Unmarshal(v, m)
+	case nil:
+		*m = StringMap{}
+		return nil
+	default:
+		return fmt.Errorf("StringMap: cannot scan %T", src)
+	}
+}

@@ -29,11 +29,23 @@ const (
 	NameAnthropicAPIKey = "anthropic_api_key"
 	NameZernioAPIKey    = "zernio_api_key"
 	NameGeminiAPIKey    = "gemini_api_key"
+	// CON-154 email subsystem: Resend send key, Resend webhook signing secret,
+	// and the app-managed HMAC key that signs unsubscribe links.
+	NameResendAPIKey        = "resend_api_key"
+	NameResendWebhookSecret = "resend_webhook_secret"
+	NameEmailLinkSecret     = "email_link_secret"
 )
 
 // AllowedNames is the closed set of accepted secret names. Anything
 // else is rejected at the Store boundary with ErrUnknownName.
-var AllowedNames = []string{NameAnthropicAPIKey, NameZernioAPIKey, NameGeminiAPIKey}
+var AllowedNames = []string{
+	NameAnthropicAPIKey,
+	NameZernioAPIKey,
+	NameGeminiAPIKey,
+	NameResendAPIKey,
+	NameResendWebhookSecret,
+	NameEmailLinkSecret,
+}
 
 // MaxValueLen is the inclusive upper bound on a plaintext secret. The
 // 4KB cap is a sanity ceiling — real Anthropic / Zernio keys are far
