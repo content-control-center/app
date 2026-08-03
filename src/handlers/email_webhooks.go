@@ -159,8 +159,9 @@ func verifySvixSignature(secret, id, timestamp, signatureHeader string, body []b
 	raw := strings.TrimPrefix(secret, "whsec_")
 	key, err := base64.StdEncoding.DecodeString(raw)
 	if err != nil {
-		// Some setups store the raw secret without base64; fall back to bytes.
-		key = []byte(secret)
+		// Some setups store the raw secret without base64; fall back to the
+		// prefix-stripped bytes (consistent with the decode path above).
+		key = []byte(raw)
 	}
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(id + "." + timestamp + "."))
