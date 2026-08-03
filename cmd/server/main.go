@@ -113,8 +113,8 @@ func main() {
 		{Name: secrets.NameAnthropicAPIKey, EnvValue: cfg.AnthropicAPIKey},
 		{Name: secrets.NameZernioAPIKey, EnvValue: cfg.ZernioAPIKey},
 		// GEMINI_API_KEY is read straight from the env (it is not a typed Config
-		// field) — first-boot seed only; thereafter set/rotated via the secrets
-		// API (CON-104).
+		// field) — first-boot seed only; thereafter set/rotated via the gRPC
+		// secrets service (CON-104).
 		{Name: secrets.NameGeminiAPIKey, EnvValue: os.Getenv("GEMINI_API_KEY")},
 		// CON-154 email subsystem: first-boot seed of the Resend send key +
 		// webhook signing secret (empty is fine — sending/webhook degrade off).

@@ -165,7 +165,10 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	sessionsHandler.SetActivityRecorder(activityWiring.recorder)
 	sessionsHandler.Register(app)
 	handlers.NewSettingsHandler(settingRepo, auth).Register(app)
-	handlers.NewSecretsHandler(secretStore, auth).Register(app)
+	// Secrets are managed exclusively over the internal gRPC surface
+	// (src/grpcserver), reached by Harbor — there is deliberately no REST CRUD
+	// for them. secretStore is still used below to resolve keys at call time and
+	// to power the health endpoint's resolvability report.
 	handlers.NewAutoPublishAllowlistHandler(autoPublishAllowlistRepo, auth).Register(app)
 
 	// Zernio integration. Ping, profile bootstrap, and the sync worker
@@ -425,9 +428,9 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 
 	// Anthropic-backed flows live in a hot-reloadable runtime. boot
 	// is allowed to start without an Anthropic key (callbacks return
-	// 503 via the handler's IsAnthropicAvailable check); a PUT to
-	// /api/secrets/anthropic_api_key triggers a rebuild on the next
-	// call.
+	// 503 via the handler's IsAnthropicAvailable check); rotating
+	// anthropic_api_key via the gRPC secrets service triggers a rebuild
+	// on the next call.
 	// CON-59: one clone service, shared by the REST endpoint and the
 	// assistant's clonePost tool. Deep-copies attachments in object
 	// storage so clone and source have independent blob lifecycles.
