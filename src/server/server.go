@@ -308,7 +308,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// CON-154: transactional + marketing email. Seeds default templates and
 	// builds the Resend sender (per-call key resolution, so a key set/rotated via
 	// the secrets API takes effect with no reboot; an unset key = skipped_disabled).
-	emailRT, err := initEmail(ctx, cfg, secretStore, emailTemplateRepo, emailSuppressionRepo, emailLogRepo, userRepo)
+	emailRT, err := initEmail(ctx, cfg, secretStore, emailTemplateRepo, emailSuppressionRepo, emailLogRepo, userRepo, activityWiring.recorder)
 	if err != nil {
 		return nil, err
 	}

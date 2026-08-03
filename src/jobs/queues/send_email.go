@@ -6,9 +6,11 @@ import (
 	"errors"
 	"log/slog"
 	"time"
+	"unicode/utf8"
 
 	"github.com/riverqueue/river"
 
+	"github.com/ogen-app/ogen/src/activity"
 	"github.com/ogen-app/ogen/src/email"
 	"github.com/ogen-app/ogen/src/email/templates"
 	"github.com/ogen-app/ogen/src/logging"
@@ -208,7 +210,18 @@ func (p *SendEmailProcessor) Process(ctx context.Context, t SendEmailTask) error
 // already made by the time this runs, so a log failure — including a unique
 // violation from a prior attempt that already logged this idempotency key — is
 // warned and swallowed rather than failing the job (which would re-send).
+//
+// Because every terminal send outcome (sent / failed / skipped) funnels through
+// here — transient failures return earlier and are retried — this is also the
+// single point where the outcome is mirrored into the tenant activity log.
 func (p *SendEmailProcessor) writeLog(ctx context.Context, base models.EmailLog, status models.EmailLogStatus, providerMsgID, errMsg string) {
+	// Mirror the outcome into tenant_activity_events (CON-125). The Recorder is
+	// nil-safe and resolves the tenant from ctx (set in Process), so this never
+	// blocks the send and is a no-op when analytics is disabled. Recorded
+	// independently of the email_logs write below so activity is captured even
+	// if the logs repo is unwired.
+	p.recordActivity(ctx, base, status, providerMsgID, errMsg)
+
 	if p.Deps.Logs == nil {
 		return
 	}
@@ -225,4 +238,62 @@ func (p *SendEmailProcessor) writeLog(ctx context.Context, base models.EmailLog,
 	if err := p.Deps.Logs.Insert(ctx, &row); err != nil {
 		slog.WarnContext(ctx, "email_log insert failed (best-effort)", logging.AttrComponent, "jobs.send_email", logging.AttrError, err)
 	}
+}
+
+// recordActivity emits one email-category activity event per terminal send
+// outcome so the analytics DB carries a tenant-scoped, append-only trail of mail
+// activity alongside the operational email_logs row (CON-125). The type mirrors
+// the email_logs status; the recipient address is deliberately omitted — the
+// event is keyed by user + tenant, keeping raw PII out of analytics. The full
+// error (if any) stays in email_logs; a capped copy rides the payload so failure
+// reasons are queryable without a join.
+func (p *SendEmailProcessor) recordActivity(ctx context.Context, base models.EmailLog, status models.EmailLogStatus, providerMsgID, errMsg string) {
+	payload := map[string]any{
+		"template": base.TemplateID,
+		"kind":     string(base.Kind),
+	}
+	if providerMsgID != "" {
+		payload["provider_message_id"] = providerMsgID
+	}
+	if errMsg != "" {
+		payload["error"] = capString(errMsg, 256)
+	}
+	p.Deps.ActivityRecorder.Record(ctx, activity.CategoryEmail, emailActivityType(status),
+		activity.WithUser(base.UserID),
+		activity.WithEntity("email", base.TemplateID),
+		activity.WithSource(activity.SourceJob),
+		activity.WithStatus(string(status)),
+		activity.WithPayload(payload),
+	)
+}
+
+// emailActivityType maps an email_logs status to the activity type recorded in
+// tenant_activity_events. The two skip outcomes share one type (email_skipped);
+// the event's status field carries the specific reason (suppressed / disabled).
+func emailActivityType(status models.EmailLogStatus) string {
+	switch status {
+	case models.EmailLogSent:
+		return "email_sent"
+	case models.EmailLogFailed:
+		return "email_send_failed"
+	case models.EmailLogSkippedSuppressed, models.EmailLogSkippedDisabled:
+		return "email_skipped"
+	default:
+		// Defensive: the job only ever logs the statuses above, but keep a
+		// stable, prefixed type rather than an empty one if that changes.
+		return "email_" + string(status)
+	}
+}
+
+// capString bounds a string to n bytes on a rune boundary so a long provider
+// error can't bloat the activity payload. Analytics-grade truncation — the full
+// value is preserved in email_logs.
+func capString(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }

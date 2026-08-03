@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ogen-app/ogen/src/activity"
 	"github.com/ogen-app/ogen/src/email"
 	"github.com/ogen-app/ogen/src/repository"
 )
@@ -37,6 +38,11 @@ type EmailDeps struct {
 
 	// Retention is the cleanup_email_logs window; 0 disables the sweep.
 	Retention time.Duration
+
+	// ActivityRecorder emits CON-125 email-category activity events into
+	// tenant_activity_events — one per terminal send outcome (sent / failed /
+	// skipped), mirroring the email_logs row. nil = no-op (analytics disabled).
+	ActivityRecorder *activity.Recorder
 }
 
 // unsubscribeURL builds the absolute one-click unsubscribe link for toEmail,
