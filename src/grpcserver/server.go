@@ -7,10 +7,13 @@
 // the name allowlist, and the hot-reload subscription hooks with zero
 // duplication.
 //
-// The listener is internal-only: it lives on a private port and every call is
-// gated by a shared bearer token (constant-time compared). Transport is plain
-// (insecure) like Ogen's pdf/video gRPC clients — the private network plus the
-// token is the trust boundary.
+// The listener is internal-only and every call is gated by a shared bearer
+// token (constant-time compared). Transport is plain (insecure) like Ogen's
+// pdf/video gRPC clients, so the token is only as safe as the network it
+// crosses: the default bind is loopback-only (config.GRPCAddr) and, when
+// exposed across hosts, the operator is expected to keep it on a private
+// network / behind a NetworkPolicy and add mTLS at the infra or transport layer
+// (grpc.Creds). Never carry the token over an untrusted path in cleartext.
 package grpcserver
 
 import (

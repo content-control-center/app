@@ -57,7 +57,7 @@ type Config struct {
 	// the former self-hosted embedding sidecar. GeminiAPIKey is now a
 	// first-boot seed source only (CON-104): it is migrated into the encrypted
 	// `secret` table on startup and thereafter read from — and rotated via — the
-	// secrets API (PUT /api/secrets/gemini_api_key), mirroring the Anthropic /
+	// gRPC secrets service (secrets.NameGeminiAPIKey), mirroring the Anthropic /
 	// Zernio keys. With no key the embedder is unavailable (asset saves succeed,
 	// no vectors are written, semantic search returns nothing) until one is set.
 	// EmbedDimensions must match the assets_chunks.embedding halfvec(N) column —
@@ -194,8 +194,8 @@ type Config struct {
 	// Email (CON-154). Transactional + marketing mail via Resend. ResendAPIKey,
 	// ResendWebhookSecret, and EmailLinkSecret are first-boot seed sources only:
 	// migrated into the encrypted `secret` table on startup and thereafter read
-	// from — and rotated via — the secrets API, mirroring the Anthropic / Zernio
-	// keys. Empty ResendAPIKey disables sending entirely (the send job logs
+	// from — and rotated via — the gRPC secrets service, mirroring the Anthropic /
+	// Zernio keys. Empty ResendAPIKey disables sending entirely (the send job logs
 	// skipped_disabled and succeeds); the app still boots. EmailLinkSecret signs
 	// unsubscribe links; when unset it is auto-generated and stored on first boot
 	// (secrets.EnsureGenerated), so one-click unsubscribe works out of the box.
@@ -229,12 +229,18 @@ type Config struct {
 	// Internal operator gRPC surface. Harbor (the ops dashboard) manages the
 	// `secret` table through this listener rather than the DB, so it reuses the
 	// envelope crypto, allowlist, and hot-reload hooks behind secrets.Store.
-	// Internal-only (private network); every call is gated by GRPCAuthToken, a
-	// shared bearer token constant-time compared server-side. The server starts
-	// ONLY when both GRPCAddr and GRPCAuthToken are set — an empty token means
-	// the surface stays off (never run unauthenticated). Default addr is :9091
-	// so it can run alongside the HTTP server (:9001) locally.
-	GRPCAddr      string `envconfig:"GRPC_ADDR"       default:":9091"`
+	// Internal-only; every call is gated by GRPCAuthToken, a shared bearer token
+	// constant-time compared server-side. The server starts ONLY when both
+	// GRPCAddr and GRPCAuthToken are set — an empty token means the surface stays
+	// off (never run unauthenticated).
+	//
+	// The default binds LOOPBACK ONLY (127.0.0.1) so a host-run binary never
+	// exposes the admin surface on the LAN. To reach it across hosts/containers,
+	// set an explicit address (e.g. ":9091" inside a container whose port is
+	// published on 127.0.0.1 only — see docker-compose) AND put it behind a
+	// firewall / NetworkPolicy / mTLS. The transport itself is plaintext (like
+	// Ogen's pdf/video gRPC), so the token must never cross an untrusted network.
+	GRPCAddr      string `envconfig:"GRPC_ADDR"       default:"127.0.0.1:9091"`
 	GRPCAuthToken string `envconfig:"GRPC_AUTH_TOKEN" default:""`
 
 	// River background-job queue (CON-69 §1, §3; CON-87 WS3). Workers
