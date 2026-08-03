@@ -89,13 +89,21 @@ func (h *ResendWebhookHandler) Handle(c *fiber.Ctx) error {
 	}
 
 	ctx := c.Context()
+	// errors.Join evaluates both calls (Go evaluates args before the call), so
+	// every address + both side effects are attempted even if one fails; a
+	// non-nil result means at least one did.
+	var sideErr error
 	switch evt.Type {
 	case "email.bounced":
-		h.suppressAll(ctx, evt.Data.To, models.EmailSuppressionReasonBounce)
-		h.markStatus(ctx, evt.Data.EmailID, models.EmailLogBounced)
+		sideErr = errors.Join(
+			h.suppressAll(ctx, evt.Data.To, models.EmailSuppressionReasonBounce),
+			h.markStatus(ctx, evt.Data.EmailID, models.EmailLogBounced),
+		)
 	case "email.complained":
-		h.suppressAll(ctx, evt.Data.To, models.EmailSuppressionReasonComplaint)
-		h.markStatus(ctx, evt.Data.EmailID, models.EmailLogComplained)
+		sideErr = errors.Join(
+			h.suppressAll(ctx, evt.Data.To, models.EmailSuppressionReasonComplaint),
+			h.markStatus(ctx, evt.Data.EmailID, models.EmailLogComplained),
+		)
 	default:
 		// delivered / opened / clicked / delivery_delayed etc.: acknowledged as
 		// a no-op so Resend stops retrying. (Fine-grained delivery status is a
@@ -103,12 +111,21 @@ func (h *ResendWebhookHandler) Handle(c *fiber.Ctx) error {
 		slog.InfoContext(ctx, "resend webhook ignored", logging.AttrComponent, "handlers.resend_webhook", "type", evt.Type)
 	}
 
+	// A failed side effect must NOT be acked 2xx: return 5xx so Resend retries
+	// the event rather than dropping a bounce/complaint suppression on the floor.
+	// The side effects are idempotent (upsert / status update), so a retry is safe.
+	if sideErr != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "webhook side effect failed")
+	}
 	return c.SendStatus(fiber.StatusOK)
 }
 
-// suppressAll adds an all-scope suppression for each address (best-effort: a
-// per-address failure is logged, not fatal to the ack).
-func (h *ResendWebhookHandler) suppressAll(ctx context.Context, addrs []string, reason models.EmailSuppressionReason) {
+// suppressAll adds an all-scope suppression for each address. It is best-effort
+// ACROSS addresses (every address is attempted even if one fails) but returns
+// the first error so the caller can decline to ack — a dropped bounce/complaint
+// suppression must not be lost to a 2xx.
+func (h *ResendWebhookHandler) suppressAll(ctx context.Context, addrs []string, reason models.EmailSuppressionReason) error {
+	var firstErr error
 	for _, a := range addrs {
 		if a == "" {
 			continue
@@ -116,6 +133,9 @@ func (h *ResendWebhookHandler) suppressAll(ctx context.Context, addrs []string, 
 		id, err := models.NewID()
 		if err != nil {
 			slog.WarnContext(ctx, "suppression id gen failed", logging.AttrComponent, "handlers.resend_webhook", logging.AttrError, err)
+			if firstErr == nil {
+				firstErr = err
+			}
 			continue
 		}
 		if err := h.suppressions.Upsert(ctx, &models.EmailSuppression{
@@ -126,17 +146,26 @@ func (h *ResendWebhookHandler) suppressAll(ctx context.Context, addrs []string, 
 			Source: models.EmailSuppressionSourceWebhook,
 		}); err != nil {
 			slog.WarnContext(ctx, "suppression upsert failed", logging.AttrComponent, "handlers.resend_webhook", logging.AttrError, err)
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
+	return firstErr
 }
 
-func (h *ResendWebhookHandler) markStatus(ctx context.Context, providerMessageID string, status models.EmailLogStatus) {
+// markStatus updates the audit row for a delivery event. A no-match is not an
+// error (returns nil, so an unknown message id can't cause a retry storm); only
+// a real persistence failure is returned, blocking the ack.
+func (h *ResendWebhookHandler) markStatus(ctx context.Context, providerMessageID string, status models.EmailLogStatus) error {
 	if providerMessageID == "" || h.logs == nil {
-		return
+		return nil
 	}
 	if _, err := h.logs.UpdateStatusByProviderMessageID(ctx, providerMessageID, status); err != nil {
 		slog.WarnContext(ctx, "email_log status update failed", logging.AttrComponent, "handlers.resend_webhook", logging.AttrError, err)
+		return err
 	}
+	return nil
 }
 
 // verifySvixSignature validates a Svix-signed webhook (the scheme Resend uses).
