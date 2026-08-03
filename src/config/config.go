@@ -210,6 +210,11 @@ type Config struct {
 	EmailBaseURL     string        `envconfig:"EMAIL_BASE_URL"            default:"https://api.resend.com"`
 	EmailHTTPTimeout time.Duration `envconfig:"EMAIL_HTTP_TIMEOUT"        default:"15s"`
 	AppBaseURL       string        `envconfig:"APP_BASE_URL"              default:"https://app.getogen.com"`
+	// EmailLinkBaseURL (CON-155) is the base for public unsubscribe links; it must
+	// resolve to the API host. Empty falls back to AppBaseURL — fine for
+	// same-origin / reverse-proxied deploys; set explicitly for a split-origin
+	// deploy where the SPA and API live on different hosts.
+	EmailLinkBaseURL string `envconfig:"EMAIL_LINK_BASE_URL" default:""`
 	// EmailLogRetentionDays mirrors PostLogRetentionDays: the cleanup_email_logs
 	// periodic task drops older rows. 0 disables cleanup entirely.
 	EmailLogRetentionDays int `envconfig:"EMAIL_LOG_RETENTION_DAYS" default:"90"`

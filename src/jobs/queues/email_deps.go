@@ -21,11 +21,14 @@ type EmailDeps struct {
 	Logs         repository.EmailLogRepository
 	Users        repository.UserRepository
 
-	// From / ReplyTo are the message envelope; AppBaseURL builds absolute links
-	// (unsubscribe, CTAs) in rendered mail.
-	From       string
-	ReplyTo    string
-	AppBaseURL string
+	// From / ReplyTo are the message envelope; AppBaseURL builds absolute CTA
+	// links in rendered mail. LinkBaseURL is the base for public unsubscribe
+	// links (must resolve to the API host; CON-155) — set to EMAIL_LINK_BASE_URL
+	// or, when unset, AppBaseURL.
+	From        string
+	ReplyTo     string
+	AppBaseURL  string
+	LinkBaseURL string
 
 	// LinkSecret resolves the HMAC key that signs unsubscribe links, per call
 	// (so a rotation takes effect with no restart). A read error is transient;
@@ -41,6 +44,6 @@ type EmailDeps struct {
 // exactly what the suppression list keys on.
 func (d EmailDeps) unsubscribeURL(secret, toEmail string) string {
 	token := email.SignUnsubscribe(secret, repository.NormalizeEmail(toEmail), time.Now().UTC())
-	base := strings.TrimRight(d.AppBaseURL, "/")
+	base := strings.TrimRight(d.LinkBaseURL, "/")
 	return base + "/api/email/unsubscribe?token=" + url.QueryEscape(token)
 }

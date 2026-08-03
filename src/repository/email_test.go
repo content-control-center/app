@@ -130,6 +130,48 @@ func TestEmailSuppressionRepoGate(t *testing.T) {
 	}
 }
 
+func TestEmailSuppressionRemoveMarketing(t *testing.T) {
+	db := openMigratedDB(t)
+	repo := repository.NewEmailSuppressionRepository(db)
+	ctx := context.Background()
+
+	up := func(scope models.EmailSuppressionScope, reason models.EmailSuppressionReason) {
+		t.Helper()
+		if err := repo.Upsert(ctx, &models.EmailSuppression{ID: mustID(t), Email: "user@x.com", Scope: scope, Reason: reason, Source: models.EmailSuppressionSourceUser}); err != nil {
+			t.Fatalf("upsert %s: %v", scope, err)
+		}
+	}
+
+	// Resubscribe from a marketing-only suppression fully clears it.
+	up(models.EmailSuppressionScopeMarketing, models.EmailSuppressionReasonUnsubscribe)
+	if err := repo.RemoveMarketing(ctx, "User@X.com"); err != nil { // mixed case → normalised
+		t.Fatalf("remove: %v", err)
+	}
+	if ok, _ := repo.IsSuppressed(ctx, "user@x.com", models.EmailKindMarketing); ok {
+		t.Fatal("marketing suppression should be gone after resubscribe")
+	}
+
+	// A hard bounce (all) must survive resubscribe.
+	up(models.EmailSuppressionScopeMarketing, models.EmailSuppressionReasonUnsubscribe)
+	up(models.EmailSuppressionScopeAll, models.EmailSuppressionReasonBounce)
+	if err := repo.RemoveMarketing(ctx, "user@x.com"); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	marketingLeft, _ := db.NewSelect().Model((*models.EmailSuppression)(nil)).
+		Where("email = ?", "user@x.com").Where("scope = ?", models.EmailSuppressionScopeMarketing).Exists(ctx)
+	if marketingLeft {
+		t.Error("marketing row should be deleted even when an all-scope row exists")
+	}
+	if ok, _ := repo.IsSuppressed(ctx, "user@x.com", models.EmailKindTransactional); !ok {
+		t.Error("all-scope suppression must survive resubscribe")
+	}
+
+	// No-op on a clean address.
+	if err := repo.RemoveMarketing(ctx, "nobody@x.com"); err != nil {
+		t.Fatalf("remove clean: %v", err)
+	}
+}
+
 func TestEmailLogRepo(t *testing.T) {
 	db := openMigratedDB(t)
 	repo := repository.NewEmailLogRepository(db)

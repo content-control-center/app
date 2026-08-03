@@ -19,6 +19,10 @@ type EmailSuppressionRepository interface {
 	// Marketing is blocked by any entry; transactional is blocked only by an
 	// `all`-scope entry (hard bounce / complaint).
 	IsSuppressed(ctx context.Context, email string, kind models.EmailKind) (bool, error)
+	// RemoveMarketing deletes the marketing suppression for an address
+	// (resubscribe, CON-155). Any `all`-scope row (hard bounce / complaint) is
+	// left in place. A no-op when no marketing row exists.
+	RemoveMarketing(ctx context.Context, email string) error
 }
 
 type emailSuppressionRepository struct {
@@ -53,4 +57,13 @@ func (r *emailSuppressionRepository) IsSuppressed(ctx context.Context, email str
 		q = q.Where("scope = ?", models.EmailSuppressionScopeAll)
 	}
 	return q.Exists(ctx)
+}
+
+func (r *emailSuppressionRepository) RemoveMarketing(ctx context.Context, email string) error {
+	_, err := r.db.NewDelete().
+		Model((*models.EmailSuppression)(nil)).
+		Where("email = ?", NormalizeEmail(email)).
+		Where("scope = ?", models.EmailSuppressionScopeMarketing).
+		Exec(ctx)
+	return err
 }

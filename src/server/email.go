@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
@@ -62,6 +63,7 @@ func initEmail(
 		From:         cfg.EmailFrom,
 		ReplyTo:      cfg.EmailReplyTo,
 		AppBaseURL:   cfg.AppBaseURL,
+		LinkBaseURL:  cmp.Or(cfg.EmailLinkBaseURL, cfg.AppBaseURL),
 		LinkSecret:   linkSecret,
 		Retention:    time.Duration(cfg.EmailLogRetentionDays) * 24 * time.Hour,
 	}
