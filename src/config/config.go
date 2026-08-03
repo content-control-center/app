@@ -226,6 +226,17 @@ type Config struct {
 	// Docker image mounts /var/lib/ogen/keys.
 	KEKPath string `envconfig:"OGEN_KEK_PATH" default:"./kek"`
 
+	// Internal operator gRPC surface. Harbor (the ops dashboard) manages the
+	// `secret` table through this listener rather than the DB, so it reuses the
+	// envelope crypto, allowlist, and hot-reload hooks behind secrets.Store.
+	// Internal-only (private network); every call is gated by GRPCAuthToken, a
+	// shared bearer token constant-time compared server-side. The server starts
+	// ONLY when both GRPCAddr and GRPCAuthToken are set — an empty token means
+	// the surface stays off (never run unauthenticated). Default addr is :9091
+	// so it can run alongside the HTTP server (:9001) locally.
+	GRPCAddr      string `envconfig:"GRPC_ADDR"       default:":9091"`
+	GRPCAuthToken string `envconfig:"GRPC_AUTH_TOKEN" default:""`
+
 	// River background-job queue (CON-69 §1, §3; CON-87 WS3). Workers
 	// process `submit_post_to_zernio`, `poll_zernio_status`,
 	// `cancel_zernio_job`, plus the periodic `reconcile_scheduled_posts`,

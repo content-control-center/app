@@ -15,6 +15,10 @@ services:
             - ./ogen-keys:/var/lib/ogen/keys
         ports:
             - "9001:9001"
+            # Internal operator gRPC surface (secrets management for Harbor).
+            # Exposed on the host so Harbor can reach it in local dev; gated by
+            # GRPC_AUTH_TOKEN. Server only starts when the token is set.
+            - "9091:9091"
         depends_on:
             postgres:
                 condition: service_healthy

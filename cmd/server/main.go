@@ -14,6 +14,7 @@ import (
 	"context"
 	"log"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"time"
@@ -23,6 +24,7 @@ import (
 	_ "github.com/ogen-app/ogen/docs"
 	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/database"
+	"github.com/ogen-app/ogen/src/grpcserver"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/secrets"
@@ -134,6 +136,28 @@ func main() {
 	app, err := server.New(context.Background(), db, analyticsDB, cfg, store)
 	if err != nil {
 		fatal("init server", err)
+	}
+
+	// Internal operator gRPC surface (secrets management for Harbor). Started
+	// only when both an address and an auth token are configured — an empty
+	// token keeps it off rather than running unauthenticated. It shares the
+	// process lifetime with the HTTP server below; a listen/serve failure is
+	// logged but non-fatal so the primary HTTP surface still comes up.
+	if cfg.GRPCAddr != "" && cfg.GRPCAuthToken != "" {
+		lis, err := net.Listen("tcp", cfg.GRPCAddr)
+		if err != nil {
+			fatal("grpc listen", err)
+		}
+		gs, err := grpcserver.New(cfg.GRPCAuthToken, store)
+		if err != nil {
+			fatal("grpc init", err)
+		}
+		slog.Info("internal grpc listening", logging.AttrComponent, "boot", "addr", cfg.GRPCAddr)
+		go func() {
+			if err := gs.Serve(lis); err != nil {
+				slog.Error("internal grpc exited", logging.AttrComponent, "boot", logging.AttrError, err)
+			}
+		}()
 	}
 
 	slog.Info("server listening", logging.AttrComponent, "boot", "addr", cfg.Addr)
