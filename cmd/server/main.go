@@ -144,20 +144,19 @@ func main() {
 	// process lifetime with the HTTP server below; a listen/serve failure is
 	// logged but non-fatal so the primary HTTP surface still comes up.
 	if cfg.GRPCAddr != "" && cfg.GRPCAuthToken != "" {
-		lis, err := net.Listen("tcp", cfg.GRPCAddr)
-		if err != nil {
-			fatal("grpc listen", err)
+		if lis, err := net.Listen("tcp", cfg.GRPCAddr); err != nil {
+			slog.Error("grpc listen failed; internal grpc disabled (non-fatal)", logging.AttrComponent, "boot", logging.AttrError, err)
+		} else if gs, err := grpcserver.New(cfg.GRPCAuthToken, store); err != nil {
+			slog.Error("grpc init failed; internal grpc disabled (non-fatal)", logging.AttrComponent, "boot", logging.AttrError, err)
+			_ = lis.Close()
+		} else {
+			slog.Info("internal grpc listening", logging.AttrComponent, "boot", "addr", cfg.GRPCAddr)
+			go func() {
+				if err := gs.Serve(lis); err != nil {
+					slog.Error("internal grpc exited", logging.AttrComponent, "boot", logging.AttrError, err)
+				}
+			}()
 		}
-		gs, err := grpcserver.New(cfg.GRPCAuthToken, store)
-		if err != nil {
-			fatal("grpc init", err)
-		}
-		slog.Info("internal grpc listening", logging.AttrComponent, "boot", "addr", cfg.GRPCAddr)
-		go func() {
-			if err := gs.Serve(lis); err != nil {
-				slog.Error("internal grpc exited", logging.AttrComponent, "boot", logging.AttrError, err)
-			}
-		}()
 	}
 
 	slog.Info("server listening", logging.AttrComponent, "boot", "addr", cfg.Addr)
