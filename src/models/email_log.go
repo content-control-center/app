@@ -45,6 +45,6 @@ type EmailLog struct {
 	ProviderMessageID string         `bun:"provider_message_id,nullzero"                 json:"provider_message_id,omitempty"`
 	IdempotencyKey    string         `bun:"idempotency_key,nullzero"                     json:"idempotency_key,omitempty"`
 	Error             string         `bun:"error,nullzero"                               json:"error,omitempty"`
-	CreatedAt         time.Time      `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
-	UpdatedAt         time.Time      `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
+	CreatedAt         time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
+	UpdatedAt         time.Time      `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
 }

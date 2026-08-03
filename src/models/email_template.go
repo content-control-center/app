@@ -35,5 +35,5 @@ type EmailTemplate struct {
 	Text      string    `bun:"text,notnull"                                  json:"text"`
 	Kind      EmailKind `bun:"kind,notnull"                                  json:"kind"`
 	Version   int       `bun:"version,notnull,default:1"                     json:"version"`
-	UpdatedAt time.Time `bun:"updated_at,notnull,default:current_timestamp"  json:"updated_at"`
+	UpdatedAt time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp"  json:"updated_at"`
 }

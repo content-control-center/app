@@ -48,5 +48,5 @@ type EmailSuppression struct {
 	Scope     EmailSuppressionScope  `bun:"scope,notnull"                                json:"scope"`
 	Reason    EmailSuppressionReason `bun:"reason,notnull"                               json:"reason"`
 	Source    EmailSuppressionSource `bun:"source,notnull"                               json:"source"`
-	CreatedAt time.Time              `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
+	CreatedAt time.Time              `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
 }

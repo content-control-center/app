@@ -52,6 +52,16 @@ func TestEmailSuppressionRepoGate(t *testing.T) {
 		t.Fatalf("upsert marketing: %v", err)
 	}
 
+	// created_at must come from the DB default (Upsert never sets it): the model
+	// tag needs nullzero, else bun inserts the Go zero time (0001-01-01).
+	var row models.EmailSuppression
+	if err := db.NewSelect().Model(&row).Where("email = ? AND scope = ?", "user@x.com", models.EmailSuppressionScopeMarketing).Scan(ctx); err != nil {
+		t.Fatalf("select back: %v", err)
+	}
+	if row.CreatedAt.IsZero() || row.CreatedAt.Year() < 2000 {
+		t.Fatalf("created_at not populated by DB default: %v", row.CreatedAt)
+	}
+
 	// Marketing is blocked; transactional is not (normalised match).
 	if ok, err := repo.IsSuppressed(ctx, "user@x.com", models.EmailKindMarketing); err != nil || !ok {
 		t.Fatalf("marketing suppressed: ok=%v err=%v", ok, err)
@@ -96,6 +106,17 @@ func TestEmailLogRepo(t *testing.T) {
 	}
 
 	insert("welcome:u1", "msg_1", models.EmailLogSent)
+
+	// created_at/updated_at come from the DB default (Insert never sets them):
+	// without nullzero these would be 0001-01-01 and the retention sweep would
+	// delete every audit row on its first tick.
+	var lg models.EmailLog
+	if err := db.NewSelect().Model(&lg).Where("idempotency_key = ?", "welcome:u1").Scan(ctx); err != nil {
+		t.Fatalf("select back: %v", err)
+	}
+	if lg.CreatedAt.Year() < 2000 || lg.UpdatedAt.Year() < 2000 {
+		t.Fatalf("email_log timestamps not defaulted: created=%v updated=%v", lg.CreatedAt, lg.UpdatedAt)
+	}
 
 	// Webhook updates the row by provider message id.
 	updated, err := repo.UpdateStatusByProviderMessageID(ctx, "msg_1", models.EmailLogBounced)
