@@ -33,19 +33,46 @@ type Data struct {
 //go:embed defaults/*.tmpl
 var defaultFS embed.FS
 
-// defaultSpec pairs a key with its kind + subject line; the bodies are read
-// from the embedded defaults/<key>.{html,txt}.tmpl files.
+// Runtime-variable descriptions. These document each [[ .Var ]] placeholder;
+// they're stored on EmailTemplate.Variables and kept in sync by SeedDefaults.
+// Keep them aligned with the Data struct fields.
+const (
+	varName           = "The recipient's display name (from their user record)."
+	varWorkspaceName  = "The recipient's workspace (tenant) name."
+	varAppURL         = "Absolute app URL (APP_BASE_URL) for the primary call-to-action link."
+	varUnsubscribeURL = "Signed one-click unsubscribe URL; required in every marketing footer."
+)
+
+// transactionalVars / marketingVars build the per-template variable doc sets.
+// Each call returns a fresh map, so specs never share (and can't mutate) state.
+func transactionalVars() models.StringMap {
+	return models.StringMap{
+		"Name":          varName,
+		"WorkspaceName": varWorkspaceName,
+		"AppURL":        varAppURL,
+	}
+}
+
+func marketingVars() models.StringMap {
+	m := transactionalVars()
+	m["UnsubscribeURL"] = varUnsubscribeURL
+	return m
+}
+
+// defaultSpec pairs a key with its kind + subject line + variable docs; the
+// bodies are read from the embedded defaults/<key>.{html,txt}.tmpl files.
 type defaultSpec struct {
-	Key     string
-	Kind    models.EmailKind
-	Subject string
+	Key       string
+	Kind      models.EmailKind
+	Subject   string
+	Variables models.StringMap
 }
 
 var defaultSpecs = []defaultSpec{
-	{KeyWelcome, models.EmailKindTransactional, "Welcome to Ogen, [[ .Name ]]"},
-	{KeyDripDay2, models.EmailKindMarketing, "Getting the most out of Ogen"},
-	{KeyDripDay5, models.EmailKindMarketing, "Your content, on autopilot"},
-	{KeyDripDay7, models.EmailKindMarketing, "A quick check-in from Ogen"},
+	{KeyWelcome, models.EmailKindTransactional, "Welcome to Ogen, [[ .Name ]]", transactionalVars()},
+	{KeyDripDay2, models.EmailKindMarketing, "Getting the most out of Ogen", marketingVars()},
+	{KeyDripDay5, models.EmailKindMarketing, "Your content, on autopilot", marketingVars()},
+	{KeyDripDay7, models.EmailKindMarketing, "A quick check-in from Ogen", marketingVars()},
 }
 
 // Defaults returns the built-in default templates, reading each body from the
@@ -62,12 +89,13 @@ func Defaults() ([]models.EmailTemplate, error) {
 			return nil, fmt.Errorf("email templates: read %s text: %w", s.Key, err)
 		}
 		out = append(out, models.EmailTemplate{
-			Key:     s.Key,
-			Subject: s.Subject,
-			HTML:    string(html),
-			Text:    string(text),
-			Kind:    s.Kind,
-			Version: 1,
+			Key:       s.Key,
+			Subject:   s.Subject,
+			HTML:      string(html),
+			Text:      string(text),
+			Kind:      s.Kind,
+			Variables: s.Variables,
+			Version:   1,
 		})
 	}
 	return out, nil
@@ -89,6 +117,11 @@ func SeedDefaults(ctx context.Context, repo repository.EmailTemplateRepository) 
 		}
 		if created {
 			seeded++
+		}
+		// Keep the code-owned variable docs current even for rows seeded before
+		// a variable was added; operator-edited copy is left untouched.
+		if err := repo.SyncVariables(ctx, defs[i].Key, defs[i].Variables); err != nil {
+			return seeded, err
 		}
 	}
 	return seeded, nil

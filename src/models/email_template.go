@@ -29,11 +29,17 @@ const (
 type EmailTemplate struct {
 	bun.BaseModel `bun:"table:email_templates,alias:et" swaggerignore:"true"`
 
-	Key       string    `bun:"key,pk"                                        json:"key"`
-	Subject   string    `bun:"subject,notnull"                               json:"subject"`
-	HTML      string    `bun:"html,notnull"                                  json:"html"`
-	Text      string    `bun:"text,notnull"                                  json:"text"`
-	Kind      EmailKind `bun:"kind,notnull"                                  json:"kind"`
-	Version   int       `bun:"version,notnull,default:1"                     json:"version"`
-	UpdatedAt time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp"  json:"updated_at"`
+	Key     string    `bun:"key,pk"          json:"key"`
+	Subject string    `bun:"subject,notnull" json:"subject"`
+	HTML    string    `bun:"html,notnull"    json:"html"`
+	Text    string    `bun:"text,notnull"    json:"text"`
+	Kind    EmailKind `bun:"kind,notnull"    json:"kind"`
+	// Variables documents the template's runtime placeholders: key = the
+	// variable name as referenced via [[ .Key ]], value = a human explanation.
+	// Code-owned metadata (the source of truth is the seeder's default set); the
+	// boot seeder keeps it in sync while leaving operator-edited copy untouched.
+	// It is NOT used at render time — rendering fills from the typed Data struct.
+	Variables StringMap `bun:"variables,nullzero,notnull,type:jsonb,default:'{}'" json:"variables"`
+	Version   int       `bun:"version,notnull,default:1"                          json:"version"`
+	UpdatedAt time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
 }

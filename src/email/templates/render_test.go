@@ -96,6 +96,13 @@ func (f *fakeTemplateRepo) InsertIfAbsent(_ context.Context, t *models.EmailTemp
 	return true, nil
 }
 
+func (f *fakeTemplateRepo) SyncVariables(_ context.Context, key string, vars models.StringMap) error {
+	if t, ok := f.m[key]; ok {
+		t.Variables = vars
+	}
+	return nil
+}
+
 func (f *fakeTemplateRepo) List(context.Context) ([]models.EmailTemplate, error) {
 	out := make([]models.EmailTemplate, 0, len(f.m))
 	for _, t := range f.m {
@@ -114,6 +121,18 @@ func TestSeedDefaultsIdempotent(t *testing.T) {
 	}
 	if n1 != len(defs) {
 		t.Fatalf("first seed: got %d, want %d", n1, len(defs))
+	}
+
+	// Variable docs are seeded: welcome (transactional) documents Name but not
+	// UnsubscribeURL; a marketing drip documents UnsubscribeURL.
+	if repo.m[KeyWelcome].Variables["Name"] == "" {
+		t.Error("welcome missing Name variable doc")
+	}
+	if _, ok := repo.m[KeyWelcome].Variables["UnsubscribeURL"]; ok {
+		t.Error("welcome (transactional) should not document UnsubscribeURL")
+	}
+	if repo.m[KeyDripDay2].Variables["UnsubscribeURL"] == "" {
+		t.Error("drip missing UnsubscribeURL variable doc")
 	}
 
 	// Simulate an operator edit; the re-seed must not clobber it.

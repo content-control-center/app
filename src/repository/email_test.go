@@ -42,6 +42,47 @@ func TestEmailTemplateRepoInsertIfAbsent(t *testing.T) {
 	}
 }
 
+func TestEmailTemplateRepoVariables(t *testing.T) {
+	db := openMigratedDB(t)
+	repo := repository.NewEmailTemplateRepository(db)
+	ctx := context.Background()
+
+	tmpl := &models.EmailTemplate{
+		Key: "welcome", Subject: "Hi", HTML: "<p>[[ .Name ]]</p>", Text: "hi",
+		Kind: models.EmailKindTransactional, Version: 1,
+		Variables: models.StringMap{"Name": "recipient name", "AppURL": "app link"},
+	}
+	if _, err := repo.InsertIfAbsent(ctx, tmpl); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// Round-trips through the jsonb column.
+	got, err := repo.GetByKey(ctx, "welcome")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Variables["Name"] != "recipient name" || got.Variables["AppURL"] != "app link" {
+		t.Fatalf("variables round-trip: %#v", got.Variables)
+	}
+
+	// SyncVariables replaces the docs wholesale, leaving copy (subject) untouched.
+	if err := repo.SyncVariables(ctx, "welcome", models.StringMap{"Name": "updated"}); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	got, _ = repo.GetByKey(ctx, "welcome")
+	if got.Variables["Name"] != "updated" || got.Subject != "Hi" {
+		t.Fatalf("sync should update variables only: vars=%#v subject=%q", got.Variables, got.Subject)
+	}
+	if _, ok := got.Variables["AppURL"]; ok {
+		t.Error("sync should replace the whole variables map, dropping AppURL")
+	}
+
+	// No-op on a missing key (no error).
+	if err := repo.SyncVariables(ctx, "nope", models.StringMap{"x": "y"}); err != nil {
+		t.Fatalf("sync missing key: %v", err)
+	}
+}
+
 func TestEmailSuppressionRepoGate(t *testing.T) {
 	db := openMigratedDB(t)
 	repo := repository.NewEmailSuppressionRepository(db)

@@ -60,7 +60,8 @@ func (f *fakeTemplateRepo) GetByKey(_ context.Context, key string) (*models.Emai
 func (f *fakeTemplateRepo) InsertIfAbsent(context.Context, *models.EmailTemplate) (bool, error) {
 	return false, nil
 }
-func (f *fakeTemplateRepo) List(context.Context) ([]models.EmailTemplate, error) { return nil, nil }
+func (f *fakeTemplateRepo) SyncVariables(context.Context, string, models.StringMap) error { return nil }
+func (f *fakeTemplateRepo) List(context.Context) ([]models.EmailTemplate, error)          { return nil, nil }
 
 // fakeSuppRepo mirrors the real SQL gate: marketing is blocked by any entry;
 // transactional is blocked only by an `all`-scope entry.

@@ -19,6 +19,11 @@ type EmailTemplateRepository interface {
 	// yet. Returns true when a row was created (seeded), false when one was
 	// already present (operator copy preserved). Idempotent — safe every boot.
 	InsertIfAbsent(ctx context.Context, t *models.EmailTemplate) (bool, error)
+	// SyncVariables refreshes the code-owned `variables` docs for a template,
+	// leaving operator-edited copy (subject/html/text) untouched. A no-op when
+	// the key doesn't exist. Called by the boot seeder so the docs always track
+	// the code, even for rows seeded before a variable was added.
+	SyncVariables(ctx context.Context, key string, vars models.StringMap) error
 	List(ctx context.Context) ([]models.EmailTemplate, error)
 }
 
@@ -50,6 +55,18 @@ func (r *emailTemplateRepository) InsertIfAbsent(ctx context.Context, t *models.
 	}
 	n, _ := res.RowsAffected()
 	return n > 0, nil
+}
+
+func (r *emailTemplateRepository) SyncVariables(ctx context.Context, key string, vars models.StringMap) error {
+	if vars == nil {
+		vars = models.StringMap{}
+	}
+	_, err := r.db.NewUpdate().
+		Model((*models.EmailTemplate)(nil)).
+		Set("variables = ?", vars).
+		Where("key = ?", key).
+		Exec(ctx)
+	return err
 }
 
 func (r *emailTemplateRepository) List(ctx context.Context) ([]models.EmailTemplate, error) {
