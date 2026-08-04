@@ -75,8 +75,9 @@ func tokenAuthInterceptor(token string) grpc.UnaryServerInterceptor {
 		// HTTP/2 header at all — the client transport rejects it before send — so
 		// the env-newline paste footgun is caught server-side in New, not here.)
 		// The trim only strips non-secret padding, so the constant-time compare
-		// stays the sole gate on the token value; ConstantTimeCompare returns 0 on
-		// any length mismatch, safe against both value and length side channels.
+		// stays the sole gate on the token value. ConstantTimeCompare is
+		// constant-time only for equal-length slices — it returns early (0) on a
+		// length mismatch — so it hides the token's contents, not its length.
 		got := strings.TrimSpace(vals[0])
 		if subtle.ConstantTimeCompare([]byte(got), want) != 1 {
 			return nil, status.Error(codes.Unauthenticated, "invalid token")
