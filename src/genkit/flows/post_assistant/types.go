@@ -138,6 +138,15 @@ type ValidationError struct{ Msg string }
 
 func (e *ValidationError) Error() string { return e.Msg }
 
+// ErrPostRemovedDuringTurn is returned when the post is deleted — directly via
+// DELETE /api/posts/:id, or by a campaign/owner cascade — while the assistant
+// is mid-turn. The flow loads the post up front without a lock and only writes
+// the conversation turn after a potentially long (tens of seconds) model call,
+// so the row can disappear in between; the write then trips the post_id foreign
+// key (SQLSTATE 23503). Surfacing this precondition error keeps the client from
+// seeing a raw database error, and it is treated like "post not found" (400).
+var ErrPostRemovedDuringTurn = &ValidationError{Msg: "This post was deleted while the assistant was working, so nothing was saved."}
+
 // AIError is returned when the model call fails (HTTP 502).
 type AIError struct{ Msg string }
 
