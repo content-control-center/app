@@ -98,3 +98,58 @@ func TestServerRoundTrip(t *testing.T) {
 		t.Errorf("wrong token: code = %v, want Unauthenticated", status.Code(err))
 	}
 }
+
+// TestTokenWhitespaceTolerance guards the common deployment footgun of a
+// GRPC_AUTH_TOKEN / OGEN_GRPC_TOKEN env var pasted with surrounding whitespace.
+// The server token is trimmed in New (so a trailing newline in Ogen's env is
+// harmless), and the interceptor trims the incoming header (so a trailing space
+// in Harbor's token — the only whitespace an HTTP/2 header can carry — still
+// authenticates). A genuinely different token stays rejected.
+func TestTokenWhitespaceTolerance(t *testing.T) {
+	const clean = "shared-token"
+
+	// Server configured as if GRPC_AUTH_TOKEN carried surrounding whitespace,
+	// including a trailing newline — New trims it.
+	srv, err := New("  "+clean+"\n", newFakeStore())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+
+	// call dials a fresh client that sends "Bearer <tok>" and returns the List
+	// status code.
+	call := func(tok string) codes.Code {
+		conn, err := grpc.NewClient(
+			lis.Addr().String(),
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+				ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+tok)
+				return invoker(ctx, method, req, reply, cc, opts...)
+			}),
+		)
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		defer func() { _ = conn.Close() }()
+		_, err = secretsv1.NewSecretsServiceClient(conn).List(context.Background(), &secretsv1.ListRequest{})
+		return status.Code(err)
+	}
+
+	if code := call(clean); code != codes.OK {
+		t.Errorf("clean client token: code = %v, want OK", code)
+	}
+	// A trailing space is the only whitespace an HTTP/2 header value can carry
+	// (a newline is rejected by the client transport before send); the
+	// interceptor's trim must let it through.
+	if code := call(clean + " "); code != codes.OK {
+		t.Errorf("space-padded client token: code = %v, want OK", code)
+	}
+	if code := call("nope"); code != codes.Unauthenticated {
+		t.Errorf("wrong token: code = %v, want Unauthenticated", code)
+	}
+}

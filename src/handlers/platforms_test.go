@@ -394,20 +394,21 @@ var _ = Describe("PlatformsHandler", Ordered, func() {
 				Expect(bySlug).To(HaveKey("carousel"))
 				Expect(bySlug).To(HaveKey("event"))
 
-				// image-post.max_attachments must resolve to LinkedIn's image cap (9).
+				// image-post.max_attachments must resolve to LinkedIn's image cap
+				// (20 since CON-123 corrected the seed against Zernio's docs).
 				img := bySlug["image-post"]
 				Expect(img.WhitelistOnly).To(BeFalse())
 				Expect(img.Rule).NotTo(BeNil())
 				Expect(img.Rule.AllowedKinds).To(ConsistOf("image"))
 				Expect(img.Rule.MinAttachments).To(Equal(1))
 				Expect(img.Rule.MaxAttachments).NotTo(BeNil())
-				Expect(*img.Rule.MaxAttachments).To(Equal(9))
+				Expect(*img.Rule.MaxAttachments).To(Equal(20))
 
-				// carousel — Min 2, Max resolves to 9.
+				// carousel — Min 2, Max resolves to the same image cap (20).
 				car := bySlug["carousel"]
 				Expect(car.Rule).NotTo(BeNil())
 				Expect(car.Rule.MinAttachments).To(Equal(2))
-				Expect(*car.Rule.MaxAttachments).To(Equal(9))
+				Expect(*car.Rule.MaxAttachments).To(Equal(20))
 
 				// event has no rule entry — whitelist-only.
 				ev := bySlug["event"]
