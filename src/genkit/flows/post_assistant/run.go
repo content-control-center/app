@@ -14,12 +14,25 @@ import (
 
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/ogen-app/ogen/src/genkit/jsonstream"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/vendors/llm"
 )
+
+// isPostRemovedFKViolation reports whether err is a Postgres foreign-key
+// violation (SQLSTATE 23503) on a post_id constraint — i.e. an insert whose
+// post_id no longer matches a posts row. Every post-referencing write in this
+// flow (post_assistant_messages, post_versions) points at posts(id) through a
+// *_post_id_fkey constraint, so a concurrent post deletion trips exactly these.
+func isPostRemovedFKViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) &&
+		pgErr.Code == "23503" &&
+		strings.HasSuffix(pgErr.ConstraintName, "_post_id_fkey")
+}
 
 func runPostAssistant(
 	ctx context.Context,
@@ -84,6 +97,10 @@ func runPostAssistant(
 			Note:          "Initial version",
 			Creator:       "user",
 		}); err != nil {
+			if isPostRemovedFKViolation(err) {
+				slog.WarnContext(ctx, "post deleted mid-turn; discarding assistant result", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID)
+				return nil, ErrPostRemovedDuringTurn
+			}
 			return nil, fmt.Errorf("create initial version: %w", err)
 		}
 		slog.InfoContext(ctx, "created initial version snapshot", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID)
@@ -434,6 +451,10 @@ func runPostAssistant(
 		Role:    "user",
 		Content: req.Instruction,
 	}); err != nil {
+		if isPostRemovedFKViolation(err) {
+			slog.WarnContext(ctx, "post deleted mid-turn; discarding assistant result", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID)
+			return nil, ErrPostRemovedDuringTurn
+		}
 		return nil, fmt.Errorf("persist user message: %w", err)
 	}
 
@@ -467,6 +488,10 @@ func runPostAssistant(
 		Role:    "model",
 		Content: string(historyJSON),
 	}); err != nil {
+		if isPostRemovedFKViolation(err) {
+			slog.WarnContext(ctx, "post deleted mid-turn; discarding assistant result", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID)
+			return nil, ErrPostRemovedDuringTurn
+		}
 		return nil, fmt.Errorf("persist model message: %w", err)
 	}
 
@@ -493,6 +518,10 @@ func runPostAssistant(
 			Note:          result.VersionNote,
 			Creator:       "assistant",
 		}); err != nil {
+			if isPostRemovedFKViolation(err) {
+				slog.WarnContext(ctx, "post deleted mid-turn; discarding assistant result", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID)
+				return nil, ErrPostRemovedDuringTurn
+			}
 			return nil, fmt.Errorf("create version: %w", err)
 		}
 		slog.InfoContext(ctx, "created version", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID, "version", nextNum, "note", result.VersionNote)
