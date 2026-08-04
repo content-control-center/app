@@ -1,4 +1,4 @@
-.PHONY: build run test test-integration coverage _ginkgo _air _pg-test-up tidy docker docker-genkit clean openapi genkit
+.PHONY: build run test test-integration coverage _ginkgo _air _pg-test-up tidy docker docker-genkit clean openapi genkit proto
 
 GINKGO_FLAGS = --github-output -r -randomize-all -randomize-suites -race -trace -procs=2 -poll-progress-after=10s -poll-progress-interval=10s
 
@@ -68,6 +68,11 @@ test-integration:
 
 tidy:
 	go mod tidy
+
+# ── Protobuf / gRPC ──────────────────────────────────────────────────────────
+# Regenerate the Go gRPC stubs under gen/ from proto/ (pdf, video, secrets).
+proto:
+	buf generate proto
 
 # ── OpenAPI ──────────────────────────────────────────────────────────────────
 openapi:

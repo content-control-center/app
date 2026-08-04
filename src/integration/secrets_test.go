@@ -3,12 +3,11 @@
 package integration_test
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
 	"io"
-	"net/http"
+	"net"
 	"net/http/httptest"
 	"strings"
 	"time"
@@ -16,178 +15,189 @@ import (
 	"github.com/gofiber/fiber/v2"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/uptrace/bun"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
+	secretsv1 "github.com/ogen-app/ogen/gen/secrets/v1"
 	"github.com/ogen-app/ogen/src/crypto/envelope"
+	"github.com/ogen-app/ogen/src/grpcserver"
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/secrets"
 )
 
-// secretsTestRig wires a freshly migrated DB, a SecretStore on a
-// random KEK, the SecretsHandler, and a logged-in session cookie.
-// Each test gets its own rig so DB + KEK are pristine.
-type secretsTestRig struct {
-	app    *fiber.App
-	cookie *http.Cookie
-	store  secrets.Store
-}
+// Secrets are managed exclusively over the internal gRPC surface (there is no
+// REST CRUD). These specs drive the real service — a token-authed gRPC server
+// on a random KEK, over a loopback listener — which is the exact path Harbor
+// uses, so the KEK crypto, allowlist, redaction, and hot-reload hooks are all
+// exercised through the transport.
 
-func newSecretsRig() *secretsTestRig {
-	db := mustOpenIntegrationDB()
+const secretsGRPCToken = "integration-grpc-token"
 
+// newSecretsStore builds a SecretStore backed by a fresh DB and a random KEK.
+func newSecretsStore(db *bun.DB) secrets.Store {
 	kek := make([]byte, envelope.KeySize)
 	_, err := rand.Read(kek)
 	Expect(err).NotTo(HaveOccurred())
 	cipher, err := envelope.NewCipher(kek)
 	Expect(err).NotTo(HaveOccurred())
-	store := secrets.NewStore(repository.NewSecretRepository(db), cipher)
+	return secrets.NewStore(repository.NewSecretRepository(db), cipher)
+}
 
-	app := fiber.New(fiber.Config{
-		ErrorHandler: func(c *fiber.Ctx, err error) error {
-			code := fiber.StatusInternalServerError
-			if e, ok := err.(*fiber.Error); ok {
-				code = e.Code
-			}
-			return c.Status(code).JSON(fiber.Map{"error": err.Error()})
-		},
-	})
+type secretsGRPCRig struct {
+	client secretsv1.SecretsServiceClient
+	store  secrets.Store
+	addr   string
+}
 
-	const cookieName = "c3_session_secrets"
-	userRepo := repository.NewUserRepository(db)
-	sessionRepo := repository.NewSessionRepository(db)
-	settingRepo := repository.NewSettingRepository(db)
-	auth := handlers.RequireAuth(sessionRepo, cookieName)
+// newSecretsGRPCRig stands up the real gRPC secrets service on a loopback
+// listener backed by a real KEK-encrypted store, plus an authenticated client.
+func newSecretsGRPCRig() *secretsGRPCRig {
+	db := mustOpenIntegrationDB()
+	store := newSecretsStore(db)
 
-	handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
-	handlers.NewSessionsHandler(userRepo, sessionRepo, cookieName, false).Register(app)
-	handlers.NewSecretsHandler(store, auth).Register(app)
-	handlers.NewHealthHandler(db, store).Register(app)
-
-	// Register an admin user and capture the session cookie.
-	seedTenantUser(db, "Secrets Tester", "secrets@test.local", "test-password")
-
-	body, _ := json.Marshal(fiber.Map{"email": "secrets@test.local", "password": "test-password"})
-	req := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := app.Test(req)
+	srv, err := grpcserver.New(secretsGRPCToken, store)
 	Expect(err).NotTo(HaveOccurred())
-	Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
-	var cookie *http.Cookie
-	for _, c := range resp.Cookies() {
-		if c.Name == cookieName {
-			cookie = c
-			break
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	Expect(err).NotTo(HaveOccurred())
+	go func() { _ = srv.Serve(lis) }()
+	DeferCleanup(srv.Stop)
+
+	return &secretsGRPCRig{
+		client: dialSecrets(lis.Addr().String(), secretsGRPCToken),
+		store:  store,
+		addr:   lis.Addr().String(),
+	}
+}
+
+// dialSecrets returns a SecretsService client that sends `Bearer <token>` on
+// every call. An empty token sends no authorization metadata.
+func dialSecrets(addr, token string) secretsv1.SecretsServiceClient {
+	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	if token != "" {
+		opts = append(opts, grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, o ...grpc.CallOption) error {
+			ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+token)
+			return invoker(ctx, method, req, reply, cc, o...)
+		}))
+	}
+	conn, err := grpc.NewClient(addr, opts...)
+	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(func() { _ = conn.Close() })
+	return secretsv1.NewSecretsServiceClient(conn)
+}
+
+func mustMarshal(m proto.Message) string {
+	b, err := proto.Marshal(m)
+	Expect(err).NotTo(HaveOccurred())
+	return string(b)
+}
+
+func setNames(resp *secretsv1.ListResponse) []string {
+	var out []string
+	for _, s := range resp.GetSecrets() {
+		if s.GetSet() {
+			out = append(out, s.GetName())
 		}
 	}
-	Expect(cookie).NotTo(BeNil())
-
-	return &secretsTestRig{app: app, cookie: cookie, store: store}
+	return out
 }
 
-func (r *secretsTestRig) do(method, path string, body any) *http.Response {
-	var rd io.Reader
-	if body != nil {
-		b, _ := json.Marshal(body)
-		rd = bytes.NewReader(b)
-	}
-	req := httptest.NewRequest(method, path, rd)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	req.AddCookie(r.cookie)
-	resp, err := r.app.Test(req, -1)
-	Expect(err).NotTo(HaveOccurred())
-	return resp
-}
-
-var _ = Describe("Secrets API lifecycle", func() {
-	It("supports the full PUT/GET/DELETE flow without leaking plaintext", func() {
-		rig := newSecretsRig()
+var _ = Describe("Secrets gRPC service lifecycle", func() {
+	It("supports the full Set/List/Delete flow without leaking plaintext", func() {
+		rig := newSecretsGRPCRig()
+		ctx := context.Background()
 		const plaintext = "sk-ant-api03-LIFECYCLE-VALUE"
 
-		// Empty list to start.
-		resp := rig.do("GET", "/api/secrets/", nil)
-		Expect(resp.StatusCode).To(Equal(200))
-		body, _ := io.ReadAll(resp.Body)
-		Expect(body).NotTo(ContainSubstring(plaintext))
-		var list []secrets.Metadata
-		Expect(json.Unmarshal(body, &list)).To(Succeed())
-		Expect(list).To(BeEmpty())
+		// List: every allowlist slot present, all unset.
+		lresp, err := rig.client.List(ctx, &secretsv1.ListRequest{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(lresp.GetSecrets()).To(HaveLen(len(secrets.AllowedNames)))
+		for _, s := range lresp.GetSecrets() {
+			Expect(s.GetSet()).To(BeFalse())
+		}
 
-		// PUT (create) → 201.
-		resp = rig.do("PUT", "/api/secrets/anthropic_api_key", fiber.Map{"value": plaintext})
-		Expect(resp.StatusCode).To(Equal(201))
-		body, _ = io.ReadAll(resp.Body)
-		Expect(body).NotTo(ContainSubstring(plaintext))
-		var meta secrets.Metadata
-		Expect(json.Unmarshal(body, &meta)).To(Succeed())
-		Expect(meta.Name).To(Equal("anthropic_api_key"))
-		Expect(meta.Decryptable).To(BeTrue())
-		firstUpdate := meta.UpdatedAt
+		// Set (create) → created=true, decryptable, metadata only.
+		sresp, err := rig.client.Set(ctx, &secretsv1.SetRequest{Name: secrets.NameAnthropicAPIKey, Value: plaintext})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(sresp.GetCreated()).To(BeTrue())
+		Expect(sresp.GetSecret().GetName()).To(Equal(secrets.NameAnthropicAPIKey))
+		Expect(sresp.GetSecret().GetSet()).To(BeTrue())
+		Expect(sresp.GetSecret().GetDecryptable()).To(BeTrue())
+		firstUpdate := sresp.GetSecret().GetUpdatedAt().AsTime()
 
-		// GET single → 200 with metadata, no plaintext.
-		resp = rig.do("GET", "/api/secrets/anthropic_api_key", nil)
-		Expect(resp.StatusCode).To(Equal(200))
-		body, _ = io.ReadAll(resp.Body)
-		Expect(body).NotTo(ContainSubstring(plaintext))
+		// The wire responses carry no plaintext.
+		Expect(mustMarshal(lresp)).NotTo(ContainSubstring(plaintext))
+		Expect(mustMarshal(sresp)).NotTo(ContainSubstring(plaintext))
 
-		// PUT renew → 200, updated_at advances.
+		// List now shows it set.
+		lresp, err = rig.client.List(ctx, &secretsv1.ListRequest{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(setNames(lresp)).To(ContainElement(secrets.NameAnthropicAPIKey))
+
+		// Rotate → created=false, updated_at advances.
 		time.Sleep(10 * time.Millisecond) // ensure clock tick
-		resp = rig.do("PUT", "/api/secrets/anthropic_api_key", fiber.Map{"value": plaintext + "-RENEWED"})
-		Expect(resp.StatusCode).To(Equal(200))
-		body, _ = io.ReadAll(resp.Body)
-		var renewed secrets.Metadata
-		Expect(json.Unmarshal(body, &renewed)).To(Succeed())
-		Expect(renewed.UpdatedAt.After(firstUpdate)).To(BeTrue(),
-			"updated_at should advance: was %s, now %s", firstUpdate, renewed.UpdatedAt)
+		sresp2, err := rig.client.Set(ctx, &secretsv1.SetRequest{Name: secrets.NameAnthropicAPIKey, Value: plaintext + "-RENEWED"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(sresp2.GetCreated()).To(BeFalse())
+		Expect(sresp2.GetSecret().GetUpdatedAt().AsTime().After(firstUpdate)).To(BeTrue(),
+			"updated_at should advance: was %s, now %s", firstUpdate, sresp2.GetSecret().GetUpdatedAt().AsTime())
 
-		// Ensure the stored value is the rotated one.
+		// Store holds the rotated plaintext (decrypts correctly).
 		current, err := rig.store.Get(tenantCtx(), secrets.NameAnthropicAPIKey)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(current).To(Equal(plaintext + "-RENEWED"))
 
-		// DELETE → 204.
-		resp = rig.do("DELETE", "/api/secrets/anthropic_api_key", nil)
-		Expect(resp.StatusCode).To(Equal(204))
+		// Delete → ok; store no longer has it.
+		_, err = rig.client.Delete(ctx, &secretsv1.DeleteRequest{Name: secrets.NameAnthropicAPIKey})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = rig.store.Get(tenantCtx(), secrets.NameAnthropicAPIKey)
+		Expect(err).To(MatchError(secrets.ErrNotFound))
 
-		// GET → 404.
-		resp = rig.do("GET", "/api/secrets/anthropic_api_key", nil)
-		Expect(resp.StatusCode).To(Equal(404))
+		// Delete again → NotFound.
+		_, err = rig.client.Delete(ctx, &secretsv1.DeleteRequest{Name: secrets.NameAnthropicAPIKey})
+		Expect(status.Code(err)).To(Equal(codes.NotFound))
 	})
 
-	It("rejects unknown names with 400 and never echoes the value", func() {
-		rig := newSecretsRig()
+	It("rejects unknown names with InvalidArgument and never echoes the value", func() {
+		rig := newSecretsGRPCRig()
 		const sentinel = "SENTINEL_VALUE_SHOULD_NEVER_LEAK"
-
-		resp := rig.do("PUT", "/api/secrets/openai_api_key", fiber.Map{"value": sentinel})
-		Expect(resp.StatusCode).To(Equal(400))
-		body, _ := io.ReadAll(resp.Body)
-		Expect(string(body)).NotTo(ContainSubstring(sentinel))
+		_, err := rig.client.Set(context.Background(), &secretsv1.SetRequest{Name: "openai_api_key", Value: sentinel})
+		Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+		Expect(err.Error()).NotTo(ContainSubstring(sentinel))
 	})
 
-	It("rejects invalid values with 400 and never echoes the value", func() {
-		rig := newSecretsRig()
+	It("rejects invalid values with InvalidArgument and never echoes the value", func() {
+		rig := newSecretsGRPCRig()
+		ctx := context.Background()
 		const sentinel = "SENTINEL_NEWLINE_ATTEMPT"
 
-		resp := rig.do("PUT", "/api/secrets/anthropic_api_key", fiber.Map{"value": sentinel + "\n"})
-		Expect(resp.StatusCode).To(Equal(400))
-		body, _ := io.ReadAll(resp.Body)
-		Expect(string(body)).NotTo(ContainSubstring(sentinel))
+		_, err := rig.client.Set(ctx, &secretsv1.SetRequest{Name: secrets.NameAnthropicAPIKey, Value: sentinel + "\n"})
+		Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+		Expect(err.Error()).NotTo(ContainSubstring(sentinel))
 
-		resp = rig.do("PUT", "/api/secrets/anthropic_api_key", fiber.Map{"value": ""})
-		Expect(resp.StatusCode).To(Equal(400))
+		_, err = rig.client.Set(ctx, &secretsv1.SetRequest{Name: secrets.NameAnthropicAPIKey, Value: ""})
+		Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
 
-		resp = rig.do("PUT", "/api/secrets/anthropic_api_key", fiber.Map{"value": strings.Repeat("a", secrets.MaxValueLen+1)})
-		Expect(resp.StatusCode).To(Equal(400))
+		_, err = rig.client.Set(ctx, &secretsv1.SetRequest{Name: secrets.NameAnthropicAPIKey, Value: strings.Repeat("a", secrets.MaxValueLen+1)})
+		Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
 	})
 
-	It("requires authentication", func() {
-		rig := newSecretsRig()
-		// No cookie attached → 401.
-		req := httptest.NewRequest("GET", "/api/secrets/", nil)
-		resp, err := rig.app.Test(req)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(resp.StatusCode).To(Equal(401))
+	It("requires a valid bearer token", func() {
+		rig := newSecretsGRPCRig()
+
+		// Same server, but a client that sends no token.
+		noauth := dialSecrets(rig.addr, "")
+		_, err := noauth.List(context.Background(), &secretsv1.ListRequest{})
+		Expect(status.Code(err)).To(Equal(codes.Unauthenticated))
+
+		wrong := dialSecrets(rig.addr, "not-the-token")
+		_, err = wrong.List(context.Background(), &secretsv1.ListRequest{})
+		Expect(status.Code(err)).To(Equal(codes.Unauthenticated))
 	})
 })
 
@@ -195,13 +205,7 @@ var _ = Describe("Secrets env-var migration on boot", func() {
 	It("migrates env values into the DB on first boot and DB wins thereafter", func() {
 		ctx := tenantCtx()
 		db := mustOpenIntegrationDB()
-
-		kek := make([]byte, envelope.KeySize)
-		_, err := rand.Read(kek)
-		Expect(err).NotTo(HaveOccurred())
-		cipher, err := envelope.NewCipher(kek)
-		Expect(err).NotTo(HaveOccurred())
-		store := secrets.NewStore(repository.NewSecretRepository(db), cipher)
+		store := newSecretsStore(db)
 
 		// First boot: env vars set, DB empty → migrated.
 		result, err := secrets.MigrateFromEnv(ctx, store, []secrets.EnvSource{
@@ -237,10 +241,7 @@ var _ = Describe("Secrets env-var migration on boot", func() {
 	It("leaves the app in a degraded state when neither DB nor env has a key", func() {
 		ctx := tenantCtx()
 		db := mustOpenIntegrationDB()
-		kek := make([]byte, envelope.KeySize)
-		_, _ = rand.Read(kek)
-		cipher, _ := envelope.NewCipher(kek)
-		store := secrets.NewStore(repository.NewSecretRepository(db), cipher)
+		store := newSecretsStore(db)
 
 		result, err := secrets.MigrateFromEnv(ctx, store, []secrets.EnvSource{
 			{Name: secrets.NameAnthropicAPIKey, EnvValue: ""},
@@ -256,44 +257,43 @@ var _ = Describe("Secrets env-var migration on boot", func() {
 })
 
 var _ = Describe("Secrets hot-reload subscriber", func() {
-	It("notifies subscribers after PUT and DELETE", func() {
-		rig := newSecretsRig()
+	It("notifies subscribers after Set and Delete", func() {
+		rig := newSecretsGRPCRig()
+		ctx := context.Background()
 		var fires int
 		rig.store.Subscribe(secrets.NameZernioAPIKey, func() { fires++ })
 
-		resp := rig.do("PUT", "/api/secrets/zernio_api_key", fiber.Map{"value": "key-1"})
-		Expect(resp.StatusCode).To(Equal(201))
+		_, err := rig.client.Set(ctx, &secretsv1.SetRequest{Name: secrets.NameZernioAPIKey, Value: "key-1"})
+		Expect(err).NotTo(HaveOccurred())
 		Expect(fires).To(Equal(1))
 
-		resp = rig.do("PUT", "/api/secrets/zernio_api_key", fiber.Map{"value": "key-2"})
-		Expect(resp.StatusCode).To(Equal(200))
+		_, err = rig.client.Set(ctx, &secretsv1.SetRequest{Name: secrets.NameZernioAPIKey, Value: "key-2"})
+		Expect(err).NotTo(HaveOccurred())
 		Expect(fires).To(Equal(2))
 
-		resp = rig.do("DELETE", "/api/secrets/zernio_api_key", nil)
-		Expect(resp.StatusCode).To(Equal(204))
+		_, err = rig.client.Delete(ctx, &secretsv1.DeleteRequest{Name: secrets.NameZernioAPIKey})
+		Expect(err).NotTo(HaveOccurred())
 		Expect(fires).To(Equal(3))
 	})
 
-	// Read-after-write semantics: a Zernio-style resolver wired to the
-	// store sees the rotated value on its very next call, no restart.
-	It("resolves the new value through a per-call resolver after PUT", func() {
-		rig := newSecretsRig()
-		ctx := tenantCtx()
-		resolver := func(ctx context.Context) (string, error) {
-			return rig.store.Get(ctx, secrets.NameZernioAPIKey)
+	// Read-after-write: a Zernio-style resolver wired to the store sees the
+	// rotated value on its very next call, no restart.
+	It("resolves the new value through a per-call resolver after Set", func() {
+		rig := newSecretsGRPCRig()
+		ctx := context.Background()
+		resolver := func(c context.Context) (string, error) {
+			return rig.store.Get(c, secrets.NameZernioAPIKey)
 		}
 
-		// PUT key v1.
-		resp := rig.do("PUT", "/api/secrets/zernio_api_key", fiber.Map{"value": "v1"})
-		Expect(resp.StatusCode).To(Equal(201))
-		got, err := resolver(ctx)
+		_, err := rig.client.Set(ctx, &secretsv1.SetRequest{Name: secrets.NameZernioAPIKey, Value: "v1"})
+		Expect(err).NotTo(HaveOccurred())
+		got, err := resolver(tenantCtx())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got).To(Equal("v1"))
 
-		// Rotate to v2.
-		resp = rig.do("PUT", "/api/secrets/zernio_api_key", fiber.Map{"value": "v2"})
-		Expect(resp.StatusCode).To(Equal(200))
-		got, err = resolver(ctx)
+		_, err = rig.client.Set(ctx, &secretsv1.SetRequest{Name: secrets.NameZernioAPIKey, Value: "v2"})
+		Expect(err).NotTo(HaveOccurred())
+		got, err = resolver(tenantCtx())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got).To(Equal("v2"))
 	})
@@ -301,30 +301,38 @@ var _ = Describe("Secrets hot-reload subscriber", func() {
 
 var _ = Describe("Health endpoint reports secret resolvability", func() {
 	It("reports presence + decryptable per allowlisted name", func() {
-		rig := newSecretsRig()
+		db := mustOpenIntegrationDB()
+		store := newSecretsStore(db)
+
+		app := fiber.New()
+		handlers.NewHealthHandler(db, store).Register(app)
+
+		get := func() map[string]map[string]bool {
+			req := httptest.NewRequest("GET", "/api/health", nil)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(200))
+			body, _ := io.ReadAll(resp.Body)
+			var health struct {
+				Status  string                     `json:"status"`
+				Secrets map[string]map[string]bool `json:"secrets"`
+			}
+			Expect(json.Unmarshal(body, &health)).To(Succeed())
+			Expect(health.Status).To(Equal("ok"))
+			return health.Secrets
+		}
 
 		// Boot: no secrets present.
-		resp := rig.do("GET", "/api/health", nil)
-		Expect(resp.StatusCode).To(Equal(200))
-		body, _ := io.ReadAll(resp.Body)
-		var health struct {
-			Status  string                     `json:"status"`
-			Secrets map[string]map[string]bool `json:"secrets"`
-		}
-		Expect(json.Unmarshal(body, &health)).To(Succeed())
-		Expect(health.Status).To(Equal("ok"))
-		Expect(health.Secrets["anthropic_api_key"]["present"]).To(BeFalse())
-		Expect(health.Secrets["zernio_api_key"]["present"]).To(BeFalse())
+		s := get()
+		Expect(s["anthropic_api_key"]["present"]).To(BeFalse())
+		Expect(s["zernio_api_key"]["present"]).To(BeFalse())
 
-		// Add an Anthropic key.
-		resp = rig.do("PUT", "/api/secrets/anthropic_api_key", fiber.Map{"value": "k"})
-		Expect(resp.StatusCode).To(Equal(201))
+		// Set a key straight through the store (the gRPC service just wraps this).
+		_, _, err := store.Set(tenantCtx(), secrets.NameAnthropicAPIKey, "k")
+		Expect(err).NotTo(HaveOccurred())
 
-		resp = rig.do("GET", "/api/health", nil)
-		body, _ = io.ReadAll(resp.Body)
-		Expect(json.Unmarshal(body, &health)).To(Succeed())
-		Expect(health.Status).To(Equal("ok"))
-		Expect(health.Secrets["anthropic_api_key"]["present"]).To(BeTrue())
-		Expect(health.Secrets["anthropic_api_key"]["decryptable"]).To(BeTrue())
+		s = get()
+		Expect(s["anthropic_api_key"]["present"]).To(BeTrue())
+		Expect(s["anthropic_api_key"]["decryptable"]).To(BeTrue())
 	})
 })

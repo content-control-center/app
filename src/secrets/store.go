@@ -54,12 +54,12 @@ var AllowedNames = []string{
 const MaxValueLen = 4096
 
 // ErrUnknownName is returned by Set / Get / Delete when name is not in
-// AllowedNames. Surfaced as a 400 by the REST handler.
+// AllowedNames. Mapped to gRPC InvalidArgument by the secrets service.
 var ErrUnknownName = errors.New("secrets: unknown name")
 
 // ErrNotFound is returned by Get / Delete when no row exists for the
-// requested name. Distinct from "name disallowed" so the REST handler
-// can map them to 400 vs 404.
+// requested name. Distinct from "name disallowed" so the secrets service
+// can map them to InvalidArgument vs NotFound.
 var ErrNotFound = errors.New("secrets: not found")
 
 // ErrInvalidValue is returned by Set when the plaintext fails one of
@@ -68,8 +68,8 @@ var ErrNotFound = errors.New("secrets: not found")
 var ErrInvalidValue = errors.New("secrets: invalid value")
 
 // Metadata is the non-sensitive view of a stored secret. Returned
-// unchanged from List / Set so the REST surface and internal callers
-// share a single shape.
+// unchanged from List / Set so the gRPC secrets service and internal
+// callers share a single shape.
 type Metadata struct {
 	Name        string    `json:"name"`
 	CreatedAt   time.Time `json:"created_at"`

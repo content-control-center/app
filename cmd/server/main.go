@@ -14,6 +14,7 @@ import (
 	"context"
 	"log"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"time"
@@ -23,6 +24,7 @@ import (
 	_ "github.com/ogen-app/ogen/docs"
 	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/database"
+	"github.com/ogen-app/ogen/src/grpcserver"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/secrets"
@@ -111,8 +113,8 @@ func main() {
 		{Name: secrets.NameAnthropicAPIKey, EnvValue: cfg.AnthropicAPIKey},
 		{Name: secrets.NameZernioAPIKey, EnvValue: cfg.ZernioAPIKey},
 		// GEMINI_API_KEY is read straight from the env (it is not a typed Config
-		// field) — first-boot seed only; thereafter set/rotated via the secrets
-		// API (CON-104).
+		// field) — first-boot seed only; thereafter set/rotated via the gRPC
+		// secrets service (CON-104).
 		{Name: secrets.NameGeminiAPIKey, EnvValue: os.Getenv("GEMINI_API_KEY")},
 		// CON-154 email subsystem: first-boot seed of the Resend send key +
 		// webhook signing secret (empty is fine — sending/webhook degrade off).
@@ -134,6 +136,27 @@ func main() {
 	app, err := server.New(context.Background(), db, analyticsDB, cfg, store)
 	if err != nil {
 		fatal("init server", err)
+	}
+
+	// Internal operator gRPC surface (secrets management for Harbor). Started
+	// only when both an address and an auth token are configured — an empty
+	// token keeps it off rather than running unauthenticated. It shares the
+	// process lifetime with the HTTP server below; a listen/serve failure is
+	// logged but non-fatal so the primary HTTP surface still comes up.
+	if cfg.GRPCAddr != "" && cfg.GRPCAuthToken != "" {
+		if lis, err := net.Listen("tcp", cfg.GRPCAddr); err != nil {
+			slog.Error("grpc listen failed; internal grpc disabled (non-fatal)", logging.AttrComponent, "boot", logging.AttrError, err)
+		} else if gs, err := grpcserver.New(cfg.GRPCAuthToken, store); err != nil {
+			slog.Error("grpc init failed; internal grpc disabled (non-fatal)", logging.AttrComponent, "boot", logging.AttrError, err)
+			_ = lis.Close()
+		} else {
+			slog.Info("internal grpc listening", logging.AttrComponent, "boot", "addr", cfg.GRPCAddr)
+			go func() {
+				if err := gs.Serve(lis); err != nil {
+					slog.Error("internal grpc exited", logging.AttrComponent, "boot", logging.AttrError, err)
+				}
+			}()
+		}
 	}
 
 	slog.Info("server listening", logging.AttrComponent, "boot", "addr", cfg.Addr)

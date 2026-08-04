@@ -15,6 +15,13 @@ services:
             - ./ogen-keys:/var/lib/ogen/keys
         ports:
             - "9001:9001"
+            # Internal operator gRPC surface (secrets management for Harbor).
+            # Published on the HOST LOOPBACK ONLY so it is never reachable from
+            # the LAN — a host-run Harbor reaches it at localhost:9091. Gated by
+            # GRPC_AUTH_TOKEN (server only starts when the token is set). NEVER
+            # publish this on a non-loopback interface in prod; reach it over the
+            # private network / a NetworkPolicy instead.
+            - "127.0.0.1:9091:9091"
         depends_on:
             postgres:
                 condition: service_healthy
