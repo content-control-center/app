@@ -40,7 +40,12 @@ const authMetadataKey = "authorization"
 // backed by store. An empty token is rejected — the caller must decide NOT to
 // start the server at all rather than run it unauthenticated.
 func New(token string, store secrets.Store) (*grpc.Server, error) {
-	if strings.TrimSpace(token) == "" {
+	// Env-configured secrets frequently arrive with a trailing newline (a very
+	// common Railway / docker-compose paste mistake). Trim it here so the
+	// byte-for-byte token compare in the interceptor doesn't silently reject an
+	// otherwise-correct token.
+	token = strings.TrimSpace(token)
+	if token == "" {
 		return nil, errors.New("grpcserver: auth token is required")
 	}
 	srv := grpc.NewServer(
@@ -64,9 +69,16 @@ func tokenAuthInterceptor(token string) grpc.UnaryServerInterceptor {
 		if len(vals) == 0 {
 			return nil, status.Error(codes.Unauthenticated, "missing authorization")
 		}
-		// ConstantTimeCompare returns 0 on any length mismatch, so this is safe
-		// against both value and length side channels.
-		if subtle.ConstantTimeCompare([]byte(vals[0]), want) != 1 {
+		// Trim surrounding whitespace before comparing: per HTTP semantics header
+		// OWS (spaces/tabs) is insignificant, so a client token padded with a
+		// trailing space still authenticates. (A raw newline can't traverse an
+		// HTTP/2 header at all — the client transport rejects it before send — so
+		// the env-newline paste footgun is caught server-side in New, not here.)
+		// The trim only strips non-secret padding, so the constant-time compare
+		// stays the sole gate on the token value; ConstantTimeCompare returns 0 on
+		// any length mismatch, safe against both value and length side channels.
+		got := strings.TrimSpace(vals[0])
+		if subtle.ConstantTimeCompare([]byte(got), want) != 1 {
 			return nil, status.Error(codes.Unauthenticated, "invalid token")
 		}
 		return handler(ctx, req)

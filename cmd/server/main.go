@@ -151,6 +151,15 @@ func main() {
 			_ = lis.Close()
 		} else {
 			slog.Info("internal grpc listening", logging.AttrComponent, "boot", "addr", cfg.GRPCAddr)
+			// A loopback bind is only reachable from within this container, so a
+			// separate service (e.g. Harbor over Railway's private network) can
+			// never connect. Warn rather than fail: a host-run binary legitimately
+			// wants loopback (the default), but a containerised deploy almost never
+			// does — surfacing it in the boot logs makes the misconfig obvious.
+			if grpcAddrIsLoopback(cfg.GRPCAddr) {
+				slog.Warn("internal grpc bound to loopback; unreachable from other containers/hosts — set GRPC_ADDR=:9091 to reach it over a private network (e.g. Railway)",
+					logging.AttrComponent, "boot", "addr", cfg.GRPCAddr)
+			}
 			go func() {
 				if err := gs.Serve(lis); err != nil {
 					slog.Error("internal grpc exited", logging.AttrComponent, "boot", logging.AttrError, err)
@@ -163,6 +172,22 @@ func main() {
 	if err := app.Listen(cfg.Addr); err != nil {
 		fatal("server exited", err)
 	}
+}
+
+// grpcAddrIsLoopback reports whether addr binds only a loopback interface, i.e.
+// it is unreachable from any other container or host. A wildcard bind (empty
+// host, as in ":9091") is NOT loopback. Unparseable / hostname addresses return
+// false so we never emit a spurious warning.
+func grpcAddrIsLoopback(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil || host == "" {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // fatal logs an unrecoverable boot error at ERROR level and exits non-zero.
