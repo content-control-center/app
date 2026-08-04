@@ -17,6 +17,7 @@ import (
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // defaultHeartbeatInterval keeps idle SSE connections alive past
@@ -131,6 +132,18 @@ func (h *EventsHandler) Stream(c *fiber.Ctx) error {
 	sessionRepo := h.sessionRepo
 	heartbeat := h.heartbeatInterval
 
+	// The stream writer runs on a fasthttp goroutine after this handler
+	// returns, at which point c.Context() (the *fasthttp.RequestCtx) has been
+	// reset and returned to the pool — reading it then is a use-after-free
+	// that nil-panics inside the slog ContextHandler, on a goroutine the Fiber
+	// recover middleware can't see, taking the whole process down (CON-158).
+	// Detach a logging context now so writer-side logs still correlate with
+	// request_id / tenant_id / user_id without touching the recycled ctx.
+	reqID, _ := logging.RequestIDFrom(c.Context())
+	logCtx := logging.WithRequestID(context.Background(), reqID)
+	logCtx = logging.WithUserID(logCtx, session.UserID)
+	logCtx = tenantctx.With(logCtx, session.TenantID)
+
 	c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
 		defer unsubscribe()
 
@@ -151,7 +164,7 @@ func (h *EventsHandler) Stream(c *fiber.Ctx) error {
 					return
 				}
 				if err := writeSSEEvent(w, ev); err != nil {
-					slog.ErrorContext(c.Context(), "sse write failed", logging.AttrComponent, "events", "user", sessionID, logging.AttrError, err)
+					slog.ErrorContext(logCtx, "sse write failed", logging.AttrComponent, "events", logging.AttrError, err)
 					return
 				}
 			case <-ticker.C:
@@ -162,7 +175,7 @@ func (h *EventsHandler) Stream(c *fiber.Ctx) error {
 				// (logout, expiry, deletion) we drop the stream now rather
 				// than keep delivering events to an unauthenticated client.
 				if !sessionStillValid(sessionRepo, sessionID) {
-					slog.InfoContext(c.Context(), "session no longer valid; closing stream", logging.AttrComponent, "events", "user", sessionID)
+					slog.InfoContext(logCtx, "session no longer valid; closing stream", logging.AttrComponent, "events")
 					return
 				}
 			}
