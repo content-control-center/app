@@ -6,6 +6,7 @@ import (
 	"embed"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
@@ -24,6 +25,11 @@ var analyticsMigrations embed.FS
 const (
 	defaultAnalyticsMaxOpenConns = 10
 	defaultAnalyticsMaxIdleConns = 2
+
+	// Recycle backends on the same cadence as the main pool so per-connection
+	// server-side caches can't accumulate over long-lived analytics connections.
+	defaultAnalyticsConnMaxLifetime = 30 * time.Minute
+	defaultAnalyticsConnMaxIdleTime = 5 * time.Minute
 )
 
 // NewAnalytics opens the isolated analytics database (TimescaleDB in prod, a
@@ -39,6 +45,8 @@ func NewAnalytics(dsn string, debug bool) (*bun.DB, error) {
 
 	sqldb.SetMaxOpenConns(defaultAnalyticsMaxOpenConns)
 	sqldb.SetMaxIdleConns(defaultAnalyticsMaxIdleConns)
+	sqldb.SetConnMaxLifetime(defaultAnalyticsConnMaxLifetime)
+	sqldb.SetConnMaxIdleTime(defaultAnalyticsConnMaxIdleTime)
 
 	db := bun.NewDB(sqldb, pgdialect.New())
 
