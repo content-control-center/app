@@ -35,6 +35,10 @@ type SendEmailTask struct {
 	TemplateKey    string           `json:"template_key"`
 	EmailKind      models.EmailKind `json:"email_kind"`
 	IdempotencyKey string           `json:"idempotency_key"`
+	// Vars carries per-message template variables that aren't derivable from the
+	// user/tenant/config at send time — e.g. the one-time password-reset URL
+	// (CON-161). Empty for templates that render purely from the resolved Data.
+	Vars map[string]string `json:"vars,omitempty"`
 }
 
 // Kind implements river.JobArgs.
@@ -167,6 +171,9 @@ func (p *SendEmailProcessor) Process(ctx context.Context, t SendEmailTask) error
 		WorkspaceName:  workspace,
 		AppURL:         dep.AppBaseURL,
 		UnsubscribeURL: unsubURL,
+		// Per-message vars (CON-161): the password_reset template reads ResetURL;
+		// other templates leave it empty.
+		ResetURL: t.Vars["reset_url"],
 	})
 	if err != nil {
 		p.writeLog(ctx, logBase, models.EmailLogFailed, "", "render: "+err.Error())

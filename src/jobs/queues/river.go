@@ -255,6 +255,29 @@ func (e *Enqueuer) EnqueueWelcomeEmailTx(ctx context.Context, tx *sql.Tx, userID
 	return err
 }
 
+// EnqueuePasswordResetTx enqueues the transactional password-reset email inside
+// the token-minting transaction, so the mail exists iff the token row does
+// (CON-161). resetURL is the one-time link; it rides the job args as a template
+// var because the worker cannot rebuild it — only the token's hash is stored.
+// The enqueue is a local DB insert (the Resend call happens later in the
+// worker), so the request never blocks on Resend reachability. tokenID keys the
+// idempotency so each distinct request queues its own mail. A nil enqueuer
+// (email queue unwired) is a no-op.
+func (e *Enqueuer) EnqueuePasswordResetTx(ctx context.Context, tx *sql.Tx, userID, tenantID, tokenID, resetURL string) error {
+	if e == nil || e.Client == nil {
+		return nil
+	}
+	_, err := e.Client.InsertTx(ctx, tx, SendEmailTask{
+		UserID:         userID,
+		TenantID:       tenantID,
+		TemplateKey:    templates.KeyPasswordReset,
+		EmailKind:      models.EmailKindTransactional,
+		IdempotencyKey: "password_reset:" + tokenID,
+		Vars:           map[string]string{"reset_url": resetURL},
+	}, insertOptsWithRequestID(ctx, nil))
+	return err
+}
+
 // EnqueueDripTx enqueues the marketing onboarding drip (day 2/5/7) as delayed
 // jobs inside the signup transaction (CON-154 FR5). Each step fires at its
 // ScheduledAt; unsubscribes are honoured at send time, so no scheduled job ever

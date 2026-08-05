@@ -371,6 +371,15 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	tenantsHandler.SetEmailEnqueuer(enqueuer)
 	tenantsHandler.Register(app)
 
+	// CON-161: public password-reset request + confirm (both unauthenticated —
+	// the emailed token is the capability). The request endpoint enqueues the
+	// reset email in its token-minting tx, so registration waits until the River
+	// enqueuer exists.
+	passwordResetHandler := handlers.NewPasswordResetHandler(db, userRepo, cfg.AppBaseURL)
+	passwordResetHandler.SetActivityRecorder(activityWiring.recorder)
+	passwordResetHandler.SetEmailEnqueuer(enqueuer)
+	passwordResetHandler.Register(app)
+
 	// CON-154: public unsubscribe (token-gated) + Resend delivery webhook
 	// (signature-gated). Registered unconditionally; both degrade safely when
 	// the relevant secret is unset.
