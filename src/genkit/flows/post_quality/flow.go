@@ -65,6 +65,10 @@ type PostQualityRepos struct {
 	Platforms   repository.PlatformRepository
 	Evaluations repository.PostEvaluationRepository
 	PostLogs    repository.PostLogRepository
+	// Versions resolves the latest committed content snapshot to assess
+	// (CON-184). Nil disables version resolution — the flow then scores the
+	// live posts.content, preserving the pre-CON-184 behaviour.
+	Versions repository.PostVersionRepository
 }
 
 // postQualityFlow is the registered flow; nil until InitPostQuality runs.
@@ -144,6 +148,14 @@ func runPostQuality(
 		}
 		return nil, fmt.Errorf("load post: %w", err)
 	}
+
+	// Assess the latest committed version rather than the live editor HEAD
+	// (CON-184). Runs before validateInput so the body precondition is
+	// checked against the content that is actually scored.
+	if err := resolveAssessedContent(ctx, repos, post); err != nil {
+		return nil, err
+	}
+
 	if err := validateInput(post); err != nil {
 		return nil, err
 	}
@@ -215,6 +227,34 @@ func runPostQuality(
 	}
 	emit(onEvent, SSEEventComplete, resp)
 	return resp, nil
+}
+
+// resolveAssessedContent overrides post.Content with the latest committed
+// version's content when one exists (CON-184).
+//
+// posts.content is the live working copy: the editor autosaves keystrokes
+// into it without snapshotting, so it is treated as uncommitted
+// work-in-progress. A post's saved versions are the states the author
+// deliberately checkpointed, and the newest one is what the quality score
+// should reflect. Only Content is touched — platform, type, media, and
+// campaign context all come from the live post.
+//
+// It is a no-op when version resolution is disabled (repos.Versions == nil,
+// preserving pre-CON-184 behaviour) or when the post has no saved version yet
+// (never opened in the assistant, never manually snapshotted), so a fresh
+// post is still assessable against its posts.content.
+func resolveAssessedContent(ctx context.Context, repos PostQualityRepos, post *models.Post) error {
+	if repos.Versions == nil {
+		return nil
+	}
+	latest, err := repos.Versions.GetLatestByPostID(ctx, post.ID)
+	if err != nil {
+		return fmt.Errorf("load latest version: %w", err)
+	}
+	if latest != nil {
+		post.Content = latest.Content
+	}
+	return nil
 }
 
 // inputHash fingerprints everything that determines an assessment's stored
