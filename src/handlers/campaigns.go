@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -658,8 +659,12 @@ func (h *CampaignsHandler) Assistant(c *fiber.Ctx) error {
 		activity.WithSource(activity.SourceAssistant),
 	)
 
-	campaignID := c.Params("id")
-	instruction := req.Instruction
+	// Copy the buffer-backed request values: the StreamWriter runs after this
+	// handler returns, by which point fasthttp may have recycled the request
+	// buffer into a concurrent request and corrupted them. See the post
+	// assistant handler for the failure this prevents.
+	campaignID := strings.Clone(c.Params("id"))
+	instruction := strings.Clone(req.Instruction)
 	assistant := h.assistant
 	session := c.Locals("session").(*models.Session)
 	// Carry the tenant into the detached flow context (the StreamWriter runs
@@ -852,7 +857,9 @@ func (h *CampaignsHandler) GeneratePosts(c *fiber.Ctx) error {
 	flowCtx := tenantctx.With(context.Background(), session.TenantID)
 	generatePosts := h.generatePosts
 	req := content_plan.GeneratePostsRequest{
-		CampaignID:  c.Params("id"),
+		// Copied: the StreamWriter below outlives the request buffer this id
+		// points into (see the post assistant handler).
+		CampaignID:  strings.Clone(c.Params("id")),
 		PlatformIDs: body.PlatformIDs,
 		PhaseID:     body.PhaseID,
 		Count:       body.Count,
@@ -937,7 +944,8 @@ func (h *CampaignsHandler) BriefReview(c *fiber.Ctx) error {
 	)
 
 	checkBrief := h.checkBrief
-	campaignID := c.Params("id")
+	// Copied: the StreamWriter outlives the request buffer (see post assistant).
+	campaignID := strings.Clone(c.Params("id"))
 
 	c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
 		writeEvent := func(event string, data any) {
@@ -1015,7 +1023,8 @@ func (h *CampaignsHandler) PostsReview(c *fiber.Ctx) error {
 	)
 
 	checkPosts := h.checkPosts
-	req := consistency.PostsCheckRequest{CampaignID: c.Params("id"), Max: body.Max}
+	// Copied: the StreamWriter outlives the request buffer (see post assistant).
+	req := consistency.PostsCheckRequest{CampaignID: strings.Clone(c.Params("id")), Max: body.Max}
 
 	c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
 		writeEvent := func(event string, data any) {
