@@ -10,13 +10,15 @@ import (
 )
 
 // Template keys. Each maps to a typed data struct + a defaults/<key>.{html,txt}.tmpl
-// pair embedded below. password_reset / verify_email are reserved for the
-// follow-up consumer issues (CON-154 §13) and are intentionally not seeded here.
+// pair embedded below. verify_email is reserved for its follow-up consumer issue
+// (CON-154 §13) and is intentionally not seeded here; password_reset is seeded
+// by its consumer (CON-161).
 const (
-	KeyWelcome  = "welcome"
-	KeyDripDay2 = "drip_day2"
-	KeyDripDay5 = "drip_day5"
-	KeyDripDay7 = "drip_day7"
+	KeyWelcome       = "welcome"
+	KeyPasswordReset = "password_reset"
+	KeyDripDay2      = "drip_day2"
+	KeyDripDay5      = "drip_day5"
+	KeyDripDay7      = "drip_day7"
 )
 
 // Data is the context passed to every default template. Transactional
@@ -28,6 +30,9 @@ type Data struct {
 	WorkspaceName  string
 	AppURL         string
 	UnsubscribeURL string
+	// ResetURL is the one-time password-reset link (CON-161). Set only for the
+	// password_reset template; empty and ignored for every other.
+	ResetURL string
 }
 
 //go:embed defaults/*.tmpl
@@ -41,6 +46,7 @@ const (
 	varWorkspaceName  = "The recipient's workspace (tenant) name."
 	varAppURL         = "Absolute app URL (APP_BASE_URL) for the primary call-to-action link."
 	varUnsubscribeURL = "Signed one-click unsubscribe URL; required in every marketing footer."
+	varResetURL       = "The one-time password-reset link; single-use, expires in an hour."
 )
 
 // transactionalVars / marketingVars build the per-template variable doc sets.
@@ -59,6 +65,14 @@ func marketingVars() models.StringMap {
 	return m
 }
 
+// passwordResetVars documents the password_reset template's placeholders: the
+// standard transactional set plus the one-time ResetURL (CON-161).
+func passwordResetVars() models.StringMap {
+	m := transactionalVars()
+	m["ResetURL"] = varResetURL
+	return m
+}
+
 // defaultSpec pairs a key with its kind + subject line + variable docs; the
 // bodies are read from the embedded defaults/<key>.{html,txt}.tmpl files.
 type defaultSpec struct {
@@ -70,6 +84,7 @@ type defaultSpec struct {
 
 var defaultSpecs = []defaultSpec{
 	{KeyWelcome, models.EmailKindTransactional, "Welcome to Ogen, [[ .Name ]]", transactionalVars()},
+	{KeyPasswordReset, models.EmailKindTransactional, "Reset your Ogen password", passwordResetVars()},
 	{KeyDripDay2, models.EmailKindMarketing, "Getting the most out of Ogen", marketingVars()},
 	{KeyDripDay5, models.EmailKindMarketing, "Your content, on autopilot", marketingVars()},
 	{KeyDripDay7, models.EmailKindMarketing, "A quick check-in from Ogen", marketingVars()},
