@@ -481,6 +481,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 			Platforms:   platformRepo,
 			Evaluations: postEvaluationRepo,
 			PostLogs:    postLogRepo,
+			Versions:    postVersionRepo,
 		},
 		enrichBriefRepos: enrich_brief.EnrichBriefRepos{
 			Campaigns:     campaignRepo,
