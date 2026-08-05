@@ -44,7 +44,7 @@ func TestLoadTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderSystem: %v", err)
 	}
-	for _, marker := range []string{"CORRECTNESS", "CLARITY", "ENGAGEMENT", "DELIVERY", "Reason before scoring", "span"} {
+	for _, marker := range []string{"CORRECTNESS", "CLARITY", "ENGAGEMENT", "DELIVERY", "Reason before scoring", "span", "second person"} {
 		if !strings.Contains(sys, marker) {
 			t.Errorf("system prompt missing %q", marker)
 		}
