@@ -185,7 +185,7 @@ var _ = Describe("PasswordResetHandler", Ordered, func() {
 		})
 
 		It("returns 429 with Retry-After once the per-address budget is spent", func() {
-			seedTenantUser(db, "Reset Me", "reset@example.com", "old-password-123")
+			u := seedTenantUser(db, "Reset Me", "reset@example.com", "old-password-123")
 
 			for i := 0; i < 5; i++ {
 				Expect(doRequest("reset@example.com").StatusCode).To(Equal(fiber.StatusAccepted))
@@ -193,6 +193,13 @@ var _ = Describe("PasswordResetHandler", Ordered, func() {
 			resp := doRequest("reset@example.com")
 			Expect(resp.StatusCode).To(Equal(fiber.StatusTooManyRequests))
 			Expect(resp.Header.Get("Retry-After")).NotTo(BeEmpty())
+
+			// Each of the 5 accepted requests mints off the response path. Wait for
+			// all five to commit before the spec exits, so the detached goroutines
+			// aren't still inserting when AfterEach deletes the user (which would log
+			// spurious FK violations). The rate-limited 6th never reaches dispatch,
+			// so exactly five are expected.
+			Eventually(func() int { return countTokens(u.ID) }).Should(Equal(5))
 		})
 
 		DescribeTable("returns 400 on an invalid payload",
