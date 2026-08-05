@@ -86,8 +86,8 @@ type assessmentOutput struct {
 // name at least one concrete weakness even on strong posts, to counter
 // sycophantic score inflation.
 type dimensionOutput struct {
-	Rationale   string             `json:"rationale" jsonschema:"description=Your concrete reasoning for THIS dimension against the anchored bands, written BEFORE the score. 2-4 specific sentences; never leave it empty. Required for every dimension - correctness, clarity, engagement, and delivery."`
-	Weakness    string             `json:"weakness" jsonschema:"description=At least one concrete, specific weakness for this dimension. Required even when the post is strong - never leave this empty."`
+	Rationale   string             `json:"rationale" jsonschema:"description=Your reasoning for THIS dimension against the anchored bands, written BEFORE the score. Address the author directly in fluent, complete sentences (2-4 of them) that connect into a short argument - an articulate editor's note, not clipped rubric shorthand. Concrete and grounded in the actual post; never empty. Required for every dimension - correctness, clarity, engagement, and delivery."`
+	Weakness    string             `json:"weakness" jsonschema:"description=At least one concrete, specific weakness for this dimension, phrased as a clear sentence addressed to the author. Required even when the post is strong - never leave this empty."`
 	Score       int                `json:"score" jsonschema:"description=Integer from 0 to 10 inclusive, chosen against the anchored bands in the rubric. Do not cluster scores in 7-9."`
 	Suggestions []suggestionOutput `json:"suggestions" jsonschema:"description=Concrete improvement suggestions for this dimension, ordered most-severe first. Guidance only, never a rewrite. Each must quote a span of the post. Emit at most the suggestion cap stated in the prompt."`
 }
@@ -99,8 +99,8 @@ type dimensionOutput struct {
 // against generic advice.
 type suggestionOutput struct {
 	Severity string `json:"severity" jsonschema:"description=Exactly one of: high, medium, low."`
-	Issue    string `json:"issue" jsonschema:"description=One line stating what is wrong."`
-	Fix      string `json:"fix" jsonschema:"description=The concrete action to take. Guidance, not rewritten copy."`
+	Issue    string `json:"issue" jsonschema:"description=A clear, self-contained sentence naming what is wrong with the quoted span."`
+	Fix      string `json:"fix" jsonschema:"description=An articulate directive the author can act on, addressed to them in the second person. Guidance, not rewritten copy."`
 	Span     string `json:"span" jsonschema:"description=The exact text quoted from the post that this suggestion reacts to. Required - never empty."`
 }
 

@@ -163,7 +163,7 @@ func evaluateDimension(
 // user prompt, naming the single dimension to score.
 func dimensionInstruction(label string, suggestionCap int) string {
 	return fmt.Sprintf(
-		"\n\nScore ONLY the %s dimension against its anchored bands. Write the rationale (2-4 specific sentences) before the score, name one concrete weakness, choose a 0-10 score, and give at most %d span-anchored, guidance-only suggestions — all for %s only.",
+		"\n\nScore ONLY the %s dimension against its anchored bands. Write the rationale as articulate feedback addressed to the author (2-4 flowing sentences) before the score, name one concrete weakness, choose a 0-10 score, and give at most %d span-anchored, guidance-only suggestions — all for %s only.",
 		label, suggestionCap, label,
 	)
 }
