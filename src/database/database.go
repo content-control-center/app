@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"time"
 
 	// Registers the "pgx" database/sql driver. bun runs on the resulting
 	// *sql.DB; the same pool (exposed as db.DB) is shared with the River job
@@ -18,6 +19,13 @@ import (
 const (
 	defaultMaxOpenConns = 25
 	defaultMaxIdleConns = 5
+
+	// Recycle backends periodically so each server-side process's private
+	// caches (relcache/catcache/CacheMemoryContext, prepared plans) can't grow
+	// unbounded over a long-lived connection — a common cause of a slowly
+	// climbing Postgres memory line. Idle backends are released sooner still.
+	defaultConnMaxLifetime = 30 * time.Minute
+	defaultConnMaxIdleTime = 5 * time.Minute
 )
 
 // New opens a Postgres connection pool via the pgx stdlib driver and wraps it
@@ -30,6 +38,8 @@ func New(dsn string, debug bool) (*bun.DB, error) {
 
 	sqldb.SetMaxOpenConns(defaultMaxOpenConns)
 	sqldb.SetMaxIdleConns(defaultMaxIdleConns)
+	sqldb.SetConnMaxLifetime(defaultConnMaxLifetime)
+	sqldb.SetConnMaxIdleTime(defaultConnMaxIdleTime)
 
 	db := bun.NewDB(sqldb, pgdialect.New())
 
