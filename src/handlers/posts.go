@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -1228,8 +1229,16 @@ func (h *PostsHandler) Assistant(c *fiber.Ctx) error {
 		activity.WithSource(activity.SourceAssistant),
 	)
 
-	postID := c.Params("id")
-	instruction := req.Instruction
+	// c.Params / BodyParser values alias fasthttp's request buffer, which is
+	// recycled for a later request the moment this handler returns — but the
+	// StreamWriter below runs *after* that return and only persists at the end
+	// of a multi-minute model call. Without copying, a concurrent request can
+	// overwrite the buffer mid-turn, corrupting the post id (observed in the
+	// wild as post_id="ations/zerni") so the final insert trips the post_id FK
+	// and is mis-surfaced as "this post was deleted while the assistant was
+	// working". Clone the retained strings to pin their own backing arrays.
+	postID := strings.Clone(c.Params("id"))
+	instruction := strings.Clone(req.Instruction)
 	assistant := h.assistant
 	// Carry the tenant into the detached flow context (the StreamWriter runs
 	// after this handler returns) so usage recording + enforcement attribute
