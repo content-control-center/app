@@ -1,6 +1,7 @@
 package scheduling
 
 import (
+	"strconv"
 	"testing"
 	"time"
 )
@@ -141,5 +142,64 @@ func TestComposeScheduledAt(t *testing.T) {
 	}
 	if d := j1.Sub(want).Minutes(); d < -30 || d > 30 {
 		t.Errorf("jitter drift %.0f min out of ±30", d)
+	}
+}
+
+func TestComposeScheduledAt_SpreadClampedToDay(t *testing.T) {
+	loc := time.UTC
+	date := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC) // days=nil → all enabled → no snap
+	start, end := date.AddDate(0, 0, -7), date.AddDate(0, 0, 7)
+	ds := date.Format("2006-01-02")
+
+	dayStart := time.Date(2026, 8, 12, 0, 0, 0, 0, loc).UTC()
+	dayEnd := time.Date(2026, 8, 12, 23, 59, 0, 0, loc).UTC()
+
+	// Force one id to a negative offset and one to a positive offset so both
+	// boundary directions are exercised deterministically.
+	var negID, posID string
+	for i := 0; negID == "" || posID == ""; i++ {
+		if i > 10000 {
+			t.Fatal("could not find both signed offsets")
+		}
+		id := "post-" + strconv.Itoa(i)
+		switch off := SpreadOffset(id, MaxSpreadMinutes); {
+		case off < 0 && negID == "":
+			negID = id
+		case off > 0 && posID == "":
+			posID = id
+		}
+	}
+
+	// Negative spread at 00:00 must clamp UP to 00:00, not roll into the prior day.
+	atNeg, effNeg, _ := ComposeScheduledAt(ds, negID, loc, "00:00", nil, MaxSpreadMinutes, &start, &end)
+	if atNeg == nil || !atNeg.Equal(dayStart) {
+		t.Errorf("00:00 with negative spread = %v, want clamped to %v", atNeg, dayStart)
+	}
+	if effNeg != ds {
+		t.Errorf("negative-spread effectiveDate = %q, want %q (must not cross to prior day)", effNeg, ds)
+	}
+
+	// Positive spread at 23:59 must clamp DOWN to 23:59, not roll into the next day.
+	atPos, effPos, _ := ComposeScheduledAt(ds, posID, loc, "23:59", nil, MaxSpreadMinutes, &start, &end)
+	if atPos == nil || !atPos.Equal(dayEnd) {
+		t.Errorf("23:59 with positive spread = %v, want clamped to %v", atPos, dayEnd)
+	}
+	if effPos != ds {
+		t.Errorf("positive-spread effectiveDate = %q, want %q (must not cross to next day)", effPos, ds)
+	}
+
+	// Invariant across many ids at both boundary clocks: the instant never leaves
+	// the day and effectiveDate always agrees.
+	for i := 0; i < 300; i++ {
+		id := "x-" + strconv.Itoa(i)
+		for _, clock := range []string{"00:00", "23:59"} {
+			at, eff, _ := ComposeScheduledAt(ds, id, loc, clock, nil, MaxSpreadMinutes, &start, &end)
+			if at == nil || at.Before(dayStart) || at.After(dayEnd) {
+				t.Fatalf("clock %s id %s → %v, out of [%v, %v]", clock, id, at, dayStart, dayEnd)
+			}
+			if eff != ds {
+				t.Fatalf("clock %s id %s → effectiveDate %q, want %q", clock, id, eff, ds)
+			}
+		}
 	}
 }

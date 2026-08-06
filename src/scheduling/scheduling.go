@@ -178,6 +178,17 @@ func ComposeScheduledAt(publishDate, postID string, loc *time.Location, clock st
 	}
 	y, mo, d := day.Date()
 	local := time.Date(y, mo, d, hh, mm, 0, 0, loc)
-	t := local.Add(time.Duration(SpreadOffset(postID, spread)) * time.Minute).UTC()
+	// Keep the jitter on the selected day. A publishing time near midnight plus a
+	// large spread could otherwise push the instant into an adjacent calendar
+	// date — landing on a day outside PublishingDays or the campaign bounds, and
+	// disagreeing with the effectiveDate we return. Clamp to [00:00, 23:59] of the
+	// day in loc so only the on-day portion of the jitter is retained.
+	adjusted := local.Add(time.Duration(SpreadOffset(postID, spread)) * time.Minute)
+	if dayStart := time.Date(y, mo, d, 0, 0, 0, 0, loc); adjusted.Before(dayStart) {
+		adjusted = dayStart
+	} else if dayEnd := time.Date(y, mo, d, 23, 59, 0, 0, loc); adjusted.After(dayEnd) {
+		adjusted = dayEnd
+	}
+	t := adjusted.UTC()
 	return &t, day.Format("2006-01-02"), !found
 }
