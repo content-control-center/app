@@ -412,9 +412,13 @@ func runPostAssistant(
 				Body:  n.Body,
 			})
 		}
-		if result.Action != "edited" && st.cloneResult == nil && st.restoreResult == nil && st.scheduleResult == nil {
+		// Only claim a notes-only turn when there is no edited content. Guarding
+		// on updatedContent == "" protects a combined edit-and-note turn that was
+		// truncated before the model emitted action: the trailing switch below
+		// then infers "edited" from the non-empty content, and the notes still
+		// attach — we never discard the edit by clearing it here.
+		if result.Action != "edited" && result.UpdatedContent == "" && st.cloneResult == nil && st.restoreResult == nil && st.scheduleResult == nil {
 			result.Action = "noted"
-			result.UpdatedContent = ""
 			result.SaveVersion = false
 		}
 		// Ensure a usable explanation so the "no usable fields" guard below

@@ -2,6 +2,7 @@ package post_assistant
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/ogen-app/ogen/src/models"
@@ -66,5 +67,36 @@ func TestToolCreateNote_Unavailable(t *testing.T) {
 	ctx := withRequestState(context.Background(), st)
 	if _, err := toolCreateNote(ctx, CreateNoteInput{Type: "note", Body: "x"}); err == nil {
 		t.Fatal("expected an error when the note service is unavailable")
+	}
+}
+
+type listNoteRepo struct {
+	repository.PostNoteRepository
+	notes []models.PostNote
+}
+
+func (r *listNoteRepo) ListByPostID(_ context.Context, _ string) ([]models.PostNote, error) {
+	return r.notes, nil
+}
+
+// buildNoteSummaries must bound the aggregate note context (count cap) while
+// keeping the repository order — the pinned draft_thesis stays first and is
+// never the entry dropped when the limit is hit.
+func TestBuildNoteSummaries_LimitAndOrdering(t *testing.T) {
+	list := []models.PostNote{{Type: models.PostNoteTypeDraftThesis, Body: "the pinned thesis"}}
+	for i := 0; i < maxNotesInContext+15; i++ {
+		list = append(list, models.PostNote{Type: models.PostNoteTypeNote, Body: strings.Repeat("x", 10)})
+	}
+	repos := PostAssistantRepos{Notes: &listNoteRepo{notes: list}}
+
+	out, err := buildNoteSummaries(context.Background(), &models.Post{ID: "p1"}, repos)
+	if err != nil {
+		t.Fatalf("buildNoteSummaries: %v", err)
+	}
+	if len(out) != maxNotesInContext {
+		t.Errorf("len(out) = %d, want the count cap %d", len(out), maxNotesInContext)
+	}
+	if out[0].Type != string(models.PostNoteTypeDraftThesis) || out[0].Body != "the pinned thesis" {
+		t.Errorf("draft_thesis must stay first, got %+v", out[0])
 	}
 }

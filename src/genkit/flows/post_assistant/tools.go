@@ -486,6 +486,9 @@ func toolCreateNote(ctx context.Context, in CreateNoteInput) (*CreateNoteOutput,
 		return nil, err
 	}
 	st.noteResults = append(st.noteResults, note)
+	// Notes aren't part of the context-cache fingerprint, so bust the cached
+	// block for this post — the next turn must see the note just created.
+	invalidateContextCache(st.postID)
 
 	emit(st.onEvent, SSEEventNoteCreated, NoteCreatedEventPayload{
 		ID:    note.ID,

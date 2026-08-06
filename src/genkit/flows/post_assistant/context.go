@@ -110,6 +110,16 @@ func assembleContextCached(
 	return actx, nil
 }
 
+// invalidateContextCache drops any cached context block for a post so the next
+// turn re-reads fresh data. Notes are not part of the cache fingerprint (only
+// content/assets/phase are), so a note-only change would otherwise stay unseen
+// for up to the TTL — the createNote tool calls this after persisting a note.
+func invalidateContextCache(postID string) {
+	contextCacheMu.Lock()
+	delete(contextCache, postID)
+	contextCacheMu.Unlock()
+}
+
 func assembleContext(
 	ctx context.Context,
 	post *models.Post,
@@ -208,6 +218,15 @@ type contextTemplateData struct {
 // (≤500 chars); image prompts and side notes are typically short too.
 const noteBodyPreviewChars = 800
 
+// maxNotesInContext and maxNotesContextRunes bound the aggregate note section so
+// a post with many (or many long) notes can't blow the prompt budget. Notes are
+// consumed in repository order (draft_thesis first), so the pinned thesis is
+// never the one dropped.
+const (
+	maxNotesInContext    = 20
+	maxNotesContextRunes = 4000
+)
+
 // noteSummary is a single note surfaced to the model (CON-188). Body is
 // included (notes are short) so the assistant can act on the captured thesis or
 // prompt directly.
@@ -232,12 +251,20 @@ func buildNoteSummaries(ctx context.Context, post *models.Post, repos PostAssist
 		return nil, err
 	}
 	out := make([]noteSummary, 0, len(list))
+	total := 0
 	for _, n := range list {
-		out = append(out, noteSummary{
-			Type:  string(n.Type),
-			Title: n.Title,
-			Body:  truncateRunes(n.Body, noteBodyPreviewChars),
-		})
+		if len(out) >= maxNotesInContext {
+			break
+		}
+		body := truncateRunes(n.Body, noteBodyPreviewChars)
+		bodyRunes := utf8.RuneCountInString(body)
+		// Always include the first note (draft_thesis); after that, stop once the
+		// combined body budget would be exceeded.
+		if len(out) > 0 && total+bodyRunes > maxNotesContextRunes {
+			break
+		}
+		out = append(out, noteSummary{Type: string(n.Type), Title: n.Title, Body: body})
+		total += bodyRunes
 	}
 	return out, nil
 }
