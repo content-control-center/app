@@ -35,7 +35,7 @@ func prewarmToolCache(g *genkit.Genkit, cfg PostAssistantFlowConfig, t *toolSet)
 		ai.WithPrompt("warmup"),
 		ai.WithTools(
 			t.listAssets, t.getAssetChunks, t.searchAssetChunks, t.getCurrentContent,
-			t.clonePost, t.restoreVersion, t.schedulePost,
+			t.clonePost, t.restoreVersion, t.schedulePost, t.createNote,
 		),
 		ai.WithMaxTurns(1),
 		cfg.Provider.CallConfig(1), // max_tokens: 1 — grammar compiles during prep

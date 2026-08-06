@@ -13,6 +13,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/genkit/embedopts"
 	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/notes"
 	"github.com/ogen-app/ogen/src/post_actions/clone"
 	"github.com/ogen-app/ogen/src/post_actions/restore"
 	"github.com/ogen-app/ogen/src/post_actions/schedule"
@@ -61,6 +62,12 @@ type requestState struct {
 	// generation to finalise the response.
 	scheduleSvc    *schedule.Service
 	scheduleResult *schedule.Result
+
+	// Note support (CON-188). noteSvc backs the createNote tool; noteResults
+	// collects every note created this turn, read by the runner after
+	// generation to finalise the response.
+	noteSvc     *notes.Service
+	noteResults []*models.PostNote
 }
 
 func withRequestState(ctx context.Context, s *requestState) context.Context {
@@ -155,6 +162,19 @@ type SchedulePostOutput struct {
 	Promoted    bool   `json:"promoted"`
 }
 
+// CreateNoteInput is the input for the createNote tool (CON-188).
+type CreateNoteInput struct {
+	Type  string `json:"type"            jsonschema:"description=The kind of note. Use image_prompt for an image-generation prompt (e.g. a Nano Banana prompt); use note for any other side note or idea.,enum=image_prompt,enum=note"`
+	Title string `json:"title,omitempty" jsonschema:"description=Optional short title for the note."`
+	Body  string `json:"body"            jsonschema:"description=The note content (the prompt text, idea, or note body)."`
+}
+
+// CreateNoteOutput is returned to the model after a note is created.
+type CreateNoteOutput struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
+}
+
 // ── Tool registration ────────────────────────────────────────────────────────
 
 type toolSet struct {
@@ -165,6 +185,7 @@ type toolSet struct {
 	clonePost         ai.ToolRef
 	restoreVersion    ai.ToolRef
 	schedulePost      ai.ToolRef
+	createNote        ai.ToolRef
 }
 
 func defineTools(g *genkit.Genkit) *toolSet {
@@ -226,6 +247,17 @@ func defineTools(g *genkit.Genkit) *toolSet {
 		},
 	)
 
+	createNote := genkit.DefineTool(g, "createNote",
+		"Saves a standalone note attached to the current post — an image-generation prompt "+
+			"(type image_prompt, e.g. a Nano Banana prompt) or a free-form side note/idea "+
+			"(type note). Use this instead of putting such artifacts in the post body. You can "+
+			"call it alongside an edit to both change the body AND capture a note in the same turn. "+
+			"Returns the new note's id.",
+		func(ctx *ai.ToolContext, in CreateNoteInput) (*CreateNoteOutput, error) {
+			return toolCreateNote(ctx, in)
+		},
+	)
+
 	return &toolSet{
 		listAssets:        list,
 		getAssetChunks:    getChunks,
@@ -234,6 +266,7 @@ func defineTools(g *genkit.Genkit) *toolSet {
 		clonePost:         clonePost,
 		restoreVersion:    restoreVersion,
 		schedulePost:      schedulePost,
+		createNote:        createNote,
 	}
 }
 
@@ -425,6 +458,46 @@ func toolSchedulePost(ctx context.Context, in SchedulePostInput) (*SchedulePostO
 		AutoPublish: res.AutoPublish,
 		Promoted:    res.Promoted,
 	}, nil
+}
+
+func toolCreateNote(ctx context.Context, in CreateNoteInput) (*CreateNoteOutput, error) {
+	st := getRequestState(ctx)
+	if st.noteSvc == nil {
+		return nil, fmt.Errorf("notes are not available")
+	}
+
+	// draft_thesis is reserved for the content-plan flow; the assistant may
+	// only create image_prompt or note. Anything else (incl. empty) defaults
+	// to a free-form note.
+	nt := models.PostNoteType(in.Type)
+	if nt != models.PostNoteTypeImagePrompt && nt != models.PostNoteTypeNote {
+		nt = models.PostNoteTypeNote
+	}
+
+	note, err := st.noteSvc.Create(ctx, notes.CreateInput{
+		PostID:    st.postID,
+		Type:      nt,
+		Title:     in.Title,
+		Body:      in.Body,
+		Origin:    models.PostNoteOriginAssistant,
+		CreatedBy: st.actor,
+	})
+	if err != nil {
+		return nil, err
+	}
+	st.noteResults = append(st.noteResults, note)
+	// Notes aren't part of the context-cache fingerprint, so bust the cached
+	// block for this post — the next turn must see the note just created.
+	invalidateContextCache(st.postID)
+
+	emit(st.onEvent, SSEEventNoteCreated, NoteCreatedEventPayload{
+		ID:    note.ID,
+		Type:  string(note.Type),
+		Title: note.Title,
+		Body:  note.Body,
+	})
+
+	return &CreateNoteOutput{ID: note.ID, Type: string(note.Type)}, nil
 }
 
 // parseScheduledAt accepts the ISO-8601 instant the model resolved. It

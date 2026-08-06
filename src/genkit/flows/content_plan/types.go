@@ -26,7 +26,7 @@ type GeneratePostsRequest struct {
 // the shape persisted as a Post record with status=draft.
 type DraftPost struct {
 	Title       string   `json:"title"                   jsonschema:"description=Short descriptive title for the post"`
-	Body        string   `json:"body"                    jsonschema:"description=Complete post copy adapted to the platform"`
+	Body        string   `json:"body"                    jsonschema:"description=A concise bullet-point thesis: 5-7 short key-point lines to expand later, NOT finished copy (max 500 chars). Stored as a draft_thesis note, not the post body."`
 	ContentType string   `json:"contentType"             jsonschema:"description=Content format slug e.g. text-post article carousel thread video reel"`
 	PlatformID  string   `json:"platformId"              jsonschema:"description=Exact platform ID string from the campaign e.g. linkedin x-twitter instagram"`
 	PublishDate string   `json:"publishDate"             jsonschema:"description=ISO 8601 date YYYY-MM-DD within the campaign date range"`

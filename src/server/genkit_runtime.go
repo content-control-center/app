@@ -21,6 +21,7 @@ import (
 	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_quality"
 	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/notes"
 	"github.com/ogen-app/ogen/src/post_actions/clone"
 	"github.com/ogen-app/ogen/src/post_actions/restore"
 	"github.com/ogen-app/ogen/src/post_actions/schedule"
@@ -72,6 +73,7 @@ type genkitRuntime struct {
 	cloneSvc            *clone.Service
 	restoreSvc          *restore.Service
 	scheduleSvc         *schedule.Service
+	noteSvc             *notes.Service
 	recorder            *usage.Recorder
 	checker             *usage.Checker
 }
@@ -91,6 +93,7 @@ type genkitDeps struct {
 	cloneSvc            *clone.Service
 	restoreSvc          *restore.Service
 	scheduleSvc         *schedule.Service
+	noteSvc             *notes.Service
 	recorder            *usage.Recorder
 	checker             *usage.Checker
 }
@@ -115,6 +118,7 @@ func newGenkitRuntime(ctx context.Context, deps genkitDeps, store secrets.Store)
 		cloneSvc:            deps.cloneSvc,
 		restoreSvc:          deps.restoreSvc,
 		scheduleSvc:         deps.scheduleSvc,
+		noteSvc:             deps.noteSvc,
 		recorder:            deps.recorder,
 		checker:             deps.checker,
 	}
@@ -295,7 +299,7 @@ func (r *genkitRuntime) rebuild(ctx context.Context, store secrets.Store) error 
 	if err != nil {
 		return fmt.Errorf("init content plan: %w", err)
 	}
-	postAssistantFn, err := initPostAssistant(g, r.cfg, provider, r.recorder, r.checker, r.embedder, r.hub, r.postAssistRepos, r.cloneSvc, r.restoreSvc, r.scheduleSvc)
+	postAssistantFn, err := initPostAssistant(g, r.cfg, provider, r.recorder, r.checker, r.embedder, r.hub, r.postAssistRepos, r.cloneSvc, r.restoreSvc, r.scheduleSvc, r.noteSvc)
 	if err != nil {
 		return fmt.Errorf("init post assistant: %w", err)
 	}

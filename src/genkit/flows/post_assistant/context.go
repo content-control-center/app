@@ -53,8 +53,15 @@ type contextCacheEntry struct {
 }
 
 var (
-	contextCache   = map[string]*contextCacheEntry{}
-	contextCacheMu sync.Mutex
+	contextCache = map[string]*contextCacheEntry{}
+	// contextCacheGen tracks a per-post generation number, bumped by every
+	// invalidateContextCache call. assembleContextCached captures it before the
+	// (unlocked) assemble and only writes the result back if it is still
+	// unchanged — otherwise an invalidation that raced an in-flight assembly
+	// would be silently undone by the stale result repopulating the cache.
+	// Kept in its own map so the generation survives deletion of the entry.
+	contextCacheGen = map[string]uint64{}
+	contextCacheMu  sync.Mutex
 )
 
 // postFingerprint returns a stable string that changes whenever any
@@ -92,6 +99,7 @@ func assembleContextCached(
 		}
 		delete(contextCache, post.ID)
 	}
+	gen := contextCacheGen[post.ID]
 	contextCacheMu.Unlock()
 
 	actx, err := assembleContext(ctx, post, repos, systemTmpl, contextTmpl)
@@ -99,15 +107,35 @@ func assembleContextCached(
 		return nil, err
 	}
 
+	// Only cache the result if no invalidation raced this assembly. If the
+	// generation moved, the underlying data changed (e.g. a note was added)
+	// after we read it, so actx is already stale — drop it rather than
+	// repopulate the cache with data an invalidation just cleared.
 	contextCacheMu.Lock()
-	contextCache[post.ID] = &contextCacheEntry{
-		ctx:         actx,
-		fingerprint: fp,
-		expiresAt:   time.Now().Add(contextCacheTTL),
+	if contextCacheGen[post.ID] == gen {
+		contextCache[post.ID] = &contextCacheEntry{
+			ctx:         actx,
+			fingerprint: fp,
+			expiresAt:   time.Now().Add(contextCacheTTL),
+		}
 	}
 	contextCacheMu.Unlock()
 
 	return actx, nil
+}
+
+// invalidateContextCache drops any cached context block for a post so the next
+// turn re-reads fresh data. Notes are not part of the cache fingerprint (only
+// content/assets/phase are), so a note-only change would otherwise stay unseen
+// for up to the TTL — the createNote tool calls this after persisting a note.
+func invalidateContextCache(postID string) {
+	contextCacheMu.Lock()
+	// Bump the generation so any assembly already in flight (which captured the
+	// old generation before this invalidation) refuses to write its now-stale
+	// result back into the cache.
+	contextCacheGen[postID]++
+	delete(contextCache, postID)
+	contextCacheMu.Unlock()
 }
 
 func assembleContext(
@@ -141,6 +169,11 @@ func assembleContext(
 		return nil, err
 	}
 
+	noteSummaries, err := buildNoteSummaries(ctx, post, repos)
+	if err != nil {
+		return nil, err
+	}
+
 	// Available platforms power the clonePost tool's platform resolution.
 	// Best-effort: a load failure (or no platforms repo) just omits the
 	// section — the tool still validates server-side.
@@ -164,6 +197,7 @@ func assembleContext(
 		Assets:              summaries,
 		Platforms:           platforms,
 		Versions:            versions,
+		Notes:               noteSummaries,
 	}
 
 	systemPrompt, err := renderTemplate(systemTmpl, data)
@@ -194,6 +228,63 @@ type contextTemplateData struct {
 	Assets              []assetSummary
 	Platforms           []platformOption
 	Versions            []versionSummary
+	Notes               []noteSummary
+}
+
+// noteBodyPreviewChars bounds a single note's body in the context block so a
+// long note can't blow the prompt budget. Draft theses are already short
+// (≤500 chars); image prompts and side notes are typically short too.
+const noteBodyPreviewChars = 800
+
+// maxNotesInContext and maxNotesContextRunes bound the aggregate note section so
+// a post with many (or many long) notes can't blow the prompt budget. Notes are
+// consumed in repository order (draft_thesis first), so the pinned thesis is
+// never the one dropped.
+const (
+	maxNotesInContext    = 20
+	maxNotesContextRunes = 4000
+)
+
+// noteSummary is a single note surfaced to the model (CON-188). Body is
+// included (notes are short) so the assistant can act on the captured thesis or
+// prompt directly.
+type noteSummary struct {
+	Type  string
+	Title string
+	Body  string
+}
+
+// buildNoteSummaries lists the post's notes for the context block, draft
+// theses first then oldest-first (the repo's ordering). Best-effort: a load
+// error is propagated; no notes simply omits the section. Rendered into the
+// cached context block — the same 5-minute TTL staleness window as the version
+// history applies (a note added mid-session may not appear until the cache
+// entry expires or the post content changes).
+func buildNoteSummaries(ctx context.Context, post *models.Post, repos PostAssistantRepos) ([]noteSummary, error) {
+	if repos.Notes == nil {
+		return nil, nil
+	}
+	list, err := repos.Notes.ListByPostID(ctx, post.ID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]noteSummary, 0, len(list))
+	total := 0
+	for _, n := range list {
+		if len(out) >= maxNotesInContext {
+			break
+		}
+		body := truncateRunes(n.Body, noteBodyPreviewChars)
+		bodyRunes := utf8.RuneCountInString(body)
+		// Always include the first note (draft_thesis); after that, stop once the
+		// combined body budget would be exceeded.
+		if len(out) > 0 && total+bodyRunes > maxNotesContextRunes {
+			break
+		}
+		out = append(out, noteSummary{Type: string(n.Type), Title: n.Title, Body: body})
+		total += bodyRunes
+	}
+	return out, nil
 }
 
 // versionSummary is a single entry in the post's version history,

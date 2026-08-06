@@ -188,7 +188,7 @@ func generatePosts(
 	// records an empty list.
 	grounded := idSet(assetIDsOf(assets))
 	persistFn := func(ctx context.Context, dp DraftPost) (string, error) {
-		return persistOne(ctx, dp, campaign, repos.Posts, groundedRefs(dp.AssetRefs, grounded))
+		return persistOne(ctx, dp, campaign, repos.Posts, repos.Notes, groundedRefs(dp.AssetRefs, grounded))
 	}
 
 	// Fill the parallel budget (CON-112 perf): a plan that fits in one batch is
@@ -543,7 +543,11 @@ func withinCount(persisted, expectedCount int) bool {
 // CreateBatch — a client disconnect mid-stream now leaves whatever was
 // already persisted in the database, and a hard *AIError from one batch
 // no longer rolls back the surviving batches' rows.
-func persistOne(ctx context.Context, dp DraftPost, campaign *models.Campaign, postRepo repository.PostRepository, usedAssetIDs []string) (string, error) {
+//
+// CON-188: the model's bullet-point thesis (dp.Body) is no longer written into
+// the post body. The post is created with an empty body and the thesis is
+// stored as a draft_thesis note, so the assistant can later expand it into copy.
+func persistOne(ctx context.Context, dp DraftPost, campaign *models.Campaign, postRepo repository.PostRepository, noteRepo repository.PostNoteRepository, usedAssetIDs []string) (string, error) {
 	id, err := models.NewID()
 	if err != nil {
 		return "", err
@@ -565,7 +569,7 @@ func persistOne(ctx context.Context, dp DraftPost, campaign *models.Campaign, po
 		PlatformID:          dp.PlatformID,
 		PlatformPostType:    dp.ContentType,
 		Title:               dp.Title,
-		Content:             dp.Body,
+		Content:             "",
 		MediaURLs:           models.StringSlice{},
 		Status:              models.PostStatusDraft,
 		CTAType:             models.CTATypeNone,
@@ -579,7 +583,40 @@ func persistOne(ctx context.Context, dp DraftPost, campaign *models.Campaign, po
 	if err := postRepo.Create(ctx, row); err != nil {
 		return "", err
 	}
+
+	// Capture the thesis as a draft_thesis note (CON-188). Best-effort: a
+	// note-write failure must not discard the already-persisted post (CON-66),
+	// so it is logged and swallowed rather than returned. An empty thesis
+	// creates no note.
+	if noteRepo != nil {
+		if body := strings.TrimSpace(dp.Body); body != "" {
+			if err := createDraftThesisNote(ctx, noteRepo, id, campaign.CreatedBy, body); err != nil {
+				slog.ErrorContext(ctx, "draft thesis note create failed", logging.AttrComponent, "genkit.content_plan", "post_id", id, logging.AttrError, err)
+			}
+		}
+	}
 	return id, nil
+}
+
+// createDraftThesisNote persists the content-plan thesis as a draft_thesis note
+// (origin content_plan, authored by the campaign owner).
+func createDraftThesisNote(ctx context.Context, noteRepo repository.PostNoteRepository, postID, createdBy, body string) error {
+	noteID, err := models.NewID()
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	return noteRepo.Create(ctx, &models.PostNote{
+		ID:        noteID,
+		PostID:    postID,
+		Type:      models.PostNoteTypeDraftThesis,
+		Title:     "Draft thesis",
+		Body:      body,
+		Origin:    models.PostNoteOriginContentPlan,
+		CreatedBy: createdBy,
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
 }
 
 // tailOf returns up to n bytes from the end of s, suitable for log output.
