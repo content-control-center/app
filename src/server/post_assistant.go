@@ -10,6 +10,7 @@ import (
 	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
+	"github.com/ogen-app/ogen/src/notes"
 	"github.com/ogen-app/ogen/src/post_actions/clone"
 	"github.com/ogen-app/ogen/src/post_actions/restore"
 	"github.com/ogen-app/ogen/src/post_actions/schedule"
@@ -31,6 +32,7 @@ func initPostAssistant(
 	cloneSvc *clone.Service,
 	restoreSvc *restore.Service,
 	scheduleSvc *schedule.Service,
+	noteSvc *notes.Service,
 ) (func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error), error) {
 	flowCfg := post_assistant.PostAssistantFlowConfig{
 		Provider:        provider,
@@ -43,6 +45,7 @@ func initPostAssistant(
 		CloneService:    cloneSvc,
 		RestoreService:  restoreSvc,
 		ScheduleService: scheduleSvc,
+		NoteService:     noteSvc,
 		// CON-112: pre-warm the strict-tool grammar cache at boot when we're also
 		// stabilizing tool order (otherwise the warmed key wouldn't match).
 		PrewarmTools: cfg.AnthropicStableToolOrder,

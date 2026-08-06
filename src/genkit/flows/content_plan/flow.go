@@ -76,6 +76,10 @@ type ContentPlanRepos struct {
 	Chunks    repository.AssetChunksRepository
 	Platforms repository.PlatformRepository
 	Posts     repository.PostRepository
+	// Notes captures each generated post's bullet-point thesis as a
+	// draft_thesis note instead of the post body (CON-188). nil skips note
+	// creation (the post is still created with an empty body).
+	Notes repository.PostNoteRepository
 }
 
 // InitContentPlan registers the generateContentPlan Genkit flow. It must be

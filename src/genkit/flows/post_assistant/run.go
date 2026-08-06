@@ -163,6 +163,7 @@ func runPostAssistant(
 		cloneSvc:    cfg.CloneService,
 		restoreSvc:  cfg.RestoreService,
 		scheduleSvc: cfg.ScheduleService,
+		noteSvc:     cfg.NoteService,
 		actor:       post.CreatedBy,
 		platforms:   platforms,
 		onEvent:     onEvent,
@@ -273,7 +274,7 @@ func runPostAssistant(
 		ai.WithSystem(systemBlock),
 		ai.WithMessages(history...),
 		ai.WithPrompt(prompt),
-		ai.WithTools(tools.listAssets, tools.getAssetChunks, tools.searchAssetChunks, tools.getCurrentContent, tools.clonePost, tools.restoreVersion, tools.schedulePost),
+		ai.WithTools(tools.listAssets, tools.getAssetChunks, tools.searchAssetChunks, tools.getCurrentContent, tools.clonePost, tools.restoreVersion, tools.schedulePost, tools.createNote),
 		ai.WithMaxTurns(maxTurns),
 		ai.WithStreaming(streamCb),
 		cfg.Provider.CallConfig(maxTokens),
@@ -395,6 +396,38 @@ func runPostAssistant(
 		}
 	}
 
+	// ── Note handling (CON-188) ──────────────────────────────────────────────
+	// The createNote tool persisted its notes at call time (origin=assistant).
+	// Notes are additive: a turn may create notes on their own or alongside an
+	// edit, so this never clears an edit's updatedContent. When notes are the
+	// only effect — no content edit and no other authoritative tool action —
+	// the action is "noted".
+	if len(st.noteResults) > 0 {
+		result.NotesCreated = make([]NotePayload, 0, len(st.noteResults))
+		for _, n := range st.noteResults {
+			result.NotesCreated = append(result.NotesCreated, NotePayload{
+				ID:    n.ID,
+				Type:  string(n.Type),
+				Title: n.Title,
+				Body:  n.Body,
+			})
+		}
+		if result.Action != "edited" && st.cloneResult == nil && st.restoreResult == nil && st.scheduleResult == nil {
+			result.Action = "noted"
+			result.UpdatedContent = ""
+			result.SaveVersion = false
+		}
+		// Ensure a usable explanation so the "no usable fields" guard below
+		// doesn't misfire on a notes-only turn where the model left it empty.
+		if result.Explanation == "" {
+			if len(st.noteResults) == 1 {
+				result.Explanation = "Saved a note."
+			} else {
+				result.Explanation = fmt.Sprintf("Saved %d notes.", len(st.noteResults))
+			}
+		}
+	}
+
 	// Pure-prose recovery: occasionally the model ignores the JSON
 	// envelope entirely and answers in plain prose (often when the user
 	// asks an informational question). Salvage the raw text as the
@@ -473,11 +506,13 @@ func runPostAssistant(
 		Explanation string `json:"explanation"`
 		SaveVersion bool   `json:"saveVersion"`
 		VersionNote string `json:"versionNote,omitempty"`
+		NoteCount   int    `json:"noteCount,omitempty"`
 	}{
 		Action:      result.Action,
 		Explanation: result.Explanation,
 		SaveVersion: result.SaveVersion,
 		VersionNote: result.VersionNote,
+		NoteCount:   len(result.NotesCreated),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal model history: %w", err)

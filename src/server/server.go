@@ -31,6 +31,7 @@ import (
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/jobs/queues"
 	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/notes"
 	"github.com/ogen-app/ogen/src/pdfclient"
 	"github.com/ogen-app/ogen/src/post_actions/clone"
 	"github.com/ogen-app/ogen/src/post_actions/restore"
@@ -106,6 +107,8 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// replaces the per-card GET /:id/posts N+1 (CON-127).
 	campaignSummariesSvc := summaries.New(postRepo)
 	postAttachmentRepo := repository.NewPostAttachmentRepository(db)
+	// CON-188: per-post notes (draft theses, image prompts, side notes).
+	postNoteRepo := repository.NewPostNoteRepository(db)
 	postLogRepo := repository.NewPostLogRepository(db)
 	postEvaluationRepo := repository.NewPostEvaluationRepository(db)
 	// CON-125 Track B: post analytics snapshots live in the isolated analytics
@@ -458,6 +461,9 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		id, _, err := zernioRT.Settings.Get(ctx, pubzernio.SettingProfileID)
 		return id, err
 	})
+	// CON-188: one note service, shared by the REST CRUD and the assistant's
+	// createNote tool, so validation + origin stamping never drift.
+	noteSvc := notes.New(postNoteRepo)
 
 	gkRuntime, err := newGenkitRuntime(ctx, genkitDeps{
 		cfg:      cfg,
@@ -469,6 +475,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 			Chunks:    chunksRepo,
 			Platforms: platformRepo,
 			Posts:     postRepo,
+			Notes:     postNoteRepo,
 		},
 		postAssistRepos: post_assistant.PostAssistantRepos{
 			Posts:       postRepo,
@@ -481,6 +488,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 			Settings:    settingRepo,
 			Allowlist:   autoPublishAllowlistRepo,
 			Attachments: postAttachmentRepo,
+			Notes:       postNoteRepo,
 		},
 		postQualityRepos: post_quality.PostQualityRepos{
 			Posts:       postRepo,
@@ -507,6 +515,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		cloneSvc:            cloneSvc,
 		restoreSvc:          restoreSvc,
 		scheduleSvc:         scheduleSvc,
+		noteSvc:             noteSvc,
 		recorder:            usageWiring.recorder,
 		checker:             usageWiring.checker,
 	}, secretStore)
@@ -599,6 +608,11 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		attachmentProber = videoClient
 	}
 	handlers.NewPostAttachmentsHandler(postAttachmentRepo, postRepo, store, attachmentRenderer, attachmentProber, auth).Register(app)
+
+	// CON-188: per-post notes CRUD, nested under a post.
+	postNotesHandler := handlers.NewPostNotesHandler(noteSvc, postRepo, auth)
+	postNotesHandler.SetActivityRecorder(activityWiring.recorder)
+	postNotesHandler.Register(app)
 
 	// The React SPA is deployed separately (CON-98) — the API serves only
 	// /api/* (plus SSE). Non-API routes fall through to a 404.

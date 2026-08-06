@@ -1,0 +1,91 @@
+@baseUrl = http://localhost:9001
+
+# Per-post Notes CRUD (CON-188). A note is a small standalone record attached to
+# a post: a draft thesis, an image prompt, or a free-form note.
+#
+# All endpoints require authentication.
+# Run "Login" from sessions/sessions.http first — the HTTP client stores and
+# sends the cookie automatically on subsequent requests to the same host.
+#
+# Prerequisites:
+#   - A post ID stored in {{postId}} (run posts/posts.http → createPost)
+#
+# Notes are returned draft_thesis-first, then oldest-first by created_at.
+# `type`   — draft_thesis | image_prompt | note (validated in Go; the set grows)
+# `origin` — manual (REST) | assistant | content_plan (server-stamped, read-only)
+
+### List a post's notes  [protected]
+GET {{baseUrl}}/api/posts/{{postId}}/notes
+Accept: application/json
+
+### Create note — free-form note  [protected]
+# @name createNote
+POST {{baseUrl}}/api/posts/{{postId}}/notes
+Content-Type: application/json
+
+{
+  "type": "note",
+  "title": "Fact-check",
+  "body": "Verify the Q3 revenue figure before publishing."
+}
+
+> {% client.global.set("noteId", response.body.id) %}
+
+### Create note — image prompt (no title)  [protected]
+POST {{baseUrl}}/api/posts/{{postId}}/notes
+Content-Type: application/json
+
+{
+  "type": "image_prompt",
+  "body": "A photorealistic ripe banana on a neon-lit desk, shallow depth of field."
+}
+
+### Create note — missing body (expects 400)  [protected]
+POST {{baseUrl}}/api/posts/{{postId}}/notes
+Content-Type: application/json
+
+{
+  "type": "note",
+  "title": "Empty"
+}
+
+### Create note — invalid type (expects 400)  [protected]
+POST {{baseUrl}}/api/posts/{{postId}}/notes
+Content-Type: application/json
+
+{
+  "type": "nonsense",
+  "body": "This should be rejected."
+}
+
+### Get note by ID  [protected]
+GET {{baseUrl}}/api/posts/{{postId}}/notes/{{noteId}}
+Accept: application/json
+
+### Update note — edit the body  [protected]
+PATCH {{baseUrl}}/api/posts/{{postId}}/notes/{{noteId}}
+Content-Type: application/json
+
+{
+  "body": "Verify the Q3 AND Q4 revenue figures before publishing."
+}
+
+### Update note — reclassify as an image prompt  [protected]
+PATCH {{baseUrl}}/api/posts/{{postId}}/notes/{{noteId}}
+Content-Type: application/json
+
+{
+  "type": "image_prompt"
+}
+
+### Update note — empty patch (expects 400)  [protected]
+PATCH {{baseUrl}}/api/posts/{{postId}}/notes/{{noteId}}
+Content-Type: application/json
+
+{}
+
+### Delete note  [protected]
+DELETE {{baseUrl}}/api/posts/{{postId}}/notes/{{noteId}}
+
+### Delete note — non-existent ID (expects 404)  [protected]
+DELETE {{baseUrl}}/api/posts/{{postId}}/notes/nonexistent

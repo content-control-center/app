@@ -141,6 +141,11 @@ func assembleContext(
 		return nil, err
 	}
 
+	noteSummaries, err := buildNoteSummaries(ctx, post, repos)
+	if err != nil {
+		return nil, err
+	}
+
 	// Available platforms power the clonePost tool's platform resolution.
 	// Best-effort: a load failure (or no platforms repo) just omits the
 	// section — the tool still validates server-side.
@@ -164,6 +169,7 @@ func assembleContext(
 		Assets:              summaries,
 		Platforms:           platforms,
 		Versions:            versions,
+		Notes:               noteSummaries,
 	}
 
 	systemPrompt, err := renderTemplate(systemTmpl, data)
@@ -194,6 +200,46 @@ type contextTemplateData struct {
 	Assets              []assetSummary
 	Platforms           []platformOption
 	Versions            []versionSummary
+	Notes               []noteSummary
+}
+
+// noteBodyPreviewChars bounds a single note's body in the context block so a
+// long note can't blow the prompt budget. Draft theses are already short
+// (≤500 chars); image prompts and side notes are typically short too.
+const noteBodyPreviewChars = 800
+
+// noteSummary is a single note surfaced to the model (CON-188). Body is
+// included (notes are short) so the assistant can act on the captured thesis or
+// prompt directly.
+type noteSummary struct {
+	Type  string
+	Title string
+	Body  string
+}
+
+// buildNoteSummaries lists the post's notes for the context block, draft
+// theses first then oldest-first (the repo's ordering). Best-effort: a load
+// error is propagated; no notes simply omits the section. Rendered into the
+// cached context block — the same 5-minute TTL staleness window as the version
+// history applies (a note added mid-session may not appear until the cache
+// entry expires or the post content changes).
+func buildNoteSummaries(ctx context.Context, post *models.Post, repos PostAssistantRepos) ([]noteSummary, error) {
+	if repos.Notes == nil {
+		return nil, nil
+	}
+	list, err := repos.Notes.ListByPostID(ctx, post.ID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]noteSummary, 0, len(list))
+	for _, n := range list {
+		out = append(out, noteSummary{
+			Type:  string(n.Type),
+			Title: n.Title,
+			Body:  truncateRunes(n.Body, noteBodyPreviewChars),
+		})
+	}
+	return out, nil
 }
 
 // versionSummary is a single entry in the post's version history,

@@ -4,6 +4,7 @@ import (
 	"github.com/firebase/genkit/go/ai"
 
 	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/notes"
 	"github.com/ogen-app/ogen/src/post_actions/clone"
 	"github.com/ogen-app/ogen/src/post_actions/restore"
 	"github.com/ogen-app/ogen/src/post_actions/schedule"
@@ -25,7 +26,7 @@ type PostAssistantRequest struct {
 type PostAssistantResponse struct {
 	Explanation    string `json:"explanation"                  jsonschema:"description=Human-readable explanation of what was changed or why the request was declined"`
 	UpdatedContent string `json:"updatedContent"               jsonschema:"description=The full updated post content as Markdown; empty when action is declined"`
-	Action         string `json:"action"                       jsonschema:"description=edited when content was changed; declined when the request is out of scope or you are asking the user to confirm; cloned when a clone was created; restored when the post was rolled back to an earlier version; scheduled when the post was scheduled for publishing,enum=edited,enum=declined,enum=cloned,enum=restored,enum=scheduled"`
+	Action         string `json:"action"                       jsonschema:"description=edited when content was changed; declined when the request is out of scope or you are asking the user to confirm; cloned when a clone was created; restored when the post was rolled back to an earlier version; scheduled when the post was scheduled for publishing; noted when one or more notes were created without changing the post body,enum=edited,enum=declined,enum=cloned,enum=restored,enum=scheduled,enum=noted"`
 	SaveVersion    bool   `json:"saveVersion"                  jsonschema:"description=True when a new version snapshot should be created"`
 	VersionNote    string `json:"versionNote,omitempty"        jsonschema:"description=Short note describing the version; only present when saveVersion is true"`
 	// CloneResult is populated by the server (not the model) when the
@@ -40,6 +41,18 @@ type PostAssistantResponse struct {
 	// schedulePost tool ran this turn. Action is then "scheduled" and
 	// UpdatedContent is empty — scheduling doesn't change content.
 	ScheduleResult *ScheduleResultPayload `json:"scheduleResult,omitempty" jsonschema:"-"`
+	// NotesCreated is populated by the server (not the model) with the notes
+	// the createNote tool persisted this turn (CON-188). Notes are additive:
+	// they may accompany an "edited" turn or stand alone as a "noted" turn.
+	NotesCreated []NotePayload `json:"notesCreated,omitempty" jsonschema:"-"`
+}
+
+// NotePayload describes a note created by the createNote tool this turn.
+type NotePayload struct {
+	ID    string `json:"id"`
+	Type  string `json:"type"`
+	Title string `json:"title,omitempty"`
+	Body  string `json:"body"`
 }
 
 // CloneResultPayload describes the post created by the clonePost tool.
@@ -88,6 +101,10 @@ type PostAssistantRepos struct {
 	// so it can pre-empt a promote-time validation failure. nil → the
 	// readiness summary omits attachment-based rules.
 	Attachments repository.PostAttachmentRepository
+	// Notes surfaces the post's existing notes (draft theses, image prompts,
+	// side notes) to the model as context (CON-188). nil omits the notes
+	// section. Writes go through the shared NoteService, not this repo.
+	Notes repository.PostNoteRepository
 }
 
 // PostAssistantFlowConfig holds settings for the post assistant flow.
@@ -131,6 +148,9 @@ type PostAssistantFlowConfig struct {
 	// ScheduleService backs the schedulePost tool (CON-78). nil disables
 	// the tool — the assistant then has no scheduling capability.
 	ScheduleService *schedule.Service
+	// NoteService backs the createNote tool (CON-188). nil disables the
+	// tool — the assistant then cannot capture notes.
+	NoteService *notes.Service
 }
 
 // ValidationError is returned when preconditions are not met (HTTP 400).
@@ -168,9 +188,19 @@ const (
 	SSEEventRestoreComplete  SSEEventKind = "restore_complete"
 	SSEEventScheduleStarted  SSEEventKind = "schedule_started"
 	SSEEventScheduleComplete SSEEventKind = "schedule_complete"
+	SSEEventNoteCreated      SSEEventKind = "note_created"
 	SSEEventComplete         SSEEventKind = "complete"
 	SSEEventError            SSEEventKind = "error"
 )
+
+// NoteCreatedEventPayload is emitted each time the createNote tool persists a
+// note during a turn (CON-188), so the UI can surface it live.
+type NoteCreatedEventPayload struct {
+	ID    string `json:"id"`
+	Type  string `json:"type"`
+	Title string `json:"title,omitempty"`
+	Body  string `json:"body"`
+}
 
 // CloneStartedEventPayload is emitted when the clonePost tool begins
 // creating a clone, so the UI can show progress.
