@@ -2,11 +2,18 @@ package overview
 
 import (
 	"testing"
+	"time"
 
 	"github.com/ogen-app/ogen/src/models"
 )
 
 func ptr(s string) *string { return &s }
+
+func tptr(t time.Time) *time.Time { return &t }
+
+func dateUTC(y int, m time.Month, day int) time.Time {
+	return time.Date(y, m, day, 9, 0, 0, 0, time.UTC)
+}
 
 func sampleCampaign() *models.Campaign {
 	return &models.Campaign{
@@ -193,5 +200,99 @@ func assertReconciles(t *testing.T, ov *Overview) {
 	}
 	if phaseSum != ov.TotalPosts {
 		t.Fatalf("phase counts + unassigned = %d, want %d", phaseSum, ov.TotalPosts)
+	}
+}
+
+// goalCampaign builds a minimal campaign carrying only the goal-relevant fields.
+func goalCampaign(count int, cadence string, start, end time.Time) *models.Campaign {
+	return &models.Campaign{
+		EstimatedPostCount: &count,
+		GoalCadence:        cadence,
+		StartDate:          tptr(start),
+		EndDate:            tptr(end),
+	}
+}
+
+func TestBuildGoalProgress_WeeklyBucketsAndTotals(t *testing.T) {
+	c := goalCampaign(2, "week",
+		time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)) // 2 weeks
+	posts := []models.Post{
+		{ID: "1", Status: models.PostStatusScheduled, ScheduledAt: tptr(dateUTC(2026, 6, 2))},                 // week 1
+		{ID: "2", Status: models.PostStatusScheduledForManualPublish, ScheduledAt: tptr(dateUTC(2026, 6, 3))}, // week 1
+		{ID: "3", Status: models.PostStatusPublished, ScheduledAt: tptr(dateUTC(2026, 6, 9))},                 // week 2
+		{ID: "4", Status: models.PostStatusDraft, ScheduledAt: tptr(dateUTC(2026, 6, 2))},                     // not committed
+		{ID: "5", Status: models.PostStatusScheduled, ScheduledAt: nil},                                       // no date
+	}
+
+	gp := buildGoalProgress(c, posts)
+	if gp == nil {
+		t.Fatal("expected goal progress, got nil")
+	}
+	if gp.Cadence != "week" || gp.PostsPerPeriod != 2 || gp.Periods != 2 || gp.TotalTarget != 4 {
+		t.Fatalf("header = %+v, want week/2/2/4", gp)
+	}
+	if gp.TotalAchieved != 3 || gp.Reached || gp.Percent != 75 {
+		t.Fatalf("totals: achieved=%d reached=%v pct=%d, want 3/false/75", gp.TotalAchieved, gp.Reached, gp.Percent)
+	}
+	if len(gp.Buckets) != 2 {
+		t.Fatalf("buckets = %d, want 2", len(gp.Buckets))
+	}
+	if gp.Buckets[0].Achieved != 2 || !gp.Buckets[0].Reached || gp.Buckets[0].Label != "Week 1" {
+		t.Fatalf("week 1 bucket = %+v, want achieved 2 reached", gp.Buckets[0])
+	}
+	if gp.Buckets[1].Achieved != 1 || gp.Buckets[1].Reached {
+		t.Fatalf("week 2 bucket = %+v, want achieved 1 not reached", gp.Buckets[1])
+	}
+	if gp.Streak != 0 {
+		t.Fatalf("streak = %d, want 0 (last period missed)", gp.Streak)
+	}
+}
+
+func TestBuildGoalProgress_StreakAndReached(t *testing.T) {
+	c := goalCampaign(2, "week",
+		time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC))
+	posts := []models.Post{
+		{ID: "1", Status: models.PostStatusScheduled, ScheduledAt: tptr(dateUTC(2026, 6, 2))},
+		{ID: "2", Status: models.PostStatusPublished, ScheduledAt: tptr(dateUTC(2026, 6, 4))},
+		{ID: "3", Status: models.PostStatusScheduled, ScheduledAt: tptr(dateUTC(2026, 6, 9))},
+		{ID: "4", Status: models.PostStatusScheduled, ScheduledAt: tptr(dateUTC(2026, 6, 12))},
+	}
+	gp := buildGoalProgress(c, posts)
+	if gp.TotalAchieved != 4 || !gp.Reached || gp.Percent != 100 {
+		t.Fatalf("totals: achieved=%d reached=%v pct=%d, want 4/true/100", gp.TotalAchieved, gp.Reached, gp.Percent)
+	}
+	if gp.Streak != 2 {
+		t.Fatalf("streak = %d, want 2 (both periods reached)", gp.Streak)
+	}
+}
+
+func TestBuildGoalProgress_MissingDates(t *testing.T) {
+	count := 3
+	c := &models.Campaign{EstimatedPostCount: &count, GoalCadence: "month"} // no dates
+	posts := []models.Post{
+		{ID: "1", Status: models.PostStatusScheduled, ScheduledAt: tptr(dateUTC(2026, 6, 2))},
+		{ID: "2", Status: models.PostStatusPublished, ScheduledAt: nil}, // committed, still counts
+		{ID: "3", Status: models.PostStatusDraft},                       // ignored
+	}
+	gp := buildGoalProgress(c, posts)
+	if gp == nil {
+		t.Fatal("expected goal progress with missing dates, got nil")
+	}
+	if gp.Periods != 1 || gp.TotalTarget != 3 {
+		t.Fatalf("periods=%d target=%d, want 1/3", gp.Periods, gp.TotalTarget)
+	}
+	if len(gp.Buckets) != 0 {
+		t.Fatalf("no dates → no buckets, got %d", len(gp.Buckets))
+	}
+	if gp.TotalAchieved != 2 || gp.Reached {
+		t.Fatalf("achieved=%d reached=%v, want 2/false", gp.TotalAchieved, gp.Reached)
+	}
+}
+
+func TestBuildGoalProgress_NoGoalWhenCountUnset(t *testing.T) {
+	if gp := buildGoalProgress(sampleCampaign(), nil); gp != nil {
+		t.Fatalf("expected nil goal when estimated_post_count is unset, got %+v", gp)
 	}
 }

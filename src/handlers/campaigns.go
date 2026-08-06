@@ -16,6 +16,7 @@ import (
 	"github.com/ogen-app/ogen/src/activity"
 	"github.com/ogen-app/ogen/src/campaign_actions/overview"
 	"github.com/ogen-app/ogen/src/campaign_actions/summaries"
+	"github.com/ogen-app/ogen/src/campaigngoal"
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/consistency"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
@@ -211,6 +212,9 @@ type campaignRequest struct {
 	Timezone       string             `json:"timezone"`
 	PublishingDays models.StringSlice `json:"publishing_days"`
 	SpreadMinutes  *int               `json:"spread_minutes"`
+	// Goal cadence (CON-182): "week" | "month". Empty falls back to "month".
+	// estimated_post_count is the target posts per one of these periods.
+	GoalCadence string `json:"goal_cadence"`
 }
 
 // normalizeScheduling validates the request's scheduling fields and returns the
@@ -314,6 +318,10 @@ func (h *CampaignsHandler) Create(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
+	goalCadence, err := campaigngoal.Normalize(strings.TrimSpace(req.GoalCadence))
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
 
 	session := c.Locals("session").(*models.Session)
 
@@ -346,6 +354,7 @@ func (h *CampaignsHandler) Create(c *fiber.Ctx) error {
 		Timezone:           timezone,
 		PublishingDays:     publishingDays,
 		SpreadMinutes:      spread,
+		GoalCadence:        goalCadence,
 		CreatedBy:          session.UserID,
 	}
 	if err := h.repo.Create(c.Context(), campaign); err != nil {
@@ -413,6 +422,10 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
+	goalCadence, err := campaigngoal.Normalize(strings.TrimSpace(req.GoalCadence))
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
 
 	campaign, err := h.repo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
@@ -447,6 +460,7 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 	campaign.Timezone = timezone
 	campaign.PublishingDays = publishingDays
 	campaign.SpreadMinutes = spread
+	campaign.GoalCadence = goalCadence
 	campaign.UpdatedAt = time.Now().UTC()
 
 	if err := h.repo.Update(c.Context(), campaign); err != nil {

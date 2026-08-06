@@ -14,6 +14,7 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
+	"github.com/ogen-app/ogen/src/campaigngoal"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
@@ -99,10 +100,15 @@ func generatePosts(
 	onEvent OnEventFunc,
 	tgt *targeting,
 ) ([]DraftPost, []string, error) {
-	estCount := 0
-	if campaign.EstimatedPostCount != nil {
-		estCount = *campaign.EstimatedPostCount
-	}
+	// CON-182: the full-campaign plan generates estimated_post_count posts PER
+	// goal_cadence period × the number of periods the campaign spans (0 when no
+	// per-period count is set → the model decides the count, as before). The
+	// targeting path below overrides this with its explicit count.
+	loc, _ := settings.ResolveTimezone(campaign.Timezone)
+	estCount := campaigngoal.EffectiveCount(
+		campaign.EstimatedPostCount, campaign.GoalCadence,
+		campaign.StartDate, campaign.EndDate, loc,
+	)
 	startDate, endDate := *campaign.StartDate, *campaign.EndDate
 
 	phases := make([]resolvedPhase, len(campaign.CampaignType.Phases))
