@@ -190,8 +190,11 @@ func generatePosts(
 	// no longer all inherit the full retrieved set — a post that cited no asset
 	// records an empty list.
 	grounded := idSet(assetIDsOf(assets))
+	// startDate/endDate are the active generation window — the campaign window, or
+	// the CON-114 targeting window when tgt != nil. persistOne snaps each post's
+	// publishing day within these bounds so a targeted run stays inside its window.
 	persistFn := func(ctx context.Context, dp *DraftPost) (string, error) {
-		return persistOne(ctx, dp, campaign, repos.Posts, repos.Notes, groundedRefs(dp.AssetRefs, grounded))
+		return persistOne(ctx, dp, campaign, &startDate, &endDate, repos.Posts, repos.Notes, groundedRefs(dp.AssetRefs, grounded))
 	}
 
 	// Fill the parallel budget (CON-112 perf): a plan that fits in one batch is
@@ -550,7 +553,7 @@ func withinCount(persisted, expectedCount int) bool {
 // CON-188: the model's bullet-point thesis (dp.Body) is no longer written into
 // the post body. The post is created with an empty body and the thesis is
 // stored as a draft_thesis note, so the assistant can later expand it into copy.
-func persistOne(ctx context.Context, dp *DraftPost, campaign *models.Campaign, postRepo repository.PostRepository, noteRepo repository.PostNoteRepository, usedAssetIDs []string) (string, error) {
+func persistOne(ctx context.Context, dp *DraftPost, campaign *models.Campaign, windowStart, windowEnd *time.Time, postRepo repository.PostRepository, noteRepo repository.PostNoteRepository, usedAssetIDs []string) (string, error) {
 	id, err := models.NewID()
 	if err != nil {
 		return "", err
@@ -560,14 +563,16 @@ func persistOne(ctx context.Context, dp *DraftPost, campaign *models.Campaign, p
 	// snap the model's date to an enabled publishing day, place it at the
 	// publishing time in the campaign timezone, ± deterministic spread. The
 	// (possibly snapped) date is written back onto dp so the streamed preview
-	// matches the persisted instant.
+	// matches the persisted instant. Snapping is bounded by the active generation
+	// window (windowStart/windowEnd) — the campaign window, or the CON-114
+	// targeting window — so a targeted run never snaps a post outside its window.
 	loc, _ := settings.ResolveTimezone(campaign.Timezone)
 	scheduledAt, effDate, noEnabledDay := scheduling.ComposeScheduledAt(
 		dp.PublishDate, id, loc, campaign.PublishingTime, campaign.PublishingDays,
-		campaign.SpreadMinutes, campaign.StartDate, campaign.EndDate,
+		campaign.SpreadMinutes, windowStart, windowEnd,
 	)
 	if noEnabledDay {
-		slog.WarnContext(ctx, "no enabled publishing day in campaign window; kept model date",
+		slog.WarnContext(ctx, "no enabled publishing day in window; kept model date",
 			logging.AttrComponent, "genkit.content_plan", "post_id", id, "date", dp.PublishDate)
 	}
 	dp.PublishDate = effDate
