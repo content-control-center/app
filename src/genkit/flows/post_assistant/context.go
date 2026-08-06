@@ -53,8 +53,15 @@ type contextCacheEntry struct {
 }
 
 var (
-	contextCache   = map[string]*contextCacheEntry{}
-	contextCacheMu sync.Mutex
+	contextCache = map[string]*contextCacheEntry{}
+	// contextCacheGen tracks a per-post generation number, bumped by every
+	// invalidateContextCache call. assembleContextCached captures it before the
+	// (unlocked) assemble and only writes the result back if it is still
+	// unchanged — otherwise an invalidation that raced an in-flight assembly
+	// would be silently undone by the stale result repopulating the cache.
+	// Kept in its own map so the generation survives deletion of the entry.
+	contextCacheGen = map[string]uint64{}
+	contextCacheMu  sync.Mutex
 )
 
 // postFingerprint returns a stable string that changes whenever any
@@ -92,6 +99,7 @@ func assembleContextCached(
 		}
 		delete(contextCache, post.ID)
 	}
+	gen := contextCacheGen[post.ID]
 	contextCacheMu.Unlock()
 
 	actx, err := assembleContext(ctx, post, repos, systemTmpl, contextTmpl)
@@ -99,11 +107,17 @@ func assembleContextCached(
 		return nil, err
 	}
 
+	// Only cache the result if no invalidation raced this assembly. If the
+	// generation moved, the underlying data changed (e.g. a note was added)
+	// after we read it, so actx is already stale — drop it rather than
+	// repopulate the cache with data an invalidation just cleared.
 	contextCacheMu.Lock()
-	contextCache[post.ID] = &contextCacheEntry{
-		ctx:         actx,
-		fingerprint: fp,
-		expiresAt:   time.Now().Add(contextCacheTTL),
+	if contextCacheGen[post.ID] == gen {
+		contextCache[post.ID] = &contextCacheEntry{
+			ctx:         actx,
+			fingerprint: fp,
+			expiresAt:   time.Now().Add(contextCacheTTL),
+		}
 	}
 	contextCacheMu.Unlock()
 
@@ -116,6 +130,10 @@ func assembleContextCached(
 // for up to the TTL — the createNote tool calls this after persisting a note.
 func invalidateContextCache(postID string) {
 	contextCacheMu.Lock()
+	// Bump the generation so any assembly already in flight (which captured the
+	// old generation before this invalidation) refuses to write its now-stale
+	// result back into the cache.
+	contextCacheGen[postID]++
 	delete(contextCache, postID)
 	contextCacheMu.Unlock()
 }
