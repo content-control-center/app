@@ -17,6 +17,8 @@ import (
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/scheduling"
+	"github.com/ogen-app/ogen/src/settings"
 	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
@@ -139,6 +141,7 @@ func generatePosts(
 		EstimatedPostCount:      estCount,
 		Platforms:               platforms,
 		Assets:                  assets,
+		PublishingDays:          scheduling.DayLabels(campaign.PublishingDays),
 	}
 
 	// System prompt is identical for every batch — render once.
@@ -187,8 +190,11 @@ func generatePosts(
 	// no longer all inherit the full retrieved set — a post that cited no asset
 	// records an empty list.
 	grounded := idSet(assetIDsOf(assets))
-	persistFn := func(ctx context.Context, dp DraftPost) (string, error) {
-		return persistOne(ctx, dp, campaign, repos.Posts, repos.Notes, groundedRefs(dp.AssetRefs, grounded))
+	// startDate/endDate are the active generation window — the campaign window, or
+	// the CON-114 targeting window when tgt != nil. persistOne snaps each post's
+	// publishing day within these bounds so a targeted run stays inside its window.
+	persistFn := func(ctx context.Context, dp *DraftPost) (string, error) {
+		return persistOne(ctx, dp, campaign, &startDate, &endDate, repos.Posts, repos.Notes, groundedRefs(dp.AssetRefs, grounded))
 	}
 
 	// Fill the parallel budget (CON-112 perf): a plan that fits in one batch is
@@ -367,7 +373,7 @@ func generatePostsStreaming(
 	globalStartIndex int,
 	expectedCount int,
 	validate postValidator,
-	persistFn func(ctx context.Context, post DraftPost) (string, error),
+	persistFn func(ctx context.Context, post *DraftPost) (string, error),
 	onEvent OnEventFunc,
 ) ([]DraftPost, error) {
 	scanner := newJSONPostScanner()
@@ -398,7 +404,7 @@ func generatePostsStreaming(
 			})
 			return
 		}
-		id, err := persistFn(ctx, post)
+		id, err := persistFn(ctx, &post)
 		if err != nil {
 			slog.ErrorContext(ctx, "persist failed for post", logging.AttrComponent, "genkit.content_plan", "title", post.Title, logging.AttrError, err)
 			emit(onEvent, SSEEventWarning, WarningPayload{
@@ -547,16 +553,29 @@ func withinCount(persisted, expectedCount int) bool {
 // CON-188: the model's bullet-point thesis (dp.Body) is no longer written into
 // the post body. The post is created with an empty body and the thesis is
 // stored as a draft_thesis note, so the assistant can later expand it into copy.
-func persistOne(ctx context.Context, dp DraftPost, campaign *models.Campaign, postRepo repository.PostRepository, noteRepo repository.PostNoteRepository, usedAssetIDs []string) (string, error) {
+func persistOne(ctx context.Context, dp *DraftPost, campaign *models.Campaign, windowStart, windowEnd *time.Time, postRepo repository.PostRepository, noteRepo repository.PostNoteRepository, usedAssetIDs []string) (string, error) {
 	id, err := models.NewID()
 	if err != nil {
 		return "", err
 	}
 
-	var scheduledAt *time.Time
-	if t, err := time.Parse("2006-01-02", dp.PublishDate); err == nil {
-		scheduledAt = &t
+	// CON-181: compose scheduled_at from the campaign's scheduling settings —
+	// snap the model's date to an enabled publishing day, place it at the
+	// publishing time in the campaign timezone, ± deterministic spread. The
+	// (possibly snapped) date is written back onto dp so the streamed preview
+	// matches the persisted instant. Snapping is bounded by the active generation
+	// window (windowStart/windowEnd) — the campaign window, or the CON-114
+	// targeting window — so a targeted run never snaps a post outside its window.
+	loc, _ := settings.ResolveTimezone(campaign.Timezone)
+	scheduledAt, effDate, noEnabledDay := scheduling.ComposeScheduledAt(
+		dp.PublishDate, id, loc, campaign.PublishingTime, campaign.PublishingDays,
+		campaign.SpreadMinutes, windowStart, windowEnd,
+	)
+	if noEnabledDay {
+		slog.WarnContext(ctx, "no enabled publishing day in window; kept model date",
+			logging.AttrComponent, "genkit.content_plan", "post_id", id, "date", dp.PublishDate)
 	}
+	dp.PublishDate = effDate
 
 	var phaseID *string
 	if dp.PhaseID != "" {

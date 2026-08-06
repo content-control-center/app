@@ -39,6 +39,15 @@ type Campaign struct {
 	EstimatedPostCount *int              `bun:"estimated_post_count"                         json:"estimated_post_count"`
 	Language           string            `bun:"language,notnull"                             json:"language"`
 
+	// Scheduling settings (CON-181) — consumed by the content-plan flow to
+	// place each generated draft's scheduled_at. PublishingTime is a local
+	// "HH:MM" wall clock; Timezone is an IANA name ("" = UTC); PublishingDays
+	// is a subset of mon..sun; SpreadMinutes is the ± jitter (0 = exact).
+	PublishingTime string      `bun:"publishing_time,notnull,default:'09:00'"      json:"publishing_time"`
+	Timezone       string      `bun:"timezone,notnull,default:''"                  json:"timezone"`
+	PublishingDays StringSlice `bun:"publishing_days,notnull,type:jsonb"           json:"publishing_days"`
+	SpreadMinutes  int         `bun:"spread_minutes,notnull,default:15"            json:"spread_minutes"`
+
 	// system
 	Status       CampaignStatus `bun:"status,notnull"                               json:"status"`
 	Budget       *float64       `bun:"budget"                                       json:"budget"`

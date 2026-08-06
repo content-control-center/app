@@ -106,6 +106,11 @@ type contentPlanTemplateData struct {
 	Platforms               []resolvedPlatform
 	Assets                  []resolvedPiece
 	Batch                   *batchSpec
+	// PublishingDays is the comma-separated label list of enabled weekdays
+	// (e.g. "Mon, Wed, Fri"), or "" when every day is enabled (CON-181). The
+	// server snaps any stray date to an enabled day regardless; this just
+	// steers the model up front.
+	PublishingDays string
 }
 
 // ValidationError is returned by the flow when preconditions are not met.

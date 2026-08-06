@@ -12,6 +12,9 @@ Hard rules — posts that violate these will be discarded, and any missing posts
 • Each post's angle and content must serve both the campaign type's overall goal and the specific phase's purpose
 • Every post must clearly serve the stated campaign objective
 • body must be a bullet list of 5–7 short theses (key points to expand later), NOT finished copy — maximum 500 characters total
+{{- if .PublishingDays}}
+• Only choose publishDates that fall on these weekdays: {{.PublishingDays}} — never schedule a post on any other weekday
+{{- end}}
 
 Output format — respond with a raw JSON array only, no markdown fences, no other text:
 [

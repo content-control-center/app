@@ -59,10 +59,44 @@ Content-Type: application/json
     "budget": 5000.00,
     "currency": "USD",
     "language": "en",
-    "tag_ids": []
+    "tag_ids": [],
+    "publishing_time": "09:00",
+    "timezone": "Asia/Nicosia",
+    "publishing_days": ["mon", "wed", "fri"],
+    "spread_minutes": 15
 }
 
 > {% client.global.set("campaignId", response.body.id) %}
+
+### Create campaign — invalid publishing_time (expects 400)  [protected]
+POST {{baseUrl}}/api/campaigns
+Content-Type: application/json
+
+{
+  "name": "Bad Time",
+  "campaign_type_id": "Uk",
+  "publishing_time": "9am"
+}
+
+### Create campaign — invalid timezone (expects 400)  [protected]
+POST {{baseUrl}}/api/campaigns
+Content-Type: application/json
+
+{
+  "name": "Bad TZ",
+  "campaign_type_id": "Uk",
+  "timezone": "Mars/Phobos"
+}
+
+### Create campaign — invalid publishing day (expects 400)  [protected]
+POST {{baseUrl}}/api/campaigns
+Content-Type: application/json
+
+{
+  "name": "Bad Day",
+  "campaign_type_id": "Uk",
+  "publishing_days": ["monday"]
+}
 
 ### Create campaign — missing name (expects 400)  [protected]
 POST {{baseUrl}}/api/campaigns
@@ -129,7 +163,11 @@ Content-Type: application/json
   "budget": 6000.00,
   "currency": "USD",
   "language": "en",
-  "tag_ids": []
+  "tag_ids": [],
+  "publishing_time": "08:30",
+  "timezone": "Europe/Kyiv",
+  "publishing_days": ["mon", "tue", "wed", "thu", "fri"],
+  "spread_minutes": 20
 }
 
 ### Update campaign — invalid campaign_type_id (expects 400)  [protected]
