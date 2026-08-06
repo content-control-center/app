@@ -3,6 +3,7 @@ package content_plan
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
@@ -62,7 +63,7 @@ func TestPersistOne_DraftThesisNote(t *testing.T) {
 	campaign := &models.Campaign{ID: "camp1", CreatedBy: "user1"}
 	dp := DraftPost{Title: "T", Body: "- point 1\n- point 2", PlatformID: "linkedin", ContentType: "article"}
 
-	id, err := persistOne(context.Background(), dp, campaign, postRepo, noteRepo, nil)
+	id, err := persistOne(context.Background(), &dp, campaign, postRepo, noteRepo, nil)
 	if err != nil {
 		t.Fatalf("persistOne: %v", err)
 	}
@@ -103,7 +104,7 @@ func TestPersistOne_EmptyThesisNoNote(t *testing.T) {
 	campaign := &models.Campaign{ID: "camp1", CreatedBy: "user1"}
 	dp := DraftPost{Title: "T", Body: "   ", PlatformID: "linkedin", ContentType: "article"}
 
-	if _, err := persistOne(context.Background(), dp, campaign, postRepo, noteRepo, nil); err != nil {
+	if _, err := persistOne(context.Background(), &dp, campaign, postRepo, noteRepo, nil); err != nil {
 		t.Fatalf("persistOne: %v", err)
 	}
 	if postRepo.created == nil {
@@ -114,13 +115,43 @@ func TestPersistOne_EmptyThesisNoNote(t *testing.T) {
 	}
 }
 
+// CON-181: persistOne composes scheduled_at from the campaign's scheduling
+// settings — the model's date placed at the publishing time in the campaign
+// timezone — and reflects the (unchanged, enabled-day) date back onto dp.
+func TestPersistOne_ComposesScheduledAt(t *testing.T) {
+	postRepo := &stubPostRepo{}
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC)
+	campaign := &models.Campaign{
+		ID: "camp1", CreatedBy: "user1",
+		PublishingTime: "09:00",
+		Timezone:       "", // UTC
+		PublishingDays: models.StringSlice{"mon", "tue", "wed", "thu", "fri", "sat", "sun"},
+		SpreadMinutes:  0,
+		StartDate:      &start,
+		EndDate:        &end,
+	}
+	dp := DraftPost{Title: "T", Body: "x", PlatformID: "linkedin", ContentType: "article", PublishDate: "2026-08-12"}
+
+	if _, err := persistOne(context.Background(), &dp, campaign, postRepo, nil, nil); err != nil {
+		t.Fatalf("persistOne: %v", err)
+	}
+	want := time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC)
+	if postRepo.created.ScheduledAt == nil || !postRepo.created.ScheduledAt.Equal(want) {
+		t.Errorf("scheduled_at = %v, want %v", postRepo.created.ScheduledAt, want)
+	}
+	if dp.PublishDate != "2026-08-12" {
+		t.Errorf("dp.PublishDate = %q, want 2026-08-12 (reflected)", dp.PublishDate)
+	}
+}
+
 // A nil note repo must not panic — the post is still created (note skipped).
 func TestPersistOne_NilNoteRepo(t *testing.T) {
 	postRepo := &stubPostRepo{}
 	campaign := &models.Campaign{ID: "camp1", CreatedBy: "user1"}
 	dp := DraftPost{Title: "T", Body: "- point 1", PlatformID: "linkedin", ContentType: "article"}
 
-	if _, err := persistOne(context.Background(), dp, campaign, postRepo, nil, nil); err != nil {
+	if _, err := persistOne(context.Background(), &dp, campaign, postRepo, nil, nil); err != nil {
 		t.Fatalf("persistOne: %v", err)
 	}
 	if postRepo.created == nil {

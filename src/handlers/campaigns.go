@@ -22,6 +22,8 @@ import (
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/scheduling"
+	"github.com/ogen-app/ogen/src/settings"
 	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
@@ -203,6 +205,58 @@ type campaignRequest struct {
 	Currency           string                   `json:"currency"`
 	Language           string                   `json:"language"`
 	TagIDs             models.StringSlice       `json:"tag_ids"`
+	// Scheduling settings (CON-181). All optional; omitted fields fall back to
+	// defaults (09:00 / UTC / every day / ±15 min) via normalizeScheduling.
+	PublishingTime string             `json:"publishing_time"`
+	Timezone       string             `json:"timezone"`
+	PublishingDays models.StringSlice `json:"publishing_days"`
+	SpreadMinutes  *int               `json:"spread_minutes"`
+}
+
+// normalizeScheduling validates the request's scheduling fields and returns the
+// effective values with defaults applied. A validation failure is returned as a
+// 400-worthy error.
+func (r *campaignRequest) normalizeScheduling() (publishingTime string, timezone string, days models.StringSlice, spread int, err error) {
+	publishingTime = strings.TrimSpace(r.PublishingTime)
+	if publishingTime == "" {
+		publishingTime = scheduling.DefaultPublishingTime
+	} else if !scheduling.ValidClock(publishingTime) {
+		return "", "", nil, 0, fmt.Errorf("publishing_time must be HH:MM (24-hour), got %q", r.PublishingTime)
+	}
+
+	timezone = strings.TrimSpace(r.Timezone)
+	if timezone != "" {
+		if _, tzErr := settings.ResolveTimezone(timezone); tzErr != nil {
+			return "", "", nil, 0, fmt.Errorf("invalid timezone: %s", timezone)
+		}
+	}
+
+	if len(r.PublishingDays) == 0 {
+		days = scheduling.DefaultPublishingDays()
+	} else {
+		seen := make(map[string]bool, len(r.PublishingDays))
+		days = make(models.StringSlice, 0, len(r.PublishingDays))
+		for _, d := range r.PublishingDays {
+			tok := strings.ToLower(strings.TrimSpace(d))
+			if !scheduling.ValidWeekday(tok) {
+				return "", "", nil, 0, fmt.Errorf("invalid publishing day: %q", d)
+			}
+			if seen[tok] {
+				return "", "", nil, 0, fmt.Errorf("duplicate publishing day: %q", tok)
+			}
+			seen[tok] = true
+			days = append(days, tok)
+		}
+	}
+
+	spread = scheduling.DefaultSpreadMinutes
+	if r.SpreadMinutes != nil {
+		spread = *r.SpreadMinutes
+		if spread < 0 || spread > scheduling.MaxSpreadMinutes {
+			return "", "", nil, 0, fmt.Errorf("spread_minutes must be between 0 and %d", scheduling.MaxSpreadMinutes)
+		}
+	}
+	return publishingTime, timezone, days, spread, nil
 }
 
 func (r *campaignRequest) toStatus() models.CampaignStatus {
@@ -256,6 +310,10 @@ func (h *CampaignsHandler) Create(c *fiber.Ctx) error {
 	if _, err := h.campaignTypeRepo.GetByID(c.Context(), req.CampaignTypeID); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid campaign_type_id")
 	}
+	publishingTime, timezone, publishingDays, spread, err := req.normalizeScheduling()
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
 
 	session := c.Locals("session").(*models.Session)
 
@@ -284,6 +342,10 @@ func (h *CampaignsHandler) Create(c *fiber.Ctx) error {
 		Language:           req.Language,
 		TagIDs:             nullSlice(req.TagIDs),
 		Tags:               []models.Tag{},
+		PublishingTime:     publishingTime,
+		Timezone:           timezone,
+		PublishingDays:     publishingDays,
+		SpreadMinutes:      spread,
 		CreatedBy:          session.UserID,
 	}
 	if err := h.repo.Create(c.Context(), campaign); err != nil {
@@ -347,6 +409,10 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 	if _, err := h.campaignTypeRepo.GetByID(c.Context(), req.CampaignTypeID); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid campaign_type_id")
 	}
+	publishingTime, timezone, publishingDays, spread, err := req.normalizeScheduling()
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
 
 	campaign, err := h.repo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
@@ -377,6 +443,10 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 	campaign.Currency = req.Currency
 	campaign.Language = req.Language
 	campaign.TagIDs = nullSlice(req.TagIDs)
+	campaign.PublishingTime = publishingTime
+	campaign.Timezone = timezone
+	campaign.PublishingDays = publishingDays
+	campaign.SpreadMinutes = spread
 	campaign.UpdatedAt = time.Now().UTC()
 
 	if err := h.repo.Update(c.Context(), campaign); err != nil {
