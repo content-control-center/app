@@ -26,7 +26,37 @@ type Overview struct {
 	Phases       []PhaseInfo  `json:"phases"` // ordered by sequence
 	TotalPosts   int          `json:"totalPosts"`
 	Distribution Distribution `json:"distribution"`
-	GeneratedAt  time.Time    `json:"generatedAt"`
+	// Goal is the CON-182 post-rate goal progress, or null when the campaign has
+	// no goal configured (no positive estimated_post_count).
+	Goal        *GoalProgress `json:"goal"`
+	GeneratedAt time.Time     `json:"generatedAt"`
+}
+
+// GoalProgress recaps a campaign's post-rate goal (CON-182): the per-period
+// target, how many committed posts land in each period, and whether the goal is
+// met per period and overall. "Committed" posts are those scheduled or
+// published, bucketed by their scheduled_at.
+type GoalProgress struct {
+	Cadence        string       `json:"cadence"`        // "week" | "month"
+	PostsPerPeriod int          `json:"postsPerPeriod"` // = estimated_post_count
+	Periods        int          `json:"periods"`
+	TotalTarget    int          `json:"totalTarget"` // postsPerPeriod × periods
+	TotalAchieved  int          `json:"totalAchieved"`
+	Reached        bool         `json:"reached"`
+	Percent        int          `json:"percent"` // 0..100, capped
+	Streak         int          `json:"streak"`  // trailing consecutive reached periods
+	Buckets        []GoalBucket `json:"buckets"`
+}
+
+// GoalBucket is one goal period. Start is inclusive, End exclusive.
+type GoalBucket struct {
+	Index    int       `json:"index"` // 1-based
+	Label    string    `json:"label"` // "Week 1" / "Aug 2026"
+	Start    time.Time `json:"start"`
+	End      time.Time `json:"end"`
+	Target   int       `json:"target"`
+	Achieved int       `json:"achieved"`
+	Reached  bool      `json:"reached"`
 }
 
 // Brief recaps the campaign's brief fields.

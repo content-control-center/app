@@ -48,6 +48,12 @@ type Campaign struct {
 	PublishingDays StringSlice `bun:"publishing_days,notnull,type:jsonb"           json:"publishing_days"`
 	SpreadMinutes  int         `bun:"spread_minutes,notnull,default:15"            json:"spread_minutes"`
 
+	// Goal (CON-182). estimated_post_count above is the target number of posts
+	// PER goal_cadence period; the content-plan flow multiplies it by the number
+	// of week/month periods the campaign's [start_date, end_date] window spans,
+	// and the campaign overview reports per-period progress against it.
+	GoalCadence string `bun:"goal_cadence,notnull,default:'month'"          json:"goal_cadence"`
+
 	// system
 	Status       CampaignStatus `bun:"status,notnull"                               json:"status"`
 	Budget       *float64       `bun:"budget"                                       json:"budget"`
