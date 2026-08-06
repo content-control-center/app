@@ -272,9 +272,9 @@ func TestBuildGoalProgress_MissingDates(t *testing.T) {
 	count := 3
 	c := &models.Campaign{EstimatedPostCount: &count, GoalCadence: "month"} // no dates
 	posts := []models.Post{
-		{ID: "1", Status: models.PostStatusScheduled, ScheduledAt: tptr(dateUTC(2026, 6, 2))},
-		{ID: "2", Status: models.PostStatusPublished, ScheduledAt: nil}, // committed, still counts
-		{ID: "3", Status: models.PostStatusDraft},                       // ignored
+		{ID: "1", Status: models.PostStatusScheduled, ScheduledAt: tptr(dateUTC(2026, 6, 2))}, // committed + dated → counts
+		{ID: "2", Status: models.PostStatusPublished, ScheduledAt: nil},                       // committed but undated → excluded
+		{ID: "3", Status: models.PostStatusDraft},                                             // not committed → ignored
 	}
 	gp := buildGoalProgress(c, posts)
 	if gp == nil {
@@ -286,8 +286,8 @@ func TestBuildGoalProgress_MissingDates(t *testing.T) {
 	if len(gp.Buckets) != 0 {
 		t.Fatalf("no dates → no buckets, got %d", len(gp.Buckets))
 	}
-	if gp.TotalAchieved != 2 || gp.Reached {
-		t.Fatalf("achieved=%d reached=%v, want 2/false", gp.TotalAchieved, gp.Reached)
+	if gp.TotalAchieved != 1 || gp.Reached {
+		t.Fatalf("achieved=%d reached=%v, want 1/false", gp.TotalAchieved, gp.Reached)
 	}
 }
 

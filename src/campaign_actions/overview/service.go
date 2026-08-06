@@ -170,9 +170,10 @@ func buildGoalProgress(campaign *models.Campaign, posts []models.Post) *GoalProg
 	total := 0
 	if len(windows) == 0 {
 		// No datable window (missing/invalid dates): report the committed total
-		// with no per-period breakdown.
+		// with no per-period breakdown. Same "committed and dated" rule as the
+		// windowed branch below, so TotalAchieved counts consistently.
 		for _, p := range posts {
-			if isCommitted(p.Status) {
+			if isCommitted(p.Status) && p.ScheduledAt != nil {
 				total++
 			}
 		}
