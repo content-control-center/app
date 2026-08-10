@@ -69,6 +69,12 @@ type createUserRequest struct {
 	Password string `json:"password" validate:"required,min=8"`
 }
 
+// errCurrentPasswordMismatch is returned from inside the password-change
+// transaction when the supplied current password fails re-verification, so the
+// tx rolls back and the handler can map it to a 403 (CON-193 §1). Mirrors
+// errResetInvalid in password_reset.go.
+var errCurrentPasswordMismatch = errors.New("current password is incorrect")
+
 type updateUserRequest struct {
 	Name  string `json:"name"     validate:"required"`
 	Email string `json:"email"    validate:"required,email"`
@@ -231,33 +237,43 @@ func (h *UsersHandler) Update(c *fiber.Ctx) error {
 		return err
 	}
 
-	user.Name = req.Name
-	user.Email = req.Email
-	user.UpdatedAt = time.Now().UTC()
-
-	changingPassword := req.Password != ""
-	if changingPassword {
-		// Re-authenticate before replacing the credential: a live session must prove
-		// it knows the current password, so a borrowed tab or a stolen cookie can't
-		// silently set a new one and lock the owner out (CON-193 §1). validate has
-		// already ensured current_password is present (required_with=Password).
-		ok, verr := models.VerifyPassword(req.CurrentPassword, user.PasswordHash)
-		if verr != nil || !ok {
-			return fiber.NewError(fiber.StatusForbidden, "current password is incorrect")
+	if req.Password == "" {
+		// Name/email-only edit: no re-authentication and no session revocation.
+		user.Name = req.Name
+		user.Email = req.Email
+		user.UpdatedAt = time.Now().UTC()
+		if err := h.repo.Update(c.Context(), user); err != nil {
+			return err
 		}
-		hash, herr := models.HashPassword(req.Password)
-		if herr != nil {
-			return herr
-		}
-		user.PasswordHash = hash
-	}
-
-	if changingPassword {
-		// Persist the new credential and evict every other session in one transaction,
-		// so the change can't half-apply and leave an intruder's session alive —
-		// mirroring POST /api/password-reset/confirm. The caller's own session is
-		// preserved so they aren't logged out of the tab making the change (CON-193 §2).
+	} else {
+		// Password change. Lock the user row, re-verify the current password against
+		// the *locked* hash, rotate it, and revoke the user's other sessions — all in
+		// one transaction. FOR UPDATE serializes concurrent changes, so an in-flight
+		// request carrying the old (possibly compromised) credential can't verify
+		// against a stale hash and slip through after a rotation has already committed
+		// (CON-193 §1/§2). Mirrors POST /api/password-reset/confirm, which likewise
+		// holds the row lock across argon2 — password changes are rare, so hashing
+		// under the lock is fine. The caller's own session (session.ID) is preserved
+		// so they aren't logged out of the tab making the change.
 		if err := h.db.RunInTx(c.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
+			if err := tx.NewSelect().Model(user).WherePK().For("UPDATE").Scan(ctx); err != nil {
+				return err
+			}
+			ok, verr := models.VerifyPassword(req.CurrentPassword, user.PasswordHash)
+			if verr != nil {
+				return verr
+			}
+			if !ok {
+				return errCurrentPasswordMismatch
+			}
+			hash, herr := models.HashPassword(req.Password)
+			if herr != nil {
+				return herr
+			}
+			user.Name = req.Name
+			user.Email = req.Email
+			user.PasswordHash = hash
+			user.UpdatedAt = time.Now().UTC()
 			if _, err := tx.NewUpdate().Model(user).WherePK().Exec(ctx); err != nil {
 				return err
 			}
@@ -267,10 +283,11 @@ func (h *UsersHandler) Update(c *fiber.Ctx) error {
 				Exec(ctx)
 			return err
 		}); err != nil {
+			if errors.Is(err, errCurrentPasswordMismatch) {
+				return fiber.NewError(fiber.StatusForbidden, "current password is incorrect")
+			}
 			return err
 		}
-	} else if err := h.repo.Update(c.Context(), user); err != nil {
-		return err
 	}
 
 	h.activity.Record(c.Context(), activity.CategoryAuthentication, "user_updated",
