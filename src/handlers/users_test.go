@@ -82,11 +82,15 @@ var _ = Describe("UsersHandler", Ordered, func() {
 
 	// sessionAlive reports whether a session cookie still authenticates, by hitting
 	// a protected endpoint: 200 means the session is live, 401 means it was revoked.
+	// Any other status is unexpected and fails the spec rather than being silently
+	// read as "revoked".
 	sessionAlive := func(cookie *http.Cookie) bool {
+		GinkgoHelper()
 		req := httptest.NewRequest("GET", "/api/current_user", nil)
 		req.AddCookie(cookie)
 		resp, err := app.Test(req)
 		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(BeElementOf(fiber.StatusOK, fiber.StatusUnauthorized))
 		return resp.StatusCode == fiber.StatusOK
 	}
 
