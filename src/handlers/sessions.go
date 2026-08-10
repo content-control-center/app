@@ -36,6 +36,15 @@ const (
 // whether or not the address exists, so a 429 never signals account existence.
 const loginThrottledMsg = "Too many login attempts. Please wait a minute and try again."
 
+// maxConcurrentThrottleRecords bounds the best-effort login_throttled recorder
+// (CON-162). Every throttled login that might target an account spends one slot
+// on a detached GetByEmail + activity write; when the slots are all busy the
+// event is dropped without starting another lookup, so a flood on the throttle
+// path can't spawn unbounded goroutines or DB queries. A handful is ample — the
+// event is a visibility signal, not an audit log, and the activity recorder
+// itself drops when its own buffer fills.
+const maxConcurrentThrottleRecords = 8
+
 type SessionsHandler struct {
 	userRepo     repository.UserRepository
 	sessionRepo  repository.SessionRepository
@@ -46,6 +55,10 @@ type SessionsHandler struct {
 	// is refunded on success, so only credential-guessing accrues against them.
 	ipLimiter    *keyedRateLimiter
 	emailLimiter *keyedRateLimiter
+	// throttleRecordSem is a counting semaphore bounding in-flight login_throttled
+	// recordings (CON-162), so the async recorder can't be amplified into an
+	// unbounded goroutine/DB-lookup fan-out under a login flood.
+	throttleRecordSem chan struct{}
 	// activity records CON-125 authentication events (login, logout). Both run
 	// outside tenant scope, so the handler builds an explicit tenant+user
 	// context per event. nil is a no-op. Wired via SetActivityRecorder.
@@ -54,12 +67,13 @@ type SessionsHandler struct {
 
 func NewSessionsHandler(userRepo repository.UserRepository, sessionRepo repository.SessionRepository, cookieName string, secureCookie bool) *SessionsHandler {
 	return &SessionsHandler{
-		userRepo:     userRepo,
-		sessionRepo:  sessionRepo,
-		cookieName:   cookieName,
-		secureCookie: secureCookie,
-		ipLimiter:    newKeyedRateLimiter(loginPerIPBurst, loginRateWindow),
-		emailLimiter: newKeyedRateLimiter(loginPerEmailBurst, loginRateWindow),
+		userRepo:          userRepo,
+		sessionRepo:       sessionRepo,
+		cookieName:        cookieName,
+		secureCookie:      secureCookie,
+		ipLimiter:         newKeyedRateLimiter(loginPerIPBurst, loginRateWindow),
+		emailLimiter:      newKeyedRateLimiter(loginPerEmailBurst, loginRateWindow),
+		throttleRecordSem: make(chan struct{}, maxConcurrentThrottleRecords),
 	}
 }
 
@@ -191,8 +205,18 @@ func (h *SessionsHandler) recordLoginThrottled(c *fiber.Ctx, email string) {
 	if h.activity == nil {
 		return
 	}
+	// Admit at most maxConcurrentThrottleRecords in-flight recordings; if every
+	// slot is busy, drop this event here — before spawning a goroutine or touching
+	// the database — so a flood on the throttle path stays bounded. The slot is
+	// released when the recording finishes.
+	select {
+	case h.throttleRecordSem <- struct{}{}:
+	default:
+		return
+	}
 	ip := c.IP()
 	go func() {
+		defer func() { <-h.throttleRecordSem }()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		user, err := h.userRepo.GetByEmail(ctx, email)
