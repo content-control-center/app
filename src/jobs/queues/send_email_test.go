@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/uptrace/bun"
+
 	"github.com/ogen-app/ogen/src/activity"
 	"github.com/ogen-app/ogen/src/email"
 	"github.com/ogen-app/ogen/src/models"
@@ -49,6 +51,13 @@ func (f *fakeUserRepo) GetByEmail(context.Context, string) (*models.User, error)
 }
 func (f *fakeUserRepo) Update(context.Context, *models.User) error   { return nil }
 func (f *fakeUserRepo) Delete(context.Context, string) (bool, error) { return false, nil }
+func (f *fakeUserRepo) CreateTx(context.Context, bun.IDB, *models.User) error {
+	return nil
+}
+func (f *fakeUserRepo) SetRoleGuarded(context.Context, string, string, string) (*models.User, error) {
+	return nil, nil
+}
+func (f *fakeUserRepo) RemoveMemberGuarded(context.Context, string, string) error { return nil }
 
 type fakeTemplateRepo struct {
 	m map[string]*models.EmailTemplate

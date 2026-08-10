@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/uptrace/bun"
 
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/handlers"
@@ -33,7 +34,10 @@ import (
 // used by the session-recheck test to drive the "closing stream" branch.
 type stubSessionRepo struct{}
 
-func (stubSessionRepo) Create(context.Context, *models.Session) error            { return nil }
+func (stubSessionRepo) Create(context.Context, *models.Session) error { return nil }
+func (stubSessionRepo) CreateTx(context.Context, bun.IDB, *models.Session) error {
+	return nil
+}
 func (stubSessionRepo) GetByID(context.Context, string) (*models.Session, error) { return nil, nil }
 func (stubSessionRepo) Delete(context.Context, string) (bool, error)             { return false, nil }
 

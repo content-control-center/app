@@ -36,6 +36,16 @@ func TestHandlers(t *testing.T) {
 // foundation migration, so it is always present in a migrated test DB.
 func seedTenantUser(db *bun.DB, name, email, password string) *models.User {
 	GinkgoHelper()
+	// Default to member: only the CON-26 team-management endpoints care about the
+	// role, and the endpoints most tests exercise are not role-gated. Tests that
+	// need an owner caller use seedTenantUserWithRole.
+	return seedTenantUserWithRole(db, name, email, password, models.RoleMember)
+}
+
+// seedTenantUserWithRole is seedTenantUser with an explicit role, for the CON-26
+// owner/member authorization tests.
+func seedTenantUserWithRole(db *bun.DB, name, email, password, role string) *models.User {
+	GinkgoHelper()
 	hash, err := models.HashPassword(password)
 	Expect(err).NotTo(HaveOccurred())
 	id, err := models.NewID()
@@ -46,6 +56,7 @@ func seedTenantUser(db *bun.DB, name, email, password string) *models.User {
 		Name:         name,
 		Email:        email,
 		PasswordHash: hash,
+		Role:         role,
 	}
 	_, err = db.NewInsert().Model(u).Exec(context.Background())
 	Expect(err).NotTo(HaveOccurred())

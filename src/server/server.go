@@ -383,6 +383,15 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	passwordResetHandler.SetEmailEnqueuer(enqueuer)
 	passwordResetHandler.Register(app)
 
+	// CON-26: workspace invitations (owner-gated create/list/revoke + public
+	// preview/accept). Creating an invite enqueues its email in the minting tx —
+	// like password reset — so registration waits until the River enqueuer exists.
+	invitationRepo := repository.NewInvitationRepository(db)
+	invitationsHandler := handlers.NewInvitationsHandler(db, userRepo, tenantRepo, invitationRepo, sessionRepo, cfg.AppBaseURL, cfg.SessionCookieName, !cfg.Debug, auth)
+	invitationsHandler.SetActivityRecorder(activityWiring.recorder)
+	invitationsHandler.SetEmailEnqueuer(enqueuer)
+	invitationsHandler.Register(app)
+
 	// CON-154: public unsubscribe (token-gated) + Resend delivery webhook
 	// (signature-gated). Registered unconditionally; both degrade safely when
 	// the relevant secret is unset.

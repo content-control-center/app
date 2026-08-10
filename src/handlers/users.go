@@ -42,11 +42,12 @@ func (h *UsersHandler) Register(app *fiber.App) {
 	app.Get("/api/current_user", h.auth, h.CurrentUser) // always protected
 
 	g := app.Group("/api/users")
-	g.Post("/", h.auth, h.Create)      // new users join the caller's tenant (CON-97)
-	g.Get("/", h.auth, h.List)         // always protected
-	g.Get("/:id", h.auth, h.Get)       // always protected
-	g.Put("/:id", h.auth, h.Update)    // always protected
-	g.Delete("/:id", h.auth, h.Delete) // always protected
+	g.Post("/", h.auth, h.Create)           // owner-only; new users join the caller's tenant (CON-26/97)
+	g.Get("/", h.auth, h.List)              // always protected
+	g.Get("/:id", h.auth, h.Get)            // always protected
+	g.Put("/:id", h.auth, h.Update)         // always protected
+	g.Patch("/:id/role", h.auth, h.SetRole) // owner-only role change (CON-26)
+	g.Delete("/:id", h.auth, h.Delete)      // self or owner (CON-26)
 }
 
 // requireSelf returns 403 unless the authenticated session belongs to the user
@@ -67,6 +68,14 @@ type createUserRequest struct {
 	Name     string `json:"name"     validate:"required"`
 	Email    string `json:"email"    validate:"required,email"`
 	Password string `json:"password" validate:"required,min=8"`
+	// Role is optional; it defaults to member. Only an owner may create users
+	// (CON-26), so an owner can also mint a co-owner by passing "owner".
+	Role string `json:"role" validate:"omitempty,oneof=owner member"`
+}
+
+// setRoleRequest is the body of PATCH /api/users/:id/role (CON-26).
+type setRoleRequest struct {
+	Role string `json:"role" validate:"required,oneof=owner member"`
 }
 
 // errCurrentPasswordMismatch is returned from inside the password-change
@@ -127,7 +136,7 @@ func (h *UsersHandler) List(c *fiber.Ctx) error {
 
 // Create godoc
 // @Summary      Create user
-// @Description  Creates a new user in the authenticated caller's tenant (CON-97). Requires authentication; any tenant_id in the body is ignored.
+// @Description  Creates a new user in the authenticated caller's tenant (CON-97). Owner-only (CON-26); the new user defaults to the member role. Any tenant_id in the body is ignored. Email-based invitations (POST /api/invitations) are the preferred way to add teammates.
 // @Tags         users
 // @Accept       json
 // @Produce      json
@@ -136,11 +145,15 @@ func (h *UsersHandler) List(c *fiber.Ctx) error {
 // @Success      201   {object}  models.User
 // @Failure      400   {object}  map[string]string
 // @Failure      401   {object}  map[string]string
+// @Failure      403   {object}  map[string]string
 // @Router       /api/users [post]
 func (h *UsersHandler) Create(c *fiber.Ctx) error {
-	// New users always join the authenticated caller's tenant; a tenant_id in
-	// the request body is never trusted (CON-97 §7.2, §12.2).
-	session := c.Locals("session").(*models.Session)
+	// Only an owner may add users directly (CON-26). Their tenant is the target;
+	// a tenant_id in the request body is never trusted (CON-97 §7.2, §12.2).
+	caller, err := requireOwner(c, h.repo)
+	if err != nil {
+		return err
+	}
 
 	var req createUserRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -160,12 +173,18 @@ func (h *UsersHandler) Create(c *fiber.Ctx) error {
 		return err
 	}
 
+	role := req.Role
+	if role == "" {
+		role = models.RoleMember
+	}
+
 	user := &models.User{
 		ID:           id,
-		TenantID:     session.TenantID,
+		TenantID:     caller.TenantID,
 		Name:         req.Name,
 		Email:        req.Email,
 		PasswordHash: hash,
+		Role:         role,
 	}
 	if err := h.repo.Create(c.Context(), user); err != nil {
 		return err
@@ -174,6 +193,56 @@ func (h *UsersHandler) Create(c *fiber.Ctx) error {
 	h.activity.Record(c.Context(), activity.CategoryAuthentication, "user_created",
 		activity.WithEntity("user", user.ID), activity.WithSource(activity.SourceAPI))
 	return c.Status(fiber.StatusCreated).JSON(user)
+}
+
+// SetRole godoc
+// @Summary      Change a member's role
+// @Description  Owner-only. Sets a workspace member's role to owner or member (CON-26). The workspace must always keep at least one owner, so demoting the last owner returns 409.
+// @Tags         users
+// @Accept       json
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id    path      string          true  "User Sqid"
+// @Param        body  body      setRoleRequest  true  "Role payload"
+// @Success      200   {object}  models.User
+// @Failure      400   {object}  map[string]string
+// @Failure      401   {object}  map[string]string
+// @Failure      403   {object}  map[string]string
+// @Failure      404   {object}  map[string]string
+// @Failure      409   {object}  map[string]string
+// @Router       /api/users/{id}/role [patch]
+func (h *UsersHandler) SetRole(c *fiber.Ctx) error {
+	caller, err := requireOwner(c, h.repo)
+	if err != nil {
+		return err
+	}
+
+	var req setRoleRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	if err := validate.Struct(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	}
+
+	// SetRoleGuarded scopes to the caller's tenant (404 for an outsider) and
+	// enforces the >=1-owner invariant in one transaction (CON-26 §7/§11).
+	updated, err := h.repo.SetRoleGuarded(c.Context(), c.Params("id"), caller.TenantID, req.Role)
+	if err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return fiber.NewError(fiber.StatusNotFound, "user not found")
+		case errors.Is(err, repository.ErrLastOwner):
+			return fiber.NewError(fiber.StatusConflict, "a workspace must have at least one owner")
+		default:
+			return err
+		}
+	}
+
+	h.activity.Record(c.Context(), activity.CategoryAuthentication, "member_role_changed",
+		activity.WithEntity("user", updated.ID), activity.WithSource(activity.SourceAPI),
+		activity.WithPayload(map[string]any{"role": req.Role, "actor": caller.ID}))
+	return c.JSON(updated)
 }
 
 // Get godoc
@@ -297,27 +366,47 @@ func (h *UsersHandler) Update(c *fiber.Ctx) error {
 
 // Delete godoc
 // @Summary      Delete user
-// @Description  Deletes a user by Sqid.
+// @Description  Removes a workspace member. A user may remove themselves; an owner may remove anyone in the workspace (CON-26). The workspace must always keep at least one owner, so removing the last owner (including self) returns 409.
 // @Tags         users
 // @Security     CookieAuth
 // @Param        id   path  string  true  "User Sqid"
 // @Success      204
 // @Failure      401  {object}  map[string]string
+// @Failure      403  {object}  map[string]string
 // @Failure      404  {object}  map[string]string
+// @Failure      409  {object}  map[string]string
 // @Router       /api/users/{id} [delete]
 func (h *UsersHandler) Delete(c *fiber.Ctx) error {
-	if err := requireSelf(c); err != nil {
-		return err
-	}
-
-	deleted, err := h.repo.Delete(c.Context(), c.Params("id"))
+	caller, err := callerUser(c, h.repo)
 	if err != nil {
 		return err
 	}
-	if !deleted {
-		return fiber.NewError(fiber.StatusNotFound, "user not found")
+	targetID := c.Params("id")
+	// A member may only remove themselves; removing anyone else requires owner.
+	if caller.ID != targetID && caller.Role != models.RoleOwner {
+		return fiber.NewError(fiber.StatusForbidden, "forbidden")
 	}
-	h.activity.Record(c.Context(), activity.CategoryAuthentication, "user_deleted",
-		activity.WithEntity("user", c.Params("id")), activity.WithSource(activity.SourceAPI))
+
+	// RemoveMemberGuarded scopes to the caller's tenant (404 for an outsider) and
+	// enforces the >=1-owner invariant, so the last owner can't be removed —
+	// including self-removal (CON-26 §7).
+	if err := h.repo.RemoveMemberGuarded(c.Context(), targetID, caller.TenantID); err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return fiber.NewError(fiber.StatusNotFound, "user not found")
+		case errors.Is(err, repository.ErrLastOwner):
+			return fiber.NewError(fiber.StatusConflict, "a workspace must have at least one owner")
+		default:
+			return err
+		}
+	}
+
+	// Distinguish self-removal from an owner removing a teammate (CON-26 §13).
+	event := "user_deleted"
+	if caller.ID != targetID {
+		event = "member_removed"
+	}
+	h.activity.Record(c.Context(), activity.CategoryAuthentication, event,
+		activity.WithEntity("user", targetID), activity.WithSource(activity.SourceAPI))
 	return c.SendStatus(fiber.StatusNoContent)
 }

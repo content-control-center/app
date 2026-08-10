@@ -68,6 +68,12 @@ var _ = Describe("UsersHandler", Ordered, func() {
 		return seedTenantUser(db, name, email, password)
 	}
 
+	// createOwner seeds an owner of the default tenant — the role POST /api/users
+	// and the CON-26 team-management endpoints require of the caller.
+	createOwner := func(name, email, password string) *models.User {
+		return seedTenantUserWithRole(db, name, email, password, models.RoleOwner)
+	}
+
 	loginAs := func(email, password string) *http.Cookie {
 		body, _ := json.Marshal(fiber.Map{"email": email, "password": password})
 		req := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(body))
@@ -235,7 +241,7 @@ var _ = Describe("UsersHandler", Ordered, func() {
 
 		Context("with a valid payload and an authenticated caller", func() {
 			It("creates a user in the caller's tenant and returns 201", func() {
-				createUser("Admin", "admin@example.com", "admin-password")
+				createOwner("Admin", "admin@example.com", "admin-password")
 				cookie := loginAs("admin@example.com", "admin-password")
 
 				body, _ := json.Marshal(fiber.Map{"name": "Carol", "email": "carol@example.com", "password": "s3cur3P@ss"})
@@ -260,7 +266,7 @@ var _ = Describe("UsersHandler", Ordered, func() {
 			})
 
 			It("ignores a tenant_id in the request body", func() {
-				createUser("Admin", "admin@example.com", "admin-password")
+				createOwner("Admin", "admin@example.com", "admin-password")
 				cookie := loginAs("admin@example.com", "admin-password")
 
 				body, _ := json.Marshal(fiber.Map{
@@ -283,7 +289,7 @@ var _ = Describe("UsersHandler", Ordered, func() {
 			})
 
 			It("does not expose the password hash in the response", func() {
-				createUser("Admin", "admin@example.com", "admin-password")
+				createOwner("Admin", "admin@example.com", "admin-password")
 				cookie := loginAs("admin@example.com", "admin-password")
 
 				body, _ := json.Marshal(fiber.Map{"name": "X", "email": "x@example.com", "password": "s3cur3P@ss"})
@@ -304,7 +310,7 @@ var _ = Describe("UsersHandler", Ordered, func() {
 		Context("with invalid payload (authenticated)", func() {
 			DescribeTable("returns 400",
 				func(payload fiber.Map) {
-					createUser("Admin", "admin@example.com", "admin-password")
+					createOwner("Admin", "admin@example.com", "admin-password")
 					cookie := loginAs("admin@example.com", "admin-password")
 
 					body, _ := json.Marshal(payload)
@@ -326,7 +332,7 @@ var _ = Describe("UsersHandler", Ordered, func() {
 			)
 
 			It("returns a descriptive error message for invalid email", func() {
-				createUser("Admin", "admin@example.com", "admin-password")
+				createOwner("Admin", "admin@example.com", "admin-password")
 				cookie := loginAs("admin@example.com", "admin-password")
 
 				body, _ := json.Marshal(fiber.Map{"name": "X", "email": "bad-email", "password": "s3cur3P@ss"})
@@ -343,7 +349,7 @@ var _ = Describe("UsersHandler", Ordered, func() {
 			})
 
 			It("returns a descriptive error message for short password", func() {
-				createUser("Admin", "admin@example.com", "admin-password")
+				createOwner("Admin", "admin@example.com", "admin-password")
 				cookie := loginAs("admin@example.com", "admin-password")
 
 				body, _ := json.Marshal(fiber.Map{"name": "X", "email": "x@example.com", "password": "short"})

@@ -13,6 +13,10 @@ import (
 // SessionRepository defines all persistence operations for the Session domain.
 type SessionRepository interface {
 	Create(ctx context.Context, session *models.Session) error
+	// CreateTx inserts a session on the provided bun.IDB so it can join an outer
+	// transaction (e.g. invitation accept creates the user + session atomically).
+	// Passing nil falls back to the repository's default DB.
+	CreateTx(ctx context.Context, tx bun.IDB, session *models.Session) error
 	GetByID(ctx context.Context, id string) (*models.Session, error)
 	Delete(ctx context.Context, id string) (bool, error)
 }
@@ -27,7 +31,15 @@ func NewSessionRepository(db *bun.DB) SessionRepository {
 }
 
 func (r *sessionRepository) Create(ctx context.Context, session *models.Session) error {
-	_, err := r.db.NewInsert().Model(session).Exec(ctx)
+	return r.CreateTx(ctx, nil, session)
+}
+
+func (r *sessionRepository) CreateTx(ctx context.Context, tx bun.IDB, session *models.Session) error {
+	db := bun.IDB(r.db)
+	if tx != nil {
+		db = tx
+	}
+	_, err := db.NewInsert().Model(session).Exec(ctx)
 	return err
 }
 
