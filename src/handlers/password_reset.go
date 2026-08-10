@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
-	"math"
-	"strconv"
 	"strings"
 	"time"
 
@@ -307,13 +305,8 @@ func (h *PasswordResetHandler) Confirm(c *fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
-// tooManyResetRequests writes a 429 with a rounded-up Retry-After (≥1s),
-// matching the Zernio connect-link limiter's contract.
+// tooManyResetRequests writes the reset endpoint's 429 (CON-161) through the
+// shared tooManyRequests helper (Retry-After + user-facing body).
 func tooManyResetRequests(c *fiber.Ctx, retry time.Duration) error {
-	sec := int(math.Ceil(retry.Seconds()))
-	if sec < 1 {
-		sec = 1
-	}
-	c.Set("Retry-After", strconv.Itoa(sec))
-	return fiber.NewError(fiber.StatusTooManyRequests, "too many password reset requests; try again later")
+	return tooManyRequests(c, retry, "too many password reset requests; try again later")
 }

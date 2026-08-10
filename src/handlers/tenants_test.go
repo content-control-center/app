@@ -210,6 +210,30 @@ var _ = Describe("TenantsHandler", Ordered, func() {
 			Entry("bad email", fiber.Map{"tenant": fiber.Map{"name": "T"}, "user": fiber.Map{"name": "A", "email": "nope", "password": "password-x"}}),
 			Entry("short password", fiber.Map{"tenant": fiber.Map{"name": "T"}, "user": fiber.Map{"name": "A", "email": "a@x.test", "password": "short"}}),
 		)
+
+		It("throttles signup per IP with 429 + Retry-After (CON-162)", func() {
+			// signupPerIPBurst is 10 and every well-formed attempt is charged. Reuse
+			// one email: the first attempt is 201, the rest 409 (duplicate), but each
+			// still spends a token — the eleventh trips the per-IP budget.
+			post := func() *http.Response {
+				body, _ := json.Marshal(fiber.Map{
+					"tenant": fiber.Map{"name": "Repeat Co"},
+					"user":   fiber.Map{"name": "Dup", "email": "dup@throttle.test", "password": "password-dup"},
+				})
+				req := httptest.NewRequest("POST", "/api/tenants", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				return resp
+			}
+			for i := 0; i < 10; i++ {
+				Expect(post().StatusCode).To(BeElementOf(fiber.StatusCreated, fiber.StatusConflict),
+					"attempt %d should reach the handler, not be throttled", i+1)
+			}
+			resp := post()
+			Expect(resp.StatusCode).To(Equal(fiber.StatusTooManyRequests))
+			Expect(resp.Header.Get("Retry-After")).NotTo(BeEmpty())
+		})
 	})
 
 	Describe("GET /api/tenants/current", func() {

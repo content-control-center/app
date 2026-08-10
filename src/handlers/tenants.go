@@ -37,6 +37,20 @@ type EmailEnqueuer interface {
 	EnqueueDripTx(ctx context.Context, tx *sql.Tx, userID, tenantID string) error
 }
 
+// Signup throttle budget (CON-162). POST /api/tenants is open and unauthenticated,
+// so it is throttled per client IP to blunt automated mass account creation.
+// Unlike login, every attempt is charged (a successful signup is exactly the
+// abuse being limited), and there is no per-address dimension — each signup uses
+// a fresh address, so the IP is the only meaningful key.
+const (
+	signupPerIPBurst = 10
+	signupRateWindow = time.Hour
+)
+
+// signupThrottledMsg is the 429 body for a throttled signup; the signup form
+// surfaces it verbatim.
+const signupThrottledMsg = "Too many signup attempts. Please wait a minute and try again."
+
 // TenantsHandler owns tenant provisioning (public self-service signup) and the
 // tenant CRU surface (no delete). Tenants are the isolation boundary, so the
 // read/update endpoints only ever operate on the caller's own tenant (CON-97).
@@ -49,6 +63,8 @@ type TenantsHandler struct {
 	cookieName   string
 	secureCookie bool
 	auth         fiber.Handler
+	// ipLimiter throttles signup per client IP (CON-162).
+	ipLimiter *keyedRateLimiter
 	// activity records CON-125 authentication events (signup, tenant_updated).
 	// Signup runs outside tenant scope, so it builds an explicit context. nil is
 	// a no-op. Wired via SetActivityRecorder.
@@ -64,6 +80,7 @@ func NewTenantsHandler(db *bun.DB, tenantRepo repository.TenantRepository, userR
 		cookieName:   cookieName,
 		secureCookie: secureCookie,
 		auth:         auth,
+		ipLimiter:    newKeyedRateLimiter(signupPerIPBurst, signupRateWindow),
 	}
 }
 
@@ -118,6 +135,13 @@ func (h *TenantsHandler) Signup(c *fiber.Ctx) error {
 	}
 	if err := validate.Struct(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	}
+
+	// Throttle mass signup per client IP (CON-162). Every well-formed attempt is
+	// charged — a successful signup is the abuse being limited — so a spike from
+	// one source answers 429 with a Retry-After once the budget is spent.
+	if ok, retry := h.ipLimiter.allow(c.IP()); !ok {
+		return tooManyRequests(c, retry, signupThrottledMsg)
 	}
 
 	// Email is globally unique (login is by email -> user -> tenant). Reject a
