@@ -315,14 +315,15 @@ type invitationPreviewResponse struct {
 // @Produce      json
 // @Param        token  path  string  true  "Invitation token"
 // @Success      200  {object}  invitationPreviewResponse
-// @Failure      404  {object}  map[string]string
 // @Failure      410  {object}  map[string]string
 // @Router       /api/invitations/accept/{token} [get]
 func (h *InvitationsHandler) Preview(c *fiber.Ctx) error {
 	inv, err := h.inviteRepo.GetByTokenHash(c.Context(), models.HashInvitationToken(c.Params("token")))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, invitationInvalidMsg)
+			// Unknown, expired, and revoked tokens all answer with the same 410 +
+			// message (matching Accept), so preview isn't a token-existence oracle.
+			return fiber.NewError(fiber.StatusGone, invitationInvalidMsg)
 		}
 		return err
 	}

@@ -312,8 +312,8 @@ var _ = Describe("InvitationsHandler", Ordered, func() {
 			Expect(out["workspace_name"]).NotTo(BeEmpty())
 		})
 
-		It("returns a generic 404 for an unknown token", func() {
-			Expect(preview("does-not-exist").StatusCode).To(Equal(fiber.StatusNotFound))
+		It("returns the same generic 410 for an unknown token as for an expired/revoked one", func() {
+			Expect(preview("does-not-exist").StatusCode).To(Equal(fiber.StatusGone))
 		})
 
 		It("returns 410 for an expired invite", func() {
