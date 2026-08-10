@@ -387,7 +387,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// preview/accept). Creating an invite enqueues its email in the minting tx —
 	// like password reset — so registration waits until the River enqueuer exists.
 	invitationRepo := repository.NewInvitationRepository(db)
-	invitationsHandler := handlers.NewInvitationsHandler(db, userRepo, tenantRepo, invitationRepo, cfg.AppBaseURL, cfg.SessionCookieName, !cfg.Debug, auth)
+	invitationsHandler := handlers.NewInvitationsHandler(db, userRepo, tenantRepo, invitationRepo, sessionRepo, cfg.AppBaseURL, cfg.SessionCookieName, !cfg.Debug, auth)
 	invitationsHandler.SetActivityRecorder(activityWiring.recorder)
 	invitationsHandler.SetEmailEnqueuer(enqueuer)
 	invitationsHandler.Register(app)

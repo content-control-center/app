@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	"github.com/uptrace/bun"
 
@@ -18,10 +19,24 @@ import (
 // paths look them up by token before any tenant is in context — so tenant-scoped
 // methods take the tenant id explicitly.
 type InvitationRepository interface {
-	// Create inserts an invitation. The owner-facing create endpoint inserts
-	// inside its own tx (so the email enqueue commits atomically); this is for
-	// tests and any non-transactional caller.
+	// Create inserts an invitation on the repository's default DB (tests / any
+	// non-transactional caller).
 	Create(ctx context.Context, inv *models.Invitation) error
+	// CreateReplacingExpiredTx clears any expired pending invite for the same
+	// (tenant, email) — its stale row still holds the partial-unique pending slot
+	// — then inserts inv, all on the provided bun.IDB so it joins the caller's tx
+	// (which also enqueues the email). "Expired" means a pending row with
+	// expires_at at or before inv.CreatedAt; a still-active pending invite is left
+	// untouched so the unique index still 409s a genuine duplicate. Passing nil
+	// falls back to the repository's default DB.
+	CreateReplacingExpiredTx(ctx context.Context, tx bun.IDB, inv *models.Invitation) error
+	// ConsumeByTokenTx atomically spends a usable invitation on the provided
+	// bun.IDB (the accept tx, which also creates the user + session): it resolves
+	// the invite by token hash and flips it pending->accepted only while still
+	// pending and unexpired, returning the consumed invite. Any unusable token
+	// (unknown, expired, revoked, already accepted) returns sql.ErrNoRows so the
+	// caller can answer one indistinguishable 410. Passing nil uses the default DB.
+	ConsumeByTokenTx(ctx context.Context, tx bun.IDB, tokenHash string, now time.Time) (*models.Invitation, error)
 	// GetByTokenHash resolves an invitation by the sha256 of its token — the
 	// capability the preview/accept endpoints hold. Not tenant-scoped by design.
 	GetByTokenHash(ctx context.Context, tokenHash string) (*models.Invitation, error)
@@ -48,6 +63,56 @@ func NewInvitationRepository(db *bun.DB) InvitationRepository {
 func (r *invitationRepository) Create(ctx context.Context, inv *models.Invitation) error {
 	_, err := r.db.NewInsert().Model(inv).Exec(ctx)
 	return err
+}
+
+func (r *invitationRepository) CreateReplacingExpiredTx(ctx context.Context, tx bun.IDB, inv *models.Invitation) error {
+	db := bun.IDB(r.db)
+	if tx != nil {
+		db = tx
+	}
+	if _, err := db.NewDelete().Model((*models.Invitation)(nil)).
+		Where("tenant_id = ?", inv.TenantID).
+		Where("email = ?", inv.Email).
+		Where("status = ?", models.InvitationPending).
+		Where("expires_at <= ?", inv.CreatedAt).
+		Exec(ctx); err != nil {
+		return err
+	}
+	_, err := db.NewInsert().Model(inv).Exec(ctx)
+	return err
+}
+
+func (r *invitationRepository) ConsumeByTokenTx(ctx context.Context, tx bun.IDB, tokenHash string, now time.Time) (*models.Invitation, error) {
+	db := bun.IDB(r.db)
+	if tx != nil {
+		db = tx
+	}
+	inv := new(models.Invitation)
+	if err := db.NewSelect().Model(inv).Where("token_hash = ?", tokenHash).Scan(ctx); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, sql.ErrNoRows
+		}
+		return nil, err
+	}
+	// Atomic single-use consume: flip pending->accepted only while still pending
+	// AND unexpired. A concurrent double-submit races here; exactly one UPDATE
+	// affects a row, so the invite can't create two users.
+	res, err := db.NewUpdate().Model((*models.Invitation)(nil)).
+		Set("status = ?", models.InvitationAccepted).
+		Set("accepted_at = ?", now).
+		Where("id = ?", inv.ID).
+		Where("status = ?", models.InvitationPending).
+		Where("expires_at > ?", now).
+		Exec(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, sql.ErrNoRows // revoked, expired, or already accepted
+	}
+	inv.Status = models.InvitationAccepted
+	inv.AcceptedAt = &now
+	return inv, nil
 }
 
 func (r *invitationRepository) GetByTokenHash(ctx context.Context, tokenHash string) (*models.Invitation, error) {

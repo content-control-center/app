@@ -78,11 +78,6 @@ type setRoleRequest struct {
 	Role string `json:"role" validate:"required,oneof=owner member"`
 }
 
-// errLastOwner is returned from inside a role-change / removal transaction when
-// the operation would leave the workspace with no owner. Mapped to 409 — a
-// workspace must always keep at least one owner (CON-26 §7).
-var errLastOwner = errors.New("cannot remove or demote the last owner")
-
 // errCurrentPasswordMismatch is returned from inside the password-change
 // transaction when the supplied current password fails re-verification, so the
 // tx rolls back and the handler can map it to a 403 (CON-193 §1). Mirrors
@@ -230,66 +225,24 @@ func (h *UsersHandler) SetRole(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
 	}
 
-	// GetByID is tenant-scoped, so this 404s for a user outside the caller's
-	// workspace — an owner can only touch their own members (CON-26 §11).
-	target, err := h.repo.GetByID(c.Context(), c.Params("id"))
+	// SetRoleGuarded scopes to the caller's tenant (404 for an outsider) and
+	// enforces the >=1-owner invariant in one transaction (CON-26 §7/§11).
+	updated, err := h.repo.SetRoleGuarded(c.Context(), c.Params("id"), caller.TenantID, req.Role)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
 			return fiber.NewError(fiber.StatusNotFound, "user not found")
-		}
-		return err
-	}
-	if target.Role == req.Role {
-		return c.JSON(target) // no-op
-	}
-
-	// Demoting an owner must not orphan the workspace; the guard + update run in
-	// one transaction that locks the owner rows, so two concurrent demotions can't
-	// both pass and leave zero owners.
-	if err := h.db.RunInTx(c.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
-		if target.Role == models.RoleOwner && req.Role != models.RoleOwner {
-			if err := ensureNotLastOwner(ctx, tx, target.TenantID); err != nil {
-				return err
-			}
-		}
-		_, err := tx.NewUpdate().Model((*models.User)(nil)).
-			Set("role = ?", req.Role).
-			Set("updated_at = ?", time.Now().UTC()).
-			Where("id = ?", target.ID).
-			Where("tenant_id = ?", target.TenantID).
-			Exec(ctx)
-		return err
-	}); err != nil {
-		if errors.Is(err, errLastOwner) {
+		case errors.Is(err, repository.ErrLastOwner):
 			return fiber.NewError(fiber.StatusConflict, "a workspace must have at least one owner")
+		default:
+			return err
 		}
-		return err
 	}
-	target.Role = req.Role
 
 	h.activity.Record(c.Context(), activity.CategoryAuthentication, "member_role_changed",
-		activity.WithEntity("user", target.ID), activity.WithSource(activity.SourceAPI),
+		activity.WithEntity("user", updated.ID), activity.WithSource(activity.SourceAPI),
 		activity.WithPayload(map[string]any{"role": req.Role, "actor": caller.ID}))
-	return c.JSON(target)
-}
-
-// ensureNotLastOwner returns errLastOwner unless the tenant would still have an
-// owner after the caller demotes or removes one. It locks the tenant's owner
-// rows (FOR UPDATE) so concurrent demotions/removals serialize and can't race
-// the workspace down to zero owners (CON-26 §7). Must be called inside a tx.
-func ensureNotLastOwner(ctx context.Context, tx bun.Tx, tenantID string) error {
-	var owners []models.User
-	if err := tx.NewSelect().Model(&owners).Column("id").
-		Where("tenant_id = ?", tenantID).
-		Where("role = ?", models.RoleOwner).
-		For("UPDATE").
-		Scan(ctx); err != nil {
-		return err
-	}
-	if len(owners) <= 1 {
-		return errLastOwner
-	}
-	return nil
+	return c.JSON(updated)
 }
 
 // Get godoc
@@ -434,33 +387,18 @@ func (h *UsersHandler) Delete(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "forbidden")
 	}
 
-	// Tenant-scoped, so an owner can't reach into another workspace's user.
-	target, err := h.repo.GetByID(c.Context(), targetID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+	// RemoveMemberGuarded scopes to the caller's tenant (404 for an outsider) and
+	// enforces the >=1-owner invariant, so the last owner can't be removed —
+	// including self-removal (CON-26 §7).
+	if err := h.repo.RemoveMemberGuarded(c.Context(), targetID, caller.TenantID); err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
 			return fiber.NewError(fiber.StatusNotFound, "user not found")
-		}
-		return err
-	}
-
-	// Removing an owner (including self-removal) must not orphan the workspace;
-	// the guard + delete run in one owner-row-locking transaction.
-	if err := h.db.RunInTx(c.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
-		if target.Role == models.RoleOwner {
-			if err := ensureNotLastOwner(ctx, tx, target.TenantID); err != nil {
-				return err
-			}
-		}
-		_, err := tx.NewDelete().Model((*models.User)(nil)).
-			Where("id = ?", target.ID).
-			Where("tenant_id = ?", target.TenantID).
-			Exec(ctx)
-		return err
-	}); err != nil {
-		if errors.Is(err, errLastOwner) {
+		case errors.Is(err, repository.ErrLastOwner):
 			return fiber.NewError(fiber.StatusConflict, "a workspace must have at least one owner")
+		default:
+			return err
 		}
-		return err
 	}
 
 	// Distinguish self-removal from an owner removing a teammate (CON-26 §13).

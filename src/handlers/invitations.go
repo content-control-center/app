@@ -59,6 +59,7 @@ type InvitationsHandler struct {
 	userRepo     repository.UserRepository
 	tenantRepo   repository.TenantRepository
 	inviteRepo   repository.InvitationRepository
+	sessionRepo  repository.SessionRepository
 	emailJobs    InvitationEmailEnqueuer
 	appBaseURL   string
 	cookieName   string
@@ -75,12 +76,13 @@ type InvitationsHandler struct {
 // NewInvitationsHandler builds the handler. appBaseURL (APP_BASE_URL) is the base
 // for the emailed accept link; cookieName/secureCookie mirror the session cookie
 // set at login so accept can auto-log-in the new user.
-func NewInvitationsHandler(db *bun.DB, userRepo repository.UserRepository, tenantRepo repository.TenantRepository, inviteRepo repository.InvitationRepository, appBaseURL, cookieName string, secureCookie bool, auth fiber.Handler) *InvitationsHandler {
+func NewInvitationsHandler(db *bun.DB, userRepo repository.UserRepository, tenantRepo repository.TenantRepository, inviteRepo repository.InvitationRepository, sessionRepo repository.SessionRepository, appBaseURL, cookieName string, secureCookie bool, auth fiber.Handler) *InvitationsHandler {
 	return &InvitationsHandler{
 		db:            db,
 		userRepo:      userRepo,
 		tenantRepo:    tenantRepo,
 		inviteRepo:    inviteRepo,
+		sessionRepo:   sessionRepo,
 		appBaseURL:    appBaseURL,
 		cookieName:    cookieName,
 		secureCookie:  secureCookie,
@@ -217,22 +219,10 @@ func (h *InvitationsHandler) Create(c *fiber.Ctx) error {
 
 	// Invite row + email enqueue commit together: a rolled-back tx queues no mail,
 	// a committed one queues exactly one link resolving to a stored hash (mirrors
-	// password-reset dispatch, CON-161).
+	// password-reset dispatch, CON-161). CreateReplacingExpiredTx also clears any
+	// expired pending invite that would otherwise hold the partial-unique slot.
 	if err := h.db.RunInTx(c.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
-		// Clear any expired pending invite for this address first: its stale row
-		// holds the partial-unique (pending) slot and would otherwise unique-
-		// violate the insert. The expires_at guard means a still-active pending
-		// invite is never deleted here — the pre-check already 409'd that, and the
-		// unique index still backstops a concurrent create.
-		if _, err := tx.NewDelete().Model((*models.Invitation)(nil)).
-			Where("tenant_id = ?", tenantID).
-			Where("email = ?", email).
-			Where("status = ?", models.InvitationPending).
-			Where("expires_at <= ?", now).
-			Exec(ctx); err != nil {
-			return err
-		}
-		if _, err := tx.NewInsert().Model(inv).Exec(ctx); err != nil {
+		if err := h.inviteRepo.CreateReplacingExpiredTx(ctx, tx, inv); err != nil {
 			return err
 		}
 		if h.emailJobs != nil {
@@ -404,28 +394,14 @@ func (h *InvitationsHandler) Accept(c *fiber.Ctx) error {
 		tenantID string
 	)
 	err := h.db.RunInTx(c.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
-		inv := new(models.Invitation)
-		if err := tx.NewSelect().Model(inv).Where("token_hash = ?", tokenHash).Scan(ctx); err != nil {
+		// Atomically spend the invite (unknown/expired/revoked/already-accepted all
+		// come back as ErrNoRows → one indistinguishable 410).
+		inv, err := h.inviteRepo.ConsumeByTokenTx(ctx, tx, tokenHash, now)
+		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return errInvitationInvalid
 			}
 			return err
-		}
-		// Atomic single-use consume: flip pending→accepted only while still pending
-		// AND unexpired. A concurrent double-submit races here; exactly one UPDATE
-		// affects a row, so the invite can't create two users.
-		res, err := tx.NewUpdate().Model((*models.Invitation)(nil)).
-			Set("status = ?", models.InvitationAccepted).
-			Set("accepted_at = ?", now).
-			Where("id = ?", inv.ID).
-			Where("status = ?", models.InvitationPending).
-			Where("expires_at > ?", now).
-			Exec(ctx)
-		if err != nil {
-			return err
-		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			return errInvitationInvalid // revoked, expired, or already accepted
 		}
 
 		uid, err := models.NewID()
@@ -449,7 +425,7 @@ func (h *InvitationsHandler) Accept(c *fiber.Ctx) error {
 		// If the address gained an account between invite and accept, the users
 		// unique constraint fires here and the whole tx rolls back — the invite is
 		// left unconsumed (accept is retryable once the conflict is resolved).
-		if _, err := tx.NewInsert().Model(newUser).Exec(ctx); err != nil {
+		if err := h.userRepo.CreateTx(ctx, tx, newUser); err != nil {
 			return err
 		}
 
@@ -464,7 +440,7 @@ func (h *InvitationsHandler) Accept(c *fiber.Ctx) error {
 			ExpiresAt: now.Add(sessionTTL),
 			CreatedAt: now,
 		}
-		if _, err := tx.NewInsert().Model(session).Exec(ctx); err != nil {
+		if err := h.sessionRepo.CreateTx(ctx, tx, session); err != nil {
 			return err
 		}
 		tenantID = inv.TenantID

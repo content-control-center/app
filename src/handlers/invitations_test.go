@@ -63,7 +63,7 @@ var _ = Describe("InvitationsHandler", Ordered, func() {
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 
 		enqueuer = &fakeInviteEnqueuer{}
-		ih := handlers.NewInvitationsHandler(db, userRepo, tenantRepo, inviteRepo, "https://app.example.com", testCookieName, false, auth)
+		ih := handlers.NewInvitationsHandler(db, userRepo, tenantRepo, inviteRepo, sessionRepo, "https://app.example.com", testCookieName, false, auth)
 		ih.SetEmailEnqueuer(enqueuer)
 		ih.Register(app)
 		// UsersHandler for the role-change / removal (last-owner) tests; Sessions for login.
