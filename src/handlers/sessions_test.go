@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 
@@ -170,6 +171,85 @@ var _ = Describe("SessionsHandler", Ordered, func() {
 				Entry("invalid email format", fiber.Map{"email": "not-an-email", "password": "s3cur3P@ss"}),
 				Entry("empty body", fiber.Map{}),
 			)
+		})
+
+		// ── rate limiting (CON-162) ──────────────────────────────────────────
+		Context("when login attempts are abused (CON-162)", func() {
+			// attempt performs a raw login and returns the response (no assertions),
+			// so specs can drive it to 401/429 deliberately.
+			attempt := func(email, password string) *http.Response {
+				body, _ := json.Marshal(fiber.Map{"email": email, "password": password})
+				req := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				return resp
+			}
+			errorBody := func(resp *http.Response) string {
+				var payload map[string]string
+				Expect(json.NewDecoder(resp.Body).Decode(&payload)).To(Succeed())
+				return payload["error"]
+			}
+
+			It("throttles repeated failed logins for one address with 429 + Retry-After", func() {
+				// loginPerEmailBurst is 10: ten failures are answered 401, the
+				// eleventh is throttled.
+				for i := 0; i < 10; i++ {
+					Expect(attempt("victim@example.com", "wrong").StatusCode).To(Equal(fiber.StatusUnauthorized))
+				}
+				resp := attempt("victim@example.com", "wrong")
+				Expect(resp.StatusCode).To(Equal(fiber.StatusTooManyRequests))
+				Expect(resp.Header.Get("Retry-After")).NotTo(BeEmpty())
+				Expect(errorBody(resp)).To(ContainSubstring("Too many login attempts"))
+			})
+
+			It("does not reveal whether the address exists — same 429 for a real and an unknown address", func() {
+				seedUser("Real", "real@example.com", "correct-password")
+
+				exhaust := func(email string) *http.Response {
+					var last *http.Response
+					for i := 0; i < 11; i++ {
+						last = attempt(email, "wrong")
+					}
+					return last
+				}
+				realResp := exhaust("real@example.com")
+				unknownResp := exhaust("ghost@example.com")
+
+				Expect(realResp.StatusCode).To(Equal(fiber.StatusTooManyRequests))
+				Expect(unknownResp.StatusCode).To(Equal(fiber.StatusTooManyRequests))
+				Expect(errorBody(realResp)).To(Equal(errorBody(unknownResp)))
+			})
+
+			It("resets the address counter after a successful login", func() {
+				seedUser("Fumbles", "fumbles@example.com", "correct-password")
+
+				// Five failures, then a success that refunds the address bucket.
+				for i := 0; i < 5; i++ {
+					Expect(attempt("fumbles@example.com", "wrong").StatusCode).To(Equal(fiber.StatusUnauthorized))
+				}
+				Expect(attempt("fumbles@example.com", "correct-password").StatusCode).To(Equal(fiber.StatusCreated))
+
+				// With the counter reset, six more failures are all 401 — a non-reset
+				// bucket (5 left) would have thrown a 429 by the sixth.
+				for i := 0; i < 6; i++ {
+					Expect(attempt("fumbles@example.com", "wrong").StatusCode).To(Equal(fiber.StatusUnauthorized),
+						"failure %d after reset should be 401, not throttled", i+1)
+				}
+			})
+
+			It("throttles a spraying IP across many distinct addresses", func() {
+				// loginPerIPBurst is 30, well above the per-address burst, so 30
+				// single failures against distinct unknown addresses stay 401 and the
+				// 31st trips the per-IP budget.
+				for i := 0; i < 30; i++ {
+					email := fmt.Sprintf("spray-%d@example.com", i)
+					Expect(attempt(email, "wrong").StatusCode).To(Equal(fiber.StatusUnauthorized))
+				}
+				resp := attempt("spray-final@example.com", "wrong")
+				Expect(resp.StatusCode).To(Equal(fiber.StatusTooManyRequests))
+				Expect(resp.Header.Get("Retry-After")).NotTo(BeEmpty())
+			})
 		})
 	})
 

@@ -17,11 +17,48 @@ import (
 
 const sessionTTL = 7 * 24 * time.Hour
 
+// Login throttle budget (CON-162). POST /api/sessions is unauthenticated and
+// globally addressable (email is unique across tenants), so it is the prime
+// credential-stuffing target. It is charged per client IP (stops one caller
+// spraying many addresses) and per address (stops a targeted brute force).
+// Both count failures only — a successful login costs nothing — and the
+// per-address burst is deliberately more generous than reset's 5 so a human
+// mistyping a password a few times isn't shut out; the per-IP budget does the
+// heavy lifting against distribution.
+const (
+	loginPerEmailBurst = 10
+	loginPerIPBurst    = 30
+	loginRateWindow    = time.Hour
+)
+
+// loginThrottledMsg is the 429 body for a throttled login. It reads as a
+// sentence because the login form surfaces it verbatim, and it is identical
+// whether or not the address exists, so a 429 never signals account existence.
+const loginThrottledMsg = "Too many login attempts. Please wait a minute and try again."
+
+// maxConcurrentThrottleRecords bounds the best-effort login_throttled recorder
+// (CON-162). Every throttled login that might target an account spends one slot
+// on a detached GetByEmail + activity write; when the slots are all busy the
+// event is dropped without starting another lookup, so a flood on the throttle
+// path can't spawn unbounded goroutines or DB queries. A handful is ample — the
+// event is a visibility signal, not an audit log, and the activity recorder
+// itself drops when its own buffer fills.
+const maxConcurrentThrottleRecords = 8
+
 type SessionsHandler struct {
 	userRepo     repository.UserRepository
 	sessionRepo  repository.SessionRepository
 	cookieName   string
 	secureCookie bool
+	// ipLimiter / emailLimiter throttle failed logins per client IP and per
+	// address (CON-162). Both are charged only on failure and the address bucket
+	// is refunded on success, so only credential-guessing accrues against them.
+	ipLimiter    *keyedRateLimiter
+	emailLimiter *keyedRateLimiter
+	// throttleRecordSem is a counting semaphore bounding in-flight login_throttled
+	// recordings (CON-162), so the async recorder can't be amplified into an
+	// unbounded goroutine/DB-lookup fan-out under a login flood.
+	throttleRecordSem chan struct{}
 	// activity records CON-125 authentication events (login, logout). Both run
 	// outside tenant scope, so the handler builds an explicit tenant+user
 	// context per event. nil is a no-op. Wired via SetActivityRecorder.
@@ -30,10 +67,13 @@ type SessionsHandler struct {
 
 func NewSessionsHandler(userRepo repository.UserRepository, sessionRepo repository.SessionRepository, cookieName string, secureCookie bool) *SessionsHandler {
 	return &SessionsHandler{
-		userRepo:     userRepo,
-		sessionRepo:  sessionRepo,
-		cookieName:   cookieName,
-		secureCookie: secureCookie,
+		userRepo:          userRepo,
+		sessionRepo:       sessionRepo,
+		cookieName:        cookieName,
+		secureCookie:      secureCookie,
+		ipLimiter:         newKeyedRateLimiter(loginPerIPBurst, loginRateWindow),
+		emailLimiter:      newKeyedRateLimiter(loginPerEmailBurst, loginRateWindow),
+		throttleRecordSem: make(chan struct{}, maxConcurrentThrottleRecords),
 	}
 }
 
@@ -59,7 +99,7 @@ type createSessionRequest struct {
 
 // Create godoc
 // @Summary      Login
-// @Description  Authenticates a user by email and password, sets a session cookie, and returns the created session.
+// @Description  Authenticates a user by email and password, sets a session cookie, and returns the created session. Failed attempts are rate-limited per client IP and per address; once a budget is exhausted the endpoint answers 429 with a Retry-After header (CON-162).
 // @Tags         sessions
 // @Accept       json
 // @Produce      json
@@ -67,6 +107,7 @@ type createSessionRequest struct {
 // @Success      201   {object}  models.Session
 // @Failure      400   {object}  map[string]string
 // @Failure      401   {object}  map[string]string
+// @Failure      429   {object}  map[string]string
 // @Router       /api/sessions [post]
 func (h *SessionsHandler) Create(c *fiber.Ctx) error {
 	var req createSessionRequest
@@ -77,18 +118,42 @@ func (h *SessionsHandler) Create(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
 	}
 
+	// Throttle before any credential work. The IP budget is checked first so a
+	// caller spraying many addresses doesn't also spend the target address's
+	// budget (CON-162). Both are only peeked here — a token is charged just on a
+	// failed attempt (loginFailed), so a legitimate login never accrues. A 429
+	// reveals only that a limit was hit, never whether the address has an account.
+	// Either dimension records the throttle for a known account (off-path, so it
+	// stays silent for unknown addresses and never blocks the response), so a
+	// targeted attempt is visible even when spraying trips the IP budget first.
+	if retry := h.ipLimiter.retryAfter(c.IP()); retry > 0 {
+		h.recordLoginThrottled(c, req.Email)
+		return tooManyRequests(c, retry, loginThrottledMsg)
+	}
+	if retry := h.emailLimiter.retryAfter(req.Email); retry > 0 {
+		h.recordLoginThrottled(c, req.Email)
+		return tooManyRequests(c, retry, loginThrottledMsg)
+	}
+
 	user, err := h.userRepo.GetByEmail(c.Context(), req.Email)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusUnauthorized, "invalid credentials")
+			return h.loginFailed(c, req.Email)
 		}
 		return err
 	}
 
 	ok, err := models.VerifyPassword(req.Password, user.PasswordHash)
 	if err != nil || !ok {
-		return fiber.NewError(fiber.StatusUnauthorized, "invalid credentials")
+		return h.loginFailed(c, req.Email)
 	}
+
+	// The address proved control of the credential, so refund its bucket — a user
+	// who fumbled their password a few times before getting it right starts clean
+	// (CON-162: a success resets the counter). The IP bucket is left as-is: it
+	// guards against spraying, which one success doesn't clear (and clearing it
+	// would let an attacker holding one valid login reset their own IP budget).
+	h.emailLimiter.reset(req.Email)
 
 	token, err := models.NewSessionToken()
 	if err != nil {
@@ -119,6 +184,52 @@ func (h *SessionsHandler) Create(c *fiber.Ctx) error {
 	})
 
 	return c.Status(fiber.StatusCreated).JSON(session)
+}
+
+// loginFailed charges the failed attempt against both the per-IP and per-address
+// budgets and returns the generic 401 (CON-162). The body is identical whether
+// the address is unknown or the password is wrong, so login is not an
+// account-existence oracle.
+func (h *SessionsHandler) loginFailed(c *fiber.Ctx, email string) error {
+	h.ipLimiter.penalize(c.IP())
+	h.emailLimiter.penalize(email)
+	return fiber.NewError(fiber.StatusUnauthorized, "invalid credentials")
+}
+
+// recordLoginThrottled emits a CON-125 authentication event when a throttled
+// login targets a real account, so a targeted brute force shows up in the
+// activity feed. The lookup + emit run on a detached goroutine so they stay off
+// the 429 response path — the throttle response leaks nothing about account
+// existence through timing, and an unknown address produces no event at all.
+func (h *SessionsHandler) recordLoginThrottled(c *fiber.Ctx, email string) {
+	if h.activity == nil {
+		return
+	}
+	// Admit at most maxConcurrentThrottleRecords in-flight recordings; if every
+	// slot is busy, drop this event here — before spawning a goroutine or touching
+	// the database — so a flood on the throttle path stays bounded. The slot is
+	// released when the recording finishes.
+	select {
+	case h.throttleRecordSem <- struct{}{}:
+	default:
+		return
+	}
+	ip := c.IP()
+	go func() {
+		defer func() { <-h.throttleRecordSem }()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		user, err := h.userRepo.GetByEmail(ctx, email)
+		if err != nil || user == nil {
+			return // unknown address ⇒ nothing to attribute
+		}
+		h.activity.Record(
+			logging.WithUserID(tenantctx.With(ctx, user.TenantID), user.ID),
+			activity.CategoryAuthentication, "login_throttled",
+			activity.WithEntity("user", user.ID), activity.WithSource(activity.SourceAPI),
+			activity.WithPayload(map[string]any{"ip": ip}),
+		)
+	}()
 }
 
 // Delete godoc
