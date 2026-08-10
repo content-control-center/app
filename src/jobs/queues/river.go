@@ -278,6 +278,36 @@ func (e *Enqueuer) EnqueuePasswordResetTx(ctx context.Context, tx *sql.Tx, userI
 	return err
 }
 
+// EnqueueInvitationEmailTx enqueues the transactional workspace-invitation email
+// inside the invite-minting transaction, so the mail exists iff the invitation
+// row does (CON-26). The invitee has no users row yet, so the recipient address
+// rides the task directly (ToEmail) rather than being re-resolved from users;
+// inviteURL / inviterName / workspaceName / role ride the args as template vars
+// because the worker cannot rebuild them (only the token's hash is stored). The
+// enqueue is a local DB insert (the Resend call happens later in the worker), so
+// the request never blocks on Resend reachability. invitationID keys the
+// idempotency so each distinct invite queues its own mail. A nil enqueuer (email
+// queue unwired) is a no-op.
+func (e *Enqueuer) EnqueueInvitationEmailTx(ctx context.Context, tx *sql.Tx, tenantID, invitationID, toEmail, inviteURL, inviterName, workspaceName, role string) error {
+	if e == nil || e.Client == nil {
+		return nil
+	}
+	_, err := e.Client.InsertTx(ctx, tx, SendEmailTask{
+		TenantID:       tenantID,
+		ToEmail:        toEmail,
+		TemplateKey:    templates.KeyInvitation,
+		EmailKind:      models.EmailKindTransactional,
+		IdempotencyKey: "invitation:" + invitationID,
+		Vars: map[string]string{
+			"invite_url":     inviteURL,
+			"inviter_name":   inviterName,
+			"workspace_name": workspaceName,
+			"role":           role,
+		},
+	}, insertOptsWithRequestID(ctx, nil))
+	return err
+}
+
 // EnqueueDripTx enqueues the marketing onboarding drip (day 2/5/7) as delayed
 // jobs inside the signup transaction (CON-154 FR5). Each step fires at its
 // ScheduledAt; unsubscribes are honoured at send time, so no scheduled job ever

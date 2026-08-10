@@ -35,9 +35,16 @@ type SendEmailTask struct {
 	TemplateKey    string           `json:"template_key"`
 	EmailKind      models.EmailKind `json:"email_kind"`
 	IdempotencyKey string           `json:"idempotency_key"`
+	// ToEmail / ToName address a recipient who is NOT (yet) a user — e.g. an
+	// invitee (CON-26), who has no users row until they accept. Used only when
+	// UserID is empty: the worker then sends to ToEmail directly instead of
+	// re-resolving the address from users. Exactly one of UserID / ToEmail is set.
+	ToEmail string `json:"to_email,omitempty"`
+	ToName  string `json:"to_name,omitempty"`
 	// Vars carries per-message template variables that aren't derivable from the
 	// user/tenant/config at send time — e.g. the one-time password-reset URL
-	// (CON-161). Empty for templates that render purely from the resolved Data.
+	// (CON-161) or the invitation accept link + inviter + role (CON-26). Empty for
+	// templates that render purely from the resolved Data.
 	Vars map[string]string `json:"vars,omitempty"`
 }
 
@@ -81,29 +88,41 @@ func init() {
 func (p *SendEmailProcessor) Process(ctx context.Context, t SendEmailTask) error {
 	const comp = "jobs.send_email"
 	dep := p.Deps
-	if t.TemplateKey == "" || t.UserID == "" {
+	if t.TemplateKey == "" || (t.UserID == "" && t.ToEmail == "") {
 		slog.WarnContext(ctx, "send_email skipped: missing args", logging.AttrComponent, comp)
 		return nil
 	}
-	if dep.Users == nil || dep.Templates == nil {
+	if dep.Templates == nil {
 		slog.WarnContext(ctx, "send_email skipped: deps not wired", logging.AttrComponent, comp)
 		return nil
 	}
 	ctx = tenantctx.With(ctx, t.TenantID)
 
-	// Resolve the recipient fresh: honours an email change since enqueue, and a
-	// deleted user becomes a clean terminal skip.
-	user, err := dep.Users.GetByIDWithTenant(ctx, t.UserID)
-	if errors.Is(err, sql.ErrNoRows) {
-		slog.InfoContext(ctx, "send_email skipped: user gone", logging.AttrComponent, comp, "user", t.UserID)
-		return nil
-	} else if err != nil {
-		return err // transient (DB)
-	}
-	toEmail := user.Email
-	workspace := ""
-	if user.Tenant != nil {
-		workspace = user.Tenant.Name
+	// Resolve the recipient. The usual path re-resolves it fresh from users (so an
+	// email change since enqueue is honoured and a deleted user is a clean terminal
+	// skip). When the mail targets someone who isn't a user yet — an invitee, CON-26
+	// — the address is carried on the task itself; the workspace name then rides the
+	// vars, since there's no user/tenant to load.
+	var recipientName, toEmail, workspace string
+	if t.UserID != "" {
+		if dep.Users == nil {
+			slog.WarnContext(ctx, "send_email skipped: deps not wired", logging.AttrComponent, comp)
+			return nil
+		}
+		user, err := dep.Users.GetByIDWithTenant(ctx, t.UserID)
+		if errors.Is(err, sql.ErrNoRows) {
+			slog.InfoContext(ctx, "send_email skipped: user gone", logging.AttrComponent, comp, "user", t.UserID)
+			return nil
+		} else if err != nil {
+			return err // transient (DB)
+		}
+		recipientName, toEmail = user.Name, user.Email
+		if user.Tenant != nil {
+			workspace = user.Tenant.Name
+		}
+	} else {
+		recipientName, toEmail = t.ToName, t.ToEmail
+		workspace = t.Vars["workspace_name"]
 	}
 
 	logBase := models.EmailLog{
@@ -167,13 +186,17 @@ func (p *SendEmailProcessor) Process(ctx context.Context, t SendEmailTask) error
 	}
 
 	rendered, err := templates.Render(tmpl, templates.Data{
-		Name:           user.Name,
+		Name:           recipientName,
 		WorkspaceName:  workspace,
 		AppURL:         dep.AppBaseURL,
 		UnsubscribeURL: unsubURL,
-		// Per-message vars (CON-161): the password_reset template reads ResetURL;
-		// other templates leave it empty.
-		ResetURL: t.Vars["reset_url"],
+		// Per-message vars: the password_reset template reads ResetURL (CON-161);
+		// the invitation template reads InviteURL/InviterName/Role (CON-26); other
+		// templates leave them empty.
+		ResetURL:    t.Vars["reset_url"],
+		InviteURL:   t.Vars["invite_url"],
+		InviterName: t.Vars["inviter_name"],
+		Role:        t.Vars["role"],
 	})
 	if err != nil {
 		p.writeLog(ctx, logBase, models.EmailLogFailed, "", "render: "+err.Error())

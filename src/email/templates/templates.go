@@ -16,6 +16,7 @@ import (
 const (
 	KeyWelcome       = "welcome"
 	KeyPasswordReset = "password_reset"
+	KeyInvitation    = "invitation"
 	KeyDripDay2      = "drip_day2"
 	KeyDripDay5      = "drip_day5"
 	KeyDripDay7      = "drip_day7"
@@ -33,6 +34,12 @@ type Data struct {
 	// ResetURL is the one-time password-reset link (CON-161). Set only for the
 	// password_reset template; empty and ignored for every other.
 	ResetURL string
+	// InviteURL / InviterName / Role feed the invitation template (CON-26): the
+	// single-use accept link, who sent it, and the role the invitee will hold.
+	// Empty and ignored for every other template.
+	InviteURL   string
+	InviterName string
+	Role        string
 }
 
 //go:embed defaults/*.tmpl
@@ -47,6 +54,9 @@ const (
 	varAppURL         = "Absolute app URL (APP_BASE_URL) for the primary call-to-action link."
 	varUnsubscribeURL = "Signed one-click unsubscribe URL; required in every marketing footer."
 	varResetURL       = "The one-time password-reset link; single-use, expires in an hour."
+	varInviteURL      = "The one-time invitation-accept link; single-use, expires in 7 days."
+	varInviterName    = "Display name of the person who sent the invitation."
+	varRole           = "The role the invitee will hold in the workspace (owner or member)."
 )
 
 // transactionalVars / marketingVars build the per-template variable doc sets.
@@ -73,6 +83,18 @@ func passwordResetVars() models.StringMap {
 	return m
 }
 
+// invitationVars documents the invitation template's placeholders (CON-26): the
+// standard transactional set plus the accept link, inviter, and target role. The
+// invitee has no user record yet, so Name is unset — the template greets without
+// a name.
+func invitationVars() models.StringMap {
+	m := transactionalVars()
+	m["InviteURL"] = varInviteURL
+	m["InviterName"] = varInviterName
+	m["Role"] = varRole
+	return m
+}
+
 // defaultSpec pairs a key with its kind + subject line + variable docs; the
 // bodies are read from the embedded defaults/<key>.{html,txt}.tmpl files.
 type defaultSpec struct {
@@ -85,6 +107,7 @@ type defaultSpec struct {
 var defaultSpecs = []defaultSpec{
 	{KeyWelcome, models.EmailKindTransactional, "Welcome to Ogen, [[ .Name ]]", transactionalVars()},
 	{KeyPasswordReset, models.EmailKindTransactional, "Reset your Ogen password", passwordResetVars()},
+	{KeyInvitation, models.EmailKindTransactional, "[[ .InviterName ]] invited you to [[ .WorkspaceName ]] on Ogen", invitationVars()},
 	{KeyDripDay2, models.EmailKindMarketing, "Getting the most out of Ogen", marketingVars()},
 	{KeyDripDay5, models.EmailKindMarketing, "Your content, on autopilot", marketingVars()},
 	{KeyDripDay7, models.EmailKindMarketing, "A quick check-in from Ogen", marketingVars()},

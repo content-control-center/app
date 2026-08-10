@@ -176,7 +176,8 @@ func (h *TenantsHandler) Signup(c *fiber.Ctx) error {
 
 	now := time.Now().UTC()
 	tenant := &models.Tenant{ID: tenantID, Name: req.Tenant.Name, Slug: slug, CreatedAt: now, UpdatedAt: now}
-	user := &models.User{ID: userID, TenantID: tenantID, Name: req.User.Name, Email: req.User.Email, PasswordHash: hash, CreatedAt: now, UpdatedAt: now}
+	// The signup user creates the workspace, so they are its first owner (CON-26).
+	user := &models.User{ID: userID, TenantID: tenantID, Name: req.User.Name, Email: req.User.Email, PasswordHash: hash, Role: models.RoleOwner, CreatedAt: now, UpdatedAt: now}
 	session := &models.Session{ID: token, UserID: userID, TenantID: tenantID, ExpiresAt: now.Add(sessionTTL), CreatedAt: now}
 
 	if err := h.db.RunInTx(c.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
