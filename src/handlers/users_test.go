@@ -44,7 +44,7 @@ var _ = Describe("UsersHandler", Ordered, func() {
 		sessionRepo := repository.NewSessionRepository(db)
 		settingRepo := repository.NewSettingRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
-		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
+		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewSettingsHandler(settingRepo, auth).Register(app)
 	})
@@ -78,6 +78,32 @@ var _ = Describe("UsersHandler", Ordered, func() {
 		cookies := resp.Cookies()
 		Expect(cookies).To(HaveLen(1))
 		return cookies[0]
+	}
+
+	// sessionAlive reports whether a session cookie still authenticates, by hitting
+	// a protected endpoint: 200 means the session is live, 401 means it was revoked.
+	// Any other status is unexpected and fails the spec rather than being silently
+	// read as "revoked".
+	sessionAlive := func(cookie *http.Cookie) bool {
+		GinkgoHelper()
+		req := httptest.NewRequest("GET", "/api/current_user", nil)
+		req.AddCookie(cookie)
+		resp, err := app.Test(req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(BeElementOf(fiber.StatusOK, fiber.StatusUnauthorized))
+		return resp.StatusCode == fiber.StatusOK
+	}
+
+	// loginFails asserts credentials are rejected — used to prove an old password
+	// no longer works after a change.
+	loginFails := func(email, password string) {
+		GinkgoHelper()
+		body, _ := json.Marshal(fiber.Map{"email": email, "password": password})
+		req := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := app.Test(req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(Equal(fiber.StatusUnauthorized))
 	}
 
 	// ── CurrentUser ──────────────────────────────────────────────────────────
@@ -413,17 +439,112 @@ var _ = Describe("UsersHandler", Ordered, func() {
 				Expect(u.Email).To(Equal("eve2@example.com"))
 			})
 
-			It("updates the password when provided", func() {
+			It("updates the password when the current password is supplied", func() {
 				created := createUser("Eve2", "eve2@example.com", "old-password")
 				cookie := loginAs("eve2@example.com", "old-password")
 
-				body, _ := json.Marshal(fiber.Map{"name": "Eve2", "email": "eve2@example.com", "password": "new-password"})
+				body, _ := json.Marshal(fiber.Map{
+					"name": "Eve2", "email": "eve2@example.com",
+					"current_password": "old-password", "password": "new-password",
+				})
 				req := httptest.NewRequest("PUT", fmt.Sprintf("/api/users/%s", created.ID), bytes.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				req.AddCookie(cookie)
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(200))
+
+				// The credential actually rotated: new works, old no longer does.
+				Expect(loginAs("eve2@example.com", "new-password")).NotTo(BeNil())
+				loginFails("eve2@example.com", "old-password")
+			})
+		})
+
+		// ── CON-193: current-password re-auth + session revocation ────────────────
+		Context("when changing the password (CON-193)", func() {
+			It("rejects a password change that omits the current password with 400", func() {
+				created := createUser("Nadia", "nadia@example.com", "old-password")
+				cookie := loginAs("nadia@example.com", "old-password")
+
+				body, _ := json.Marshal(fiber.Map{
+					"name": "Nadia", "email": "nadia@example.com", "password": "new-password",
+				})
+				req := httptest.NewRequest("PUT", fmt.Sprintf("/api/users/%s", created.ID), bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(cookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(400))
+
+				// Nothing changed: the old password still logs in.
+				Expect(loginAs("nadia@example.com", "old-password")).NotTo(BeNil())
+			})
+
+			It("rejects a wrong current password with 403 and leaves the credential intact", func() {
+				created := createUser("Omar", "omar@example.com", "old-password")
+				cookie := loginAs("omar@example.com", "old-password")
+
+				body, _ := json.Marshal(fiber.Map{
+					"name": "Omar", "email": "omar@example.com",
+					"current_password": "not-my-password", "password": "new-password",
+				})
+				req := httptest.NewRequest("PUT", fmt.Sprintf("/api/users/%s", created.ID), bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(cookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(403))
+
+				// The password was not rotated.
+				Expect(loginAs("omar@example.com", "old-password")).NotTo(BeNil())
+				loginFails("omar@example.com", "new-password")
+			})
+
+			It("revokes the user's other sessions but keeps the caller's own", func() {
+				created := createUser("Rita", "rita@example.com", "old-password")
+				// Two independent live sessions for the same user.
+				caller := loginAs("rita@example.com", "old-password")
+				other := loginAs("rita@example.com", "old-password")
+				Expect(sessionAlive(caller)).To(BeTrue())
+				Expect(sessionAlive(other)).To(BeTrue())
+
+				body, _ := json.Marshal(fiber.Map{
+					"name": "Rita", "email": "rita@example.com",
+					"current_password": "old-password", "password": "brand-new-password",
+				})
+				req := httptest.NewRequest("PUT", fmt.Sprintf("/api/users/%s", created.ID), bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(caller)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+
+				// The caller stays signed in on the tab making the change...
+				Expect(sessionAlive(caller)).To(BeTrue())
+				// ...while every other session is evicted.
+				Expect(sessionAlive(other)).To(BeFalse())
+
+				// And the credential rotated.
+				Expect(loginAs("rita@example.com", "brand-new-password")).NotTo(BeNil())
+				loginFails("rita@example.com", "old-password")
+			})
+
+			It("does not touch other sessions on a name/email-only edit", func() {
+				created := createUser("Sam", "sam@example.com", "password-sam")
+				caller := loginAs("sam@example.com", "password-sam")
+				other := loginAs("sam@example.com", "password-sam")
+
+				body, _ := json.Marshal(fiber.Map{"name": "Sam Renamed", "email": "sam@example.com"})
+				req := httptest.NewRequest("PUT", fmt.Sprintf("/api/users/%s", created.ID), bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(caller)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+
+				// No password change → no revocation; both sessions remain live.
+				Expect(sessionAlive(caller)).To(BeTrue())
+				Expect(sessionAlive(other)).To(BeTrue())
 			})
 		})
 

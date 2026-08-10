@@ -55,7 +55,7 @@ var _ = Describe("PlatformsHandler publishers enrichment", Ordered, func() {
 		accountRepo = repository.NewSocialAccountRepository(db)
 		allowlistRepo = repository.NewAutoPublishAllowlistRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
-		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
+		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewPlatformsHandler(platformRepo, pubs, allowlistRepo, auth).Register(app)
 

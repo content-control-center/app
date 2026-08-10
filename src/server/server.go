@@ -156,7 +156,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	handlers.NewEventsHandler(hub, sessionRepo, auth, 0).Register(app)
 
 	handlers.NewHealthHandler(db, secretStore).Register(app)
-	usersHandler := handlers.NewUsersHandler(userRepo, settingRepo, auth)
+	usersHandler := handlers.NewUsersHandler(db, userRepo, settingRepo, auth)
 	usersHandler.SetActivityRecorder(activityWiring.recorder)
 	usersHandler.Register(app)
 	// CON-97 signup + CON-102 eager Zernio profile provisioning are registered

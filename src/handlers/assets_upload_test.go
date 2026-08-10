@@ -74,7 +74,7 @@ var _ = Describe("AssetsHandler upload", Ordered, func() {
 		// recording enqueuer, plus the test DB for the insert+enqueue transaction.
 		store = &stubStorage{returnURL: "https://pub.example.com/x", objects: map[string][]byte{}}
 		enq = &fakePDFEnqueuer{}
-		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
+		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewAssetsHandler(assetRepo, repository.NewAssetFileRepository(db), store, db, enq, auth, nil).Register(app)
 

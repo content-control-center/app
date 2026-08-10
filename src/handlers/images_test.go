@@ -135,7 +135,7 @@ var _ = Describe("ImagesHandler", Ordered, func() {
 		sessionRepo := repository.NewSessionRepository(db)
 		settingRepo := repository.NewSettingRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
-		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
+		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewImagesHandler(stub, auth).Register(app)
 
@@ -237,7 +237,7 @@ var _ = Describe("ImagesHandler", Ordered, func() {
 				sessionRepo2 := repository.NewSessionRepository(db)
 				settingRepo2 := repository.NewSettingRepository(db)
 				auth2 := handlers.RequireAuth(sessionRepo2, testCookieName)
-				handlers.NewUsersHandler(userRepo2, settingRepo2, auth2).Register(app2)
+				handlers.NewUsersHandler(db, userRepo2, settingRepo2, auth2).Register(app2)
 				handlers.NewSessionsHandler(userRepo2, sessionRepo2, testCookieName, false).Register(app2)
 				handlers.NewImagesHandler(stub, auth2).Register(app2)
 				resp, err := app2.Test(req, 30000)
@@ -269,7 +269,7 @@ var _ = Describe("ImagesHandler", Ordered, func() {
 				sessionRepo2 := repository.NewSessionRepository(db)
 				settingRepo2 := repository.NewSettingRepository(db)
 				auth2 := handlers.RequireAuth(sessionRepo2, testCookieName)
-				handlers.NewUsersHandler(userRepo2, settingRepo2, auth2).Register(app2)
+				handlers.NewUsersHandler(db, userRepo2, settingRepo2, auth2).Register(app2)
 				handlers.NewSessionsHandler(userRepo2, sessionRepo2, testCookieName, false).Register(app2)
 				handlers.NewImagesHandler(nil, auth2).Register(app2) // nil = disabled
 

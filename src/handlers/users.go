@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/uptrace/bun"
 
 	"github.com/ogen-app/ogen/src/activity"
 	"github.com/ogen-app/ogen/src/models"
@@ -13,6 +15,10 @@ import (
 )
 
 type UsersHandler struct {
+	// db backs the password-change path, which must update the credential and
+	// revoke the user's other sessions in one transaction (CON-193). Every other
+	// operation goes through repo.
+	db   *bun.DB
 	repo repository.UserRepository
 	// settingRepo backed the setup_complete bootstrap gate, removed in CON-97
 	// (signup via POST /api/tenants is the sole bootstrap). Retained on the
@@ -25,8 +31,8 @@ type UsersHandler struct {
 	activity *activity.Recorder
 }
 
-func NewUsersHandler(repo repository.UserRepository, settingRepo repository.SettingRepository, auth fiber.Handler) *UsersHandler {
-	return &UsersHandler{repo: repo, settingRepo: settingRepo, auth: auth}
+func NewUsersHandler(db *bun.DB, repo repository.UserRepository, settingRepo repository.SettingRepository, auth fiber.Handler) *UsersHandler {
+	return &UsersHandler{db: db, repo: repo, settingRepo: settingRepo, auth: auth}
 }
 
 // SetActivityRecorder wires the CON-125 activity recorder (nil-safe no-op).
@@ -63,11 +69,22 @@ type createUserRequest struct {
 	Password string `json:"password" validate:"required,min=8"`
 }
 
+// errCurrentPasswordMismatch is returned from inside the password-change
+// transaction when the supplied current password fails re-verification, so the
+// tx rolls back and the handler can map it to a 403 (CON-193 §1). Mirrors
+// errResetInvalid in password_reset.go.
+var errCurrentPasswordMismatch = errors.New("current password is incorrect")
+
 type updateUserRequest struct {
 	Name  string `json:"name"     validate:"required"`
 	Email string `json:"email"    validate:"required,email"`
 	// Password is optional on update; when provided it must be at least 8 characters.
 	Password string `json:"password" validate:"omitempty,min=8"`
+	// CurrentPassword re-authenticates a credential change (CON-193 §1): it is
+	// required only when Password is present and is verified against the stored
+	// hash, so it carries no min-length rule of its own. A plain name/email edit
+	// leaves it empty and unchecked.
+	CurrentPassword string `json:"current_password" validate:"required_with=Password"`
 }
 
 // CurrentUser godoc
@@ -183,7 +200,7 @@ func (h *UsersHandler) Get(c *fiber.Ctx) error {
 
 // Update godoc
 // @Summary      Update user
-// @Description  Updates name and/or email of an existing user.
+// @Description  Updates name and/or email of an existing user. When `password` is present the caller must also send `current_password`; it is re-verified and, on success, every other session for the user is revoked (the caller's own session is kept). CON-193.
 // @Tags         users
 // @Accept       json
 // @Produce      json
@@ -193,12 +210,16 @@ func (h *UsersHandler) Get(c *fiber.Ctx) error {
 // @Success      200   {object}  models.User
 // @Failure      400   {object}  map[string]string
 // @Failure      401   {object}  map[string]string
+// @Failure      403   {object}  map[string]string
 // @Failure      404   {object}  map[string]string
 // @Router       /api/users/{id} [put]
 func (h *UsersHandler) Update(c *fiber.Ctx) error {
 	if err := requireSelf(c); err != nil {
 		return err
 	}
+	// requireSelf guarantees an authenticated session; hold on to it so a password
+	// change can spare the caller's own session while revoking the rest (CON-193 §2).
+	session := c.Locals("session").(*models.Session)
 
 	var req updateUserRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -216,20 +237,57 @@ func (h *UsersHandler) Update(c *fiber.Ctx) error {
 		return err
 	}
 
-	user.Name = req.Name
-	user.Email = req.Email
-	user.UpdatedAt = time.Now().UTC()
-
-	if req.Password != "" {
-		hash, err := models.HashPassword(req.Password)
-		if err != nil {
+	if req.Password == "" {
+		// Name/email-only edit: no re-authentication and no session revocation.
+		user.Name = req.Name
+		user.Email = req.Email
+		user.UpdatedAt = time.Now().UTC()
+		if err := h.repo.Update(c.Context(), user); err != nil {
 			return err
 		}
-		user.PasswordHash = hash
-	}
-
-	if err := h.repo.Update(c.Context(), user); err != nil {
-		return err
+	} else {
+		// Password change. Lock the user row, re-verify the current password against
+		// the *locked* hash, rotate it, and revoke the user's other sessions — all in
+		// one transaction. FOR UPDATE serializes concurrent changes, so an in-flight
+		// request carrying the old (possibly compromised) credential can't verify
+		// against a stale hash and slip through after a rotation has already committed
+		// (CON-193 §1/§2). Mirrors POST /api/password-reset/confirm, which likewise
+		// holds the row lock across argon2 — password changes are rare, so hashing
+		// under the lock is fine. The caller's own session (session.ID) is preserved
+		// so they aren't logged out of the tab making the change.
+		if err := h.db.RunInTx(c.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
+			if err := tx.NewSelect().Model(user).WherePK().For("UPDATE").Scan(ctx); err != nil {
+				return err
+			}
+			ok, verr := models.VerifyPassword(req.CurrentPassword, user.PasswordHash)
+			if verr != nil {
+				return verr
+			}
+			if !ok {
+				return errCurrentPasswordMismatch
+			}
+			hash, herr := models.HashPassword(req.Password)
+			if herr != nil {
+				return herr
+			}
+			user.Name = req.Name
+			user.Email = req.Email
+			user.PasswordHash = hash
+			user.UpdatedAt = time.Now().UTC()
+			if _, err := tx.NewUpdate().Model(user).WherePK().Exec(ctx); err != nil {
+				return err
+			}
+			_, err := tx.NewDelete().Model((*models.Session)(nil)).
+				Where("user_id = ?", user.ID).
+				Where("id != ?", session.ID).
+				Exec(ctx)
+			return err
+		}); err != nil {
+			if errors.Is(err, errCurrentPasswordMismatch) {
+				return fiber.NewError(fiber.StatusForbidden, "current password is incorrect")
+			}
+			return err
+		}
 	}
 
 	h.activity.Record(c.Context(), activity.CategoryAuthentication, "user_updated",
