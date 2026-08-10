@@ -45,7 +45,7 @@ var _ = Describe("AssetsHandler", Ordered, func() {
 		tagRepo := repository.NewTagRepository(db)
 		pieceRepo := repository.NewAssetRepository(db, tagRepo, repository.NewAssetFileRepository(db))
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
-		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
+		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewAssetsHandler(pieceRepo, repository.NewAssetFileRepository(db), nil, nil, nil, auth, nil).Register(app)
 		handlers.NewTagsHandler(tagRepo, auth).Register(app)
@@ -439,7 +439,7 @@ var _ = Describe("AssetsHandler onSave embed trigger", Ordered, func() {
 		tagRepo := repository.NewTagRepository(db)
 		assetRepo := repository.NewAssetRepository(db, tagRepo, repository.NewAssetFileRepository(db))
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
-		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
+		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewTagsHandler(tagRepo, auth).Register(app)
 		handlers.NewAssetsHandler(assetRepo, repository.NewAssetFileRepository(db), nil, nil, nil, auth, func(assetID, _, _, tenantID string) {

@@ -74,7 +74,7 @@ var _ = Describe("Post schedule — CON-78", Ordered, func() {
 		allowlistRepo = repository.NewAutoPublishAllowlistRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, "test_session")
 
-		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
+		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, "test_session", false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
 

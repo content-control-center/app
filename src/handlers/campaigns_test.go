@@ -57,7 +57,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 		campaignTypeRepo := repository.NewCampaignTypeRepository(db)
 		campaignRepo := repository.NewCampaignRepository(db, tagRepo, platformRepo, campaignTypeRepo)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
-		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
+		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewCampaignTypesHandler(campaignTypeRepo, auth).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
@@ -557,7 +557,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				settingRepo := repository.NewSettingRepository(db)
 				userRepo := repository.NewUserRepository(db)
 				auth2 := handlers.RequireAuth(sessionRepo, testCookieName)
-				handlers.NewUsersHandler(userRepo, settingRepo, auth2).Register(appWithDraft)
+				handlers.NewUsersHandler(db, userRepo, settingRepo, auth2).Register(appWithDraft)
 				handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(appWithDraft)
 				noop := func(_ context.Context, _ string, _ content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error) {
 					return &content_plan.ContentPlanResponse{}, nil
@@ -588,7 +588,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				settingRepo := repository.NewSettingRepository(db)
 				userRepo := repository.NewUserRepository(db)
 				auth2 := handlers.RequireAuth(sessionRepo, testCookieName)
-				handlers.NewUsersHandler(userRepo, settingRepo, auth2).Register(appWithDraft)
+				handlers.NewUsersHandler(db, userRepo, settingRepo, auth2).Register(appWithDraft)
 				handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(appWithDraft)
 				noop := func(_ context.Context, _ string, _ content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error) {
 					return &content_plan.ContentPlanResponse{}, nil
@@ -643,7 +643,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				settingRepo := repository.NewSettingRepository(db)
 				userRepo := repository.NewUserRepository(db)
 				auth2 := handlers.RequireAuth(sessionRepo, testCookieName)
-				handlers.NewUsersHandler(userRepo, settingRepo, auth2).Register(appWithDraft)
+				handlers.NewUsersHandler(db, userRepo, settingRepo, auth2).Register(appWithDraft)
 				handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(appWithDraft)
 
 				stub := func(_ context.Context, _ string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error) {
@@ -740,7 +740,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				settingRepo := repository.NewSettingRepository(db)
 				userRepo := repository.NewUserRepository(db)
 				auth2 := handlers.RequireAuth(sessionRepo, testCookieName)
-				handlers.NewUsersHandler(userRepo, settingRepo, auth2).Register(appWithDraft)
+				handlers.NewUsersHandler(db, userRepo, settingRepo, auth2).Register(appWithDraft)
 				handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(appWithDraft)
 
 				stub := func(_ context.Context, _ string, _ content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error) {
@@ -817,7 +817,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 			setRepo := repository.NewSettingRepository(db)
 			uRepo := repository.NewUserRepository(db)
 			a2 := handlers.RequireAuth(sRepo, testCookieName)
-			handlers.NewUsersHandler(uRepo, setRepo, a2).Register(a)
+			handlers.NewUsersHandler(db, uRepo, setRepo, a2).Register(a)
 			handlers.NewSessionsHandler(uRepo, sRepo, testCookieName, false).Register(a)
 			handlers.NewCampaignsHandler(cRepo, ctRepo, a2, nil, nil, brief, nil, nil).Register(a)
 			return a
@@ -1002,7 +1002,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 			uRepo := repository.NewUserRepository(db)
 			msgRepo := repository.NewCampaignAssistantMessageRepository(db)
 			a2 := handlers.RequireAuth(sRepo, testCookieName)
-			handlers.NewUsersHandler(uRepo, setRepo, a2).Register(a)
+			handlers.NewUsersHandler(db, uRepo, setRepo, a2).Register(a)
 			handlers.NewSessionsHandler(uRepo, sRepo, testCookieName, false).Register(a)
 			handlers.NewCampaignsHandler(cRepo, ctRepo, a2, nil, nil, nil, msgRepo, assistant).Register(a)
 			return a
@@ -1214,7 +1214,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 			uRepo := repository.NewUserRepository(db)
 			msgRepo := repository.NewCampaignAssistantMessageRepository(db)
 			a2 := handlers.RequireAuth(sRepo, testCookieName)
-			handlers.NewUsersHandler(uRepo, setRepo, a2).Register(a)
+			handlers.NewUsersHandler(db, uRepo, setRepo, a2).Register(a)
 			handlers.NewSessionsHandler(uRepo, sRepo, testCookieName, false).Register(a)
 			handlers.NewCampaignsHandler(cRepo, ctRepo, a2, nil, nil, nil, msgRepo, nil).Register(a)
 			return a, msgRepo
@@ -1331,7 +1331,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 			setRepo := repository.NewSettingRepository(db)
 			uRepo := repository.NewUserRepository(db)
 			a2 := handlers.RequireAuth(sRepo, testCookieName)
-			handlers.NewUsersHandler(uRepo, setRepo, a2).Register(a)
+			handlers.NewUsersHandler(db, uRepo, setRepo, a2).Register(a)
 			handlers.NewSessionsHandler(uRepo, sRepo, testCookieName, false).Register(a)
 			ch := handlers.NewCampaignsHandler(cRepo, ctRepo, a2, nil, nil, nil, nil, nil)
 			ch.SetOverviewService(overview.New(cRepo, postRepo, pRepo))
@@ -1486,7 +1486,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 			setRepo := repository.NewSettingRepository(db)
 			uRepo := repository.NewUserRepository(db)
 			a2 := handlers.RequireAuth(sRepo, testCookieName)
-			handlers.NewUsersHandler(uRepo, setRepo, a2).Register(a)
+			handlers.NewUsersHandler(db, uRepo, setRepo, a2).Register(a)
 			handlers.NewSessionsHandler(uRepo, sRepo, testCookieName, false).Register(a)
 			ch := handlers.NewCampaignsHandler(cRepo, ctRepo, a2, nil, nil, nil, nil, nil)
 			ch.SetSummariesService(summaries.New(postRepo))
@@ -1621,7 +1621,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 			setRepo := repository.NewSettingRepository(db)
 			uRepo := repository.NewUserRepository(db)
 			a2 := handlers.RequireAuth(sRepo, testCookieName)
-			handlers.NewUsersHandler(uRepo, setRepo, a2).Register(a)
+			handlers.NewUsersHandler(db, uRepo, setRepo, a2).Register(a)
 			handlers.NewSessionsHandler(uRepo, sRepo, testCookieName, false).Register(a)
 			ch := handlers.NewCampaignsHandler(cRepo, ctRepo, a2, nil, nil, nil, nil, nil)
 			ch.SetGeneratePosts(stub, 10)
@@ -1774,7 +1774,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 			setRepo := repository.NewSettingRepository(db)
 			uRepo := repository.NewUserRepository(db)
 			a2 := handlers.RequireAuth(sRepo, testCookieName)
-			handlers.NewUsersHandler(uRepo, setRepo, a2).Register(a)
+			handlers.NewUsersHandler(db, uRepo, setRepo, a2).Register(a)
 			handlers.NewSessionsHandler(uRepo, sRepo, testCookieName, false).Register(a)
 			ch := handlers.NewCampaignsHandler(cRepo, ctRepo, a2, nil, nil, nil, nil, nil)
 			ch.SetConsistency(checkBrief, checkPosts)

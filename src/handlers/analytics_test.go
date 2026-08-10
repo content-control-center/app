@@ -65,7 +65,7 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 		socialAccountRepo = repository.NewSocialAccountRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 
-		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
+		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
 

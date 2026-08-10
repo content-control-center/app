@@ -42,7 +42,7 @@ var _ = Describe("SettingsHandler", Ordered, func() {
 		sessionRepo := repository.NewSessionRepository(db)
 		settingRepo := repository.NewSettingRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
-		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
+		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewSettingsHandler(settingRepo, auth).Register(app)
 

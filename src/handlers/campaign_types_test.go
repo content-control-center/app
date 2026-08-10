@@ -51,7 +51,7 @@ var _ = Describe("CampaignTypesHandler", Ordered, func() {
 		settingRepo := repository.NewSettingRepository(db)
 		campaignTypeRepo := repository.NewCampaignTypeRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
-		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
+		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewCampaignTypesHandler(campaignTypeRepo, auth).Register(app)
 

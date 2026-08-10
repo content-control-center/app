@@ -41,7 +41,7 @@ var _ = Describe("SessionsHandler", Ordered, func() {
 		sessionRepo := repository.NewSessionRepository(db)
 		settingRepo := repository.NewSettingRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
-		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
+		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 	})
 
@@ -111,7 +111,7 @@ var _ = Describe("SessionsHandler", Ordered, func() {
 				sessionRepo := repository.NewSessionRepository(db)
 				settingRepo := repository.NewSettingRepository(db)
 				auth := handlers.RequireAuth(sessionRepo, testCookieName)
-				handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(secureApp)
+				handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(secureApp)
 				handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, true).Register(secureApp)
 
 				// Seed a user directly in the default tenant; login below exercises the secure-cookie path.

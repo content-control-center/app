@@ -189,7 +189,7 @@ var _ = Describe("ZernioHandler", Ordered, func() {
 		platformRepo := repository.NewPlatformRepository(db)
 		accountRepo = repository.NewSocialAccountRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
-		handlers.NewUsersHandler(userRepo, settingRepo, auth).Register(app)
+		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
 
 		// Bypass the cache for tests so reads always hit the SQLite source
