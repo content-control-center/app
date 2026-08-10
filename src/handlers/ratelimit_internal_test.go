@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"strconv"
 	"testing"
 	"time"
 )
@@ -105,6 +106,40 @@ func TestKeyedRateLimiter_RefillsOverTime(t *testing.T) {
 	now = now.Add(time.Duration(window.Seconds()/burst) * time.Second)
 	if d := l.retryAfter("k"); d != 0 {
 		t.Fatalf("after one refill interval: want 0, got %v", d)
+	}
+}
+
+func TestKeyedRateLimiter_CapIsHardEvenWhenAllBucketsActive(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	l := newKeyedRateLimiter(1, time.Hour)
+	l.now = func() time.Time { return now }
+
+	// Fill the map to the cap with active buckets — each penalize creates one at
+	// lastSeen=now, so a sweep (ttl is 2×window) reclaims nothing.
+	for i := 0; i < maxRateLimiterBuckets; i++ {
+		l.penalize("k" + strconv.Itoa(i))
+	}
+	if len(l.buckets) != maxRateLimiterBuckets {
+		t.Fatalf("setup: want %d buckets, got %d", maxRateLimiterBuckets, len(l.buckets))
+	}
+
+	// A brand-new key must not push the map past the cap when nothing can be swept.
+	l.penalize("overflow")
+	if len(l.buckets) > maxRateLimiterBuckets {
+		t.Fatalf("penalize grew the map past the cap: %d", len(l.buckets))
+	}
+	// allow() on a new key at capacity fails open (permits) without tracking it.
+	if ok, _ := l.allow("overflow-allow"); !ok {
+		t.Fatal("allow on a new key at capacity should fail open (permit)")
+	}
+	if len(l.buckets) > maxRateLimiterBuckets {
+		t.Fatalf("allow grew the map past the cap: %d", len(l.buckets))
+	}
+
+	// The cap didn't disable limiting: an already-tracked, exhausted key is still
+	// blocked (its bucket was preserved, not evicted).
+	if ok, _ := l.allow("k0"); ok {
+		t.Fatal("an already-exhausted tracked key should still be blocked")
 	}
 }
 

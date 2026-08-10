@@ -9,9 +9,10 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// maxRateLimiterBuckets caps a keyed limiter's map so a spray of distinct keys
-// (many addresses / spoofed IPs) can't grow it without bound. When the cap is
-// reached, fully-refilled idle buckets are swept before a new key is added.
+// maxRateLimiterBuckets is a hard cap on a keyed limiter's map so a spray of
+// distinct keys (many addresses / spoofed IPs) can't grow it without bound. When
+// a new key would exceed the cap, idle (fully-refilled) buckets are swept first;
+// if none can be reclaimed the new key is simply not tracked (see touch).
 const maxRateLimiterBuckets = 50_000
 
 // keyedRateLimiter is an in-memory, per-instance token-bucket limiter keyed by
@@ -52,14 +53,23 @@ func newKeyedRateLimiter(burst float64, window time.Duration) *keyedRateLimiter 
 	}
 }
 
-// touch returns the refilled bucket for key, creating a full one when unseen.
-// The map is swept for idle buckets before a new key grows it past the cap.
+// touch returns the refilled bucket for key, creating a full one when unseen, or
+// nil when the map is at capacity and no idle bucket can be reclaimed for it.
 // Callers must hold l.mu.
 func (l *keyedRateLimiter) touch(key string, now time.Time) *rlBucket {
 	b, ok := l.buckets[key]
 	if !ok {
+		// New key: keep maxRateLimiterBuckets a hard cap. Sweep idle buckets to make
+		// room; if the map is still full (every bucket is active) don't grow it —
+		// return nil so the caller leaves this key untracked. Per-key limiting does
+		// nothing against an all-distinct-key flood anyway, so not tracking a new key
+		// there costs no protection, and the buckets already tracking real activity
+		// are preserved rather than evicted.
 		if len(l.buckets) >= maxRateLimiterBuckets {
 			l.sweep(now)
+			if len(l.buckets) >= maxRateLimiterBuckets {
+				return nil
+			}
 		}
 		b = &rlBucket{tokens: l.capacity, lastSeen: now}
 		l.buckets[key] = b
@@ -84,6 +94,9 @@ func (l *keyedRateLimiter) allow(key string) (bool, time.Duration) {
 	defer l.mu.Unlock()
 
 	b := l.touch(key, l.now())
+	if b == nil {
+		return true, 0 // limiter at capacity ⇒ leave untracked and fail open
+	}
 	if b.tokens >= 1 {
 		b.tokens--
 		return true, 0
@@ -120,6 +133,9 @@ func (l *keyedRateLimiter) penalize(key string) {
 	defer l.mu.Unlock()
 
 	b := l.touch(key, l.now())
+	if b == nil {
+		return // limiter at capacity ⇒ nothing to charge
+	}
 	if b.tokens >= 1 {
 		b.tokens--
 	} else {
