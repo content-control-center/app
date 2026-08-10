@@ -173,10 +173,16 @@ func (h *InvitationsHandler) Create(c *fiber.Ctx) error {
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
+	now := time.Now().UTC()
 	// One live invite per address per workspace (the partial unique index is the
-	// hard backstop; this is the friendly pre-check).
-	if _, err := h.inviteRepo.GetPendingByTenantEmail(c.Context(), tenantID, email); err == nil {
-		return fiber.NewError(fiber.StatusConflict, "an invitation for this email is already pending")
+	// hard backstop; this is the friendly pre-check). A pending row whose
+	// expires_at has already passed is treated as expired: it still occupies the
+	// partial-unique (pending) slot, so it is cleared inside the tx below rather
+	// than blocking a fresh invite. Only a still-active pending invite is a 409.
+	if existing, err := h.inviteRepo.GetPendingByTenantEmail(c.Context(), tenantID, email); err == nil {
+		if now.Before(existing.ExpiresAt) {
+			return fiber.NewError(fiber.StatusConflict, "an invitation for this email is already pending")
+		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -189,7 +195,6 @@ func (h *InvitationsHandler) Create(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	now := time.Now().UTC()
 	inv := &models.Invitation{
 		ID:        id,
 		TenantID:  tenantID,
@@ -214,6 +219,19 @@ func (h *InvitationsHandler) Create(c *fiber.Ctx) error {
 	// a committed one queues exactly one link resolving to a stored hash (mirrors
 	// password-reset dispatch, CON-161).
 	if err := h.db.RunInTx(c.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
+		// Clear any expired pending invite for this address first: its stale row
+		// holds the partial-unique (pending) slot and would otherwise unique-
+		// violate the insert. The expires_at guard means a still-active pending
+		// invite is never deleted here — the pre-check already 409'd that, and the
+		// unique index still backstops a concurrent create.
+		if _, err := tx.NewDelete().Model((*models.Invitation)(nil)).
+			Where("tenant_id = ?", tenantID).
+			Where("email = ?", email).
+			Where("status = ?", models.InvitationPending).
+			Where("expires_at <= ?", now).
+			Exec(ctx); err != nil {
+			return err
+		}
 		if _, err := tx.NewInsert().Model(inv).Exec(ctx); err != nil {
 			return err
 		}

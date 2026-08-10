@@ -220,6 +220,24 @@ var _ = Describe("InvitationsHandler", Ordered, func() {
 			resp := createInvite(cookie, fiber.Map{"email": "dup@example.com"})
 			Expect(resp.StatusCode).To(Equal(fiber.StatusConflict))
 		})
+
+		It("replaces an expired pending invite so the address can be re-invited (201)", func() {
+			owner, cookie := ownerCookie()
+			// An expired-but-still-pending row occupies the partial-unique (pending)
+			// slot; a fresh invite must clear it rather than 409 forever.
+			seedInvite(owner.ID, "stale@example.com", models.RoleMember, models.InvitationPending, time.Now().Add(-time.Minute))
+
+			resp := createInvite(cookie, fiber.Map{"email": "stale@example.com"})
+			Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+
+			// Exactly one row remains for the address — the stale one is gone and a
+			// single live pending invite replaces it.
+			total, err := db.NewSelect().Model((*models.Invitation)(nil)).Where("email = ?", "stale@example.com").Count(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(total).To(Equal(1))
+			Expect(getInviteByEmail("stale@example.com").Status).To(Equal(models.InvitationPending))
+			Expect(time.Now().Before(getInviteByEmail("stale@example.com").ExpiresAt)).To(BeTrue())
+		})
 	})
 
 	// ── GET / DELETE /api/invitations ─────────────────────────────────────────
