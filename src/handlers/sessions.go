@@ -109,7 +109,11 @@ func (h *SessionsHandler) Create(c *fiber.Ctx) error {
 	// budget (CON-162). Both are only peeked here — a token is charged just on a
 	// failed attempt (loginFailed), so a legitimate login never accrues. A 429
 	// reveals only that a limit was hit, never whether the address has an account.
+	// Either dimension records the throttle for a known account (off-path, so it
+	// stays silent for unknown addresses and never blocks the response), so a
+	// targeted attempt is visible even when spraying trips the IP budget first.
 	if retry := h.ipLimiter.retryAfter(c.IP()); retry > 0 {
+		h.recordLoginThrottled(c, req.Email)
 		return tooManyRequests(c, retry, loginThrottledMsg)
 	}
 	if retry := h.emailLimiter.retryAfter(req.Email); retry > 0 {
