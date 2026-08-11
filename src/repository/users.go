@@ -149,12 +149,15 @@ func (r *userRepository) GetByEmail(ctx context.Context, email string) (*models.
 
 func (r *userRepository) GetByAccountID(ctx context.Context, accountID string) (*models.User, error) {
 	// Unscoped: the login/auth path resolves the membership before any tenant is
-	// known. Ordered so an account with several memberships (PR2+) resolves to a
-	// stable default; in PR1 there is exactly one.
+	// known. Joins tenants to skip soft-deleted workspaces (CON-147 PR4), so an
+	// account never lands on a deleted one; ordered so it resolves to a stable
+	// default (the oldest live membership).
 	user := new(models.User)
 	err := r.db.NewSelect().Model(user).
+		Join("JOIN tenants AS t ON t.id = u.tenant_id").
 		Where("u.account_id = ?", accountID).
-		OrderExpr("created_at ASC").
+		Where("t.deleted_at IS NULL").
+		OrderExpr("u.created_at ASC").
 		Limit(1).
 		Scan(ctx)
 	if err != nil {
@@ -169,10 +172,15 @@ func (r *userRepository) GetByAccountID(ctx context.Context, accountID string) (
 func (r *userRepository) GetMembership(ctx context.Context, accountID, tenantID string) (*models.User, error) {
 	// Unscoped by design: this lookup is what authorises scoping a request to
 	// tenantID, so it can't itself depend on a tenant already being in context.
+	// Joins tenants and filters deleted_at so a soft-deleted workspace resolves to
+	// ErrNoRows — indistinguishable from one the account was never in, which is
+	// what makes a deleted workspace unreachable (CON-147 PR4).
 	user := new(models.User)
 	err := r.db.NewSelect().Model(user).
+		Join("JOIN tenants AS t ON t.id = u.tenant_id").
 		Where("u.account_id = ?", accountID).
 		Where("u.tenant_id = ?", tenantID).
+		Where("t.deleted_at IS NULL").
 		Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

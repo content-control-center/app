@@ -52,6 +52,7 @@ func (r *workspaceRepository) ListForAccount(ctx context.Context, accountID stri
 		ColumnExpr("u.role AS role").
 		ColumnExpr("(SELECT count(*) FROM users m WHERE m.tenant_id = t.id) AS member_count").
 		Where("u.account_id = ?", accountID).
+		Where("t.deleted_at IS NULL"). // a soft-deleted workspace leaves every member's list (CON-147 PR4)
 		OrderExpr("t.created_at ASC").
 		Scan(ctx, &items)
 	if err != nil {

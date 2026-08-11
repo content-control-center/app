@@ -68,6 +68,7 @@ func (h *WorkspacesHandler) Register(app *fiber.App) {
 	g.Get("/", h.List)
 	g.Post("/", h.Create)
 	g.Post("/:id/switch", h.Switch)
+	g.Delete("/:id", h.Delete)
 }
 
 type createWorkspaceRequest struct {
@@ -212,6 +213,80 @@ func (h *WorkspacesHandler) Switch(c *fiber.Ctx) error {
 	h.activity.Record(
 		logging.WithUserID(tenantctx.With(c.Context(), targetID), membership.ID),
 		activity.CategoryWorkspace, "workspace_switched",
+		activity.WithEntity("tenant", targetID), activity.WithSource(activity.SourceAPI),
+	)
+
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// Delete godoc
+// @Summary      Delete a workspace
+// @Description  Owner-only. Soft-deletes the workspace: it leaves every member's list and can't be entered again, but the row survives (recovery is a manual support request — there is no self-serve restore). Published posts stay live on the networks. Refuses to delete the account's only workspace (409). If it was the session default, the default is re-pointed to a surviving workspace (CON-147 PR4).
+// @Tags         workspaces
+// @Security     CookieAuth
+// @Param        id  path  string  true  "Workspace id"
+// @Success      204
+// @Failure      401  {object}  map[string]string
+// @Failure      403  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Failure      409  {object}  map[string]string
+// @Router       /api/workspaces/{id} [delete]
+func (h *WorkspacesHandler) Delete(c *fiber.Ctx) error {
+	session := c.Locals("session").(*models.Session)
+	targetID := c.Params("id")
+
+	// Resolve the target from the path (like Switch), independent of the active
+	// workspace — an owner can delete any workspace they own. 404 (not 403) hides
+	// the existence of workspaces the account can't see (CON-97 §12.3).
+	membership, err := h.userRepo.GetMembership(c.Context(), session.AccountID, targetID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "workspace not found")
+		}
+		return err
+	}
+	if membership.Role != models.RoleOwner {
+		return fiber.NewError(fiber.StatusForbidden, "only an owner can delete a workspace")
+	}
+
+	// Refuse to strand the account: it must keep at least one workspace to work in
+	// (and to stay able to authenticate — RequireAuth needs a live membership).
+	live, err := h.workspaceRepo.ListForAccount(c.Context(), session.AccountID)
+	if err != nil {
+		return err
+	}
+	if len(live) <= 1 {
+		return fiber.NewError(fiber.StatusConflict, "you can't delete your only workspace — create another first")
+	}
+
+	now := time.Now().UTC()
+	if err := h.db.RunInTx(c.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := h.tenantRepo.SoftDeleteTx(ctx, tx, targetID, now); err != nil {
+			return err
+		}
+		// TODO(CON-147 follow-up): enqueue the Zernio profile teardown here, in this
+		// same tx, once a DeleteProfile job exists — the Zernio client has no
+		// profile-delete method yet and the external contract is unverified.
+		// Deferring is safe: the workspace is already unreachable, published posts
+		// stay live, and the orphaned profile is a background-cleanup concern
+		// (docs/CON-147-workspace-ui.md §9).
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	// If the deleted workspace was this session's stored default, re-point it to a
+	// surviving one so a fresh tab / no-header request lands somewhere live. Best
+	// effort — RequireAuth's recovery also handles a dead default.
+	if def, _ := c.Locals(DefaultWorkspaceLocal).(string); def == targetID {
+		if next, nerr := h.userRepo.GetByAccountID(c.Context(), session.AccountID); nerr == nil {
+			_ = h.sessionRepo.SetDefaultWorkspace(c.Context(), session.ID, next.ID, next.TenantID)
+		}
+	}
+
+	h.activity.Record(
+		logging.WithUserID(tenantctx.With(c.Context(), targetID), membership.ID),
+		activity.CategoryWorkspace, "workspace_deleted",
 		activity.WithEntity("tenant", targetID), activity.WithSource(activity.SourceAPI),
 	)
 

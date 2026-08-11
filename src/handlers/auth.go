@@ -30,6 +30,10 @@ import (
 // session.UserID as CreatedBy — sees the active workspace with no per-handler
 // change. The stored session row is untouched (its tenant is the default, moved
 // only by POST /api/workspaces/:id/switch).
+//
+// Every authenticated request costs one indexed membership lookup (account_id,
+// tenant_id): it is also the gate that keeps a soft-deleted workspace (CON-147
+// PR4) unreachable, so it can't be skipped for the no-header case.
 func RequireAuth(sessionRepo repository.SessionRepository, userRepo repository.UserRepository, cookieName string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		token := c.Cookies(cookieName)
@@ -52,25 +56,40 @@ func RequireAuth(sessionRepo repository.SessionRepository, userRepo repository.U
 		// The session's stored tenant is the DEFAULT workspace — where a fresh tab
 		// or the next login seeds. Capture it before the active-workspace override
 		// below rewrites session.TenantID, so the switcher can mark it (CON-147).
-		c.Locals(DefaultWorkspaceLocal, session.TenantID)
+		storedDefault := session.TenantID
+		c.Locals(DefaultWorkspaceLocal, storedDefault)
 
-		// Resolve the active workspace. Absent header (or one naming the default)
-		// keeps the session's stored membership — the common single-workspace path,
-		// with no extra query. A header naming another workspace is validated
-		// against membership and, on success, rewrites the in-request session view
-		// to that workspace; a non-member is rejected (403) so a request can never
-		// read a workspace the account isn't in.
-		if ws := c.Get(workspaceHeader); ws != "" && ws != session.TenantID {
-			membership, merr := userRepo.GetMembership(c.Context(), session.AccountID, ws)
-			if merr != nil {
-				if errors.Is(merr, sql.ErrNoRows) {
-					return fiber.NewError(fiber.StatusForbidden, "not a member of this workspace")
-				}
-				return merr
-			}
-			session.UserID = membership.ID
-			session.TenantID = ws
+		// Resolve — and authorise — the active workspace. An X-Workspace-Id header
+		// selects it; absent, the session default applies. The membership lookup
+		// filters soft-deleted workspaces (CON-147 PR4), so a deleted or non-member
+		// workspace resolves to ErrNoRows and is refused, and the resolved
+		// membership rewrites the in-request session view (UserID/TenantID) — which
+		// is what every downstream reader, from tenantctx scoping to CreatedBy
+		// stamps, sees.
+		active := storedDefault
+		if ws := c.Get(workspaceHeader); ws != "" {
+			active = ws
 		}
+		membership, merr := userRepo.GetMembership(c.Context(), session.AccountID, active)
+		if errors.Is(merr, sql.ErrNoRows) {
+			if c.Get(workspaceHeader) != "" {
+				// An explicit header naming a workspace the account can't reach (not a
+				// member, or soft-deleted) is refused, never silently redirected.
+				return fiber.NewError(fiber.StatusForbidden, "not a member of this workspace")
+			}
+			// No header and the default is gone (its workspace was deleted, or the
+			// membership removed): fall back to any live workspace so the account
+			// isn't stranded on a dead default. 401 only when nothing remains.
+			membership, merr = userRepo.GetByAccountID(c.Context(), session.AccountID)
+			if errors.Is(merr, sql.ErrNoRows) {
+				return fiber.NewError(fiber.StatusUnauthorized, "no accessible workspace")
+			}
+		}
+		if merr != nil {
+			return merr
+		}
+		session.UserID = membership.ID
+		session.TenantID = membership.TenantID
 
 		c.Locals("session", session)
 		// Carry the tenant so the tenant-scoped query layer (CON-97 §6) can

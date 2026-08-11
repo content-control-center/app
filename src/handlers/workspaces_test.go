@@ -2,9 +2,11 @@ package handlers_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	. "github.com/onsi/ginkgo/v2"
@@ -47,6 +49,7 @@ var _ = Describe("Workspaces (CON-147)", Ordered, func() {
 		// profileJobs nil: no Zernio bootstrap in tests (creation still succeeds).
 		handlers.NewTenantsHandler(db, tenantRepo, userRepo, accountRepo, nil, testCookieName, false, auth).Register(app)
 		handlers.NewWorkspacesHandler(db, workspaceRepo, userRepo, accountRepo, tenantRepo, sessionRepo, nil, auth).Register(app)
+		handlers.NewSessionsHandler(userRepo, accountRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewTagsHandler(tagRepo, auth).Register(app)
 	})
 
@@ -105,6 +108,34 @@ var _ = Describe("Workspaces (CON-147)", Ordered, func() {
 		resp, err := app.Test(req)
 		Expect(err).NotTo(HaveOccurred())
 		return resp
+	}
+
+	// login authenticates an account and returns its session cookie.
+	login := func(email, password string) *http.Cookie {
+		GinkgoHelper()
+		body, _ := json.Marshal(fiber.Map{"email": email, "password": password})
+		req := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := app.Test(req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+		return resp.Cookies()[0]
+	}
+
+	// seedMember inserts an account and a member (non-owner) membership of an
+	// existing workspace, for the owner-gating tests.
+	seedMember := func(tenantID, email, password string) {
+		GinkgoHelper()
+		hash, err := models.HashPassword(password)
+		Expect(err).NotTo(HaveOccurred())
+		id, err := models.NewID()
+		Expect(err).NotTo(HaveOccurred())
+		now := time.Now().UTC()
+		bg := context.Background() // Account/User aren't tenant-scoped
+		_, err = db.NewInsert().Model(&models.Account{ID: id, Email: email, PasswordHash: hash, Name: "Mem", CreatedAt: now, UpdatedAt: now}).Exec(bg)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = db.NewInsert().Model(&models.User{ID: id, AccountID: id, TenantID: tenantID, Name: "Mem", Email: email, Role: models.RoleMember, CreatedAt: now, UpdatedAt: now}).Exec(bg)
+		Expect(err).NotTo(HaveOccurred())
 	}
 
 	// createWorkspace posts a new workspace for cookie and returns its id.
@@ -215,6 +246,74 @@ var _ = Describe("Workspaces (CON-147)", Ordered, func() {
 
 			resp := do("POST", "/api/workspaces/"+foreign+"/switch", cookieA, "", nil)
 			Expect(resp.StatusCode).To(Equal(fiber.StatusNotFound))
+		})
+	})
+
+	Describe("DELETE /api/workspaces/:id (soft-delete, CON-147 PR4)", func() {
+		It("soft-deletes a workspace: it leaves the list and can't be entered", func() {
+			cookie, _ := signup("Alpha", "alpha@test.local")
+			w2 := createWorkspace(cookie, "Beta")
+			// Prove it's reachable first.
+			Expect(createTag(cookie, w2, "before-delete").StatusCode).To(Equal(fiber.StatusCreated))
+
+			resp := do("DELETE", "/api/workspaces/"+w2, cookie, "", nil)
+			Expect(resp.StatusCode).To(Equal(fiber.StatusNoContent))
+
+			// Gone from the switcher.
+			lresp := do("GET", "/api/workspaces", cookie, "", nil)
+			var items []repository.WorkspaceListItem
+			Expect(json.NewDecoder(lresp.Body).Decode(&items)).To(Succeed())
+			ids := make([]string, 0, len(items))
+			for _, it := range items {
+				ids = append(ids, it.ID)
+			}
+			Expect(ids).NotTo(ContainElement(w2))
+			// Can't be entered via the header, nor switched to.
+			Expect(do("GET", "/api/tags", cookie, w2, nil).StatusCode).To(Equal(fiber.StatusForbidden))
+			Expect(do("POST", "/api/workspaces/"+w2+"/switch", cookie, "", nil).StatusCode).To(Equal(fiber.StatusNotFound))
+		})
+
+		It("refuses to delete the account's only workspace (409)", func() {
+			cookie, w1 := signup("Solo", "solo@test.local")
+			resp := do("DELETE", "/api/workspaces/"+w1, cookie, "", nil)
+			Expect(resp.StatusCode).To(Equal(fiber.StatusConflict))
+		})
+
+		It("is owner-only: a member gets 403", func() {
+			cookie, w1 := signup("Alpha", "alpha@test.local")
+			_ = createWorkspace(cookie, "Beta") // so the owner isn't blocked by the only-workspace guard
+			seedMember(w1, "mem@test.local", "mem-password")
+			memCookie := login("mem@test.local", "mem-password")
+
+			resp := do("DELETE", "/api/workspaces/"+w1, memCookie, "", nil)
+			Expect(resp.StatusCode).To(Equal(fiber.StatusForbidden))
+		})
+
+		It("returns 404 deleting a workspace the account isn't a member of", func() {
+			cookieA, _ := signup("Alpha", "alpha@test.local")
+			_, foreign := signup("Foreign", "foreign@test.local")
+			resp := do("DELETE", "/api/workspaces/"+foreign, cookieA, "", nil)
+			Expect(resp.StatusCode).To(Equal(fiber.StatusNotFound))
+		})
+
+		It("re-points the session default when the deleted workspace was it", func() {
+			// W1 is the signup default; switch the default to W2, delete W2, and a
+			// no-header request should land back on a surviving workspace (W1).
+			cookie, w1 := signup("Alpha", "alpha@test.local")
+			w2 := createWorkspace(cookie, "Beta")
+			Expect(do("POST", "/api/workspaces/"+w2+"/switch", cookie, "", nil).StatusCode).To(Equal(fiber.StatusNoContent))
+
+			Expect(do("DELETE", "/api/workspaces/"+w2, cookie, "", nil).StatusCode).To(Equal(fiber.StatusNoContent))
+
+			// No-header request still works (default re-pointed to the survivor) and
+			// the list marks W1 as the default again.
+			lresp := do("GET", "/api/workspaces", cookie, "", nil)
+			Expect(lresp.StatusCode).To(Equal(fiber.StatusOK))
+			var items []repository.WorkspaceListItem
+			Expect(json.NewDecoder(lresp.Body).Decode(&items)).To(Succeed())
+			Expect(items).To(HaveLen(1))
+			Expect(items[0].ID).To(Equal(w1))
+			Expect(items[0].IsDefault).To(BeTrue())
 		})
 	})
 })

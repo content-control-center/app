@@ -21,6 +21,11 @@ type Tenant struct {
 	Slug      string    `bun:"slug,notnull,unique"                          json:"slug"`
 	CreatedAt time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
+	// DeletedAt marks a soft-deleted workspace (CON-147 PR4). Membership
+	// resolution filters it out, so a deleted workspace can't be listed, switched
+	// to, or entered — but the row survives for support-side recovery. Plain
+	// timestamp, NOT a bun `,soft_delete` column: see the migration comment.
+	DeletedAt *time.Time `bun:"deleted_at" json:"deleted_at,omitempty"`
 }
 
 // DefaultTenantID is the id of the tenant created by the multi-tenancy

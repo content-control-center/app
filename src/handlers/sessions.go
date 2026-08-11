@@ -152,12 +152,15 @@ func (h *SessionsHandler) Create(c *fiber.Ctx) error {
 		return h.loginFailed(c, req.Email)
 	}
 
-	// Resolve the workspace membership this login opens into. In PR1 an account
-	// has exactly one; PR2 lets it default to the last-active one. An account
-	// with no membership can't happen (signup/accept always create one), so a
-	// miss here is an integrity fault, not a bad credential.
+	// Resolve the workspace membership this login opens into — the oldest LIVE one
+	// (GetByAccountID skips soft-deleted workspaces, CON-147 PR4). An account with
+	// no live workspace (e.g. removed from its last one) has nothing to open a
+	// session onto; answer 403 rather than a 500.
 	user, err := h.userRepo.GetByAccountID(c.Context(), account.ID)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusForbidden, "your account has no active workspace")
+		}
 		return err
 	}
 
