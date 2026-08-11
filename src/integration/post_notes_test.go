@@ -93,6 +93,7 @@ var _ = Describe("Post notes CRUD (CON-188)", Ordered, func() {
 		_, _ = db.NewDelete().TableExpr("campaigns").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(ctx)
+		_, _ = db.NewDelete().TableExpr("accounts").Where("1 = 1").Exec(ctx)
 	})
 
 	createPost := func() string {

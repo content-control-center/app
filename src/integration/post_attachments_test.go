@@ -184,6 +184,7 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 		_, _ = db.NewDelete().TableExpr("campaigns").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(ctx)
+		_, _ = db.NewDelete().TableExpr("accounts").Where("1 = 1").Exec(ctx)
 	})
 
 	createPost := func() string {

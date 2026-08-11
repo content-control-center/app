@@ -127,7 +127,7 @@ var _ = Describe("Post clone — CON-59 (real S3/MinIO)", Ordered, func() {
 
 	AfterEach(func() {
 		ctx := tenantCtx()
-		for _, t := range []string{"post_attachments", "post_versions", "post_logs", "post_assistant_messages", "posts", "campaigns", "sessions", "users"} {
+		for _, t := range []string{"post_attachments", "post_versions", "post_logs", "post_assistant_messages", "posts", "campaigns", "sessions", "users", "accounts"} {
 			_, _ = db.NewDelete().TableExpr(t).Where("1 = 1").Exec(ctx)
 		}
 	})

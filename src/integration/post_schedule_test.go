@@ -112,7 +112,7 @@ var _ = Describe("Post schedule — CON-78", Ordered, func() {
 
 	AfterEach(func() {
 		ctx := tenantCtx()
-		for _, t := range []string{"auto_publish_allowlist", "post_versions", "post_logs", "post_assistant_messages", "posts", "campaigns", "sessions", "users"} {
+		for _, t := range []string{"auto_publish_allowlist", "post_versions", "post_logs", "post_assistant_messages", "posts", "campaigns", "sessions", "users", "accounts"} {
 			_, _ = db.NewDelete().TableExpr(t).Where("1 = 1").Exec(ctx)
 		}
 	})
