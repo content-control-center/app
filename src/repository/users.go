@@ -151,13 +151,15 @@ func (r *userRepository) GetByAccountID(ctx context.Context, accountID string) (
 	// Unscoped: the login/auth path resolves the membership before any tenant is
 	// known. Joins tenants to skip soft-deleted workspaces (CON-147 PR4), so an
 	// account never lands on a deleted one; ordered so it resolves to a stable
-	// default (the oldest live membership).
+	// default (the oldest live membership). u.id breaks ties on identical
+	// created_at (e.g. memberships seeded in one transaction) so the default is
+	// deterministic across calls, not left to the scan order.
 	user := new(models.User)
 	err := r.db.NewSelect().Model(user).
 		Join("JOIN tenants AS t ON t.id = u.tenant_id").
 		Where("u.account_id = ?", accountID).
 		Where("t.deleted_at IS NULL").
-		OrderExpr("u.created_at ASC").
+		OrderExpr("u.created_at ASC, u.id ASC").
 		Limit(1).
 		Scan(ctx)
 	if err != nil {
