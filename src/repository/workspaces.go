@@ -26,6 +26,11 @@ type WorkspaceRepository interface {
 	// ListForAccount returns every workspace accountID is a member of, with the
 	// caller's role and the member count, ordered oldest-first.
 	ListForAccount(ctx context.Context, accountID string) ([]WorkspaceListItem, error)
+	// ListForAccountTx is ListForAccount on the provided bun.IDB, so a caller can
+	// read an account's live workspaces inside its own transaction — e.g. the
+	// last-workspace guard in workspace delete, which must count against the
+	// soft-delete it just made in the same tx. Passing nil uses the default DB.
+	ListForAccountTx(ctx context.Context, tx bun.IDB, accountID string) ([]WorkspaceListItem, error)
 }
 
 type workspaceRepository struct {
@@ -38,12 +43,20 @@ func NewWorkspaceRepository(db *bun.DB) WorkspaceRepository {
 }
 
 func (r *workspaceRepository) ListForAccount(ctx context.Context, accountID string) ([]WorkspaceListItem, error) {
+	return r.ListForAccountTx(ctx, nil, accountID)
+}
+
+func (r *workspaceRepository) ListForAccountTx(ctx context.Context, tx bun.IDB, accountID string) ([]WorkspaceListItem, error) {
+	db := bun.IDB(r.db)
+	if tx != nil {
+		db = tx
+	}
 	var items []WorkspaceListItem
 	// Join the account's memberships to their tenants; member_count is a
 	// correlated subquery over users so it counts every member of each workspace,
 	// not just the caller. account_id is the only filter — this read intentionally
 	// crosses tenants, so it bypasses the tenant-scoped model layer.
-	err := r.db.NewSelect().
+	err := db.NewSelect().
 		TableExpr("users AS u").
 		Join("JOIN tenants AS t ON t.id = u.tenant_id").
 		ColumnExpr("t.id AS id").

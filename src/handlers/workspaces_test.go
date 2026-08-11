@@ -275,10 +275,17 @@ var _ = Describe("Workspaces (CON-147)", Ordered, func() {
 			Expect(do("POST", "/api/workspaces/"+w2+"/switch", cookie, "", nil).StatusCode).To(Equal(fiber.StatusNotFound))
 		})
 
-		It("refuses to delete the account's only workspace (409)", func() {
+		It("refuses to delete the account's only workspace (409) and rolls the soft-delete back", func() {
 			cookie, w1 := signup("Solo", "solo@test.local")
 			resp := do("DELETE", "/api/workspaces/"+w1, cookie, "", nil)
 			Expect(resp.StatusCode).To(Equal(fiber.StatusConflict))
+			// The guard runs inside the tx, so the soft-delete is rolled back — the
+			// workspace is still live and listed.
+			lresp := do("GET", "/api/workspaces", cookie, "", nil)
+			var items []repository.WorkspaceListItem
+			Expect(json.NewDecoder(lresp.Body).Decode(&items)).To(Succeed())
+			Expect(items).To(HaveLen(1))
+			Expect(items[0].ID).To(Equal(w1))
 		})
 
 		It("is owner-only: a member gets 403", func() {

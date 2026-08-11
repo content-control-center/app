@@ -219,6 +219,11 @@ func (h *WorkspacesHandler) Switch(c *fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
+// errLastWorkspace is the in-transaction sentinel the delete guard returns when
+// soft-deleting the target would leave the account with no live workspace; the
+// handler maps it to a 409 and the transaction rolls back.
+var errLastWorkspace = errors.New("cannot delete the account's only workspace")
+
 // Delete godoc
 // @Summary      Delete a workspace
 // @Description  Owner-only. Soft-deletes the workspace: it leaves every member's list and can't be entered again, but the row survives (recovery is a manual support request — there is no self-serve restore). Published posts stay live on the networks. Refuses to delete the account's only workspace (409). If it was the session default, the default is re-pointed to a surviving workspace (CON-147 PR4).
@@ -249,20 +254,24 @@ func (h *WorkspacesHandler) Delete(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "only an owner can delete a workspace")
 	}
 
-	// Refuse to strand the account: it must keep at least one workspace to work in
-	// (and to stay able to authenticate — RequireAuth needs a live membership).
-	live, err := h.workspaceRepo.ListForAccount(c.Context(), session.AccountID)
-	if err != nil {
-		return err
-	}
-	if len(live) <= 1 {
-		return fiber.NewError(fiber.StatusConflict, "you can't delete your only workspace — create another first")
-	}
-
 	now := time.Now().UTC()
 	if err := h.db.RunInTx(c.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := h.tenantRepo.SoftDeleteTx(ctx, tx, targetID, now); err != nil {
 			return err
+		}
+		// Last-workspace guard, evaluated INSIDE the tx so it counts against the
+		// soft-delete just made: an account must keep at least one workspace to work
+		// in (and to stay able to authenticate — RequireAuth needs a live
+		// membership). Recounting here rather than before the tx closes the TOCTOU
+		// window a pre-transaction check leaves open — a concurrent delete that
+		// committed since would otherwise slip through. No live workspace left →
+		// roll back with a 409.
+		remaining, cerr := h.workspaceRepo.ListForAccountTx(ctx, tx, session.AccountID)
+		if cerr != nil {
+			return cerr
+		}
+		if len(remaining) == 0 {
+			return errLastWorkspace
 		}
 		// TODO(CON-147 follow-up): enqueue the Zernio profile teardown here, in this
 		// same tx, once a DeleteProfile job exists — the Zernio client has no
@@ -272,6 +281,9 @@ func (h *WorkspacesHandler) Delete(c *fiber.Ctx) error {
 		// (docs/CON-147-workspace-ui.md §9).
 		return nil
 	}); err != nil {
+		if errors.Is(err, errLastWorkspace) {
+			return fiber.NewError(fiber.StatusConflict, "you can't delete your only workspace — create another first")
+		}
 		return err
 	}
 
