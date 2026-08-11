@@ -7,9 +7,9 @@ import (
 )
 
 // Role is a user's authority within their workspace (tenant). CON-26 introduces
-// a minimal two-tier model — owner > member — forward-compatible with CON-147's
-// eventual owner/admin/member split (an `admin` tier is inserted between them).
-// The workspace creator is owner; a workspace always keeps at least one owner.
+// a minimal two-tier model — owner > member — which CON-147 keeps unchanged (no
+// `admin` or `viewer` tier). The workspace creator is owner; a workspace always
+// keeps at least one owner.
 type Role = string
 
 const (
@@ -23,15 +23,23 @@ const (
 // IsValidRole reports whether r is one of the roles CON-26 recognises.
 func IsValidRole(r string) bool { return r == RoleOwner || r == RoleMember }
 
+// User is a per-(account, workspace) MEMBERSHIP since CON-147 PR1 — one row per
+// account per tenant, carrying that account's role in that tenant. Before the
+// split a users row was the identity itself; now the credential lives on Account
+// (AccountID) and this row is what `user_id` FKs (sessions, authorship,
+// activity) resolve to: "this account, in this workspace." Email/Name stay,
+// denormalised from the account for existing responses; email is no longer
+// unique (one account can be a member of several workspaces).
 type User struct {
 	bun.BaseModel `bun:"table:users,alias:u" swaggerignore:"true"`
 
-	ID           string `bun:"id,pk"                json:"id"`
-	TenantID     string `bun:"tenant_id,notnull"    json:"-"`
-	Name         string `bun:"name,notnull"         json:"name"`
-	Email        string `bun:"email,notnull,unique" json:"email"`
-	PasswordHash string `bun:"password_hash,notnull" json:"-"`
-	// Role is the user's authority in their tenant (CON-26). Backfilled to
+	ID string `bun:"id,pk"             json:"id"`
+	// AccountID is the login identity this membership belongs to (CON-147).
+	AccountID string `bun:"account_id,notnull" json:"-"`
+	TenantID  string `bun:"tenant_id,notnull"  json:"-"`
+	Name      string `bun:"name,notnull"       json:"name"`
+	Email     string `bun:"email,notnull"      json:"email"`
+	// Role is the account's authority in this tenant (CON-26). Backfilled to
 	// 'owner' for every pre-CON-26 user (each was the sole member of its tenant).
 	Role      string    `bun:"role,notnull,default:'member'" json:"role"`
 	CreatedAt time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`

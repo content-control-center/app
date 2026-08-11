@@ -35,12 +35,19 @@ var _ = Describe("Asset chunking", Ordered, func() {
 		var err error
 		userID, err = models.NewID()
 		Expect(err).NotTo(HaveOccurred())
-		_, err = db.NewInsert().Model(&models.User{
+		_, err = db.NewInsert().Model(&models.Account{
 			ID:           userID,
-			TenantID:     models.DefaultTenantID,
-			Name:         "Chunking Tester",
 			Email:        "chunking@test.local",
 			PasswordHash: "placeholder",
+			Name:         "Chunking Tester",
+		}).Exec(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = db.NewInsert().Model(&models.User{
+			ID:        userID,
+			AccountID: userID,
+			TenantID:  models.DefaultTenantID,
+			Name:      "Chunking Tester",
+			Email:     "chunking@test.local",
 		}).Exec(ctx)
 		Expect(err).NotTo(HaveOccurred())
 	})

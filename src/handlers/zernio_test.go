@@ -189,8 +189,8 @@ var _ = Describe("ZernioHandler", Ordered, func() {
 		platformRepo := repository.NewPlatformRepository(db)
 		accountRepo = repository.NewSocialAccountRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
-		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
-		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
+		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
+		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(app)
 
 		// Bypass the cache for tests so reads always hit the SQLite source
 		// of truth; Phase 4 unit tests already cover cache semantics.
@@ -237,6 +237,7 @@ var _ = Describe("ZernioHandler", Ordered, func() {
 		_, _ = db.NewDelete().TableExpr("campaigns_types").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(ctx)
+		_, _ = db.NewDelete().TableExpr("accounts").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("social_accounts").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("settings").Where("key LIKE ?", "zernio.%").Exec(ctx)
 	})

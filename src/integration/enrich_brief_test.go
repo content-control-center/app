@@ -43,12 +43,19 @@ var _ = Describe("Enrich brief flow", Ordered, func() {
 		var err error
 		userID, err = models.NewID()
 		Expect(err).NotTo(HaveOccurred())
-		_, err = db.NewInsert().Model(&models.User{
+		_, err = db.NewInsert().Model(&models.Account{
 			ID:           userID,
-			TenantID:     models.DefaultTenantID,
-			Name:         "Enrich Brief Tester",
 			Email:        "eb-integration@test.local",
 			PasswordHash: "placeholder",
+			Name:         "Enrich Brief Tester",
+		}).Exec(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = db.NewInsert().Model(&models.User{
+			ID:        userID,
+			AccountID: userID,
+			TenantID:  models.DefaultTenantID,
+			Name:      "Enrich Brief Tester",
+			Email:     "eb-integration@test.local",
 		}).Exec(ctx)
 		Expect(err).NotTo(HaveOccurred())
 

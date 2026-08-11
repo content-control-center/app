@@ -44,14 +44,14 @@ var _ = Describe("Multi-tenant isolation (CON-97)", Ordered, func() {
 		campaignTypeRepo := repository.NewCampaignTypeRepository(db)
 		campaignRepo := repository.NewCampaignRepository(db, tagRepo, repository.NewPlatformRepository(db), campaignTypeRepo)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
-		handlers.NewTenantsHandler(db, tenantRepo, userRepo, nil, testCookieName, false, auth).Register(app)
+		handlers.NewTenantsHandler(db, tenantRepo, userRepo, repository.NewAccountRepository(db), nil, testCookieName, false, auth).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
 		handlers.NewTagsHandler(tagRepo, auth).Register(app)
 	})
 
 	AfterEach(func() {
 		ctx := tenantCtx() // TableExpr deletes bypass hooks; tenant value is ignored
-		for _, t := range []string{"campaigns", "tags", "sessions", "users"} {
+		for _, t := range []string{"campaigns", "tags", "sessions", "users", "accounts"} {
 			_, _ = db.NewDelete().TableExpr(t).Where("1 = 1").Exec(ctx)
 		}
 		_, _ = db.NewDelete().Model((*models.Tenant)(nil)).Where("id <> ?", models.DefaultTenantID).Exec(ctx)

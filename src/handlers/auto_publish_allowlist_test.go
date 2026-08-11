@@ -42,8 +42,8 @@ var _ = Describe("AutoPublishAllowlistHandler", Ordered, func() {
 		settingRepo := repository.NewSettingRepository(db)
 		allowlistRepo := repository.NewAutoPublishAllowlistRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
-		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
-		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
+		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
+		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(app)
 		handlers.NewAutoPublishAllowlistHandler(allowlistRepo, auth).Register(app)
 
 		seedTenantUser(db, "Admin", "admin@example.com", "admin-password")
@@ -66,6 +66,7 @@ var _ = Describe("AutoPublishAllowlistHandler", Ordered, func() {
 		_, err = db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		_, err = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(ctx)
+		_, err = db.NewDelete().TableExpr("accounts").Where("1 = 1").Exec(ctx)
 		Expect(err).NotTo(HaveOccurred())
 	})
 

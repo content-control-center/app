@@ -190,7 +190,7 @@ func newZernioTenancyRig() *ztRig {
 	})
 	const cookieName = "c3_session_ztenancy"
 	auth := handlers.RequireAuth(repository.NewSessionRepository(db), cookieName)
-	handlers.NewTenantsHandler(db, repository.NewTenantRepository(db), repository.NewUserRepository(db), nil, cookieName, false, auth).Register(app)
+	handlers.NewTenantsHandler(db, repository.NewTenantRepository(db), repository.NewUserRepository(db), repository.NewAccountRepository(db), nil, cookieName, false, auth).Register(app)
 	handlers.NewZernioHandler(integ, bootstrapper, settings, platformRepo, accountRepo, repository.NewPostRepository(db), nil, zernio.NewConnectLinkRateLimiter(), auth).Register(app)
 
 	return &ztRig{app: app, stub: stub, stubState: stubState, accounts: accountRepo, settings: settings, cookieName: cookieName}

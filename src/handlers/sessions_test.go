@@ -42,14 +42,15 @@ var _ = Describe("SessionsHandler", Ordered, func() {
 		sessionRepo := repository.NewSessionRepository(db)
 		settingRepo := repository.NewSettingRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
-		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
-		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
+		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
+		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(app)
 	})
 
 	AfterEach(func() {
 		_, err := db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		_, err = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(context.Background())
+		_, err = db.NewDelete().TableExpr("accounts").Where("1 = 1").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		_, err = db.NewUpdate().TableExpr("settings").Set("value = ?", "false").
 			Where("key = ?", "setup_complete").Exec(context.Background())
@@ -112,8 +113,8 @@ var _ = Describe("SessionsHandler", Ordered, func() {
 				sessionRepo := repository.NewSessionRepository(db)
 				settingRepo := repository.NewSettingRepository(db)
 				auth := handlers.RequireAuth(sessionRepo, testCookieName)
-				handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(secureApp)
-				handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, true).Register(secureApp)
+				handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(secureApp)
+				handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, true).Register(secureApp)
 
 				// Seed a user directly in the default tenant; login below exercises the secure-cookie path.
 				seedTenantUser(db, "Sec", "sec@example.com", "password-sec")

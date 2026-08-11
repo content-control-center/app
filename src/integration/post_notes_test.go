@@ -55,8 +55,8 @@ var _ = Describe("Post notes CRUD (CON-188)", Ordered, func() {
 		noteSvc := notes.New(repository.NewPostNoteRepository(db))
 		auth := handlers.RequireAuth(sessionRepo, "test_session")
 
-		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
-		handlers.NewSessionsHandler(userRepo, sessionRepo, "test_session", false).Register(app)
+		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
+		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, "test_session", false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
 		handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, repository.NewPlatformRepository(db), postAttRepo, auth, nil, nil).Register(app)
 		handlers.NewPostNotesHandler(noteSvc, postRepo, auth).Register(app)

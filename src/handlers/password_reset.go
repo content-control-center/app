@@ -50,10 +50,11 @@ type PasswordResetEnqueuer interface {
 // endpoints (CON-161). The whole point is that the caller can't log in, so the
 // emailed token is the only capability.
 type PasswordResetHandler struct {
-	db         *bun.DB
-	userRepo   repository.UserRepository
-	emailJobs  PasswordResetEnqueuer
-	appBaseURL string
+	db          *bun.DB
+	userRepo    repository.UserRepository
+	accountRepo repository.AccountRepository
+	emailJobs   PasswordResetEnqueuer
+	appBaseURL  string
 
 	ipLimiter    *keyedRateLimiter
 	emailLimiter *keyedRateLimiter
@@ -66,10 +67,11 @@ type PasswordResetHandler struct {
 
 // NewPasswordResetHandler builds the handler. appBaseURL (APP_BASE_URL) is the
 // base for the emailed reset link.
-func NewPasswordResetHandler(db *bun.DB, userRepo repository.UserRepository, appBaseURL string) *PasswordResetHandler {
+func NewPasswordResetHandler(db *bun.DB, userRepo repository.UserRepository, accountRepo repository.AccountRepository, appBaseURL string) *PasswordResetHandler {
 	return &PasswordResetHandler{
 		db:           db,
 		userRepo:     userRepo,
+		accountRepo:  accountRepo,
 		appBaseURL:   appBaseURL,
 		ipLimiter:    newKeyedRateLimiter(resetPerIPBurst, resetRateWindow),
 		emailLimiter: newKeyedRateLimiter(resetPerEmailBurst, resetRateWindow),
@@ -130,12 +132,12 @@ func (h *PasswordResetHandler) Request(c *fiber.Ctx) error {
 	// off the response path (dispatchReset), because an early return on a miss —
 	// or extra synchronous work on a hit — would leak account existence through
 	// timing alone.
-	user, err := h.userRepo.GetByEmail(c.Context(), email)
+	account, err := h.accountRepo.GetByEmail(c.Context(), email)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	if err == nil && user != nil {
-		h.dispatchReset(user)
+	if err == nil && account != nil {
+		h.dispatchReset(account)
 	}
 	return c.SendStatus(fiber.StatusAccepted)
 }
@@ -146,11 +148,21 @@ func (h *PasswordResetHandler) Request(c *fiber.Ctx) error {
 // fiber request context is recycled once Request returns) that still carries the
 // user's tenant + id for the tenant-scoped activity event. Best-effort: a
 // failure is logged, never surfaced (surfacing it would itself be an oracle).
-func (h *PasswordResetHandler) dispatchReset(user *models.User) {
+func (h *PasswordResetHandler) dispatchReset(account *models.Account) {
 	const comp = "handlers.password_reset"
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
+
+		// Resolve the membership the reset token attaches to (its user_id/tenant_id
+		// and the activity attribution). Done here, off the response path, so a hit
+		// stays latency-indistinguishable from a miss — only the account lookup is
+		// synchronous. In PR1 an account has exactly one membership.
+		user, err := h.userRepo.GetByAccountID(ctx, account.ID)
+		if err != nil {
+			slog.ErrorContext(ctx, "password reset: membership lookup failed", logging.AttrComponent, comp, logging.AttrError, err)
+			return
+		}
 
 		token, hash, err := models.NewResetToken()
 		if err != nil {
@@ -255,6 +267,16 @@ func (h *PasswordResetHandler) Confirm(c *fiber.Ctx) error {
 		}
 		userID, tenantID = row.UserID, row.TenantID
 
+		// The token is tied to a membership, but the credential lives on the account
+		// (CON-147). Resolve the account so the rotation and session revocation act
+		// on the identity, not the membership row.
+		membership := new(models.User)
+		if err := tx.NewSelect().Model(membership).Column("account_id").
+			Where("id = ?", userID).Scan(ctx); err != nil {
+			return err
+		}
+		accountID := membership.AccountID
+
 		// Hash the new password only once the token is confirmed live, so a bogus
 		// or already-spent token is rejected cheaply — confirm is unauthenticated
 		// and unthrottled, and argon2id is deliberately expensive, so hashing
@@ -264,10 +286,10 @@ func (h *PasswordResetHandler) Confirm(c *fiber.Ctx) error {
 		if err != nil {
 			return err
 		}
-		if _, err := tx.NewUpdate().Model((*models.User)(nil)).
+		if _, err := tx.NewUpdate().Model((*models.Account)(nil)).
 			Set("password_hash = ?", newHash).
 			Set("updated_at = ?", now).
-			Where("id = ?", userID).
+			Where("id = ?", accountID).
 			Exec(ctx); err != nil {
 			return err
 		}
@@ -280,11 +302,12 @@ func (h *PasswordResetHandler) Confirm(c *fiber.Ctx) error {
 			Exec(ctx); err != nil {
 			return err
 		}
-		// Revoke every session. A reset may be locking out an intruder, and
-		// confirm deliberately opens no session (POST /api/sessions stays the only
-		// thing that starts one), so there is no "current" session to preserve.
+		// Revoke every session for the account. A reset may be locking out an
+		// intruder across every workspace the account can reach, and confirm
+		// deliberately opens no session (POST /api/sessions stays the only thing
+		// that starts one), so there is no "current" session to preserve.
 		if _, err := tx.NewDelete().Model((*models.Session)(nil)).
-			Where("user_id = ?", userID).
+			Where("account_id = ?", accountID).
 			Exec(ctx); err != nil {
 			return err
 		}

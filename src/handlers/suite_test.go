@@ -50,13 +50,24 @@ func seedTenantUserWithRole(db *bun.DB, name, email, password, role string) *mod
 	Expect(err).NotTo(HaveOccurred())
 	id, err := models.NewID()
 	Expect(err).NotTo(HaveOccurred())
-	u := &models.User{
+	// Since CON-147 the credential lives on an accounts row; the users row is a
+	// per-(account, tenant) membership FKing that account. Seed the account first
+	// (1:1 with the user id here) so the NOT NULL account_id FK holds.
+	acct := &models.Account{
 		ID:           id,
-		TenantID:     models.DefaultTenantID,
-		Name:         name,
 		Email:        email,
 		PasswordHash: hash,
-		Role:         role,
+		Name:         name,
+	}
+	_, err = db.NewInsert().Model(acct).Exec(context.Background())
+	Expect(err).NotTo(HaveOccurred())
+	u := &models.User{
+		ID:        id,
+		AccountID: id,
+		TenantID:  models.DefaultTenantID,
+		Name:      name,
+		Email:     email,
+		Role:      role,
 	}
 	_, err = db.NewInsert().Model(u).Exec(context.Background())
 	Expect(err).NotTo(HaveOccurred())

@@ -21,8 +21,8 @@ import (
 func seedUser(t *testing.T, db *bun.DB, id, tenantID, email string) {
 	t.Helper()
 	u := &models.User{
-		ID: id, TenantID: tenantID, Name: "User " + id, Email: email,
-		PasswordHash: "x", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+		ID: id, AccountID: id, TenantID: tenantID, Name: "User " + id, Email: email,
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 	}
 	if _, err := db.NewInsert().Model(u).Exec(context.Background()); err != nil {
 		t.Fatalf("seed user %s: %v", id, err)

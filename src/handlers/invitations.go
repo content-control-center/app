@@ -57,6 +57,7 @@ type InvitationEmailEnqueuer interface {
 type InvitationsHandler struct {
 	db           *bun.DB
 	userRepo     repository.UserRepository
+	accountRepo  repository.AccountRepository
 	tenantRepo   repository.TenantRepository
 	inviteRepo   repository.InvitationRepository
 	sessionRepo  repository.SessionRepository
@@ -76,10 +77,11 @@ type InvitationsHandler struct {
 // NewInvitationsHandler builds the handler. appBaseURL (APP_BASE_URL) is the base
 // for the emailed accept link; cookieName/secureCookie mirror the session cookie
 // set at login so accept can auto-log-in the new user.
-func NewInvitationsHandler(db *bun.DB, userRepo repository.UserRepository, tenantRepo repository.TenantRepository, inviteRepo repository.InvitationRepository, sessionRepo repository.SessionRepository, appBaseURL, cookieName string, secureCookie bool, auth fiber.Handler) *InvitationsHandler {
+func NewInvitationsHandler(db *bun.DB, userRepo repository.UserRepository, accountRepo repository.AccountRepository, tenantRepo repository.TenantRepository, inviteRepo repository.InvitationRepository, sessionRepo repository.SessionRepository, appBaseURL, cookieName string, secureCookie bool, auth fiber.Handler) *InvitationsHandler {
 	return &InvitationsHandler{
 		db:            db,
 		userRepo:      userRepo,
+		accountRepo:   accountRepo,
 		tenantRepo:    tenantRepo,
 		inviteRepo:    inviteRepo,
 		sessionRepo:   sessionRepo,
@@ -166,11 +168,13 @@ func (h *InvitationsHandler) Create(c *fiber.Ctx) error {
 		return tooManyRequests(c, retry, inviteThrottledMsg)
 	}
 
-	// An email already tied to an Ogen account anywhere can't be invited — the
-	// global-unique users.email forbids a second row (CON-26; cross-workspace
-	// membership is CON-147). The caller is an authenticated owner, so surfacing
-	// "already an account" is acceptable (unlike the public reset endpoint).
-	if _, err := h.userRepo.GetByEmail(c.Context(), email); err == nil {
+	// An email already tied to an Ogen account can't be invited yet — accept only
+	// creates NEW accounts in CON-147 PR1 (attaching an existing account to a new
+	// workspace is PR3). Resolved against accounts (identity) rather than the
+	// membership rows, since users.email is no longer unique. The caller is an
+	// authenticated owner, so surfacing "already an account" is acceptable (unlike
+	// the public reset endpoint).
+	if _, err := h.accountRepo.GetByEmail(c.Context(), email); err == nil {
 		return fiber.NewError(fiber.StatusConflict, "this email already has an Ogen account")
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
@@ -409,23 +413,34 @@ func (h *InvitationsHandler) Accept(c *fiber.Ctx) error {
 		if err != nil {
 			return err
 		}
+		aid, err := models.NewID()
+		if err != nil {
+			return err
+		}
 		hash, err := models.HashPassword(req.Password)
 		if err != nil {
 			return err
 		}
-		newUser = &models.User{
-			ID:           uid,
-			TenantID:     inv.TenantID,
-			Name:         req.Name,
-			Email:        inv.Email,
-			PasswordHash: hash,
-			Role:         inv.Role,
-			CreatedAt:    now,
-			UpdatedAt:    now,
+		// Accept creates the invitee's identity (account) and their membership of
+		// the workspace (CON-147). This is the new-account path; attaching an
+		// existing account is PR3. accounts.email is the uniqueness backstop: if the
+		// address gained an account between invite and accept, this insert fires it
+		// and the whole tx rolls back — the invite is left unconsumed (accept is
+		// retryable once the conflict is resolved).
+		account := &models.Account{ID: aid, Email: inv.Email, PasswordHash: hash, Name: req.Name, CreatedAt: now, UpdatedAt: now}
+		if err := h.accountRepo.CreateTx(ctx, tx, account); err != nil {
+			return err
 		}
-		// If the address gained an account between invite and accept, the users
-		// unique constraint fires here and the whole tx rolls back — the invite is
-		// left unconsumed (accept is retryable once the conflict is resolved).
+		newUser = &models.User{
+			ID:        uid,
+			AccountID: aid,
+			TenantID:  inv.TenantID,
+			Name:      req.Name,
+			Email:     inv.Email,
+			Role:      inv.Role,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
 		if err := h.userRepo.CreateTx(ctx, tx, newUser); err != nil {
 			return err
 		}
@@ -436,6 +451,7 @@ func (h *InvitationsHandler) Accept(c *fiber.Ctx) error {
 		}
 		session = &models.Session{
 			ID:        tokenStr,
+			AccountID: aid,
 			UserID:    uid,
 			TenantID:  inv.TenantID,
 			ExpiresAt: now.Add(sessionTTL),

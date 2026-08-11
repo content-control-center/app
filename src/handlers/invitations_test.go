@@ -63,16 +63,16 @@ var _ = Describe("InvitationsHandler", Ordered, func() {
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 
 		enqueuer = &fakeInviteEnqueuer{}
-		ih := handlers.NewInvitationsHandler(db, userRepo, tenantRepo, inviteRepo, sessionRepo, "https://app.example.com", testCookieName, false, auth)
+		ih := handlers.NewInvitationsHandler(db, userRepo, repository.NewAccountRepository(db), tenantRepo, inviteRepo, sessionRepo, "https://app.example.com", testCookieName, false, auth)
 		ih.SetEmailEnqueuer(enqueuer)
 		ih.Register(app)
 		// UsersHandler for the role-change / removal (last-owner) tests; Sessions for login.
-		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
-		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
+		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
+		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(app)
 	})
 
 	AfterEach(func() {
-		for _, tbl := range []string{"users_invitations", "sessions", "users"} {
+		for _, tbl := range []string{"users_invitations", "sessions", "users", "accounts"} {
 			_, err := db.NewDelete().TableExpr(tbl).Where("1 = 1").Exec(ctx)
 			Expect(err).NotTo(HaveOccurred())
 		}

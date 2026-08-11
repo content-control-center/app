@@ -55,8 +55,8 @@ var _ = Describe("PlatformsHandler publishers enrichment", Ordered, func() {
 		accountRepo = repository.NewSocialAccountRepository(db)
 		allowlistRepo = repository.NewAutoPublishAllowlistRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
-		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
-		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
+		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
+		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(app)
 		handlers.NewPlatformsHandler(platformRepo, pubs, allowlistRepo, auth).Register(app)
 
 		seedTenantUser(db, "Admin", "admin@example.com", "admin-password")
@@ -94,6 +94,7 @@ var _ = Describe("PlatformsHandler publishers enrichment", Ordered, func() {
 		ctx := tenantCtx()
 		_, _ = db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(ctx)
+		_, _ = db.NewDelete().TableExpr("accounts").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("social_accounts").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("settings").Where("key LIKE ?", "zernio.%").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("auto_publish_allowlist").Where("1 = 1").Exec(ctx)

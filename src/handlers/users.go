@@ -20,6 +20,10 @@ type UsersHandler struct {
 	// operation goes through repo.
 	db   *bun.DB
 	repo repository.UserRepository
+	// accountRepo backs the identity side of user management (CON-147): creating a
+	// member creates their account, and password changes rotate the credential on
+	// the account rather than the membership row.
+	accountRepo repository.AccountRepository
 	// settingRepo backed the setup_complete bootstrap gate, removed in CON-97
 	// (signup via POST /api/tenants is the sole bootstrap). Retained on the
 	// constructor to avoid churn across the ~37 call sites; revisit when
@@ -31,8 +35,8 @@ type UsersHandler struct {
 	activity *activity.Recorder
 }
 
-func NewUsersHandler(db *bun.DB, repo repository.UserRepository, settingRepo repository.SettingRepository, auth fiber.Handler) *UsersHandler {
-	return &UsersHandler{db: db, repo: repo, settingRepo: settingRepo, auth: auth}
+func NewUsersHandler(db *bun.DB, repo repository.UserRepository, accountRepo repository.AccountRepository, settingRepo repository.SettingRepository, auth fiber.Handler) *UsersHandler {
+	return &UsersHandler{db: db, repo: repo, accountRepo: accountRepo, settingRepo: settingRepo, auth: auth}
 }
 
 // SetActivityRecorder wires the CON-125 activity recorder (nil-safe no-op).
@@ -167,6 +171,10 @@ func (h *UsersHandler) Create(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	accountID, err := models.NewID()
+	if err != nil {
+		return err
+	}
 
 	hash, err := models.HashPassword(req.Password)
 	if err != nil {
@@ -178,15 +186,31 @@ func (h *UsersHandler) Create(c *fiber.Ctx) error {
 		role = models.RoleMember
 	}
 
+	now := time.Now().UTC()
+	// Directly adding a member creates their identity (account) and their
+	// membership of the caller's workspace together (CON-147). PR3 replaces this
+	// with invitations that can attach an existing account; here the email must be
+	// new, enforced by accounts.email — a clash surfaces as 409.
+	account := &models.Account{ID: accountID, Email: req.Email, PasswordHash: hash, Name: req.Name, CreatedAt: now, UpdatedAt: now}
 	user := &models.User{
-		ID:           id,
-		TenantID:     caller.TenantID,
-		Name:         req.Name,
-		Email:        req.Email,
-		PasswordHash: hash,
-		Role:         role,
+		ID:        id,
+		AccountID: accountID,
+		TenantID:  caller.TenantID,
+		Name:      req.Name,
+		Email:     req.Email,
+		Role:      role,
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
-	if err := h.repo.Create(c.Context(), user); err != nil {
+	if err := h.db.RunInTx(c.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := h.accountRepo.CreateTx(ctx, tx, account); err != nil {
+			return err
+		}
+		return h.repo.CreateTx(ctx, tx, user)
+	}); err != nil {
+		if isUniqueViolation(err) {
+			return fiber.NewError(fiber.StatusConflict, "email already in use")
+		}
 		return err
 	}
 
@@ -307,28 +331,46 @@ func (h *UsersHandler) Update(c *fiber.Ctx) error {
 	}
 
 	if req.Password == "" {
-		// Name/email-only edit: no re-authentication and no session revocation.
-		user.Name = req.Name
-		user.Email = req.Email
-		user.UpdatedAt = time.Now().UTC()
-		if err := h.repo.Update(c.Context(), user); err != nil {
+		// Name/email-only edit: no re-authentication and no session revocation. The
+		// membership row carries a denormalised copy, but email/name also live on
+		// the account (identity) and login is by account email, so both are updated
+		// together — a clash on the account email surfaces as 409 (CON-147).
+		now := time.Now().UTC()
+		if err := h.db.RunInTx(c.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
+			user.Name = req.Name
+			user.Email = req.Email
+			user.UpdatedAt = now
+			if _, err := tx.NewUpdate().Model(user).Column("name", "email", "updated_at").WherePK().Exec(ctx); err != nil {
+				return err
+			}
+			_, err := tx.NewUpdate().Model((*models.Account)(nil)).
+				Set("name = ?", req.Name).Set("email = ?", req.Email).Set("updated_at = ?", now).
+				Where("id = ?", user.AccountID).Exec(ctx)
+			return err
+		}); err != nil {
+			if isUniqueViolation(err) {
+				return fiber.NewError(fiber.StatusConflict, "email already in use")
+			}
 			return err
 		}
 	} else {
-		// Password change. Lock the user row, re-verify the current password against
-		// the *locked* hash, rotate it, and revoke the user's other sessions — all in
-		// one transaction. FOR UPDATE serializes concurrent changes, so an in-flight
-		// request carrying the old (possibly compromised) credential can't verify
-		// against a stale hash and slip through after a rotation has already committed
-		// (CON-193 §1/§2). Mirrors POST /api/password-reset/confirm, which likewise
-		// holds the row lock across argon2 — password changes are rare, so hashing
-		// under the lock is fine. The caller's own session (session.ID) is preserved
-		// so they aren't logged out of the tab making the change.
+		// Password change. The credential lives on the account since CON-147, so lock
+		// the ACCOUNT row, re-verify the current password against the *locked* hash,
+		// rotate it, sync the membership's denormalised name/email, and revoke the
+		// account's other sessions — all in one transaction. FOR UPDATE serializes
+		// concurrent changes, so an in-flight request carrying the old (possibly
+		// compromised) credential can't verify against a stale hash and slip through
+		// after a rotation has already committed (CON-193 §1/§2). Mirrors
+		// POST /api/password-reset/confirm, which likewise holds the row lock across
+		// argon2 — password changes are rare, so hashing under the lock is fine. The
+		// caller's own session (session.ID) is preserved so they aren't logged out of
+		// the tab making the change.
 		if err := h.db.RunInTx(c.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
-			if err := tx.NewSelect().Model(user).WherePK().For("UPDATE").Scan(ctx); err != nil {
+			account := new(models.Account)
+			if err := tx.NewSelect().Model(account).Where("a.id = ?", user.AccountID).For("UPDATE").Scan(ctx); err != nil {
 				return err
 			}
-			ok, verr := models.VerifyPassword(req.CurrentPassword, user.PasswordHash)
+			ok, verr := models.VerifyPassword(req.CurrentPassword, account.PasswordHash)
 			if verr != nil {
 				return verr
 			}
@@ -339,21 +381,31 @@ func (h *UsersHandler) Update(c *fiber.Ctx) error {
 			if herr != nil {
 				return herr
 			}
-			user.Name = req.Name
-			user.Email = req.Email
-			user.PasswordHash = hash
-			user.UpdatedAt = time.Now().UTC()
-			if _, err := tx.NewUpdate().Model(user).WherePK().Exec(ctx); err != nil {
+			now := time.Now().UTC()
+			if _, err := tx.NewUpdate().Model((*models.Account)(nil)).
+				Set("password_hash = ?", hash).Set("name = ?", req.Name).Set("email = ?", req.Email).Set("updated_at = ?", now).
+				Where("id = ?", user.AccountID).Exec(ctx); err != nil {
 				return err
 			}
+			user.Name = req.Name
+			user.Email = req.Email
+			user.UpdatedAt = now
+			if _, err := tx.NewUpdate().Model(user).Column("name", "email", "updated_at").WherePK().Exec(ctx); err != nil {
+				return err
+			}
+			// Revoke the account's other sessions (a password change may be locking
+			// out an intruder across every workspace the account can reach).
 			_, err := tx.NewDelete().Model((*models.Session)(nil)).
-				Where("user_id = ?", user.ID).
+				Where("account_id = ?", user.AccountID).
 				Where("id != ?", session.ID).
 				Exec(ctx)
 			return err
 		}); err != nil {
 			if errors.Is(err, errCurrentPasswordMismatch) {
 				return fiber.NewError(fiber.StatusForbidden, "current password is incorrect")
+			}
+			if isUniqueViolation(err) {
+				return fiber.NewError(fiber.StatusConflict, "email already in use")
 			}
 			return err
 		}

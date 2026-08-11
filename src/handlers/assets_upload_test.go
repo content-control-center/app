@@ -74,8 +74,8 @@ var _ = Describe("AssetsHandler upload", Ordered, func() {
 		// recording enqueuer, plus the test DB for the insert+enqueue transaction.
 		store = &stubStorage{returnURL: "https://pub.example.com/x", objects: map[string][]byte{}}
 		enq = &fakePDFEnqueuer{}
-		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
-		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
+		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
+		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(app)
 		handlers.NewAssetsHandler(assetRepo, repository.NewAssetFileRepository(db), store, db, enq, auth, nil).Register(app)
 
 		seedTenantUser(db, "Admin", "up@example.com", "pw-password")
@@ -96,6 +96,7 @@ var _ = Describe("AssetsHandler upload", Ordered, func() {
 		_, err = db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		_, err = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(context.Background())
+		_, err = db.NewDelete().TableExpr("accounts").Where("1 = 1").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 	})
 

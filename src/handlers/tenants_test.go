@@ -66,13 +66,16 @@ var _ = Describe("TenantsHandler", Ordered, func() {
 		sessionRepo := repository.NewSessionRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, testCookieName)
 		enq = &fakeProfileEnqueuer{}
-		handlers.NewTenantsHandler(db, tenantRepo, userRepo, enq, testCookieName, false, auth).Register(app)
+		handlers.NewTenantsHandler(db, tenantRepo, userRepo, repository.NewAccountRepository(db), enq, testCookieName, false, auth).Register(app)
 	})
 
 	AfterEach(func() {
 		ctx := context.Background()
 		_, _ = db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(ctx)
+		// Credentials live on accounts since CON-147 (signup creates one); clear
+		// them so a reused email doesn't collide across specs.
+		_, _ = db.NewDelete().TableExpr("accounts").Where("1 = 1").Exec(ctx)
 		// Leave the default tenant (seeded by the migration); drop signup tenants.
 		_, _ = db.NewDelete().Model((*models.Tenant)(nil)).
 			Where("id <> ?", models.DefaultTenantID).Exec(ctx)

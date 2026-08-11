@@ -42,11 +42,12 @@ var _ = Describe("PasswordResetHandler", Ordered, func() {
 			},
 		})
 		userRepo := repository.NewUserRepository(db)
+		accountRepo := repository.NewAccountRepository(db)
 		// No activity recorder and no email enqueuer wired: both are nil-safe, so
 		// a reset request mints + stores a token (observable) without needing the
 		// River/analytics stack. Enqueuer-specific behaviour is covered in the
 		// jobs package.
-		handlers.NewPasswordResetHandler(db, userRepo, "https://app.example.com").Register(app)
+		handlers.NewPasswordResetHandler(db, userRepo, accountRepo, "https://app.example.com").Register(app)
 	})
 
 	AfterEach(func() {
@@ -55,6 +56,11 @@ var _ = Describe("PasswordResetHandler", Ordered, func() {
 		_, err = db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		_, err = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		// The credential now lives on accounts (CON-147); each seedTenantUser
+		// inserts one, and specs reuse the same emails, so clear it too or the
+		// unique-email constraint collides across specs.
+		_, err = db.NewDelete().TableExpr("accounts").Where("1 = 1").Exec(ctx)
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -113,16 +119,23 @@ var _ = Describe("PasswordResetHandler", Ordered, func() {
 		GinkgoHelper()
 		tok, err := models.NewSessionToken()
 		Expect(err).NotTo(HaveOccurred())
-		s := &models.Session{ID: tok, UserID: userID, TenantID: tenantID, ExpiresAt: time.Now().UTC().Add(time.Hour)}
+		// seedTenantUser seeds the account with the same id as the user (1:1), so
+		// the session's account_id can reuse the user id here.
+		s := &models.Session{ID: tok, AccountID: userID, UserID: userID, TenantID: tenantID, ExpiresAt: time.Now().UTC().Add(time.Hour)}
 		_, err = db.NewInsert().Model(s).Exec(ctx)
 		Expect(err).NotTo(HaveOccurred())
 	}
 
-	getUser := func(id string) *models.User {
+	// getAccountFor loads the login account behind a user membership. Since
+	// CON-147 the credential lives on accounts, so a reset asserts on
+	// account.PasswordHash rather than the (removed) user.PasswordHash.
+	getAccountFor := func(userID string) *models.Account {
 		GinkgoHelper()
-		u := new(models.User)
-		Expect(db.NewSelect().Model(u).Where("id = ?", id).Scan(ctx)).To(Succeed())
-		return u
+		acct := new(models.Account)
+		Expect(db.NewSelect().Model(acct).
+			Where("id = (SELECT account_id FROM users WHERE id = ?)", userID).
+			Scan(ctx)).To(Succeed())
+		return acct
 	}
 
 	countTokens := func(userID string) int {
@@ -228,7 +241,7 @@ var _ = Describe("PasswordResetHandler", Ordered, func() {
 			resp := doConfirm(token, "new-password-456")
 			Expect(resp.StatusCode).To(Equal(fiber.StatusNoContent))
 
-			got := getUser(u.ID)
+			got := getAccountFor(u.ID)
 			newOK, _ := models.VerifyPassword("new-password-456", got.PasswordHash)
 			Expect(newOK).To(BeTrue())
 			oldOK, _ := models.VerifyPassword("old-password-123", got.PasswordHash)
@@ -256,7 +269,7 @@ var _ = Describe("PasswordResetHandler", Ordered, func() {
 			resp := doConfirm(token, "new-password-456")
 			Expect(resp.StatusCode).To(Equal(fiber.StatusBadRequest))
 
-			oldOK, _ := models.VerifyPassword("old-password-123", getUser(u.ID).PasswordHash)
+			oldOK, _ := models.VerifyPassword("old-password-123", getAccountFor(u.ID).PasswordHash)
 			Expect(oldOK).To(BeTrue())
 		})
 

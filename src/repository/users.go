@@ -29,6 +29,12 @@ type UserRepository interface {
 	// GET /api/current_user (CON-97).
 	GetByIDWithTenant(ctx context.Context, id string) (*models.User, error)
 	GetByEmail(ctx context.Context, email string) (*models.User, error)
+	// GetByAccountID resolves the membership a login lands on. In CON-147 PR1 an
+	// account has exactly one membership, so this returns it; when an account can
+	// hold several (PR2+) it returns the earliest-joined as the default. Runs
+	// unscoped — the auth path has no tenant yet. sql.ErrNoRows if the account has
+	// no membership at all.
+	GetByAccountID(ctx context.Context, accountID string) (*models.User, error)
 	Update(ctx context.Context, user *models.User) error
 	Delete(ctx context.Context, id string) (bool, error)
 	// SetRoleGuarded sets a member's role within tenantID, enforcing the
@@ -127,6 +133,25 @@ func (r *userRepository) GetByIDWithTenant(ctx context.Context, id string) (*mod
 func (r *userRepository) GetByEmail(ctx context.Context, email string) (*models.User, error) {
 	user := new(models.User)
 	err := r.db.NewSelect().Model(user).Where("u.email = ?", email).Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, sql.ErrNoRows
+		}
+		return nil, err
+	}
+	return user, nil
+}
+
+func (r *userRepository) GetByAccountID(ctx context.Context, accountID string) (*models.User, error) {
+	// Unscoped: the login/auth path resolves the membership before any tenant is
+	// known. Ordered so an account with several memberships (PR2+) resolves to a
+	// stable default; in PR1 there is exactly one.
+	user := new(models.User)
+	err := r.db.NewSelect().Model(user).
+		Where("u.account_id = ?", accountID).
+		OrderExpr("created_at ASC").
+		Limit(1).
+		Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, sql.ErrNoRows
