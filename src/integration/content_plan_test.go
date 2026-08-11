@@ -118,6 +118,8 @@ var _ = Describe("Content plan flow", Ordered, func() {
 		_, _ = db.NewDelete().TableExpr("posts").Where("campaign_id = ?", campaignID).Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("campaigns").Where("id = ?", campaignID).Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("users").Where("id = ?", userID).Exec(ctx)
+		_, err := db.NewDelete().TableExpr("accounts").Where("id = ?", userID).Exec(ctx)
+		Expect(err).NotTo(HaveOccurred())
 	})
 
 	Describe("generateContentPlan flow", func() {

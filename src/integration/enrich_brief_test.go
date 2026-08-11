@@ -83,6 +83,8 @@ var _ = Describe("Enrich brief flow", Ordered, func() {
 		}
 		_, _ = db.NewDelete().TableExpr("campaigns").Where("created_by = ?", userID).Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("users").Where("id = ?", userID).Exec(ctx)
+		_, err := db.NewDelete().TableExpr("accounts").Where("id = ?", userID).Exec(ctx)
+		Expect(err).NotTo(HaveOccurred())
 	})
 
 	// seedCampaign creates a minimal campaign — only a title, a real type

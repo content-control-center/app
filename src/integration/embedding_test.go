@@ -94,6 +94,8 @@ var _ = Describe("Asset embedding flow", Ordered, func() {
 		_, _ = db.NewDelete().TableExpr("assets_chunks").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("assets").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(ctx)
+		_, err := db.NewDelete().TableExpr("accounts").Where("1 = 1").Exec(ctx)
+		Expect(err).NotTo(HaveOccurred())
 	})
 
 	// ── Create ───────────────────────────────────────────────────────────────
