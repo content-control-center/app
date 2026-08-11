@@ -76,6 +76,10 @@ var _ = Describe("InvitationsHandler", Ordered, func() {
 			_, err := db.NewDelete().TableExpr(tbl).Where("1 = 1").Exec(ctx)
 			Expect(err).NotTo(HaveOccurred())
 		}
+		// Cross-workspace invite tests seed extra tenants (CON-147 PR3); clear them
+		// so slugs/ids don't accumulate across specs.
+		_, err := db.NewDelete().Model((*models.Tenant)(nil)).Where("id <> ?", models.DefaultTenantID).Exec(ctx)
+		Expect(err).NotTo(HaveOccurred())
 	})
 
 	// ── helpers ────────────────────────────────────────────────────────────────
@@ -164,6 +168,46 @@ var _ = Describe("InvitationsHandler", Ordered, func() {
 		inv := new(models.Invitation)
 		Expect(db.NewSelect().Model(inv).Where("email = ?", email).Scan(ctx)).To(Succeed())
 		return inv
+	}
+
+	// acceptAs is accept while signed in as some account — the existing-account
+	// path (CON-147 PR3), where the caller's session cookie proves they own the
+	// invited address.
+	acceptAs := func(token string, cookie *http.Cookie, payload fiber.Map) *http.Response {
+		GinkgoHelper()
+		body, _ := json.Marshal(payload)
+		req := httptest.NewRequest("POST", "/api/invitations/accept/"+token, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		if cookie != nil {
+			req.AddCookie(cookie)
+		}
+		resp, err := app.Test(req)
+		Expect(err).NotTo(HaveOccurred())
+		return resp
+	}
+
+	// seedForeignAccount creates a second workspace and an account that owns it,
+	// so the account exists but is NOT a member of the default tenant — the
+	// CON-147 cross-workspace invite case. Returns the account.
+	seedForeignAccount := func(email, password string) *models.Account {
+		GinkgoHelper()
+		hash, err := models.HashPassword(password)
+		Expect(err).NotTo(HaveOccurred())
+		tid, err := models.NewID()
+		Expect(err).NotTo(HaveOccurred())
+		aid, err := models.NewID()
+		Expect(err).NotTo(HaveOccurred())
+		mid, err := models.NewID()
+		Expect(err).NotTo(HaveOccurred())
+		now := time.Now().UTC()
+		_, err = db.NewInsert().Model(&models.Tenant{ID: tid, Name: "Other " + aid, Slug: "other-" + aid, CreatedAt: now, UpdatedAt: now}).Exec(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		acct := &models.Account{ID: aid, Email: email, PasswordHash: hash, Name: "Ext", CreatedAt: now, UpdatedAt: now}
+		_, err = db.NewInsert().Model(acct).Exec(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = db.NewInsert().Model(&models.User{ID: mid, AccountID: aid, TenantID: tid, Name: "Ext", Email: email, Role: models.RoleOwner, CreatedAt: now, UpdatedAt: now}).Exec(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		return acct
 	}
 
 	// ── POST /api/invitations ────────────────────────────────────────────────
@@ -386,11 +430,57 @@ var _ = Describe("InvitationsHandler", Ordered, func() {
 			Expect(countUsersByEmail("twice@example.com")).To(Equal(1))
 		})
 
-		It("returns 409 when the email gained an account since the invite was sent", func() {
+		It("returns 403 (invite left pending) when the email has an account and the caller isn't signed in as it", func() {
+			// CON-147 PR3: an email that already has an account is joined by signing
+			// in as that account and accepting — not a dead-end 409. An anonymous
+			// accept is refused and the invite is left for the real owner to claim.
 			owner, _ := ownerCookie()
 			token := seedInvite(owner.ID, "raced@example.com", models.RoleMember, models.InvitationPending, time.Now().Add(time.Hour))
 			seedTenantUser(db, "Raced", "raced@example.com", "some-password")
 			resp := accept(token, fiber.Map{"name": "Raced", "password": "another-password"})
+			Expect(resp.StatusCode).To(Equal(fiber.StatusForbidden))
+			Expect(getInviteByEmail("raced@example.com").Status).To(Equal(models.InvitationPending))
+		})
+	})
+
+	// ── Cross-workspace invitations & existing-account accept (CON-147 PR3) ───
+
+	Describe("existing-account invitations (CON-147 PR3)", func() {
+		It("invites an email that already has an account in another workspace (201)", func() {
+			_, cookie := ownerCookie()
+			seedForeignAccount("ext@example.com", "ext-password")
+			resp := createInvite(cookie, fiber.Map{"email": "ext@example.com"})
+			Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+			Expect(enqueuer.toEmails).To(ContainElement("ext@example.com"))
+		})
+
+		It("409s inviting an email already a member of this workspace", func() {
+			_, cookie := ownerCookie()
+			resp := createInvite(cookie, fiber.Map{"email": "owner@example.com"})
+			Expect(resp.StatusCode).To(Equal(fiber.StatusConflict))
+		})
+
+		It("attaches a membership when accepted while signed in as the account (200, no new session)", func() {
+			owner, _ := ownerCookie()
+			seedForeignAccount("ext@example.com", "ext-password")
+			extCookie := login("ext@example.com", "ext-password")
+			token := seedInvite(owner.ID, "ext@example.com", models.RoleMember, models.InvitationPending, time.Now().Add(time.Hour))
+
+			resp := acceptAs(token, extCookie, fiber.Map{})
+			Expect(resp.StatusCode).To(Equal(fiber.StatusOK))
+			// The existing-account path opens no session, so it sets no cookie.
+			Expect(resp.Cookies()).To(BeEmpty())
+			// ext now holds two memberships: the original (Other) + the default tenant.
+			Expect(countUsersByEmail("ext@example.com")).To(Equal(2))
+			Expect(getInviteByEmail("ext@example.com").Status).To(Equal(models.InvitationAccepted))
+		})
+
+		It("409s when the signed-in account is already a member of the workspace", func() {
+			owner, ownerCk := ownerCookie()
+			// Seeded directly to bypass Create's own already-a-member 409 and reach
+			// acceptExisting's guard.
+			token := seedInvite(owner.ID, "owner@example.com", models.RoleMember, models.InvitationPending, time.Now().Add(time.Hour))
+			resp := acceptAs(token, ownerCk, fiber.Map{})
 			Expect(resp.StatusCode).To(Equal(fiber.StatusConflict))
 		})
 	})
