@@ -45,11 +45,13 @@ var _ = Describe("Workspaces (CON-147)", Ordered, func() {
 		tenantRepo := repository.NewTenantRepository(db)
 		sessionRepo := repository.NewSessionRepository(db)
 		tagRepo := repository.NewTagRepository(db)
+		settingRepo := repository.NewSettingRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, userRepo, testCookieName)
 		// profileJobs nil: no Zernio bootstrap in tests (creation still succeeds).
 		handlers.NewTenantsHandler(db, tenantRepo, userRepo, accountRepo, nil, testCookieName, false, auth).Register(app)
 		handlers.NewWorkspacesHandler(db, workspaceRepo, userRepo, accountRepo, tenantRepo, sessionRepo, nil, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, accountRepo, sessionRepo, testCookieName, false).Register(app)
+		handlers.NewUsersHandler(db, userRepo, accountRepo, settingRepo, auth).Register(app)
 		handlers.NewTagsHandler(tagRepo, auth).Register(app)
 	})
 
@@ -314,6 +316,33 @@ var _ = Describe("Workspaces (CON-147)", Ordered, func() {
 			Expect(items).To(HaveLen(1))
 			Expect(items[0].ID).To(Equal(w1))
 			Expect(items[0].IsDefault).To(BeTrue())
+		})
+	})
+
+	Describe("profile update propagation (CON-147)", func() {
+		It("renaming propagates to the account's membership in every workspace", func() {
+			// One account, two workspaces => two membership rows carrying the
+			// denormalised name. A profile rename must update both, not just the one
+			// the request is scoped to.
+			cookie, w1 := signup("Alpha", "alpha@test.local")
+			w2 := createWorkspace(cookie, "Beta")
+
+			// The caller's membership id in the active (default) workspace.
+			cu := do("GET", "/api/current_user", cookie, "", nil)
+			Expect(cu.StatusCode).To(Equal(fiber.StatusOK))
+			var me struct {
+				ID string `json:"id"`
+			}
+			Expect(json.NewDecoder(cu.Body).Decode(&me)).To(Succeed())
+
+			resp := do("PUT", "/api/users/"+me.ID, cookie, "", fiber.Map{"name": "Renamed", "email": "alpha@test.local"})
+			Expect(resp.StatusCode).To(Equal(fiber.StatusOK))
+
+			var names []string
+			Expect(db.NewSelect().ColumnExpr("name").TableExpr("users").
+				Where("tenant_id IN (?, ?)", w1, w2).
+				Scan(context.Background(), &names)).To(Succeed())
+			Expect(names).To(ConsistOf("Renamed", "Renamed"))
 		})
 	})
 })

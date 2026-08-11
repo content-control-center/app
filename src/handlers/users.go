@@ -340,7 +340,12 @@ func (h *UsersHandler) Update(c *fiber.Ctx) error {
 			user.Name = req.Name
 			user.Email = req.Email
 			user.UpdatedAt = now
-			if _, err := tx.NewUpdate().Model(user).Column("name", "email", "updated_at").WherePK().Exec(ctx); err != nil {
+			// Sync the denormalised copy on EVERY membership of this account, so the
+			// person's name/email stays consistent across all their workspaces — not
+			// just the one this request is scoped to.
+			if _, err := tx.NewUpdate().Model((*models.User)(nil)).
+				Set("name = ?", req.Name).Set("email = ?", req.Email).Set("updated_at = ?", now).
+				Where("account_id = ?", user.AccountID).Exec(ctx); err != nil {
 				return err
 			}
 			_, err := tx.NewUpdate().Model((*models.Account)(nil)).
@@ -390,7 +395,11 @@ func (h *UsersHandler) Update(c *fiber.Ctx) error {
 			user.Name = req.Name
 			user.Email = req.Email
 			user.UpdatedAt = now
-			if _, err := tx.NewUpdate().Model(user).Column("name", "email", "updated_at").WherePK().Exec(ctx); err != nil {
+			// Sync the denormalised name/email on EVERY membership of this account
+			// (see the name/email-only branch above).
+			if _, err := tx.NewUpdate().Model((*models.User)(nil)).
+				Set("name = ?", req.Name).Set("email = ?", req.Email).Set("updated_at = ?", now).
+				Where("account_id = ?", user.AccountID).Exec(ctx); err != nil {
 				return err
 			}
 			// Revoke the account's other sessions (a password change may be locking
