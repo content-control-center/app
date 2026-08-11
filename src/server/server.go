@@ -86,6 +86,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// API routes
 	userRepo := repository.NewUserRepository(db)
 	accountRepo := repository.NewAccountRepository(db)
+	workspaceRepo := repository.NewWorkspaceRepository(db)
 	tenantRepo := repository.NewTenantRepository(db)
 	sessionRepo := repository.NewSessionRepository(db)
 	settingRepo := repository.NewSettingRepository(db)
@@ -133,7 +134,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	emailTemplateRepo := repository.NewEmailTemplateRepository(db)
 	emailSuppressionRepo := repository.NewEmailSuppressionRepository(db)
 	emailLogRepo := repository.NewEmailLogRepository(db)
-	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
+	auth := handlers.RequireAuth(sessionRepo, userRepo, cfg.SessionCookieName)
 
 	// CON-86: apply any operator price-map override (USAGE_MODEL_PRICES) before
 	// metering starts; a malformed payload or unknown vendor fails boot.
@@ -374,6 +375,13 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// CON-154: signup enqueues the welcome email + onboarding drip in its tx.
 	tenantsHandler.SetEmailEnqueuer(enqueuer)
 	tenantsHandler.Register(app)
+
+	// CON-147: authenticated workspace surface (list / create / switch). Create
+	// provisions a per-workspace Zernio profile through the same River enqueuer as
+	// signup, so it registers here alongside the tenants handler.
+	workspacesHandler := handlers.NewWorkspacesHandler(db, workspaceRepo, userRepo, accountRepo, tenantRepo, sessionRepo, enqueuer, auth)
+	workspacesHandler.SetActivityRecorder(activityWiring.recorder)
+	workspacesHandler.Register(app)
 
 	// CON-161: public password-reset request + confirm (both unauthenticated —
 	// the emailed token is the capability). The request endpoint enqueues the

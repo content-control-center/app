@@ -43,7 +43,7 @@ var _ = Describe("UsersHandler", Ordered, func() {
 		userRepo := repository.NewUserRepository(db)
 		sessionRepo := repository.NewSessionRepository(db)
 		settingRepo := repository.NewSettingRepository(db)
-		auth := handlers.RequireAuth(sessionRepo, testCookieName)
+		auth := handlers.RequireAuth(sessionRepo, userRepo, testCookieName)
 		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(app)
 		handlers.NewSettingsHandler(settingRepo, auth).Register(app)

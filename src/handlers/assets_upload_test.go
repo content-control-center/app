@@ -69,7 +69,7 @@ var _ = Describe("AssetsHandler upload", Ordered, func() {
 		settingRepo := repository.NewSettingRepository(db)
 		tagRepo := repository.NewTagRepository(db)
 		assetRepo := repository.NewAssetRepository(db, tagRepo, repository.NewAssetFileRepository(db))
-		auth := handlers.RequireAuth(sessionRepo, testCookieName)
+		auth := handlers.RequireAuth(sessionRepo, userRepo, testCookieName)
 		// Wire the real PDF ingestion path: object storage for original.pdf and a
 		// recording enqueuer, plus the test DB for the insert+enqueue transaction.
 		store = &stubStorage{returnURL: "https://pub.example.com/x", objects: map[string][]byte{}}

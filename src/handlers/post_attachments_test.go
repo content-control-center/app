@@ -190,7 +190,7 @@ var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 		campaignRepo := repository.NewCampaignRepository(db, tagRepo, repository.NewPlatformRepository(db), campaignTypeRepo)
 		postRepo := repository.NewPostRepository(db)
 		postAttRepo := repository.NewPostAttachmentRepository(db)
-		auth := handlers.RequireAuth(sessionRepo, testCookieName)
+		auth := handlers.RequireAuth(sessionRepo, userRepo, testCookieName)
 
 		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(app)

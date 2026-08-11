@@ -43,7 +43,7 @@ var _ = Describe("Multi-tenant isolation (CON-97)", Ordered, func() {
 		tagRepo := repository.NewTagRepository(db)
 		campaignTypeRepo := repository.NewCampaignTypeRepository(db)
 		campaignRepo := repository.NewCampaignRepository(db, tagRepo, repository.NewPlatformRepository(db), campaignTypeRepo)
-		auth := handlers.RequireAuth(sessionRepo, testCookieName)
+		auth := handlers.RequireAuth(sessionRepo, userRepo, testCookieName)
 		handlers.NewTenantsHandler(db, tenantRepo, userRepo, repository.NewAccountRepository(db), nil, testCookieName, false, auth).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
 		handlers.NewTagsHandler(tagRepo, auth).Register(app)

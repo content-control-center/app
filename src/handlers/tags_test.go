@@ -42,7 +42,7 @@ var _ = Describe("TagsHandler", Ordered, func() {
 		sessionRepo := repository.NewSessionRepository(db)
 		settingRepo := repository.NewSettingRepository(db)
 		tagRepo := repository.NewTagRepository(db)
-		auth := handlers.RequireAuth(sessionRepo, testCookieName)
+		auth := handlers.RequireAuth(sessionRepo, userRepo, testCookieName)
 		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(app)
 		handlers.NewTagsHandler(tagRepo, auth).Register(app)

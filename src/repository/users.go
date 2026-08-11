@@ -35,6 +35,11 @@ type UserRepository interface {
 	// unscoped — the auth path has no tenant yet. sql.ErrNoRows if the account has
 	// no membership at all.
 	GetByAccountID(ctx context.Context, accountID string) (*models.User, error)
+	// GetMembership resolves the membership of accountID in a specific workspace,
+	// which is how the auth middleware validates an X-Workspace-Id header before
+	// scoping a request to it (CON-147 PR2). Runs unscoped — it IS the check that
+	// decides the tenant. sql.ErrNoRows when the account isn't a member there.
+	GetMembership(ctx context.Context, accountID, tenantID string) (*models.User, error)
 	Update(ctx context.Context, user *models.User) error
 	Delete(ctx context.Context, id string) (bool, error)
 	// SetRoleGuarded sets a member's role within tenantID, enforcing the
@@ -151,6 +156,23 @@ func (r *userRepository) GetByAccountID(ctx context.Context, accountID string) (
 		Where("u.account_id = ?", accountID).
 		OrderExpr("created_at ASC").
 		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, sql.ErrNoRows
+		}
+		return nil, err
+	}
+	return user, nil
+}
+
+func (r *userRepository) GetMembership(ctx context.Context, accountID, tenantID string) (*models.User, error) {
+	// Unscoped by design: this lookup is what authorises scoping a request to
+	// tenantID, so it can't itself depend on a tenant already being in context.
+	user := new(models.User)
+	err := r.db.NewSelect().Model(user).
+		Where("u.account_id = ?", accountID).
+		Where("u.tenant_id = ?", tenantID).
 		Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

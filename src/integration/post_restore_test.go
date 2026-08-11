@@ -66,7 +66,7 @@ var _ = Describe("Post restore — CON-68", Ordered, func() {
 		logRepo = repository.NewPostLogRepository(db)
 		postAttRepo := repository.NewPostAttachmentRepository(db)
 		postMessageRepo := repository.NewPostAssistantMessageRepository(db)
-		auth := handlers.RequireAuth(sessionRepo, "test_session")
+		auth := handlers.RequireAuth(sessionRepo, userRepo, "test_session")
 
 		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, "test_session", false).Register(app)

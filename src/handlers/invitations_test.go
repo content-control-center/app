@@ -60,7 +60,7 @@ var _ = Describe("InvitationsHandler", Ordered, func() {
 		sessionRepo := repository.NewSessionRepository(db)
 		settingRepo := repository.NewSettingRepository(db)
 		inviteRepo := repository.NewInvitationRepository(db)
-		auth := handlers.RequireAuth(sessionRepo, testCookieName)
+		auth := handlers.RequireAuth(sessionRepo, userRepo, testCookieName)
 
 		enqueuer = &fakeInviteEnqueuer{}
 		ih := handlers.NewInvitationsHandler(db, userRepo, repository.NewAccountRepository(db), tenantRepo, inviteRepo, sessionRepo, "https://app.example.com", testCookieName, false, auth)

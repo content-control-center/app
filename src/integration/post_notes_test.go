@@ -53,7 +53,7 @@ var _ = Describe("Post notes CRUD (CON-188)", Ordered, func() {
 		postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 		postAttRepo := repository.NewPostAttachmentRepository(db)
 		noteSvc := notes.New(repository.NewPostNoteRepository(db))
-		auth := handlers.RequireAuth(sessionRepo, "test_session")
+		auth := handlers.RequireAuth(sessionRepo, userRepo, "test_session")
 
 		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, "test_session", false).Register(app)

@@ -72,7 +72,7 @@ var _ = Describe("Post schedule — CON-78", Ordered, func() {
 		postAttRepo := repository.NewPostAttachmentRepository(db)
 		postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 		allowlistRepo = repository.NewAutoPublishAllowlistRepository(db)
-		auth := handlers.RequireAuth(sessionRepo, "test_session")
+		auth := handlers.RequireAuth(sessionRepo, userRepo, "test_session")
 
 		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, "test_session", false).Register(app)

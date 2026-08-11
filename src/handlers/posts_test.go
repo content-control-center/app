@@ -84,7 +84,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		pieceRepo := repository.NewAssetRepository(db, tagRepo, repository.NewAssetFileRepository(db))
 		postRepo := repository.NewPostRepository(db)
 		postVersionRepo := repository.NewPostVersionRepository(db)
-		auth := handlers.RequireAuth(sessionRepo, testCookieName)
+		auth := handlers.RequireAuth(sessionRepo, userRepo, testCookieName)
 		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
@@ -1148,7 +1148,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				postRepo := repository.NewPostRepository(db)
 				postVersionRepo := repository.NewPostVersionRepository(db)
 				postMessageRepo := repository.NewPostAssistantMessageRepository(db)
-				auth := handlers.RequireAuth(sessionRepo, testCookieName)
+				auth := handlers.RequireAuth(sessionRepo, userRepo, testCookieName)
 				handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(stubApp)
 				handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(stubApp)
 				handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(stubApp)
@@ -1325,7 +1325,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				postRepo := repository.NewPostRepository(db)
 				postVersionRepo := repository.NewPostVersionRepository(db)
 				postMessageRepo := repository.NewPostAssistantMessageRepository(db)
-				auth := handlers.RequireAuth(sessionRepo, testCookieName)
+				auth := handlers.RequireAuth(sessionRepo, userRepo, testCookieName)
 				handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(stubApp)
 				handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(stubApp)
 				handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(stubApp)
@@ -1531,7 +1531,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				postVersionRepo := repository.NewPostVersionRepository(db)
 				postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 				evalRepo := repository.NewPostEvaluationRepository(db)
-				auth := handlers.RequireAuth(sessionRepo, testCookieName)
+				auth := handlers.RequireAuth(sessionRepo, userRepo, testCookieName)
 				handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(readApp)
 				handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(readApp)
 				handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(readApp)
@@ -1871,7 +1871,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 					return c.Status(code).JSON(fiber.Map{"error": err.Error()})
 				},
 			})
-			auth := handlers.RequireAuth(repository.NewSessionRepository(db), testCookieName)
+			auth := handlers.RequireAuth(repository.NewSessionRepository(db), repository.NewUserRepository(db), testCookieName)
 			ph := handlers.NewPostsHandler(
 				repository.NewPostRepository(db),
 				repository.NewPostVersionRepository(db),

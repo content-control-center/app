@@ -188,7 +188,7 @@ var _ = Describe("ZernioHandler", Ordered, func() {
 		settingRepo := repository.NewSettingRepository(db)
 		platformRepo := repository.NewPlatformRepository(db)
 		accountRepo = repository.NewSocialAccountRepository(db)
-		auth := handlers.RequireAuth(sessionRepo, testCookieName)
+		auth := handlers.RequireAuth(sessionRepo, userRepo, testCookieName)
 		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(app)
 

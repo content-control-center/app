@@ -63,7 +63,7 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 		postRepo = repository.NewPostRepository(db)
 		analyticsRepo = repository.NewPostAnalyticsRepository(db)
 		socialAccountRepo = repository.NewSocialAccountRepository(db)
-		auth := handlers.RequireAuth(sessionRepo, testCookieName)
+		auth := handlers.RequireAuth(sessionRepo, userRepo, testCookieName)
 
 		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(app)

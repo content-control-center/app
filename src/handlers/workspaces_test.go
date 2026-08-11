@@ -1,0 +1,220 @@
+package handlers_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+
+	"github.com/gofiber/fiber/v2"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"github.com/uptrace/bun"
+
+	"github.com/ogen-app/ogen/src/handlers"
+	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/repository"
+)
+
+// Exercises the CON-147 PR2 workspace surface end-to-end: one account holding
+// several workspaces, per-request workspace selection via the X-Workspace-Id
+// header (the multi-tab mechanism), and the default-workspace switch. Tags stand
+// in for any tenant-scoped entity — the point is which workspace a request reads
+// and writes, decided by the header, not the session.
+var _ = Describe("Workspaces (CON-147)", Ordered, func() {
+	var (
+		app *fiber.App
+		db  *bun.DB
+	)
+
+	BeforeAll(func() { db = mustOpenTestDBWithMigrations() })
+
+	BeforeEach(func() {
+		app = fiber.New(fiber.Config{ErrorHandler: func(c *fiber.Ctx, err error) error {
+			code := fiber.StatusInternalServerError
+			if e, ok := err.(*fiber.Error); ok {
+				code = e.Code
+			}
+			return c.Status(code).JSON(fiber.Map{"error": err.Error()})
+		}})
+		userRepo := repository.NewUserRepository(db)
+		accountRepo := repository.NewAccountRepository(db)
+		workspaceRepo := repository.NewWorkspaceRepository(db)
+		tenantRepo := repository.NewTenantRepository(db)
+		sessionRepo := repository.NewSessionRepository(db)
+		tagRepo := repository.NewTagRepository(db)
+		auth := handlers.RequireAuth(sessionRepo, userRepo, testCookieName)
+		// profileJobs nil: no Zernio bootstrap in tests (creation still succeeds).
+		handlers.NewTenantsHandler(db, tenantRepo, userRepo, accountRepo, nil, testCookieName, false, auth).Register(app)
+		handlers.NewWorkspacesHandler(db, workspaceRepo, userRepo, accountRepo, tenantRepo, sessionRepo, nil, auth).Register(app)
+		handlers.NewTagsHandler(tagRepo, auth).Register(app)
+	})
+
+	AfterEach(func() {
+		ctx := tenantCtx()
+		for _, t := range []string{"tags", "sessions", "users", "accounts"} {
+			_, _ = db.NewDelete().TableExpr(t).Where("1 = 1").Exec(ctx)
+		}
+		_, _ = db.NewDelete().Model((*models.Tenant)(nil)).Where("id <> ?", models.DefaultTenantID).Exec(ctx)
+	})
+
+	// signup creates a fresh account + first workspace, returning the auth cookie
+	// and the created workspace (tenant) id.
+	signup := func(tenantName, email string) (*http.Cookie, string) {
+		GinkgoHelper()
+		body, _ := json.Marshal(fiber.Map{
+			"tenant": fiber.Map{"name": tenantName},
+			"user":   fiber.Map{"name": "Owner", "email": email, "password": "password-owner"},
+		})
+		req := httptest.NewRequest("POST", "/api/tenants", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := app.Test(req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+		var out struct {
+			Tenant models.Tenant `json:"tenant"`
+		}
+		Expect(json.NewDecoder(resp.Body).Decode(&out)).To(Succeed())
+		var cookie *http.Cookie
+		for _, ck := range resp.Cookies() {
+			if ck.Name == testCookieName {
+				cookie = ck
+			}
+		}
+		Expect(cookie).NotTo(BeNil(), "signup did not set a session cookie")
+		return cookie, out.Tenant.ID
+	}
+
+	// do issues a request as cookie, optionally selecting a workspace via the
+	// X-Workspace-Id header (empty = none, i.e. the session default).
+	do := func(method, path string, cookie *http.Cookie, workspaceID string, payload fiber.Map) *http.Response {
+		GinkgoHelper()
+		var r *bytes.Reader
+		if payload != nil {
+			b, _ := json.Marshal(payload)
+			r = bytes.NewReader(b)
+		} else {
+			r = bytes.NewReader(nil)
+		}
+		req := httptest.NewRequest(method, path, r)
+		req.Header.Set("Content-Type", "application/json")
+		if workspaceID != "" {
+			req.Header.Set("X-Workspace-Id", workspaceID)
+		}
+		req.AddCookie(cookie)
+		resp, err := app.Test(req)
+		Expect(err).NotTo(HaveOccurred())
+		return resp
+	}
+
+	// createWorkspace posts a new workspace for cookie and returns its id.
+	createWorkspace := func(cookie *http.Cookie, name string) string {
+		GinkgoHelper()
+		resp := do("POST", "/api/workspaces", cookie, "", fiber.Map{"name": name})
+		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+		var t models.Tenant
+		Expect(json.NewDecoder(resp.Body).Decode(&t)).To(Succeed())
+		return t.ID
+	}
+
+	createTag := func(cookie *http.Cookie, workspaceID, name string) *http.Response {
+		GinkgoHelper()
+		return do("POST", "/api/tags", cookie, workspaceID, fiber.Map{"name": name})
+	}
+
+	listTagNames := func(cookie *http.Cookie, workspaceID string) []string {
+		GinkgoHelper()
+		resp := do("GET", "/api/tags", cookie, workspaceID, nil)
+		Expect(resp.StatusCode).To(Equal(fiber.StatusOK))
+		var tags []models.Tag
+		Expect(json.NewDecoder(resp.Body).Decode(&tags)).To(Succeed())
+		names := make([]string, 0, len(tags))
+		for _, t := range tags {
+			names = append(names, t.Name)
+		}
+		return names
+	}
+
+	Describe("GET /api/workspaces", func() {
+		It("lists every workspace the account belongs to, marking the default", func() {
+			cookie, w1 := signup("Alpha", "alpha@test.local")
+			w2 := createWorkspace(cookie, "Beta")
+
+			resp := do("GET", "/api/workspaces", cookie, "", nil)
+			Expect(resp.StatusCode).To(Equal(fiber.StatusOK))
+			var items []repository.WorkspaceListItem
+			Expect(json.NewDecoder(resp.Body).Decode(&items)).To(Succeed())
+
+			Expect(items).To(HaveLen(2))
+			byID := map[string]repository.WorkspaceListItem{}
+			for _, it := range items {
+				byID[it.ID] = it
+			}
+			Expect(byID[w1].Role).To(Equal(models.RoleOwner))
+			Expect(byID[w2].Role).To(Equal(models.RoleOwner))
+			Expect(byID[w1].MemberCount).To(Equal(1))
+			Expect(byID[w2].MemberCount).To(Equal(1))
+			// The signup workspace is the default until a switch moves it.
+			Expect(byID[w1].IsDefault).To(BeTrue())
+			Expect(byID[w2].IsDefault).To(BeFalse())
+		})
+	})
+
+	Describe("X-Workspace-Id resolution (the multi-tab mechanism)", func() {
+		It("scopes a request to the header workspace, isolated from the default", func() {
+			cookie, _ := signup("Alpha", "alpha@test.local")
+			w2 := createWorkspace(cookie, "Beta")
+
+			// Write into W2 by carrying its id in the header.
+			Expect(createTag(cookie, w2, "beta-only").StatusCode).To(Equal(fiber.StatusCreated))
+
+			// The same session reading W2 sees it; reading the default (no header)
+			// does not — two tabs, two workspaces, one cookie.
+			Expect(listTagNames(cookie, w2)).To(ContainElement("beta-only"))
+			Expect(listTagNames(cookie, "")).NotTo(ContainElement("beta-only"))
+		})
+
+		It("rejects a workspace the account is not a member of with 403", func() {
+			cookieA, _ := signup("Alpha", "alpha@test.local")
+			_, foreign := signup("Foreign", "foreign@test.local") // a workspace A can't see
+
+			resp := do("GET", "/api/tags", cookieA, foreign, nil)
+			Expect(resp.StatusCode).To(Equal(fiber.StatusForbidden))
+		})
+	})
+
+	Describe("POST /api/workspaces/:id/switch", func() {
+		It("moves the default workspace without disturbing header-scoped reads", func() {
+			cookie, w1 := signup("Alpha", "alpha@test.local")
+			w2 := createWorkspace(cookie, "Beta")
+
+			// A no-header request defaults to W1 before the switch.
+			Expect(createTag(cookie, "", "in-w1").StatusCode).To(Equal(fiber.StatusCreated))
+			Expect(listTagNames(cookie, w1)).To(ContainElement("in-w1"))
+
+			resp := do("POST", "/api/workspaces/"+w2+"/switch", cookie, "", nil)
+			Expect(resp.StatusCode).To(Equal(fiber.StatusNoContent))
+
+			// Now a no-header request defaults to W2, and the list marks it default.
+			Expect(createTag(cookie, "", "in-w2").StatusCode).To(Equal(fiber.StatusCreated))
+			Expect(listTagNames(cookie, w2)).To(ContainElement("in-w2"))
+			Expect(listTagNames(cookie, "")).To(ContainElement("in-w2"))
+			Expect(listTagNames(cookie, "")).NotTo(ContainElement("in-w1"))
+
+			lresp := do("GET", "/api/workspaces", cookie, "", nil)
+			var items []repository.WorkspaceListItem
+			Expect(json.NewDecoder(lresp.Body).Decode(&items)).To(Succeed())
+			for _, it := range items {
+				Expect(it.IsDefault).To(Equal(it.ID == w2))
+			}
+		})
+
+		It("returns 404 for a workspace the account is not a member of", func() {
+			cookieA, _ := signup("Alpha", "alpha@test.local")
+			_, foreign := signup("Foreign", "foreign@test.local")
+
+			resp := do("POST", "/api/workspaces/"+foreign+"/switch", cookieA, "", nil)
+			Expect(resp.StatusCode).To(Equal(fiber.StatusNotFound))
+		})
+	})
+})

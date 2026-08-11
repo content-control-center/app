@@ -121,7 +121,7 @@ var _ = Describe("Post analytics — CON-93", Ordered, func() {
 		campaignRepo := repository.NewCampaignRepository(db, tagRepo, platformRepo, campaignTypeRepo)
 		postRepo = repository.NewPostRepository(db)
 		analyticsRepo = repository.NewPostAnalyticsRepository(db)
-		auth := handlers.RequireAuth(sessionRepo, "test_session")
+		auth := handlers.RequireAuth(sessionRepo, userRepo, "test_session")
 
 		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, "test_session", false).Register(app)

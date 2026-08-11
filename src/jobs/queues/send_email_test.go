@@ -52,6 +52,9 @@ func (f *fakeUserRepo) GetByEmail(context.Context, string) (*models.User, error)
 func (f *fakeUserRepo) GetByAccountID(context.Context, string) (*models.User, error) {
 	return nil, sql.ErrNoRows
 }
+func (f *fakeUserRepo) GetMembership(context.Context, string, string) (*models.User, error) {
+	return nil, sql.ErrNoRows
+}
 func (f *fakeUserRepo) Update(context.Context, *models.User) error   { return nil }
 func (f *fakeUserRepo) Delete(context.Context, string) (bool, error) { return false, nil }
 func (f *fakeUserRepo) CreateTx(context.Context, bun.IDB, *models.User) error {

@@ -64,7 +64,7 @@ var _ = Describe("TenantsHandler", Ordered, func() {
 		userRepo := repository.NewUserRepository(db)
 		tenantRepo := repository.NewTenantRepository(db)
 		sessionRepo := repository.NewSessionRepository(db)
-		auth := handlers.RequireAuth(sessionRepo, testCookieName)
+		auth := handlers.RequireAuth(sessionRepo, userRepo, testCookieName)
 		enq = &fakeProfileEnqueuer{}
 		handlers.NewTenantsHandler(db, tenantRepo, userRepo, repository.NewAccountRepository(db), enq, testCookieName, false, auth).Register(app)
 	})
