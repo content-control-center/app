@@ -22,17 +22,22 @@ touches unauthenticated routes and mail; the prototype stops at that boundary.
 
 ## Core model
 
-- Membership becomes **many-to-many**; a **session is bound to one workspace at
-  a time**. The tenant boundary itself is unchanged and still fail-closed —
-  only *which* tenant the session points at becomes mutable.
-- Active workspace lives in the **session**, switched via
-  `POST /api/workspaces/:id/switch` — deliberately **not** a per-request
-  `X-Workspace-Id` header, so no existing endpoint changes. Cost: two browser
-  tabs can't sit in two workspaces (header is the documented escape hatch).
-- Roles: `owner | admin | member | viewer`. `viewer` is the branch's addition
-  over CON-147 (read-only agency-client case). Multiple owners allowed;
-  invariant is **≥1 owner** (server answers `409`; UI counts owners to grey
-  controls out first).
+- Membership becomes **many-to-many**; the **session identifies the account**,
+  and the active workspace is resolved **per request from an `X-Workspace-Id`
+  header**, falling back to the session's default workspace when the header is
+  absent. The tenant boundary itself is unchanged and still fail-closed — only
+  *which* tenant a request scopes to is now per-request.
+- This is what lets two browser tabs sit in two workspaces at once (one cookie,
+  different headers). `POST /api/workspaces/:id/switch` repoints only the
+  session's **default** workspace — where a fresh tab or the next login seeds —
+  and does **not** rescope open tabs. (The prototype originally bound the active
+  workspace to the session with a switch + full reload; the shipped API
+  overrides that with the header model, which the UI must adopt.)
+- Roles: `owner | member` (shipped, inherited from CON-26). The prototype also
+  modeled `admin` and `viewer`, but the backend supports **owner and member
+  only** — so both `admin` and `viewer` are **prototype-only**. Multiple owners
+  allowed; invariant is **≥1 owner** (server answers `409`; UI counts owners to
+  grey controls out first).
 - RBAC collapses to **two rank rules** in `src/types/workspace.ts`
   (`canActOnMember`, `canGrantRole`, `grantableRoles`): act on someone *below*
   your rank; grant a role *at or below* your own. Owners act on each other as
