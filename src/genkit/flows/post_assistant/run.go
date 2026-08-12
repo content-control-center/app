@@ -484,15 +484,18 @@ func runPostAssistant(
 		}
 	}
 
-	// Hybrid safety (CON-128): the planner claimed an edit but the editPost
-	// writer never ran (it didn't call the tool, or the writer produced
-	// nothing), so there is no content to apply. Never let the empty body reach
-	// the post — that would wipe it. Downgrade to a notes-only turn if notes
-	// were captured this turn, otherwise to an answer, and drop the version
-	// snapshot. The legacy path can't hit this: there action and content come
-	// from the same JSON envelope, with content emitted before action.
-	if planner && result.Action == "edited" && st.editResult == nil && result.UpdatedContent == "" {
-		slog.WarnContext(ctx, "planner claimed an edit without invoking editPost; not persisting empty content", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID)
+	// Hybrid safety (CON-128): only the editPost writer may produce post copy,
+	// so an "edited" turn is legitimate ONLY when the writer actually ran
+	// (st.editResult set). Without it the planner either applied no edit, or
+	// emitted its own inline content in violation of the split — either way we
+	// must not persist that content (an empty body would wipe the post; a
+	// planner-written body would leak Haiku prose past the writer). Discard any
+	// such content and downgrade: to a notes-only turn if notes were captured
+	// this turn, otherwise to an answer, dropping the version snapshot. The
+	// legacy path can't hit this — there content comes from the same call.
+	if planner && result.Action == "edited" && st.editResult == nil {
+		slog.WarnContext(ctx, "planner claimed an edit without invoking editPost; discarding any inline content", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID)
+		result.UpdatedContent = ""
 		if len(st.noteResults) > 0 {
 			result.Action = "noted"
 		} else {
