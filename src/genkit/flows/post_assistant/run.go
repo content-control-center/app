@@ -484,6 +484,26 @@ func runPostAssistant(
 		}
 	}
 
+	// Hybrid safety (CON-128): the planner claimed an edit but the editPost
+	// writer never ran (it didn't call the tool, or the writer produced
+	// nothing), so there is no content to apply. Never let the empty body reach
+	// the post — that would wipe it. Downgrade to a notes-only turn if notes
+	// were captured this turn, otherwise to an answer, and drop the version
+	// snapshot. The legacy path can't hit this: there action and content come
+	// from the same JSON envelope, with content emitted before action.
+	if planner && result.Action == "edited" && st.editResult == nil && result.UpdatedContent == "" {
+		slog.WarnContext(ctx, "planner claimed an edit without invoking editPost; not persisting empty content", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID)
+		if len(st.noteResults) > 0 {
+			result.Action = "noted"
+		} else {
+			result.Action = "declined"
+		}
+		result.SaveVersion = false
+		if result.Explanation == "" {
+			result.Explanation = "I couldn't apply that edit — could you rephrase what you'd like changed?"
+		}
+	}
+
 	// Pure-prose recovery: occasionally the model ignores the JSON
 	// envelope entirely and answers in plain prose (often when the user
 	// asks an informational question). Salvage the raw text as the
