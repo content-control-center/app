@@ -17,6 +17,8 @@ import (
 	"github.com/ogen-app/ogen/src/post_actions/clone"
 	"github.com/ogen-app/ogen/src/post_actions/restore"
 	"github.com/ogen-app/ogen/src/post_actions/schedule"
+	"github.com/ogen-app/ogen/src/usage"
+	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 // Per-turn token budget for tool-retrieved chunks.
@@ -68,6 +70,27 @@ type requestState struct {
 	// generation to finalise the response.
 	noteSvc     *notes.Service
 	noteResults []*models.PostNote
+
+	// Writer support (CON-128). In the hybrid path the planner loop runs on
+	// the cheap planning model and delegates all copywriting to the Sonnet
+	// writer via the editPost tool (and clonePost adaptation). g runs the
+	// nested writer generation; provider/recorder resolve the generation model
+	// and meter it; writerSystem is the writer prompt + context block assembled
+	// per-request; writerMaxTokens caps the writer output. editResult holds the
+	// content the writer produced this turn, read by the runner to finalise an
+	// "edited" response — the content never flows back through the planner model.
+	g               *genkit.Genkit
+	provider        *llm.Provider
+	recorder        *usage.Recorder
+	writerSystem    string
+	writerMaxTokens int64
+	editResult      *editResult
+}
+
+// editResult is the internal outcome of the editPost write-tool (CON-128): the
+// full post content the Sonnet writer produced this turn.
+type editResult struct {
+	Content string
 }
 
 func withRequestState(ctx context.Context, s *requestState) context.Context {
@@ -117,8 +140,26 @@ type SearchChunksInput struct {
 type ClonePostInput struct {
 	TargetPlatform string `json:"targetPlatform,omitempty" jsonschema:"description=Platform name or ID for the clone (e.g. Threads). Omit to keep the source's platform."`
 	TargetPostType string `json:"targetPostType,omitempty" jsonschema:"description=Post-type slug for the target platform (e.g. text-post). Omit to inherit or default."`
-	Content        string `json:"content,omitempty"        jsonschema:"description=Full Markdown content for the clone. For a cross-platform clone provide content adapted to the target platform; omit to copy the source content verbatim."`
+	Content        string `json:"content,omitempty"        jsonschema:"description=Full Markdown content for the clone. Normally leave empty — for a cross-platform clone the server's writer adapts the copy; provide content only to override it entirely. Omit to copy the source content verbatim (same-platform clone)."`
+	Instruction    string `json:"instruction,omitempty"    jsonschema:"description=Optional steer for a cross-platform adaptation (e.g. 'keep it short'), forwarded to the writer. Ignored for a verbatim same-platform clone."`
 	Title          string `json:"title,omitempty"          jsonschema:"description=Title for the clone. Omit to apply the default naming."`
+}
+
+// EditPostInput is the input for the editPost tool (CON-128). The planner
+// forwards the user's change request verbatim; the Sonnet writer produces the
+// full updated post from it.
+type EditPostInput struct {
+	Instruction string `json:"instruction" jsonschema:"description=The user's change request, forwarded verbatim (e.g. 'shorten the intro' or 'write the post from the draft thesis'). Do not paraphrase or pre-write the content."`
+	Mode        string `json:"mode,omitempty" jsonschema:"description=edit for a change to existing content; draft to write the post body from a draft_thesis outline.,enum=edit,enum=draft"`
+}
+
+// EditPostOutput is the compact receipt returned to the planner after the
+// writer runs. The full content deliberately does NOT come back through the
+// planner model — it streams to the client and the runner finalises it from
+// requestState — so the cheap planner stays cheap and can't mangle the copy.
+type EditPostOutput struct {
+	OK    bool `json:"ok"`
+	Chars int  `json:"chars"`
 }
 
 // ClonePostOutput is returned to the model after a clone is created.
@@ -186,6 +227,9 @@ type toolSet struct {
 	restoreVersion    ai.ToolRef
 	schedulePost      ai.ToolRef
 	createNote        ai.ToolRef
+	// editPost (CON-128) is the Sonnet write-tool used only in the hybrid
+	// planner path; the legacy single-Sonnet loop does not attach it.
+	editPost ai.ToolRef
 }
 
 func defineTools(g *genkit.Genkit) *toolSet {
@@ -258,6 +302,16 @@ func defineTools(g *genkit.Genkit) *toolSet {
 		},
 	)
 
+	editPost := genkit.DefineTool(g, "editPost",
+		"Generates or revises the current post's content — this is how ALL content changes happen. "+
+			"Pass the user's change request verbatim in instruction (e.g. 'shorten the intro', "+
+			"'make it punchier', 'write the post from the draft thesis') and a mode (edit or draft). "+
+			"The content is produced and applied by the server; you do not write it yourself.",
+		func(ctx *ai.ToolContext, in EditPostInput) (*EditPostOutput, error) {
+			return toolEditPost(ctx, in)
+		},
+	)
+
 	return &toolSet{
 		listAssets:        list,
 		getAssetChunks:    getChunks,
@@ -267,6 +321,7 @@ func defineTools(g *genkit.Genkit) *toolSet {
 		restoreVersion:    restoreVersion,
 		schedulePost:      schedulePost,
 		createNote:        createNote,
+		editPost:          editPost,
 	}
 }
 
@@ -367,8 +422,27 @@ func toolClonePost(ctx context.Context, in ClonePostInput) (*ClonePostOutput, er
 		opts.TargetPlatformID = id
 	}
 	opts.TargetPostType = in.TargetPostType
-	if in.Content != "" {
-		opts.ContentOverride = &in.Content
+
+	// CON-128: in the hybrid path the planner does not write copy, so a
+	// cross-platform clone's adapted content is produced by the Sonnet writer
+	// here rather than passed in. An explicit Content override still wins
+	// (legacy path / deliberate override); a verbatim same-platform clone (no
+	// targetPlatform) skips the writer entirely. writerSystem is empty in the
+	// legacy path, so this branch is inert there.
+	content := in.Content
+	if content == "" && in.TargetPlatform != "" && st.writerSystem != "" {
+		instr := fmt.Sprintf("Adapt the current post for the %s platform, following its conventions (length, tone, formatting, links). Output the full adapted post.", in.TargetPlatform)
+		if s := strings.TrimSpace(in.Instruction); s != "" {
+			instr += " " + s
+		}
+		adapted, err := runWriter(ctx, st, instr, false)
+		if err != nil {
+			return nil, fmt.Errorf("adapt content for %s: %w", in.TargetPlatform, err)
+		}
+		content = adapted
+	}
+	if content != "" {
+		opts.ContentOverride = &content
 	}
 	if in.Title != "" {
 		opts.TitleOverride = &in.Title
@@ -498,6 +572,83 @@ func toolCreateNote(ctx context.Context, in CreateNoteInput) (*CreateNoteOutput,
 	})
 
 	return &CreateNoteOutput{ID: note.ID, Type: string(note.Type)}, nil
+}
+
+// toolEditPost is the editPost write-tool (CON-128). In the hybrid path the
+// planner (Haiku) calls it for any content change, forwarding the user's
+// instruction verbatim; the Sonnet writer produces the full post, which
+// streams to the client and is stashed on requestState for the runner. Only a
+// compact receipt goes back to the planner.
+func toolEditPost(ctx context.Context, in EditPostInput) (*EditPostOutput, error) {
+	st := getRequestState(ctx)
+	instruction := strings.TrimSpace(in.Instruction)
+	if instruction == "" {
+		return nil, fmt.Errorf("instruction is required to edit the post")
+	}
+
+	content, err := runWriter(ctx, st, instruction, true)
+	if err != nil {
+		return nil, fmt.Errorf("write content: %w", err)
+	}
+	if content == "" {
+		return nil, fmt.Errorf("the writer produced no content")
+	}
+	st.editResult = &editResult{Content: content}
+	return &EditPostOutput{OK: true, Chars: len(content)}, nil
+}
+
+// runWriter executes the Sonnet copywriting sub-call (CON-128). When stream is
+// true it fans the generated Markdown out to the client as content_delta events
+// (the editPost path, feeding the live editor); for clone adaptation it stays
+// silent (the copy lands in a new draft, not the open editor). It returns the
+// full generated post content. Usage is metered under the post_assistant_edit
+// flow so the writer's Sonnet spend is attributable separately from the cheap
+// planner loop.
+func runWriter(ctx context.Context, st *requestState, instruction string, stream bool) (string, error) {
+	if st.g == nil || st.provider == nil || st.writerSystem == "" {
+		return "", fmt.Errorf("content writing is not available")
+	}
+
+	var buf strings.Builder
+	streamCb := func(_ context.Context, chunk *ai.ModelResponseChunk) error {
+		if chunk == nil || chunk.Aggregated {
+			return nil
+		}
+		for _, part := range chunk.Content {
+			if part.IsText() {
+				buf.WriteString(part.Text)
+				if stream {
+					emit(st.onEvent, SSEEventContentDelta, DeltaEventPayload{Delta: part.Text})
+				}
+			}
+		}
+		return nil
+	}
+
+	maxTokens := st.writerMaxTokens
+	if maxTokens == 0 {
+		maxTokens = 64000
+	}
+
+	resp, err := genkit.Generate(ctx, st.g,
+		ai.WithModelName(st.provider.Ref(llm.RoleGeneration)),
+		ai.WithSystem(st.writerSystem),
+		ai.WithPrompt(instruction),
+		ai.WithStreaming(streamCb),
+		st.provider.CallConfig(maxTokens),
+	)
+	if err != nil {
+		return "", err
+	}
+	if st.recorder != nil {
+		st.recorder.RecordResp(ctx, st.provider.Vendor(), st.provider.Model(llm.RoleGeneration), "post_assistant_edit", resp)
+	}
+
+	content := strings.TrimSpace(buf.String())
+	if content == "" {
+		content = strings.TrimSpace(resp.Text())
+	}
+	return content, nil
 }
 
 // parseScheduledAt accepts the ISO-8601 instant the model resolved. It

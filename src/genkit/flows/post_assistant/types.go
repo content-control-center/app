@@ -130,7 +130,18 @@ type PostAssistantFlowConfig struct {
 	// covers realistic asset-incorporation scenarios (browse + search a
 	// few assets + read chunks + respond).
 	MaxTurns int
-	Embedder ai.Embedder // nil = semantic search unavailable
+	// PlannerEnabled turns on the CON-128 hybrid split: the orchestration
+	// loop runs on the planning model (Haiku) and the actual copywriting is
+	// delegated to the Sonnet editPost write-tool. False = the legacy
+	// single-Sonnet path (loop on the generation model, no editPost tool,
+	// content written inline) — the instant-rollback fallback.
+	PlannerEnabled bool
+	// PlannerMaxOutputTokens caps the planner turn's output when
+	// PlannerEnabled. The planner only emits a short envelope + tool inputs,
+	// so a small cap is plenty; the writer sub-call uses MaxOutputTokens.
+	// 0 falls back to 8192.
+	PlannerMaxOutputTokens int64
+	Embedder               ai.Embedder // nil = semantic search unavailable
 	// Hub is the event broker used to publish "operation finalised"
 	// events on success/failure. nil = silent (no events emitted).
 	Hub eventhub.Hub

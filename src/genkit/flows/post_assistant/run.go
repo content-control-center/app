@@ -41,6 +41,7 @@ func runPostAssistant(
 	cfg PostAssistantFlowConfig,
 	repos PostAssistantRepos,
 	systemTmpl, contextTmpl *template.Template,
+	writerInstructions string,
 	tools *toolSet,
 	onEvent OnEventFunc,
 ) (out *PostAssistantResponse, retErr error) {
@@ -167,6 +168,20 @@ func runPostAssistant(
 		actor:       post.CreatedBy,
 		platforms:   platforms,
 		onEvent:     onEvent,
+		// Writer support (CON-128): the editPost tool + clonePost adaptation
+		// run a nested Sonnet generation off this state.
+		g:               g,
+		provider:        cfg.Provider,
+		recorder:        cfg.Recorder,
+		writerMaxTokens: cfg.MaxOutputTokens,
+	}
+	// The writer's system prompt is the copywriter instructions plus the same
+	// campaign/post context block the planner sees; only assembled in the
+	// hybrid path (writerSystem stays empty in the legacy path, which disables
+	// the writer helpers). Injecting the context here keeps the writer aware of
+	// the campaign voice + current content without a second DB read.
+	if cfg.PlannerEnabled {
+		st.writerSystem = writerInstructions + "\n\n" + actx.ContextBlock
 	}
 	ctx = withRequestState(ctx, st)
 
@@ -183,27 +198,46 @@ func runPostAssistant(
 	}
 
 	// ── Call model ───────────────────────────────────────────────────────────
-	// Assistant responses are short (description + explanation), so cap
-	// output tokens well below the content-plan default.
-	maxTokens := cfg.MaxOutputTokens
-	if maxTokens == 0 {
-		maxTokens = 64000
+	// CON-128: in the hybrid path the orchestration loop routes on the cheap
+	// planning model and delegates all copywriting to the Sonnet editPost
+	// write-tool; the loop itself only emits a short envelope, so it takes a
+	// small output cap. The legacy path keeps the single generation-model call
+	// that writes the full post inline, so it needs the generous output budget.
+	planner := cfg.PlannerEnabled
+	loopRole := llm.RoleGeneration
+	loopMaxTokens := cfg.MaxOutputTokens
+	if loopMaxTokens == 0 {
+		loopMaxTokens = 64000
+	}
+	if planner {
+		loopRole = llm.RolePlanning
+		loopMaxTokens = cfg.PlannerMaxOutputTokens
+		if loopMaxTokens == 0 {
+			loopMaxTokens = 8192
+		}
 	}
 	maxTurns := cfg.MaxTurns
 	if maxTurns == 0 {
 		maxTurns = 8
 	}
 
-	modelName := cfg.Provider.Ref(llm.RoleGeneration)
+	modelName := cfg.Provider.Ref(loopRole)
 
 	// System + context block forms the stable cached prefix.
 	systemBlock := actx.SystemPrompt + "\n\n" + actx.ContextBlock
 
-	// Set up an incremental JSON scanner that watches the two string-valued
-	// fields whose deltas we surface to the client. The scanner decodes
-	// JSON escapes as they arrive, so the client never sees raw \n / \uXXXX.
+	// Set up an incremental JSON scanner that watches the string-valued fields
+	// whose deltas we surface to the client. The scanner decodes JSON escapes
+	// as they arrive, so the client never sees raw \n / \uXXXX. In the hybrid
+	// path the planner never emits updatedContent — the editPost writer sub-call
+	// streams content_delta itself — so only explanation is watched. (Values()
+	// still returns every top-level field for response assembly regardless.)
+	watchFields := []string{"explanation", "updatedContent"}
+	if planner {
+		watchFields = []string{"explanation"}
+	}
 	scanner := jsonstream.New(
-		[]string{"explanation", "updatedContent"},
+		watchFields,
 		func(key, delta string) {
 			switch key {
 			case "explanation":
@@ -269,15 +303,22 @@ func runPostAssistant(
 	// discarding the full response. Dropping the constraint lets us do the
 	// parse ourselves with a tolerant preprocessor below. Format discipline
 	// is enforced via the prompt, which is already explicit.
+	// Tool set: the editPost write-tool is attached only in the hybrid path;
+	// the legacy loop writes content inline and never routes through it.
+	toolRefs := []ai.ToolRef{tools.listAssets, tools.getAssetChunks, tools.searchAssetChunks, tools.getCurrentContent, tools.clonePost, tools.restoreVersion, tools.schedulePost, tools.createNote}
+	if planner {
+		toolRefs = append(toolRefs, tools.editPost)
+	}
+
 	resp, err := genkit.Generate(ctx, g,
 		ai.WithModelName(modelName),
 		ai.WithSystem(systemBlock),
 		ai.WithMessages(history...),
 		ai.WithPrompt(prompt),
-		ai.WithTools(tools.listAssets, tools.getAssetChunks, tools.searchAssetChunks, tools.getCurrentContent, tools.clonePost, tools.restoreVersion, tools.schedulePost, tools.createNote),
+		ai.WithTools(toolRefs...),
 		ai.WithMaxTurns(maxTurns),
 		ai.WithStreaming(streamCb),
-		cfg.Provider.CallConfig(maxTokens),
+		cfg.Provider.CallConfig(loopMaxTokens),
 	)
 	if err != nil {
 		slog.ErrorContext(ctx, "model call failed", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID, "duration_ms", time.Since(start).Milliseconds(), logging.AttrError, err)
@@ -293,13 +334,13 @@ func runPostAssistant(
 		if resp.Usage != nil {
 			outputTokens = int64(resp.Usage.OutputTokens)
 		}
-		slog.WarnContext(ctx, "response truncated at max tokens", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID, "output_tokens", outputTokens, "cap", maxTokens)
+		slog.WarnContext(ctx, "response truncated at max tokens", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID, "output_tokens", outputTokens, "cap", loopMaxTokens)
 	}
 
 	if resp.Usage != nil {
 		slog.InfoContext(ctx, "tokens", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID, "input", resp.Usage.InputTokens, "output", resp.Usage.OutputTokens, "total", resp.Usage.InputTokens+resp.Usage.OutputTokens)
 	}
-	cfg.Recorder.RecordResp(ctx, cfg.Provider.Vendor(), cfg.Provider.Model(llm.RoleGeneration), "post_assistant", resp)
+	cfg.Recorder.RecordResp(ctx, cfg.Provider.Vendor(), cfg.Provider.Model(loopRole), "post_assistant", resp)
 
 	// ── Assemble response from scanner ───────────────────────────────────────
 	// The scanner has been processing every chunk in the streaming callback
@@ -394,6 +435,17 @@ func runPostAssistant(
 			AutoPublish: sr.AutoPublish,
 			Promoted:    sr.Promoted,
 		}
+	}
+
+	// ── Edit handling (CON-128) ──────────────────────────────────────────────
+	// In the hybrid path the editPost tool ran the Sonnet writer this turn; its
+	// content is authoritative and the planner never emits it. The planner
+	// supplies the metadata (action / saveVersion / versionNote) in its JSON
+	// envelope, already parsed into result above. Runs before the note handling
+	// so an edit-and-note turn is finalised as "edited" with the note attached.
+	if st.editResult != nil {
+		result.Action = "edited"
+		result.UpdatedContent = st.editResult.Content
 	}
 
 	// ── Note handling (CON-188) ──────────────────────────────────────────────

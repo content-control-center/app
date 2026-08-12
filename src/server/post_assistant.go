@@ -46,6 +46,11 @@ func initPostAssistant(
 		RestoreService:  restoreSvc,
 		ScheduleService: scheduleSvc,
 		NoteService:     noteSvc,
+		// CON-128: hybrid model split — the planner loop runs on the planning
+		// model and delegates copywriting to the Sonnet editPost write-tool.
+		// Off reverts to the legacy single-Sonnet path.
+		PlannerEnabled:         cfg.PostAssistantPlanner,
+		PlannerMaxOutputTokens: cfg.PostAssistantPlannerMaxOutputTokens,
 		// CON-112: pre-warm the strict-tool grammar cache at boot when we're also
 		// stabilizing tool order (otherwise the warmed key wouldn't match).
 		PrewarmTools: cfg.AnthropicStableToolOrder,

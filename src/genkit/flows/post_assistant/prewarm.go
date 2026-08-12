@@ -28,15 +28,26 @@ func prewarmToolCache(g *genkit.Genkit, cfg PostAssistantFlowConfig, t *toolSet)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
+	// CON-128: warm the grammar the real loop uses — in the hybrid path that's
+	// the planner tool set (incl. editPost) on the planning model; in the legacy
+	// path it's the base tool set on the generation model. The writer sub-call
+	// carries no tools, so there is no separate grammar to warm for it.
+	role := llm.RoleGeneration
+	tools := []ai.ToolRef{
+		t.listAssets, t.getAssetChunks, t.searchAssetChunks, t.getCurrentContent,
+		t.clonePost, t.restoreVersion, t.schedulePost, t.createNote,
+	}
+	if cfg.PlannerEnabled {
+		role = llm.RolePlanning
+		tools = append(tools, t.editPost)
+	}
+
 	start := time.Now()
 	_, err := genkit.Generate(ctx, g,
-		ai.WithModelName(cfg.Provider.Ref(llm.RoleGeneration)),
+		ai.WithModelName(cfg.Provider.Ref(role)),
 		ai.WithSystem("warmup"),
 		ai.WithPrompt("warmup"),
-		ai.WithTools(
-			t.listAssets, t.getAssetChunks, t.searchAssetChunks, t.getCurrentContent,
-			t.clonePost, t.restoreVersion, t.schedulePost, t.createNote,
-		),
+		ai.WithTools(tools...),
 		ai.WithMaxTurns(1),
 		cfg.Provider.CallConfig(1), // max_tokens: 1 — grammar compiles during prep
 	)
