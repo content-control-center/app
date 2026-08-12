@@ -85,12 +85,49 @@ type requestState struct {
 	writerSystem    string
 	writerMaxTokens int64
 	editResult      *editResult
+
+	// retrieved holds the asset excerpts the planner pulled via the
+	// asset-retrieval tools this turn (CON-128). The writer's context block
+	// carries only short asset previews, so an asset-grounded edit must be fed
+	// the full retrieved text — captured here and passed to the writer as
+	// source material (see composeWriterInstruction).
+	retrieved []retrievedExcerpt
 }
 
 // editResult is the internal outcome of the editPost write-tool (CON-128): the
 // full post content the Sonnet writer produced this turn.
 type editResult struct {
 	Content string
+}
+
+// retrievedExcerpt is a chunk the planner pulled via an asset-retrieval tool
+// this turn, captured so the writer sub-call can ground on the full retrieved
+// text rather than the short preview in the context block.
+type retrievedExcerpt struct {
+	AssetID string
+	ChunkID string
+	Content string
+}
+
+// captureExcerpts records the chunks an asset-retrieval tool returned so the
+// writer can use them as source material. Deduped by chunk ID across calls, so
+// re-retrieving the same chunk in a later turn-step doesn't duplicate it.
+func (st *requestState) captureExcerpts(assetID string, out *ChunksOutput) {
+	if out == nil {
+		return
+	}
+	for _, c := range out.Chunks {
+		dup := false
+		for _, e := range st.retrieved {
+			if e.ChunkID == c.ID {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			st.retrieved = append(st.retrieved, retrievedExcerpt{AssetID: assetID, ChunkID: c.ID, Content: c.Content})
+		}
+	}
 }
 
 func withRequestState(ctx context.Context, s *requestState) context.Context {
@@ -367,7 +404,9 @@ func toolGetAssetChunks(ctx context.Context, in GetChunksInput) (*ChunksOutput, 
 		return nil, fmt.Errorf("fetch chunks: %w", err)
 	}
 
-	return packChunks(chunks), nil
+	out := packChunks(chunks)
+	st.captureExcerpts(in.AssetID, out)
+	return out, nil
 }
 
 func toolSearchAssetChunks(ctx context.Context, in SearchChunksInput) (*ChunksOutput, error) {
@@ -395,7 +434,9 @@ func toolSearchAssetChunks(ctx context.Context, in SearchChunksInput) (*ChunksOu
 		return nil, fmt.Errorf("search chunks: %w", err)
 	}
 
-	return packChunks(ranked), nil
+	out := packChunks(ranked)
+	st.captureExcerpts(in.AssetID, out)
+	return out, nil
 }
 
 func toolGetCurrentContent(ctx context.Context) (string, error) {
@@ -633,7 +674,7 @@ func runWriter(ctx context.Context, st *requestState, instruction string, stream
 	resp, err := genkit.Generate(ctx, st.g,
 		ai.WithModelName(st.provider.Ref(llm.RoleGeneration)),
 		ai.WithSystem(st.writerSystem),
-		ai.WithPrompt(instruction),
+		ai.WithPrompt(composeWriterInstruction(instruction, st.retrieved)),
 		ai.WithStreaming(streamCb),
 		st.provider.CallConfig(maxTokens),
 	)
@@ -649,6 +690,36 @@ func runWriter(ctx context.Context, st *requestState, instruction string, stream
 		content = strings.TrimSpace(resp.Text())
 	}
 	return content, nil
+}
+
+// composeWriterInstruction assembles the writer's prompt: the user's verbatim
+// instruction, then any asset excerpts the planner retrieved this turn as
+// clearly-delimited source material (CON-128). Appending the excerpts rather
+// than folding them into the instruction keeps the instruction unchanged while
+// giving an asset-grounded edit the full retrieved text — not just the short
+// preview in the context block. Returns the instruction untouched when nothing
+// was retrieved.
+func composeWriterInstruction(instruction string, excerpts []retrievedExcerpt) string {
+	if len(excerpts) == 0 {
+		return instruction
+	}
+	var b strings.Builder
+	b.WriteString(instruction)
+	b.WriteString("\n\n## Source material (retrieved from the attached assets)\n")
+	b.WriteString("Use these retrieved excerpts as the source of truth for any asset-based facts; prefer them over the shorter previews in the context above.\n")
+	for _, e := range excerpts {
+		b.WriteString("\n---\n")
+		if e.AssetID != "" {
+			b.WriteString("Asset " + e.AssetID)
+			if e.ChunkID != "" {
+				b.WriteString(", chunk " + e.ChunkID)
+			}
+			b.WriteString(":\n")
+		}
+		b.WriteString(e.Content)
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 // parseScheduledAt accepts the ISO-8601 instant the model resolved. It
