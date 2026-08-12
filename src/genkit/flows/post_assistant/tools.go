@@ -300,8 +300,10 @@ func defineTools(g *genkit.Genkit) *toolSet {
 
 	clonePost := genkit.DefineTool(g, "clonePost",
 		"Duplicates the current post as a new draft in the same campaign. "+
-			"To clone for another platform, set targetPlatform and provide content adapted to that platform. "+
-			"Omit content for a verbatim copy. Returns the new draft's id.",
+			"For a cross-platform clone, set targetPlatform and OMIT content — the server's writer "+
+			"adapts the copy to the target platform (pass an optional instruction to steer it). "+
+			"content is an explicit override only: provide it to set the clone's body yourself; omit it "+
+			"for a verbatim same-platform copy. Returns the new draft's id.",
 		func(ctx *ai.ToolContext, in ClonePostInput) (*ClonePostOutput, error) {
 			return toolClonePost(ctx, in)
 		},
