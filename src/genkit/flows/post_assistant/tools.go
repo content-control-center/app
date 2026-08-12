@@ -482,6 +482,11 @@ func toolClonePost(ctx context.Context, in ClonePostInput) (*ClonePostOutput, er
 		if err != nil {
 			return nil, fmt.Errorf("adapt content for %s: %w", in.TargetPlatform, err)
 		}
+		if adapted == "" {
+			// The writer returned no content (not an error) — fail rather than
+			// silently clone the source verbatim onto the target platform.
+			return nil, fmt.Errorf("adapt content for %s: the writer produced no content", in.TargetPlatform)
+		}
 		content = adapted
 	}
 	if content != "" {
