@@ -258,21 +258,34 @@ var _ = Describe("InvitationsHandler", Ordered, func() {
 			Expect(resp.StatusCode).To(Equal(fiber.StatusConflict))
 		})
 
-		It("rejects a duplicate pending invite (409)", func() {
+		It("re-issues a live pending invite with a fresh token and resends the mail (200), idempotent per email (CON-147 §7.3)", func() {
 			_, cookie := ownerCookie()
 			Expect(createInvite(cookie, fiber.Map{"email": "dup@example.com"}).StatusCode).To(Equal(fiber.StatusCreated))
+			first := getInviteByEmail("dup@example.com")
+
 			resp := createInvite(cookie, fiber.Map{"email": "dup@example.com"})
-			Expect(resp.StatusCode).To(Equal(fiber.StatusConflict))
+			Expect(resp.StatusCode).To(Equal(fiber.StatusOK)) // 200, not 409 — re-posting resends
+
+			// The old row is replaced by a fresh one: new id + new token, so the prior
+			// emailed link is dead. Exactly one pending row survives, and the mail was
+			// enqueued both times.
+			second := getInviteByEmail("dup@example.com")
+			Expect(second.ID).NotTo(Equal(first.ID))
+			Expect(second.TokenHash).NotTo(Equal(first.TokenHash))
+			total, err := db.NewSelect().Model((*models.Invitation)(nil)).Where("email = ?", "dup@example.com").Count(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(total).To(Equal(1))
+			Expect(enqueuer.toEmails).To(Equal([]string{"dup@example.com", "dup@example.com"}))
 		})
 
-		It("replaces an expired pending invite so the address can be re-invited (201)", func() {
+		It("re-issues an expired pending invite so the address can be re-invited (200)", func() {
 			owner, cookie := ownerCookie()
 			// An expired-but-still-pending row occupies the partial-unique (pending)
 			// slot; a fresh invite must clear it rather than 409 forever.
 			seedInvite(owner.ID, "stale@example.com", models.RoleMember, models.InvitationPending, time.Now().Add(-time.Minute))
 
 			resp := createInvite(cookie, fiber.Map{"email": "stale@example.com"})
-			Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+			Expect(resp.StatusCode).To(Equal(fiber.StatusOK)) // re-issue of a pending (expired) row
 
 			// Exactly one row remains for the address — the stale one is gone and a
 			// single live pending invite replaces it.
@@ -343,7 +356,7 @@ var _ = Describe("InvitationsHandler", Ordered, func() {
 	// ── GET /api/invitations/accept/:token (preview) ──────────────────────────
 
 	Describe("GET /api/invitations/accept/:token", func() {
-		It("previews a valid pending invite", func() {
+		It("previews a valid pending invite and reports has_account=false for a new email", func() {
 			owner, _ := ownerCookie()
 			token := seedInvite(owner.ID, "prev@example.com", models.RoleMember, models.InvitationPending, time.Now().Add(time.Hour))
 			resp := preview(token)
@@ -354,6 +367,21 @@ var _ = Describe("InvitationsHandler", Ordered, func() {
 			Expect(out["role"]).To(Equal(models.RoleMember))
 			Expect(out["inviter_name"]).To(Equal("Olivia Owner"))
 			Expect(out["workspace_name"]).NotTo(BeEmpty())
+			// No Ogen account for this address → the accept page collects name+password.
+			Expect(out["has_account"]).To(BeFalse())
+		})
+
+		It("reports has_account=true when the invited email already has an account (CON-147)", func() {
+			owner, _ := ownerCookie()
+			// An account exists for the address (here, owning another workspace); the
+			// accept page should prompt sign-in rather than name+password.
+			seedForeignAccount("ext@example.com", "ext-password")
+			token := seedInvite(owner.ID, "ext@example.com", models.RoleMember, models.InvitationPending, time.Now().Add(time.Hour))
+			resp := preview(token)
+			Expect(resp.StatusCode).To(Equal(fiber.StatusOK))
+			var out map[string]any
+			Expect(json.NewDecoder(resp.Body).Decode(&out)).To(Succeed())
+			Expect(out["has_account"]).To(BeTrue())
 		})
 
 		It("returns the same generic 410 for an unknown token as for an expired/revoked one", func() {
