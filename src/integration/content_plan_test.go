@@ -48,12 +48,19 @@ var _ = Describe("Content plan flow", Ordered, func() {
 		var err error
 		userID, err = models.NewID()
 		Expect(err).NotTo(HaveOccurred())
-		user := &models.User{
+		_, err = db.NewInsert().Model(&models.Account{
 			ID:           userID,
-			TenantID:     models.DefaultTenantID,
-			Name:         "Content Plan Tester",
 			Email:        "cp-integration@test.local",
 			PasswordHash: "placeholder",
+			Name:         "Content Plan Tester",
+		}).Exec(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		user := &models.User{
+			ID:        userID,
+			AccountID: userID,
+			TenantID:  models.DefaultTenantID,
+			Name:      "Content Plan Tester",
+			Email:     "cp-integration@test.local",
 		}
 		_, err = db.NewInsert().Model(user).Exec(ctx)
 		Expect(err).NotTo(HaveOccurred())
@@ -111,6 +118,8 @@ var _ = Describe("Content plan flow", Ordered, func() {
 		_, _ = db.NewDelete().TableExpr("posts").Where("campaign_id = ?", campaignID).Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("campaigns").Where("id = ?", campaignID).Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("users").Where("id = ?", userID).Exec(ctx)
+		_, err := db.NewDelete().TableExpr("accounts").Where("id = ?", userID).Exec(ctx)
+		Expect(err).NotTo(HaveOccurred())
 	})
 
 	Describe("generateContentPlan flow", func() {

@@ -47,6 +47,7 @@ const maxConcurrentThrottleRecords = 8
 
 type SessionsHandler struct {
 	userRepo     repository.UserRepository
+	accountRepo  repository.AccountRepository
 	sessionRepo  repository.SessionRepository
 	cookieName   string
 	secureCookie bool
@@ -65,9 +66,10 @@ type SessionsHandler struct {
 	activity *activity.Recorder
 }
 
-func NewSessionsHandler(userRepo repository.UserRepository, sessionRepo repository.SessionRepository, cookieName string, secureCookie bool) *SessionsHandler {
+func NewSessionsHandler(userRepo repository.UserRepository, accountRepo repository.AccountRepository, sessionRepo repository.SessionRepository, cookieName string, secureCookie bool) *SessionsHandler {
 	return &SessionsHandler{
 		userRepo:          userRepo,
+		accountRepo:       accountRepo,
 		sessionRepo:       sessionRepo,
 		cookieName:        cookieName,
 		secureCookie:      secureCookie,
@@ -135,7 +137,9 @@ func (h *SessionsHandler) Create(c *fiber.Ctx) error {
 		return tooManyRequests(c, retry, loginThrottledMsg)
 	}
 
-	user, err := h.userRepo.GetByEmail(c.Context(), req.Email)
+	// Authenticate the ACCOUNT (identity), which holds the credential since
+	// CON-147 PR1. The membership the session lands on is resolved from it below.
+	account, err := h.accountRepo.GetByEmail(c.Context(), req.Email)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return h.loginFailed(c, req.Email)
@@ -143,9 +147,21 @@ func (h *SessionsHandler) Create(c *fiber.Ctx) error {
 		return err
 	}
 
-	ok, err := models.VerifyPassword(req.Password, user.PasswordHash)
+	ok, err := models.VerifyPassword(req.Password, account.PasswordHash)
 	if err != nil || !ok {
 		return h.loginFailed(c, req.Email)
+	}
+
+	// Resolve the workspace membership this login opens into — the oldest LIVE one
+	// (GetByAccountID skips soft-deleted workspaces, CON-147 PR4). An account with
+	// no live workspace (e.g. removed from its last one) has nothing to open a
+	// session onto; answer 403 rather than a 500.
+	user, err := h.userRepo.GetByAccountID(c.Context(), account.ID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusForbidden, "your account has no active workspace")
+		}
+		return err
 	}
 
 	// The address proved control of the credential, so refund its bucket — a user
@@ -162,6 +178,7 @@ func (h *SessionsHandler) Create(c *fiber.Ctx) error {
 
 	session := &models.Session{
 		ID:        token,
+		AccountID: account.ID,
 		UserID:    user.ID,
 		TenantID:  user.TenantID,
 		ExpiresAt: time.Now().UTC().Add(sessionTTL),
@@ -219,9 +236,13 @@ func (h *SessionsHandler) recordLoginThrottled(c *fiber.Ctx, email string) {
 		defer func() { <-h.throttleRecordSem }()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		user, err := h.userRepo.GetByEmail(ctx, email)
-		if err != nil || user == nil {
+		account, err := h.accountRepo.GetByEmail(ctx, email)
+		if err != nil || account == nil {
 			return // unknown address ⇒ nothing to attribute
+		}
+		user, err := h.userRepo.GetByAccountID(ctx, account.ID)
+		if err != nil || user == nil {
+			return
 		}
 		h.activity.Record(
 			logging.WithUserID(tenantctx.With(ctx, user.TenantID), user.ID),

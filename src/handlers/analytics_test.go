@@ -63,10 +63,10 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 		postRepo = repository.NewPostRepository(db)
 		analyticsRepo = repository.NewPostAnalyticsRepository(db)
 		socialAccountRepo = repository.NewSocialAccountRepository(db)
-		auth := handlers.RequireAuth(sessionRepo, testCookieName)
+		auth := handlers.RequireAuth(sessionRepo, userRepo, testCookieName)
 
-		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
-		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
+		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
+		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
 
 		ph := handlers.NewPostsHandler(postRepo, repository.NewPostVersionRepository(db),
@@ -110,6 +110,7 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 		_, _ = db.NewDelete().TableExpr("campaigns").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(ctx)
+		_, _ = db.NewDelete().TableExpr("accounts").Where("1 = 1").Exec(ctx)
 	})
 
 	seedPost := func(id, publisher, publisherPostID string, published time.Time) {

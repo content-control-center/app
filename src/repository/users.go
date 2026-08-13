@@ -29,6 +29,17 @@ type UserRepository interface {
 	// GET /api/current_user (CON-97).
 	GetByIDWithTenant(ctx context.Context, id string) (*models.User, error)
 	GetByEmail(ctx context.Context, email string) (*models.User, error)
+	// GetByAccountID resolves the membership a login lands on. In CON-147 PR1 an
+	// account has exactly one membership, so this returns it; when an account can
+	// hold several (PR2+) it returns the earliest-joined as the default. Runs
+	// unscoped — the auth path has no tenant yet. sql.ErrNoRows if the account has
+	// no membership at all.
+	GetByAccountID(ctx context.Context, accountID string) (*models.User, error)
+	// GetMembership resolves the membership of accountID in a specific workspace,
+	// which is how the auth middleware validates an X-Workspace-Id header before
+	// scoping a request to it (CON-147 PR2). Runs unscoped — it IS the check that
+	// decides the tenant. sql.ErrNoRows when the account isn't a member there.
+	GetMembership(ctx context.Context, accountID, tenantID string) (*models.User, error)
 	Update(ctx context.Context, user *models.User) error
 	Delete(ctx context.Context, id string) (bool, error)
 	// SetRoleGuarded sets a member's role within tenantID, enforcing the
@@ -127,6 +138,52 @@ func (r *userRepository) GetByIDWithTenant(ctx context.Context, id string) (*mod
 func (r *userRepository) GetByEmail(ctx context.Context, email string) (*models.User, error) {
 	user := new(models.User)
 	err := r.db.NewSelect().Model(user).Where("u.email = ?", email).Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, sql.ErrNoRows
+		}
+		return nil, err
+	}
+	return user, nil
+}
+
+func (r *userRepository) GetByAccountID(ctx context.Context, accountID string) (*models.User, error) {
+	// Unscoped: the login/auth path resolves the membership before any tenant is
+	// known. Joins tenants to skip soft-deleted workspaces (CON-147 PR4), so an
+	// account never lands on a deleted one; ordered so it resolves to a stable
+	// default (the oldest live membership). u.id breaks ties on identical
+	// created_at (e.g. memberships seeded in one transaction) so the default is
+	// deterministic across calls, not left to the scan order.
+	user := new(models.User)
+	err := r.db.NewSelect().Model(user).
+		Join("JOIN tenants AS t ON t.id = u.tenant_id").
+		Where("u.account_id = ?", accountID).
+		Where("t.deleted_at IS NULL").
+		OrderExpr("u.created_at ASC, u.id ASC").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, sql.ErrNoRows
+		}
+		return nil, err
+	}
+	return user, nil
+}
+
+func (r *userRepository) GetMembership(ctx context.Context, accountID, tenantID string) (*models.User, error) {
+	// Unscoped by design: this lookup is what authorises scoping a request to
+	// tenantID, so it can't itself depend on a tenant already being in context.
+	// Joins tenants and filters deleted_at so a soft-deleted workspace resolves to
+	// ErrNoRows — indistinguishable from one the account was never in, which is
+	// what makes a deleted workspace unreachable (CON-147 PR4).
+	user := new(models.User)
+	err := r.db.NewSelect().Model(user).
+		Join("JOIN tenants AS t ON t.id = u.tenant_id").
+		Where("u.account_id = ?", accountID).
+		Where("u.tenant_id = ?", tenantID).
+		Where("t.deleted_at IS NULL").
+		Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, sql.ErrNoRows

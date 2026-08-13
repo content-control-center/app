@@ -72,10 +72,10 @@ var _ = Describe("Post schedule — CON-78", Ordered, func() {
 		postAttRepo := repository.NewPostAttachmentRepository(db)
 		postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 		allowlistRepo = repository.NewAutoPublishAllowlistRepository(db)
-		auth := handlers.RequireAuth(sessionRepo, "test_session")
+		auth := handlers.RequireAuth(sessionRepo, userRepo, "test_session")
 
-		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
-		handlers.NewSessionsHandler(userRepo, sessionRepo, "test_session", false).Register(app)
+		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
+		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, "test_session", false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
 
 		postsHandler := handlers.NewPostsHandler(postRepo, versionRepo, postMessageRepo, platformRepo, postAttRepo, auth, nil, nil)
@@ -112,7 +112,7 @@ var _ = Describe("Post schedule — CON-78", Ordered, func() {
 
 	AfterEach(func() {
 		ctx := tenantCtx()
-		for _, t := range []string{"auto_publish_allowlist", "post_versions", "post_logs", "post_assistant_messages", "posts", "campaigns", "sessions", "users"} {
+		for _, t := range []string{"auto_publish_allowlist", "post_versions", "post_logs", "post_assistant_messages", "posts", "campaigns", "sessions", "users", "accounts"} {
 			_, _ = db.NewDelete().TableExpr(t).Where("1 = 1").Exec(ctx)
 		}
 	})

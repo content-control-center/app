@@ -62,12 +62,19 @@ var _ = Describe("Campaign assistant flow", Ordered, func() {
 		var err error
 		userID, err = models.NewID()
 		Expect(err).NotTo(HaveOccurred())
-		_, err = db.NewInsert().Model(&models.User{
+		_, err = db.NewInsert().Model(&models.Account{
 			ID:           userID,
-			TenantID:     models.DefaultTenantID,
-			Name:         "Campaign Assistant Tester",
 			Email:        "ca-integration@test.local",
 			PasswordHash: "placeholder",
+			Name:         "Campaign Assistant Tester",
+		}).Exec(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = db.NewInsert().Model(&models.User{
+			ID:        userID,
+			AccountID: userID,
+			TenantID:  models.DefaultTenantID,
+			Name:      "Campaign Assistant Tester",
+			Email:     "ca-integration@test.local",
 		}).Exec(ctx)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -154,6 +161,8 @@ var _ = Describe("Campaign assistant flow", Ordered, func() {
 		_, _ = db.NewDelete().TableExpr("posts").Where("campaign_id = ?", campaignID).Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("campaigns").Where("id = ?", campaignID).Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("users").Where("id = ?", userID).Exec(ctx)
+		_, err := db.NewDelete().TableExpr("accounts").Where("id = ?", userID).Exec(ctx)
+		Expect(err).NotTo(HaveOccurred())
 	})
 
 	Describe("question answering", func() {

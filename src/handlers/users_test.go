@@ -43,9 +43,9 @@ var _ = Describe("UsersHandler", Ordered, func() {
 		userRepo := repository.NewUserRepository(db)
 		sessionRepo := repository.NewSessionRepository(db)
 		settingRepo := repository.NewSettingRepository(db)
-		auth := handlers.RequireAuth(sessionRepo, testCookieName)
-		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
-		handlers.NewSessionsHandler(userRepo, sessionRepo, testCookieName, false).Register(app)
+		auth := handlers.RequireAuth(sessionRepo, userRepo, testCookieName)
+		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
+		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(app)
 		handlers.NewSettingsHandler(settingRepo, auth).Register(app)
 	})
 
@@ -53,6 +53,10 @@ var _ = Describe("UsersHandler", Ordered, func() {
 		_, err := db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		_, err = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		// Credentials live on accounts since CON-147; clear them too so a
+		// reused email doesn't collide with an orphaned account across specs.
+		_, err = db.NewDelete().TableExpr("accounts").Where("1 = 1").Exec(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		_, err = db.NewUpdate().TableExpr("settings").Set("value = ?", "false").
 			Where("key = ?", "setup_complete").Exec(context.Background())

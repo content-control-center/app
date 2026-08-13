@@ -58,12 +58,19 @@ var _ = Describe("Post assistant flow", Ordered, func() {
 		var err error
 		userID, err = models.NewID()
 		Expect(err).NotTo(HaveOccurred())
-		_, err = db.NewInsert().Model(&models.User{
+		_, err = db.NewInsert().Model(&models.Account{
 			ID:           userID,
-			TenantID:     models.DefaultTenantID,
-			Name:         "Post Assistant Tester",
 			Email:        "pa-integration@test.local",
 			PasswordHash: "placeholder",
+			Name:         "Post Assistant Tester",
+		}).Exec(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = db.NewInsert().Model(&models.User{
+			ID:        userID,
+			AccountID: userID,
+			TenantID:  models.DefaultTenantID,
+			Name:      "Post Assistant Tester",
+			Email:     "pa-integration@test.local",
 		}).Exec(ctx)
 		Expect(err).NotTo(HaveOccurred())
 

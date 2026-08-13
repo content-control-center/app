@@ -50,13 +50,16 @@ type InvitationEmailEnqueuer interface {
 	EnqueueInvitationEmailTx(ctx context.Context, tx *sql.Tx, tenantID, invitationID, toEmail, inviteURL, inviterName, workspaceName, role string) error
 }
 
-// InvitationsHandler serves workspace invitations (CON-26): owner-gated
+// InvitationsHandler serves workspace invitations (CON-26/CON-147): owner-gated
 // create/list/revoke, and the public preview/accept the invitee uses. Accepting
-// creates a users row in the invite's tenant and opens a session — Ogen stays
-// one-user-one-tenant (the multi-workspace account split is CON-147).
+// adds a membership of the invite's workspace — creating the account + a session
+// for a brand-new email, or attaching to an existing account (signed in as it)
+// with no new credentials. Owners invite into the ACTIVE workspace, resolved
+// per request from the X-Workspace-Id header (CON-147 PR2).
 type InvitationsHandler struct {
 	db           *bun.DB
 	userRepo     repository.UserRepository
+	accountRepo  repository.AccountRepository
 	tenantRepo   repository.TenantRepository
 	inviteRepo   repository.InvitationRepository
 	sessionRepo  repository.SessionRepository
@@ -76,10 +79,11 @@ type InvitationsHandler struct {
 // NewInvitationsHandler builds the handler. appBaseURL (APP_BASE_URL) is the base
 // for the emailed accept link; cookieName/secureCookie mirror the session cookie
 // set at login so accept can auto-log-in the new user.
-func NewInvitationsHandler(db *bun.DB, userRepo repository.UserRepository, tenantRepo repository.TenantRepository, inviteRepo repository.InvitationRepository, sessionRepo repository.SessionRepository, appBaseURL, cookieName string, secureCookie bool, auth fiber.Handler) *InvitationsHandler {
+func NewInvitationsHandler(db *bun.DB, userRepo repository.UserRepository, accountRepo repository.AccountRepository, tenantRepo repository.TenantRepository, inviteRepo repository.InvitationRepository, sessionRepo repository.SessionRepository, appBaseURL, cookieName string, secureCookie bool, auth fiber.Handler) *InvitationsHandler {
 	return &InvitationsHandler{
 		db:            db,
 		userRepo:      userRepo,
+		accountRepo:   accountRepo,
 		tenantRepo:    tenantRepo,
 		inviteRepo:    inviteRepo,
 		sessionRepo:   sessionRepo,
@@ -124,13 +128,14 @@ type createInvitationRequest struct {
 
 // Create godoc
 // @Summary      Invite a teammate
-// @Description  Owner-only. Emails a single-use invitation link to join the caller's workspace with the given role (default member). Returns 409 if the email already has an Ogen account anywhere, or if a live invite for it is already pending. Rate-limited per workspace and per IP (CON-26).
+// @Description  Owner-only. Emails a single-use invitation link to join the caller's active workspace with the given role (default member). Idempotent per email (CON-147 §7.3): re-inviting an address with a pending invite — live or expired — re-issues it with a fresh token, expiry and email and returns 200 (a brand-new invite returns 201); there is no separate resend endpoint. An existing Ogen account may be invited into another workspace; 409 only if the email is already a member of THIS workspace. Rate-limited per workspace and per IP (CON-26/CON-147).
 // @Tags         invitations
 // @Accept       json
 // @Produce      json
 // @Security     CookieAuth
 // @Param        body  body      createInvitationRequest  true  "Invitation payload"
-// @Success      201   {object}  models.Invitation
+// @Success      201   {object}  models.Invitation  "New invitation created"
+// @Success      200   {object}  models.Invitation  "Existing pending invitation re-issued"
 // @Failure      400   {object}  map[string]string
 // @Failure      401   {object}  map[string]string
 // @Failure      403   {object}  map[string]string
@@ -166,28 +171,22 @@ func (h *InvitationsHandler) Create(c *fiber.Ctx) error {
 		return tooManyRequests(c, retry, inviteThrottledMsg)
 	}
 
-	// An email already tied to an Ogen account anywhere can't be invited — the
-	// global-unique users.email forbids a second row (CON-26; cross-workspace
-	// membership is CON-147). The caller is an authenticated owner, so surfacing
-	// "already an account" is acceptable (unlike the public reset endpoint).
-	if _, err := h.userRepo.GetByEmail(c.Context(), email); err == nil {
-		return fiber.NewError(fiber.StatusConflict, "this email already has an Ogen account")
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
-	now := time.Now().UTC()
-	// One live invite per address per workspace (the partial unique index is the
-	// hard backstop; this is the friendly pre-check). A pending row whose
-	// expires_at has already passed is treated as expired: it still occupies the
-	// partial-unique (pending) slot, so it is cleared inside the tx below rather
-	// than blocking a fresh invite. Only a still-active pending invite is a 409.
-	if existing, err := h.inviteRepo.GetPendingByTenantEmail(c.Context(), tenantID, email); err == nil {
-		if now.Before(existing.ExpiresAt) {
-			return fiber.NewError(fiber.StatusConflict, "an invitation for this email is already pending")
+	// An existing Ogen account CAN be invited into another workspace (CON-147 PR3:
+	// accept attaches a membership to it). The only thing barred is inviting
+	// someone who is already a member of THIS workspace — that is the 409, scoped
+	// to the tenant rather than to "has an account anywhere." Resolved against
+	// accounts (identity) since users.email is no longer unique. The caller is an
+	// authenticated owner, so surfacing membership state is acceptable.
+	if acct, err := h.accountRepo.GetByEmail(c.Context(), email); err == nil {
+		if _, merr := h.userRepo.GetMembership(c.Context(), acct.ID, tenantID); merr == nil {
+			return fiber.NewError(fiber.StatusConflict, "this email is already a member of this workspace")
+		} else if !errors.Is(merr, sql.ErrNoRows) {
+			return merr
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
+	now := time.Now().UTC()
 
 	token, hash, err := models.NewInvitationToken()
 	if err != nil {
@@ -219,19 +218,24 @@ func (h *InvitationsHandler) Create(c *fiber.Ctx) error {
 
 	// Invite row + email enqueue commit together: a rolled-back tx queues no mail,
 	// a committed one queues exactly one link resolving to a stored hash (mirrors
-	// password-reset dispatch, CON-161). CreateReplacingExpiredTx also clears any
-	// expired pending invite that would otherwise hold the partial-unique slot.
+	// password-reset dispatch, CON-161). CreateReplacingPendingTx clears any
+	// pending invite (live or expired) that holds the partial-unique slot and
+	// reports whether it replaced one, so re-inviting is idempotent (CON-147 §7.3).
+	var reissued bool
 	if err := h.db.RunInTx(c.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
-		if err := h.inviteRepo.CreateReplacingExpiredTx(ctx, tx, inv); err != nil {
+		replaced, err := h.inviteRepo.CreateReplacingPendingTx(ctx, tx, inv)
+		if err != nil {
 			return err
 		}
+		reissued = replaced
 		if h.emailJobs != nil {
 			return h.emailJobs.EnqueueInvitationEmailTx(ctx, tx.Tx, tenantID, id, email, inviteURL, caller.Name, workspaceName, role)
 		}
 		return nil
 	}); err != nil {
-		// A concurrent create for the same address loses the race to the partial
-		// unique index; surface that as 409, not a raw 500.
+		// Two concurrent invites for the same address race the delete+insert; the
+		// loser hits the partial unique index. Surface that as 409, not a raw 500 —
+		// the caller can retry, which then re-issues cleanly.
 		if isUniqueViolation(err) {
 			return fiber.NewError(fiber.StatusConflict, "an invitation for this email is already pending")
 		}
@@ -244,7 +248,12 @@ func (h *InvitationsHandler) Create(c *fiber.Ctx) error {
 		activity.WithEntity("invitation", id), activity.WithSource(activity.SourceAPI),
 		activity.WithPayload(map[string]any{"role": role}),
 	)
-	return c.Status(fiber.StatusCreated).JSON(inv)
+	// 200 when an existing pending invite was re-issued, 201 for a brand-new one.
+	status := fiber.StatusCreated
+	if reissued {
+		status = fiber.StatusOK
+	}
+	return c.Status(status).JSON(inv)
 }
 
 // List godoc
@@ -301,16 +310,23 @@ func (h *InvitationsHandler) Revoke(c *fiber.Ctx) error {
 }
 
 type invitationPreviewResponse struct {
-	WorkspaceName string    `json:"workspace_name"`
-	InviterName   string    `json:"inviter_name"`
-	Email         string    `json:"email"`
-	Role          string    `json:"role"`
-	ExpiresAt     time.Time `json:"expires_at"`
+	WorkspaceName string `json:"workspace_name"`
+	InviterName   string `json:"inviter_name"`
+	Email         string `json:"email"`
+	Role          string `json:"role"`
+	// HasAccount tells the accept page which mode applies without a wasted POST:
+	// true → the invited email already has an Ogen account, so prompt "sign in as
+	// <email>" (no password field) and accept; false → collect name + password to
+	// create the account. The invitee already holds the capability token and sees
+	// their own email here, so disclosing whether that one address is registered
+	// adds no meaningful enumeration surface (CON-147).
+	HasAccount bool      `json:"has_account"`
+	ExpiresAt  time.Time `json:"expires_at"`
 }
 
 // Preview godoc
 // @Summary      Preview an invitation
-// @Description  Public. Returns the workspace, inviter, invited email and role for a valid, pending, unexpired invitation token; every unusable token returns the same generic 410 so the endpoint is not an oracle (CON-26).
+// @Description  Public. Returns the workspace, inviter, invited email, role, and has_account (whether the invited email already has an Ogen account, so the accept page can prompt sign-in vs name+password) for a valid, pending, unexpired invitation token; every unusable token returns the same generic 410 so the endpoint is not an oracle (CON-26/CON-147).
 // @Tags         invitations
 // @Produce      json
 // @Param        token  path  string  true  "Invitation token"
@@ -342,30 +358,47 @@ func (h *InvitationsHandler) Preview(c *fiber.Ctx) error {
 	if u, uerr := h.userRepo.GetByID(ctx, inv.InvitedBy); uerr == nil && u != nil {
 		resp.InviterName = u.Name
 	}
+	// Does the invited address already have an account? Resolved against accounts
+	// (identity), not users (membership), since the same email may hold memberships
+	// in several workspaces. A lookup error other than "no such account" is fatal;
+	// sql.ErrNoRows simply leaves has_account false (a new-account invite).
+	if _, aerr := h.accountRepo.GetByEmail(c.Context(), inv.Email); aerr == nil {
+		resp.HasAccount = true
+	} else if !errors.Is(aerr, sql.ErrNoRows) {
+		return aerr
+	}
 	return c.JSON(resp)
 }
 
+// acceptInvitationRequest carries the new-account credentials. They are required
+// only when the invited email has no Ogen account yet; an existing account
+// accepts while logged in and supplies neither (CON-147 PR3), so both are
+// optional at the schema level and enforced per path.
 type acceptInvitationRequest struct {
-	Name     string `json:"name"     validate:"required"`
-	Password string `json:"password" validate:"required,min=8"`
+	Name     string `json:"name"     validate:"omitempty"`
+	Password string `json:"password" validate:"omitempty,min=8"`
 }
 
 type acceptInvitationResponse struct {
-	Tenant  *models.Tenant  `json:"tenant,omitempty"`
-	User    *models.User    `json:"user"`
-	Session *models.Session `json:"session"`
+	Tenant *models.Tenant `json:"tenant,omitempty"`
+	User   *models.User   `json:"user"`
+	// Session is set only on the new-account path (auto-login); an existing
+	// account is already signed in, so it accepts without a new session.
+	Session *models.Session `json:"session,omitempty"`
 }
 
 // Accept godoc
 // @Summary      Accept an invitation
-// @Description  Public. Consumes a single-use invitation token, creates the invited user in the workspace with the invited role, opens a session (auto-login), and sets the session cookie (CON-26). Returns a generic 410 for any unusable token, and 409 if the email gained an account since the invite was sent.
+// @Description  Public. Consumes a single-use invitation token and joins its workspace with the invited role. If the invited email has no Ogen account, the body's name+password create one and a session is opened (auto-login, 201). If the email already has an account, the caller must be signed in as it and only a membership is added (200, no new session). Returns a generic 410 for any unusable token.
 // @Tags         invitations
 // @Accept       json
 // @Produce      json
 // @Param        token  path  string                    true  "Invitation token"
-// @Param        body   body  acceptInvitationRequest   true  "Name + password"
-// @Success      201  {object}  acceptInvitationResponse
+// @Param        body   body  acceptInvitationRequest   true  "Name + password (new accounts only)"
+// @Success      201  {object}  acceptInvitationResponse  "New account created and logged in"
+// @Success      200  {object}  acceptInvitationResponse  "Membership added to an existing account"
 // @Failure      400  {object}  map[string]string
+// @Failure      403  {object}  map[string]string
 // @Failure      409  {object}  map[string]string
 // @Failure      410  {object}  map[string]string
 // @Failure      429  {object}  map[string]string
@@ -380,32 +413,119 @@ func (h *InvitationsHandler) Accept(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
-	// Validate BEFORE consuming the token, so a too-short password doesn't burn a
-	// still-valid invite — the invitee can retry it (mirrors password-reset confirm).
 	if err := validate.Struct(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
 	}
 
-	tokenHash := models.HashInvitationToken(c.Params("token"))
+	// Peek the invite WITHOUT consuming, to choose the path: a new email needs
+	// credentials and gets a session; an existing account is attached while logged
+	// in. The atomic single-use consume happens inside the path's transaction, so
+	// a token spent between here and there still yields one indistinguishable 410,
+	// and a rejected accept (bad credentials / not signed in) leaves it unspent.
+	inv, err := h.inviteRepo.GetByTokenHash(c.Context(), models.HashInvitationToken(c.Params("token")))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusGone, invitationInvalidMsg)
+		}
+		return err
+	}
+	if inv.Status != models.InvitationPending || time.Now().UTC().After(inv.ExpiresAt) {
+		return fiber.NewError(fiber.StatusGone, invitationInvalidMsg)
+	}
+
+	account, err := h.accountRepo.GetByEmail(c.Context(), inv.Email)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if account != nil {
+		return h.acceptExisting(c, inv, account)
+	}
+	return h.acceptNew(c, inv, req)
+}
+
+// acceptExisting attaches a membership to an account that already owns the
+// invited address — no new credentials, no new session (CON-147 PR3). The caller
+// must be signed in as that account, so a stray link can't graft a workspace
+// onto someone else's identity; if they aren't, the invite is left unconsumed so
+// they can log in and retry.
+func (h *InvitationsHandler) acceptExisting(c *fiber.Ctx, inv *models.Invitation, account *models.Account) error {
+	if h.callerAccountID(c) != account.ID {
+		return fiber.NewError(fiber.StatusForbidden, "sign in as "+inv.Email+" to accept this invitation")
+	}
+	// Already a member? The unique(tenant, account) index is the hard backstop;
+	// this is the friendly pre-check.
+	if _, err := h.userRepo.GetMembership(c.Context(), account.ID, inv.TenantID); err == nil {
+		return fiber.NewError(fiber.StatusConflict, "you are already a member of this workspace")
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+
+	now := time.Now().UTC()
+	uid, err := models.NewID()
+	if err != nil {
+		return err
+	}
+	membership := &models.User{ID: uid, AccountID: account.ID, TenantID: inv.TenantID, Name: account.Name, Email: account.Email, Role: inv.Role, CreatedAt: now, UpdatedAt: now}
+
+	if err := h.db.RunInTx(c.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, cerr := h.inviteRepo.ConsumeByTokenTx(ctx, tx, inv.TokenHash, now); cerr != nil {
+			if errors.Is(cerr, sql.ErrNoRows) {
+				return errInvitationInvalid
+			}
+			return cerr
+		}
+		return h.userRepo.CreateTx(ctx, tx, membership)
+	}); err != nil {
+		if errors.Is(err, errInvitationInvalid) {
+			return fiber.NewError(fiber.StatusGone, invitationInvalidMsg)
+		}
+		if isUniqueViolation(err) {
+			return fiber.NewError(fiber.StatusConflict, "you are already a member of this workspace")
+		}
+		return err
+	}
+
+	h.activity.Record(
+		logging.WithUserID(tenantctx.With(c.Context(), inv.TenantID), uid),
+		activity.CategoryAuthentication, "invitation_accepted",
+		activity.WithEntity("user", uid), activity.WithSource(activity.SourceAPI),
+	)
+
+	// No cookie: the caller stays in whatever workspace their session is on; the
+	// client offers to switch to the newly joined one.
+	resp := acceptInvitationResponse{User: membership}
+	if t, terr := h.tenantRepo.GetByID(c.Context(), inv.TenantID); terr == nil {
+		resp.Tenant = t
+	}
+	return c.Status(fiber.StatusOK).JSON(resp)
+}
+
+// acceptNew creates the identity (account), the membership, and a session for a
+// brand-new invited email (auto-login). Name + password are required and checked
+// before the token is consumed, so a bad password doesn't burn a still-valid
+// invite.
+func (h *InvitationsHandler) acceptNew(c *fiber.Ctx, inv *models.Invitation, req acceptInvitationRequest) error {
+	if req.Name == "" || len(req.Password) < 8 {
+		return fiber.NewError(fiber.StatusBadRequest, "name and a password of at least 8 characters are required")
+	}
 	now := time.Now().UTC()
 
 	var (
-		newUser  *models.User
-		session  *models.Session
-		tenantID string
+		newUser *models.User
+		session *models.Session
 	)
 	err := h.db.RunInTx(c.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
-		// Atomically spend the invite (unknown/expired/revoked/already-accepted all
-		// come back as ErrNoRows → one indistinguishable 410).
-		inv, err := h.inviteRepo.ConsumeByTokenTx(ctx, tx, tokenHash, now)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
+		if _, cerr := h.inviteRepo.ConsumeByTokenTx(ctx, tx, inv.TokenHash, now); cerr != nil {
+			if errors.Is(cerr, sql.ErrNoRows) {
 				return errInvitationInvalid
 			}
+			return cerr
+		}
+		uid, err := models.NewID()
+		if err != nil {
 			return err
 		}
-
-		uid, err := models.NewID()
+		aid, err := models.NewID()
 		if err != nil {
 			return err
 		}
@@ -413,46 +533,31 @@ func (h *InvitationsHandler) Accept(c *fiber.Ctx) error {
 		if err != nil {
 			return err
 		}
-		newUser = &models.User{
-			ID:           uid,
-			TenantID:     inv.TenantID,
-			Name:         req.Name,
-			Email:        inv.Email,
-			PasswordHash: hash,
-			Role:         inv.Role,
-			CreatedAt:    now,
-			UpdatedAt:    now,
+		// accounts.email is the uniqueness backstop: if the address gained an
+		// account between the peek and here (a raced signup), this insert fires it
+		// and the whole tx rolls back — the invite is left unconsumed and the caller
+		// can log in as that account and accept again.
+		account := &models.Account{ID: aid, Email: inv.Email, PasswordHash: hash, Name: req.Name, CreatedAt: now, UpdatedAt: now}
+		if err := h.accountRepo.CreateTx(ctx, tx, account); err != nil {
+			return err
 		}
-		// If the address gained an account between invite and accept, the users
-		// unique constraint fires here and the whole tx rolls back — the invite is
-		// left unconsumed (accept is retryable once the conflict is resolved).
+		newUser = &models.User{ID: uid, AccountID: aid, TenantID: inv.TenantID, Name: req.Name, Email: inv.Email, Role: inv.Role, CreatedAt: now, UpdatedAt: now}
 		if err := h.userRepo.CreateTx(ctx, tx, newUser); err != nil {
 			return err
 		}
-
 		tokenStr, err := models.NewSessionToken()
 		if err != nil {
 			return err
 		}
-		session = &models.Session{
-			ID:        tokenStr,
-			UserID:    uid,
-			TenantID:  inv.TenantID,
-			ExpiresAt: now.Add(sessionTTL),
-			CreatedAt: now,
-		}
-		if err := h.sessionRepo.CreateTx(ctx, tx, session); err != nil {
-			return err
-		}
-		tenantID = inv.TenantID
-		return nil
+		session = &models.Session{ID: tokenStr, AccountID: aid, UserID: uid, TenantID: inv.TenantID, ExpiresAt: now.Add(sessionTTL), CreatedAt: now}
+		return h.sessionRepo.CreateTx(ctx, tx, session)
 	})
 	if err != nil {
 		if errors.Is(err, errInvitationInvalid) {
 			return fiber.NewError(fiber.StatusGone, invitationInvalidMsg)
 		}
 		if isUniqueViolation(err) {
-			return fiber.NewError(fiber.StatusConflict, "this email already has an Ogen account")
+			return fiber.NewError(fiber.StatusConflict, "this email already has an Ogen account — sign in to accept")
 		}
 		return err
 	}
@@ -468,14 +573,30 @@ func (h *InvitationsHandler) Accept(c *fiber.Ctx) error {
 	})
 
 	h.activity.Record(
-		logging.WithUserID(tenantctx.With(c.Context(), tenantID), newUser.ID),
+		logging.WithUserID(tenantctx.With(c.Context(), inv.TenantID), newUser.ID),
 		activity.CategoryAuthentication, "invitation_accepted",
 		activity.WithEntity("user", newUser.ID), activity.WithSource(activity.SourceAPI),
 	)
 
 	resp := acceptInvitationResponse{User: newUser, Session: session}
-	if t, terr := h.tenantRepo.GetByID(c.Context(), tenantID); terr == nil {
+	if t, terr := h.tenantRepo.GetByID(c.Context(), inv.TenantID); terr == nil {
 		resp.Tenant = t
 	}
 	return c.Status(fiber.StatusCreated).JSON(resp)
+}
+
+// callerAccountID returns the account id of the session cookie on the request,
+// or "" when there is no valid, unexpired session. Used by the public accept
+// endpoint to check whether the caller is signed in as the invited account
+// (it runs outside the auth middleware, so it resolves the session by hand).
+func (h *InvitationsHandler) callerAccountID(c *fiber.Ctx) string {
+	token := c.Cookies(h.cookieName)
+	if token == "" {
+		return ""
+	}
+	s, err := h.sessionRepo.GetByID(c.Context(), token)
+	if err != nil || s == nil || time.Now().UTC().After(s.ExpiresAt) {
+		return ""
+	}
+	return s.AccountID
 }

@@ -58,6 +58,7 @@ type TenantsHandler struct {
 	db           *bun.DB
 	tenantRepo   repository.TenantRepository
 	userRepo     repository.UserRepository
+	accountRepo  repository.AccountRepository
 	profileJobs  ProfileBootstrapEnqueuer
 	emailJobs    EmailEnqueuer
 	cookieName   string
@@ -71,11 +72,12 @@ type TenantsHandler struct {
 	activity *activity.Recorder
 }
 
-func NewTenantsHandler(db *bun.DB, tenantRepo repository.TenantRepository, userRepo repository.UserRepository, profileJobs ProfileBootstrapEnqueuer, cookieName string, secureCookie bool, auth fiber.Handler) *TenantsHandler {
+func NewTenantsHandler(db *bun.DB, tenantRepo repository.TenantRepository, userRepo repository.UserRepository, accountRepo repository.AccountRepository, profileJobs ProfileBootstrapEnqueuer, cookieName string, secureCookie bool, auth fiber.Handler) *TenantsHandler {
 	return &TenantsHandler{
 		db:           db,
 		tenantRepo:   tenantRepo,
 		userRepo:     userRepo,
+		accountRepo:  accountRepo,
 		profileJobs:  profileJobs,
 		cookieName:   cookieName,
 		secureCookie: secureCookie,
@@ -144,9 +146,10 @@ func (h *TenantsHandler) Signup(c *fiber.Ctx) error {
 		return tooManyRequests(c, retry, signupThrottledMsg)
 	}
 
-	// Email is globally unique (login is by email -> user -> tenant). Reject a
-	// duplicate up front with 409 (PRD §9); the unique constraint is the backstop.
-	if _, err := h.userRepo.GetByEmail(c.Context(), req.User.Email); err == nil {
+	// Email uniquely identifies an ACCOUNT (CON-147). Reject a duplicate up front
+	// with 409 (an existing account should log in and create a workspace instead);
+	// the accounts.email unique constraint is the TOCTOU backstop below.
+	if _, err := h.accountRepo.GetByEmail(c.Context(), req.User.Email); err == nil {
 		return fiber.NewError(fiber.StatusConflict, "email already in use")
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
@@ -158,6 +161,10 @@ func (h *TenantsHandler) Signup(c *fiber.Ctx) error {
 	}
 
 	tenantID, err := models.NewID()
+	if err != nil {
+		return err
+	}
+	accountID, err := models.NewID()
 	if err != nil {
 		return err
 	}
@@ -176,12 +183,18 @@ func (h *TenantsHandler) Signup(c *fiber.Ctx) error {
 
 	now := time.Now().UTC()
 	tenant := &models.Tenant{ID: tenantID, Name: req.Tenant.Name, Slug: slug, CreatedAt: now, UpdatedAt: now}
-	// The signup user creates the workspace, so they are its first owner (CON-26).
-	user := &models.User{ID: userID, TenantID: tenantID, Name: req.User.Name, Email: req.User.Email, PasswordHash: hash, Role: models.RoleOwner, CreatedAt: now, UpdatedAt: now}
-	session := &models.Session{ID: token, UserID: userID, TenantID: tenantID, ExpiresAt: now.Add(sessionTTL), CreatedAt: now}
+	// Identity (the credential) lives on the account; the users row is this
+	// account's membership of the new workspace (CON-147). The signup user creates
+	// the workspace, so they are its first owner (CON-26).
+	account := &models.Account{ID: accountID, Email: req.User.Email, PasswordHash: hash, Name: req.User.Name, CreatedAt: now, UpdatedAt: now}
+	user := &models.User{ID: userID, AccountID: accountID, TenantID: tenantID, Name: req.User.Name, Email: req.User.Email, Role: models.RoleOwner, CreatedAt: now, UpdatedAt: now}
+	session := &models.Session{ID: token, AccountID: accountID, UserID: userID, TenantID: tenantID, ExpiresAt: now.Add(sessionTTL), CreatedAt: now}
 
 	if err := h.db.RunInTx(c.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
 		if _, err := tx.NewInsert().Model(tenant).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewInsert().Model(account).Exec(ctx); err != nil {
 			return err
 		}
 		if _, err := tx.NewInsert().Model(user).Exec(ctx); err != nil {
@@ -216,7 +229,7 @@ func (h *TenantsHandler) Signup(c *fiber.Ctx) error {
 		return nil
 	}); err != nil {
 		// A concurrent signup with the same email passes the pre-check above
-		// but loses the race to the users.email unique constraint; surface that
+		// but loses the race to the accounts.email unique constraint; surface that
 		// as 409 rather than a raw 500 (TOCTOU backstop — the constraint is the
 		// real source of truth).
 		if isUniqueViolation(err) {

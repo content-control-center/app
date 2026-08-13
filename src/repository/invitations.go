@@ -22,14 +22,20 @@ type InvitationRepository interface {
 	// Create inserts an invitation on the repository's default DB (tests / any
 	// non-transactional caller).
 	Create(ctx context.Context, inv *models.Invitation) error
-	// CreateReplacingExpiredTx clears any expired pending invite for the same
-	// (tenant, email) — its stale row still holds the partial-unique pending slot
-	// — then inserts inv, all on the provided bun.IDB so it joins the caller's tx
-	// (which also enqueues the email). "Expired" means a pending row with
-	// expires_at at or before inv.CreatedAt; a still-active pending invite is left
-	// untouched so the unique index still 409s a genuine duplicate. Passing nil
-	// falls back to the repository's default DB.
-	CreateReplacingExpiredTx(ctx context.Context, tx bun.IDB, inv *models.Invitation) error
+	// CreateReplacingPendingTx clears any pending invite for the same (tenant,
+	// email) — live or expired, since either occupies the partial-unique pending
+	// slot — then inserts inv, all on the provided bun.IDB so it joins the caller's
+	// tx (which also enqueues the email). Re-inviting an address is idempotent
+	// (CON-147 §7.3): it returns replaced=true when an existing pending invite was
+	// cleared, so the handler can answer 200 (re-issue) vs 201 (new). It first takes
+	// a transaction-scoped advisory lock keyed on (tenant, email) so concurrent
+	// re-issues serialize rather than racing the delete+insert — the partial-unique
+	// index already guarantees at most one live invite, but without the lock the
+	// loser of the race would 409 instead of re-issuing. Requires the caller's tx
+	// for the lock to span the delete+insert; passing nil falls back to the
+	// repository's default DB (no cross-statement serialization, used only by
+	// non-concurrent callers).
+	CreateReplacingPendingTx(ctx context.Context, tx bun.IDB, inv *models.Invitation) (replaced bool, err error)
 	// ConsumeByTokenTx atomically spends a usable invitation on the provided
 	// bun.IDB (the accept tx, which also creates the user + session): it resolves
 	// the invite by token hash and flips it pending->accepted only while still
@@ -40,10 +46,6 @@ type InvitationRepository interface {
 	// GetByTokenHash resolves an invitation by the sha256 of its token — the
 	// capability the preview/accept endpoints hold. Not tenant-scoped by design.
 	GetByTokenHash(ctx context.Context, tokenHash string) (*models.Invitation, error)
-	// GetPendingByTenantEmail returns the live (pending) invite for an address in
-	// a workspace, if any — the friendly pre-check behind the create endpoint's
-	// duplicate 409 (the partial unique index is the hard backstop).
-	GetPendingByTenantEmail(ctx context.Context, tenantID, email string) (*models.Invitation, error)
 	// ListByTenant returns a workspace's invitations, newest first.
 	ListByTenant(ctx context.Context, tenantID string) ([]models.Invitation, error)
 	// Revoke marks a pending invite revoked. Returns false if no pending invite
@@ -65,21 +67,33 @@ func (r *invitationRepository) Create(ctx context.Context, inv *models.Invitatio
 	return err
 }
 
-func (r *invitationRepository) CreateReplacingExpiredTx(ctx context.Context, tx bun.IDB, inv *models.Invitation) error {
+func (r *invitationRepository) CreateReplacingPendingTx(ctx context.Context, tx bun.IDB, inv *models.Invitation) (bool, error) {
 	db := bun.IDB(r.db)
 	if tx != nil {
 		db = tx
 	}
-	if _, err := db.NewDelete().Model((*models.Invitation)(nil)).
+	// Serialize re-issues for the same (tenant, email): a transaction-scoped
+	// advisory lock (released on commit/rollback) makes a concurrent second invite
+	// wait for the first to commit, then see its row and replace it — so both
+	// re-issue idempotently (CON-147 §7.3) instead of one hitting the partial-unique
+	// pending index and 409ing. hashtext maps each key to an int4; a collision only
+	// costs unnecessary serialization, never correctness.
+	if _, err := db.NewRaw("SELECT pg_advisory_xact_lock(hashtext(?), hashtext(?))", inv.TenantID, inv.Email).Exec(ctx); err != nil {
+		return false, err
+	}
+	res, err := db.NewDelete().Model((*models.Invitation)(nil)).
 		Where("tenant_id = ?", inv.TenantID).
 		Where("email = ?", inv.Email).
 		Where("status = ?", models.InvitationPending).
-		Where("expires_at <= ?", inv.CreatedAt).
-		Exec(ctx); err != nil {
-		return err
+		Exec(ctx)
+	if err != nil {
+		return false, err
 	}
-	_, err := db.NewInsert().Model(inv).Exec(ctx)
-	return err
+	replaced, _ := res.RowsAffected()
+	if _, err := db.NewInsert().Model(inv).Exec(ctx); err != nil {
+		return false, err
+	}
+	return replaced > 0, nil
 }
 
 func (r *invitationRepository) ConsumeByTokenTx(ctx context.Context, tx bun.IDB, tokenHash string, now time.Time) (*models.Invitation, error) {
@@ -118,22 +132,6 @@ func (r *invitationRepository) ConsumeByTokenTx(ctx context.Context, tx bun.IDB,
 func (r *invitationRepository) GetByTokenHash(ctx context.Context, tokenHash string) (*models.Invitation, error) {
 	inv := new(models.Invitation)
 	err := r.db.NewSelect().Model(inv).Where("token_hash = ?", tokenHash).Scan(ctx)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, sql.ErrNoRows
-		}
-		return nil, err
-	}
-	return inv, nil
-}
-
-func (r *invitationRepository) GetPendingByTenantEmail(ctx context.Context, tenantID, email string) (*models.Invitation, error) {
-	inv := new(models.Invitation)
-	err := r.db.NewSelect().Model(inv).
-		Where("tenant_id = ?", tenantID).
-		Where("email = ?", email).
-		Where("status = ?", models.InvitationPending).
-		Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, sql.ErrNoRows

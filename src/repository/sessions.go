@@ -18,6 +18,12 @@ type SessionRepository interface {
 	// Passing nil falls back to the repository's default DB.
 	CreateTx(ctx context.Context, tx bun.IDB, session *models.Session) error
 	GetByID(ctx context.Context, id string) (*models.Session, error)
+	// SetDefaultWorkspace repoints a session's stored default workspace (CON-147
+	// switch): it moves user_id + tenant_id to the given membership/workspace so a
+	// fresh tab or the next login seeds there. It does NOT scope live requests —
+	// those resolve per request from the X-Workspace-Id header — so the cookie
+	// stays valid and other tabs are unaffected.
+	SetDefaultWorkspace(ctx context.Context, sessionID, userID, tenantID string) error
 	Delete(ctx context.Context, id string) (bool, error)
 }
 
@@ -53,6 +59,15 @@ func (r *sessionRepository) GetByID(ctx context.Context, id string) (*models.Ses
 		return nil, err
 	}
 	return session, nil
+}
+
+func (r *sessionRepository) SetDefaultWorkspace(ctx context.Context, sessionID, userID, tenantID string) error {
+	_, err := r.db.NewUpdate().Model((*models.Session)(nil)).
+		Set("user_id = ?", userID).
+		Set("tenant_id = ?", tenantID).
+		Where("id = ?", sessionID).
+		Exec(ctx)
+	return err
 }
 
 func (r *sessionRepository) Delete(ctx context.Context, id string) (bool, error) {

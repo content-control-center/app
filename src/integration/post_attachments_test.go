@@ -126,10 +126,10 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 		postAttRepo = repository.NewPostAttachmentRepository(db)
 		postVersionRepo := repository.NewPostVersionRepository(db)
 		postMessageRepo := repository.NewPostAssistantMessageRepository(db)
-		auth := handlers.RequireAuth(sessionRepo, "test_session")
+		auth := handlers.RequireAuth(sessionRepo, userRepo, "test_session")
 
-		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
-		handlers.NewSessionsHandler(userRepo, sessionRepo, "test_session", false).Register(app)
+		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
+		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, "test_session", false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
 
 		postsHandler := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, repository.NewPlatformRepository(db), postAttRepo, auth, nil, nil)
@@ -184,6 +184,7 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 		_, _ = db.NewDelete().TableExpr("campaigns").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("sessions").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(ctx)
+		_, _ = db.NewDelete().TableExpr("accounts").Where("1 = 1").Exec(ctx)
 	})
 
 	createPost := func() string {

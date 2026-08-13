@@ -85,6 +85,8 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 
 	// API routes
 	userRepo := repository.NewUserRepository(db)
+	accountRepo := repository.NewAccountRepository(db)
+	workspaceRepo := repository.NewWorkspaceRepository(db)
 	tenantRepo := repository.NewTenantRepository(db)
 	sessionRepo := repository.NewSessionRepository(db)
 	settingRepo := repository.NewSettingRepository(db)
@@ -132,7 +134,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	emailTemplateRepo := repository.NewEmailTemplateRepository(db)
 	emailSuppressionRepo := repository.NewEmailSuppressionRepository(db)
 	emailLogRepo := repository.NewEmailLogRepository(db)
-	auth := handlers.RequireAuth(sessionRepo, cfg.SessionCookieName)
+	auth := handlers.RequireAuth(sessionRepo, userRepo, cfg.SessionCookieName)
 
 	// CON-86: apply any operator price-map override (USAGE_MODEL_PRICES) before
 	// metering starts; a malformed payload or unknown vendor fails boot.
@@ -156,7 +158,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	handlers.NewEventsHandler(hub, sessionRepo, auth, 0).Register(app)
 
 	handlers.NewHealthHandler(db, secretStore).Register(app)
-	usersHandler := handlers.NewUsersHandler(db, userRepo, settingRepo, auth)
+	usersHandler := handlers.NewUsersHandler(db, userRepo, accountRepo, settingRepo, auth)
 	usersHandler.SetActivityRecorder(activityWiring.recorder)
 	usersHandler.Register(app)
 	// CON-97 signup + CON-102 eager Zernio profile provisioning are registered
@@ -164,7 +166,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// in its transaction).
 	// Session cookies are marked Secure in production. Debug mode is the
 	// development escape hatch so localhost over plain HTTP still works.
-	sessionsHandler := handlers.NewSessionsHandler(userRepo, sessionRepo, cfg.SessionCookieName, !cfg.Debug)
+	sessionsHandler := handlers.NewSessionsHandler(userRepo, accountRepo, sessionRepo, cfg.SessionCookieName, !cfg.Debug)
 	sessionsHandler.SetActivityRecorder(activityWiring.recorder)
 	sessionsHandler.Register(app)
 	handlers.NewSettingsHandler(settingRepo, auth).Register(app)
@@ -368,17 +370,24 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// CON-102: signup enqueues an eager Zernio profile-bootstrap job in its
 	// transaction via the enqueuer, so the registration here waits until the
 	// River client exists.
-	tenantsHandler := handlers.NewTenantsHandler(db, tenantRepo, userRepo, enqueuer, cfg.SessionCookieName, !cfg.Debug, auth)
+	tenantsHandler := handlers.NewTenantsHandler(db, tenantRepo, userRepo, accountRepo, enqueuer, cfg.SessionCookieName, !cfg.Debug, auth)
 	tenantsHandler.SetActivityRecorder(activityWiring.recorder)
 	// CON-154: signup enqueues the welcome email + onboarding drip in its tx.
 	tenantsHandler.SetEmailEnqueuer(enqueuer)
 	tenantsHandler.Register(app)
 
+	// CON-147: authenticated workspace surface (list / create / switch). Create
+	// provisions a per-workspace Zernio profile through the same River enqueuer as
+	// signup, so it registers here alongside the tenants handler.
+	workspacesHandler := handlers.NewWorkspacesHandler(db, workspaceRepo, userRepo, accountRepo, tenantRepo, sessionRepo, enqueuer, auth)
+	workspacesHandler.SetActivityRecorder(activityWiring.recorder)
+	workspacesHandler.Register(app)
+
 	// CON-161: public password-reset request + confirm (both unauthenticated —
 	// the emailed token is the capability). The request endpoint enqueues the
 	// reset email in its token-minting tx, so registration waits until the River
 	// enqueuer exists.
-	passwordResetHandler := handlers.NewPasswordResetHandler(db, userRepo, cfg.AppBaseURL)
+	passwordResetHandler := handlers.NewPasswordResetHandler(db, userRepo, accountRepo, cfg.AppBaseURL)
 	passwordResetHandler.SetActivityRecorder(activityWiring.recorder)
 	passwordResetHandler.SetEmailEnqueuer(enqueuer)
 	passwordResetHandler.Register(app)
@@ -387,7 +396,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// preview/accept). Creating an invite enqueues its email in the minting tx —
 	// like password reset — so registration waits until the River enqueuer exists.
 	invitationRepo := repository.NewInvitationRepository(db)
-	invitationsHandler := handlers.NewInvitationsHandler(db, userRepo, tenantRepo, invitationRepo, sessionRepo, cfg.AppBaseURL, cfg.SessionCookieName, !cfg.Debug, auth)
+	invitationsHandler := handlers.NewInvitationsHandler(db, userRepo, accountRepo, tenantRepo, invitationRepo, sessionRepo, cfg.AppBaseURL, cfg.SessionCookieName, !cfg.Debug, auth)
 	invitationsHandler.SetActivityRecorder(activityWiring.recorder)
 	invitationsHandler.SetEmailEnqueuer(enqueuer)
 	invitationsHandler.Register(app)

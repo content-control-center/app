@@ -121,10 +121,10 @@ var _ = Describe("Post analytics — CON-93", Ordered, func() {
 		campaignRepo := repository.NewCampaignRepository(db, tagRepo, platformRepo, campaignTypeRepo)
 		postRepo = repository.NewPostRepository(db)
 		analyticsRepo = repository.NewPostAnalyticsRepository(db)
-		auth := handlers.RequireAuth(sessionRepo, "test_session")
+		auth := handlers.RequireAuth(sessionRepo, userRepo, "test_session")
 
-		handlers.NewUsersHandler(db, userRepo, settingRepo, auth).Register(app)
-		handlers.NewSessionsHandler(userRepo, sessionRepo, "test_session", false).Register(app)
+		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
+		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, "test_session", false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
 
 		postsHandler := handlers.NewPostsHandler(postRepo, repository.NewPostVersionRepository(db),
@@ -162,7 +162,7 @@ var _ = Describe("Post analytics — CON-93", Ordered, func() {
 			zernioStub.Close()
 		}
 		ctx := tenantCtx()
-		for _, t := range []string{"post_analytics_snapshots", "post_versions", "post_logs", "post_assistant_messages", "posts", "campaigns", "sessions", "users"} {
+		for _, t := range []string{"post_analytics_snapshots", "post_versions", "post_logs", "post_assistant_messages", "posts", "campaigns", "sessions", "users", "accounts"} {
 			_, _ = db.NewDelete().TableExpr(t).Where("1 = 1").Exec(ctx)
 		}
 	})

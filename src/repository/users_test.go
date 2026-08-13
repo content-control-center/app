@@ -21,8 +21,8 @@ import (
 func seedUser(t *testing.T, db *bun.DB, id, tenantID, email string) {
 	t.Helper()
 	u := &models.User{
-		ID: id, TenantID: tenantID, Name: "User " + id, Email: email,
-		PasswordHash: "x", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+		ID: id, AccountID: id, TenantID: tenantID, Name: "User " + id, Email: email,
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 	}
 	if _, err := db.NewInsert().Model(u).Exec(context.Background()); err != nil {
 		t.Fatalf("seed user %s: %v", id, err)
@@ -63,5 +63,44 @@ func TestUserRepositoryTenantIsolation(t *testing.T) {
 	// every tenant's users.
 	if _, err := repo.List(context.Background()); !errors.Is(err, tenantctx.ErrNoTenant) {
 		t.Fatalf("List without a tenant must fail closed, got %v", err)
+	}
+}
+
+// TestUserRepositoryGetByAccountIDTieBreak guards CON-147: GetByAccountID chooses
+// the account's default workspace, so it must be deterministic when two
+// memberships share a created_at (e.g. seeded in one transaction). The id
+// tie-breaker makes the smallest-id membership win regardless of scan order.
+func TestUserRepositoryGetByAccountIDTieBreak(t *testing.T) {
+	db := openMigratedDB(t)
+	repo := repository.NewUserRepository(db)
+	ctx := context.Background()
+
+	// GetByAccountID joins tenants and filters deleted_at, so the memberships need
+	// real, live tenants rows to resolve to.
+	ts := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, id := range []string{"t-1", "t-2"} {
+		if _, err := db.NewInsert().Model(&models.Tenant{ID: id, Name: id, Slug: id, CreatedAt: ts, UpdatedAt: ts}).Exec(ctx); err != nil {
+			t.Fatalf("seed tenant %s: %v", id, err)
+		}
+	}
+
+	// One account, two memberships with the SAME created_at. Insert the larger id
+	// first so a missing tie-breaker would be free to return it (scan/heap order).
+	same := time.Date(2026, 2, 2, 12, 0, 0, 0, time.UTC)
+	for _, m := range []*models.User{
+		{ID: "u-zzz", AccountID: "acc", TenantID: "t-1", Name: "Z", Email: "e@x", CreatedAt: same, UpdatedAt: same},
+		{ID: "u-aaa", AccountID: "acc", TenantID: "t-2", Name: "A", Email: "e@x", CreatedAt: same, UpdatedAt: same},
+	} {
+		if _, err := db.NewInsert().Model(m).Exec(ctx); err != nil {
+			t.Fatalf("seed membership %s: %v", m.ID, err)
+		}
+	}
+
+	got, err := repo.GetByAccountID(ctx, "acc")
+	if err != nil {
+		t.Fatalf("GetByAccountID: %v", err)
+	}
+	if got.ID != "u-aaa" {
+		t.Fatalf("tie on created_at must resolve to the smallest id (u-aaa), got %s", got.ID)
 	}
 }

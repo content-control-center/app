@@ -61,12 +61,19 @@ var _ = Describe("Asset embedding flow", Ordered, func() {
 		// Seed a user and an asset to satisfy foreign-key constraints.
 		userID, err := models.NewID()
 		Expect(err).NotTo(HaveOccurred())
-		user := &models.User{
+		_, err = db.NewInsert().Model(&models.Account{
 			ID:           userID,
-			TenantID:     models.DefaultTenantID,
-			Name:         "Integration Tester",
 			Email:        "integration@test.local",
 			PasswordHash: "placeholder",
+			Name:         "Integration Tester",
+		}).Exec(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		user := &models.User{
+			ID:        userID,
+			AccountID: userID,
+			TenantID:  models.DefaultTenantID,
+			Name:      "Integration Tester",
+			Email:     "integration@test.local",
 		}
 		_, err = db.NewInsert().Model(user).Exec(ctx)
 		Expect(err).NotTo(HaveOccurred())
@@ -87,6 +94,8 @@ var _ = Describe("Asset embedding flow", Ordered, func() {
 		_, _ = db.NewDelete().TableExpr("assets_chunks").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("assets").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("users").Where("1 = 1").Exec(ctx)
+		_, err := db.NewDelete().TableExpr("accounts").Where("1 = 1").Exec(ctx)
+		Expect(err).NotTo(HaveOccurred())
 	})
 
 	// ── Create ───────────────────────────────────────────────────────────────

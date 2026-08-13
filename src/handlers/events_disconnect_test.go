@@ -39,7 +39,10 @@ func (stubSessionRepo) CreateTx(context.Context, bun.IDB, *models.Session) error
 	return nil
 }
 func (stubSessionRepo) GetByID(context.Context, string) (*models.Session, error) { return nil, nil }
-func (stubSessionRepo) Delete(context.Context, string) (bool, error)             { return false, nil }
+func (stubSessionRepo) SetDefaultWorkspace(context.Context, string, string, string) error {
+	return nil
+}
+func (stubSessionRepo) Delete(context.Context, string) (bool, error) { return false, nil }
 
 // captureHandler records the slog.Records it receives so a test can assert on
 // the correlation attributes the ContextHandler attached from the log call's

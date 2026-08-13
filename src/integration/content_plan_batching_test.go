@@ -71,12 +71,19 @@ var _ = Describe("Content plan flow — parallel batched generation", Ordered, f
 		var err error
 		userID, err = models.NewID()
 		Expect(err).NotTo(HaveOccurred())
-		user := &models.User{
+		_, err = db.NewInsert().Model(&models.Account{
 			ID:           userID,
-			TenantID:     models.DefaultTenantID,
-			Name:         "Batching Tester",
 			Email:        "cp-batching@test.local",
 			PasswordHash: "placeholder",
+			Name:         "Batching Tester",
+		}).Exec(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		user := &models.User{
+			ID:        userID,
+			AccountID: userID,
+			TenantID:  models.DefaultTenantID,
+			Name:      "Batching Tester",
+			Email:     "cp-batching@test.local",
 		}
 		_, err = db.NewInsert().Model(user).Exec(ctx)
 		Expect(err).NotTo(HaveOccurred())
@@ -140,6 +147,8 @@ var _ = Describe("Content plan flow — parallel batched generation", Ordered, f
 		_, _ = db.NewDelete().TableExpr("posts").Where("campaign_id = ?", campaignID).Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("campaigns").Where("id = ?", campaignID).Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("users").Where("id = ?", userID).Exec(ctx)
+		_, err := db.NewDelete().TableExpr("accounts").Where("id = ?", userID).Exec(ctx)
+		Expect(err).NotTo(HaveOccurred())
 	})
 
 	Describe("parallel batches against the real model", func() {
