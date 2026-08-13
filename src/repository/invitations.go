@@ -27,8 +27,14 @@ type InvitationRepository interface {
 	// slot — then inserts inv, all on the provided bun.IDB so it joins the caller's
 	// tx (which also enqueues the email). Re-inviting an address is idempotent
 	// (CON-147 §7.3): it returns replaced=true when an existing pending invite was
-	// cleared, so the handler can answer 200 (re-issue) vs 201 (new). Passing nil
-	// falls back to the repository's default DB.
+	// cleared, so the handler can answer 200 (re-issue) vs 201 (new). It first takes
+	// a transaction-scoped advisory lock keyed on (tenant, email) so concurrent
+	// re-issues serialize rather than racing the delete+insert — the partial-unique
+	// index already guarantees at most one live invite, but without the lock the
+	// loser of the race would 409 instead of re-issuing. Requires the caller's tx
+	// for the lock to span the delete+insert; passing nil falls back to the
+	// repository's default DB (no cross-statement serialization, used only by
+	// non-concurrent callers).
 	CreateReplacingPendingTx(ctx context.Context, tx bun.IDB, inv *models.Invitation) (replaced bool, err error)
 	// ConsumeByTokenTx atomically spends a usable invitation on the provided
 	// bun.IDB (the accept tx, which also creates the user + session): it resolves
@@ -65,6 +71,15 @@ func (r *invitationRepository) CreateReplacingPendingTx(ctx context.Context, tx 
 	db := bun.IDB(r.db)
 	if tx != nil {
 		db = tx
+	}
+	// Serialize re-issues for the same (tenant, email): a transaction-scoped
+	// advisory lock (released on commit/rollback) makes a concurrent second invite
+	// wait for the first to commit, then see its row and replace it — so both
+	// re-issue idempotently (CON-147 §7.3) instead of one hitting the partial-unique
+	// pending index and 409ing. hashtext maps each key to an int4; a collision only
+	// costs unnecessary serialization, never correctness.
+	if _, err := db.NewRaw("SELECT pg_advisory_xact_lock(hashtext(?), hashtext(?))", inv.TenantID, inv.Email).Exec(ctx); err != nil {
+		return false, err
 	}
 	res, err := db.NewDelete().Model((*models.Invitation)(nil)).
 		Where("tenant_id = ?", inv.TenantID).

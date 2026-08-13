@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -24,11 +25,14 @@ import (
 // test can assert the enqueue fired without standing up River (CON-26). It is
 // invoked inside the create tx; recording + returning nil lets the tx commit.
 type fakeInviteEnqueuer struct {
+	mu       sync.Mutex // guards toEmails: the concurrent-re-issue test enqueues from many goroutines
 	toEmails []string
 }
 
 func (f *fakeInviteEnqueuer) EnqueueInvitationEmailTx(ctx context.Context, tx *sql.Tx, tenantID, invitationID, toEmail, inviteURL, inviterName, workspaceName, role string) error {
+	f.mu.Lock()
 	f.toEmails = append(f.toEmails, toEmail)
+	f.mu.Unlock()
 	return nil
 }
 
@@ -294,6 +298,42 @@ var _ = Describe("InvitationsHandler", Ordered, func() {
 			Expect(total).To(Equal(1))
 			Expect(getInviteByEmail("stale@example.com").Status).To(Equal(models.InvitationPending))
 			Expect(time.Now().Before(getInviteByEmail("stale@example.com").ExpiresAt)).To(BeTrue())
+		})
+
+		It("serializes concurrent re-issues for the same email — all succeed idempotently, one live link survives (CON-147 §7.3)", func() {
+			_, cookie := ownerCookie()
+			// Seed a live invite so every concurrent POST below is a re-issue, then
+			// fire several at once. The per-(tenant,email) advisory lock makes them
+			// serialize: each re-issues the previous one's link rather than racing the
+			// delete+insert, so none hits the partial-unique pending index and 409s.
+			Expect(createInvite(cookie, fiber.Map{"email": "race@example.com"}).StatusCode).To(Equal(fiber.StatusCreated))
+
+			const n = 5
+			var wg sync.WaitGroup
+			codes := make([]int, n)
+			for i := 0; i < n; i++ {
+				wg.Add(1)
+				go func(i int) {
+					defer GinkgoRecover()
+					defer wg.Done()
+					codes[i] = createInvite(cookie, fiber.Map{"email": "race@example.com"}).StatusCode
+				}(i)
+			}
+			wg.Wait()
+
+			// Every concurrent re-post re-issued cleanly (200) — no 409s, no 500s.
+			for _, code := range codes {
+				Expect(code).To(Equal(fiber.StatusOK))
+			}
+			// Exactly one live pending invite remains for the address, with a fresh
+			// (unexpired) link.
+			live, err := db.NewSelect().Model((*models.Invitation)(nil)).
+				Where("email = ?", "race@example.com").
+				Where("status = ?", models.InvitationPending).
+				Count(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(live).To(Equal(1))
+			Expect(time.Now().Before(getInviteByEmail("race@example.com").ExpiresAt)).To(BeTrue())
 		})
 	})
 
