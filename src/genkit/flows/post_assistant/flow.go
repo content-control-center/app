@@ -5,6 +5,7 @@ import (
 	"embed"
 	"fmt"
 	"log/slog"
+	"strings"
 	"text/template"
 
 	"github.com/firebase/genkit/go/core"
@@ -38,9 +39,27 @@ func InitPostAssistant(g *genkit.Genkit, cfg PostAssistantFlowConfig, repos Post
 		return fmt.Errorf("parse post_assistant.tmpl: %w", err)
 	}
 	systemTmpl := tmpl.Lookup("system")
+	plannerTmpl := tmpl.Lookup("planner")
+	writerTmpl := tmpl.Lookup("writer")
 	contextTmpl := tmpl.Lookup("context")
-	if systemTmpl == nil || contextTmpl == nil {
-		return fmt.Errorf("post_assistant.tmpl must define both {{define \"system\"}} and {{define \"context\"}} blocks")
+	if systemTmpl == nil || plannerTmpl == nil || writerTmpl == nil || contextTmpl == nil {
+		return fmt.Errorf("post_assistant.tmpl must define \"system\", \"planner\", \"writer\", and \"context\" blocks")
+	}
+
+	// CON-128: in the hybrid path the orchestration loop runs on the planner
+	// system prompt (routing + the editPost tool) and delegates copywriting to
+	// the Sonnet writer; the legacy path keeps the single system prompt that
+	// writes content inline. Resolve which system prompt the loop uses, and
+	// render the (static) writer instructions once for the writer sub-call.
+	activeSystemTmpl := systemTmpl
+	var writerInstructions string
+	if cfg.PlannerEnabled {
+		activeSystemTmpl = plannerTmpl
+		wi, err := renderTemplate(writerTmpl, contextTemplateData{})
+		if err != nil {
+			return fmt.Errorf("render writer instructions: %w", err)
+		}
+		writerInstructions = strings.TrimSpace(wi)
 	}
 
 	tools := defineTools(g)
@@ -53,12 +72,12 @@ func InitPostAssistant(g *genkit.Genkit, cfg PostAssistantFlowConfig, repos Post
 
 	PostAssistantFlow = genkit.DefineFlow(g, "postAssistant",
 		func(ctx context.Context, req PostAssistantRequest) (*PostAssistantResponse, error) {
-			return runPostAssistant(ctx, g, req, cfg, repos, systemTmpl, contextTmpl, tools, nil)
+			return runPostAssistant(ctx, g, req, cfg, repos, activeSystemTmpl, contextTmpl, writerInstructions, tools, nil)
 		},
 	)
 
 	postAssistantRunner = func(ctx context.Context, req PostAssistantRequest, onEvent OnEventFunc) (*PostAssistantResponse, error) {
-		return runPostAssistant(ctx, g, req, cfg, repos, systemTmpl, contextTmpl, tools, onEvent)
+		return runPostAssistant(ctx, g, req, cfg, repos, activeSystemTmpl, contextTmpl, writerInstructions, tools, onEvent)
 	}
 
 	return nil

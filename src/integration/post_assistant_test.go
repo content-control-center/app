@@ -17,6 +17,7 @@ import (
 	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 var _ = Describe("Post assistant flow", Ordered, func() {
@@ -104,7 +105,21 @@ var _ = Describe("Post assistant flow", Ordered, func() {
 		if modelID == "" {
 			modelID = "claude-haiku-4-5-20251001"
 		}
-		flowCfg := post_assistant.PostAssistantFlowConfig{ModelID: modelID}
+		planningModelID := os.Getenv("PLANNING_MODEL_ID")
+		if planningModelID == "" {
+			planningModelID = "claude-haiku-4-5-20251001"
+		}
+		// CON-128: the flow resolves its loop model (and the editPost writer
+		// model) through the Provider — without one, cfg.Provider.Ref would
+		// panic. Exercise the hybrid planner path by default (the shipped
+		// default); set POST_ASSISTANT_PLANNER=false to run the legacy
+		// single-Sonnet path instead, so the same suite covers both.
+		provider := llm.NewProvider(modelID, modelID, planningModelID)
+		flowCfg := post_assistant.PostAssistantFlowConfig{
+			Provider:       provider,
+			ModelID:        modelID,
+			PlannerEnabled: os.Getenv("POST_ASSISTANT_PLANNER") != "false",
+		}
 		repos := post_assistant.PostAssistantRepos{
 			Posts:     postRepo,
 			Assets:    assetRepo,
@@ -255,6 +270,7 @@ A concise post about Go.`)
 
 			var (
 				gotExplanationDelta bool
+				gotContentDelta     bool
 				gotComplete         bool
 				gotError            bool
 				eventOrder          []post_assistant.SSEEventKind
@@ -264,6 +280,8 @@ A concise post about Go.`)
 				switch name {
 				case post_assistant.SSEEventExplanationDelta:
 					gotExplanationDelta = true
+				case post_assistant.SSEEventContentDelta:
+					gotContentDelta = true
 				case post_assistant.SSEEventComplete:
 					gotComplete = true
 				case post_assistant.SSEEventError:
@@ -279,6 +297,10 @@ A concise post about Go.`)
 
 			Expect(gotError).To(BeFalse(), "error event should not fire on the happy path")
 			Expect(gotExplanationDelta).To(BeTrue(), "explanation_delta should fire as the model writes the explanation")
+			// content_delta must stream the edited copy: in the hybrid path this
+			// proves the editPost writer sub-call streams through to the client;
+			// in the legacy path it is the inline updatedContent stream (CON-128).
+			Expect(gotContentDelta).To(BeTrue(), "content_delta should stream the rewritten post content on an edit")
 			Expect(gotComplete).To(BeTrue(), "complete event signals the canonical final response")
 
 			// complete should be the last event emitted.
