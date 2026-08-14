@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/firebase/genkit/go/ai"
@@ -54,7 +55,17 @@ type requestState struct {
 	checkBrief func(ctx context.Context, campaignID string, onEvent consistency.OnEventFunc) (*consistency.BriefReview, error)
 	checkPosts func(ctx context.Context, req consistency.PostsCheckRequest, onEvent consistency.OnEventFunc) (*consistency.PostsReview, error)
 
-	// Results set by tools, read by the runner after generation.
+	// mu guards heavyReserved. genkit dispatches a turn's tool calls in parallel
+	// goroutines, so the one-heavy-action-per-turn latch must be a synchronised
+	// reservation, not a read of the *Result fields below (which are written only
+	// after a sub-flow completes — a TOCTOU race + data race). See
+	// reserveHeavyAction (CON-213).
+	mu            sync.Mutex
+	heavyReserved bool
+
+	// Results set by tools, read by the runner after generation. Only the tool
+	// that won the heavy-action reservation writes a heavy result, so these need
+	// no locking: distinct single-writer fields, read after the tool barrier.
 	contentPlanResult    *ContentPlanResult
 	briefResult          *BriefResult
 	generatedPostsResult *GeneratedPostsResult
@@ -64,19 +75,25 @@ type requestState struct {
 	postsReviewResult    *consistency.PostsReview
 }
 
-// heavyActionRan reports whether an expensive LLM sub-flow tool (content plan,
-// targeted posts, brief enrich, or a consistency review) has already run this
-// turn. The heavy tools consult it to run at most once per chat turn (CON-213):
-// this is the precise cost guard CON-112 wanted — "don't chain several heavy
-// Sonnet sub-flows in one turn" — decoupled from the tool-call turn budget so
-// the cheap read tools can still iterate. Cheap DB-only tools (setCampaignDates,
-// redistributePosts) are intentionally excluded; they may run alongside.
-func (st *requestState) heavyActionRan() bool {
-	return st.contentPlanResult != nil ||
-		st.generatedPostsResult != nil ||
-		st.briefResult != nil ||
-		st.briefReviewResult != nil ||
-		st.postsReviewResult != nil
+// reserveHeavyAction atomically claims the single heavy-action slot for this
+// turn. It returns true to the first caller and false to every caller after —
+// so at most one expensive LLM sub-flow tool (content plan, targeted posts,
+// brief enrich, or a consistency review) runs per chat turn (CON-213). This is
+// the precise cost guard CON-112 wanted — "don't chain several heavy Sonnet
+// sub-flows in one turn" — decoupled from the tool-call turn budget so cheap
+// read tools can still iterate. It must reserve up front, not check the *Result
+// fields: genkit runs a turn's tool calls in parallel goroutines, so a
+// completion-based check both races on those fields and lets two heavy tools
+// dispatched together both start. Cheap DB-only tools (setCampaignDates,
+// redistributePosts) never reserve and may run alongside.
+func (st *requestState) reserveHeavyAction() bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.heavyReserved {
+		return false
+	}
+	st.heavyReserved = true
+	return true
 }
 
 // heavySkipNote steers the planner to stop and reply after a heavy action has
@@ -320,7 +337,7 @@ func defineTools(g *genkit.Genkit) *toolSet {
 
 func toolRunContentPlan(ctx context.Context) (*RunContentPlanOutput, error) {
 	st := getRequestState(ctx)
-	if st.heavyActionRan() {
+	if !st.reserveHeavyAction() {
 		return &RunContentPlanOutput{Note: heavySkipNote}, nil
 	}
 	if st.contentPlan == nil {
@@ -377,7 +394,7 @@ func toAssetRefs(in []content_plan.AssetRef) []AssetRef {
 
 func toolEnrichBrief(ctx context.Context, in EnrichBriefInput) (*EnrichBriefOutput, error) {
 	st := getRequestState(ctx)
-	if st.heavyActionRan() {
+	if !st.reserveHeavyAction() {
 		return &EnrichBriefOutput{Applied: false, Note: heavySkipNote}, nil
 	}
 	if st.enrichBrief == nil {
@@ -458,7 +475,7 @@ func toolGetCampaignOverview(ctx context.Context) (*overview.Overview, error) {
 
 func toolGeneratePosts(ctx context.Context, in GeneratePostsInput) (*GeneratePostsOutput, error) {
 	st := getRequestState(ctx)
-	if st.heavyActionRan() {
+	if !st.reserveHeavyAction() {
 		return &GeneratePostsOutput{Note: heavySkipNote}, nil
 	}
 	if st.generatePosts == nil {
@@ -1026,7 +1043,7 @@ func dateOnly(t time.Time) time.Time {
 
 func toolCheckBrief(ctx context.Context) (*consistency.BriefReview, error) {
 	st := getRequestState(ctx)
-	if st.heavyActionRan() {
+	if !st.reserveHeavyAction() {
 		return &consistency.BriefReview{Summary: heavySkipNote}, nil
 	}
 	if st.checkBrief == nil {
@@ -1044,7 +1061,7 @@ func toolCheckBrief(ctx context.Context) (*consistency.BriefReview, error) {
 
 func toolCheckPostsConsistency(ctx context.Context, in CheckPostsInput) (*consistency.PostsReview, error) {
 	st := getRequestState(ctx)
-	if st.heavyActionRan() {
+	if !st.reserveHeavyAction() {
 		return &consistency.PostsReview{Summary: heavySkipNote}, nil
 	}
 	if st.checkPosts == nil {

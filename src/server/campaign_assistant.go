@@ -55,7 +55,7 @@ func initCampaignAssistant(
 		// "exceeded maximum tool call iterations" 502 (CON-213). We now give the
 		// read chain room (4) and keep the real cost guard — "at most one heavy
 		// Sonnet sub-flow per turn" — enforced precisely inside the tools
-		// themselves (see requestState.heavyActionRan), not via a blunt turn cap.
+		// themselves (see requestState.reserveHeavyAction), not via a blunt turn cap.
 		MaxOutputTokens: 2048,
 		MaxTurns:        4,
 		Hub:             hub,

@@ -2,10 +2,10 @@ package campaign_assistant
 
 import (
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/ogen-app/ogen/src/genkit/flows/consistency"
 	"github.com/ogen-app/ogen/src/models"
 )
 
@@ -213,39 +213,51 @@ func TestResolveGenerateCount(t *testing.T) {
 	}
 }
 
-// CON-213: the per-turn heavy-action latch. Each of the five expensive
-// sub-flow results flips it; the cheap DB-only results (dates, redistribute) do
-// not, so a date change can still precede a generation in the same turn.
-func TestHeavyActionRan(t *testing.T) {
-	if (&requestState{}).heavyActionRan() {
-		t.Fatal("fresh state must report no heavy action")
+// CON-213: the per-turn heavy-action latch. Exactly one reservation succeeds
+// per requestState; every later caller is turned away and skips its sub-flow.
+func TestReserveHeavyAction_Sequential(t *testing.T) {
+	st := &requestState{}
+	if !st.reserveHeavyAction() {
+		t.Fatal("first reservation must succeed")
 	}
-
-	heavy := []struct {
-		name string
-		set  func(*requestState)
-	}{
-		{"contentPlan", func(s *requestState) { s.contentPlanResult = &ContentPlanResult{} }},
-		{"generatedPosts", func(s *requestState) { s.generatedPostsResult = &GeneratedPostsResult{} }},
-		{"brief", func(s *requestState) { s.briefResult = &BriefResult{} }},
-		{"briefReview", func(s *requestState) { s.briefReviewResult = &consistency.BriefReview{} }},
-		{"postsReview", func(s *requestState) { s.postsReviewResult = &consistency.PostsReview{} }},
-	}
-	for _, h := range heavy {
-		st := &requestState{}
-		h.set(st)
-		if !st.heavyActionRan() {
-			t.Errorf("%s result should flip heavyActionRan", h.name)
+	for i := 0; i < 3; i++ {
+		if st.reserveHeavyAction() {
+			t.Fatalf("reservation %d must fail once the slot is taken", i+2)
 		}
 	}
+}
 
-	// Cheap mutations do not count as a heavy action.
-	cheap := &requestState{
-		datesResult:        &DatesResult{},
-		redistributeResult: &RedistributeResult{},
+// CON-213: genkit dispatches a turn's tool calls in parallel goroutines, so the
+// reservation must admit exactly one winner even under simultaneous contention
+// (guards against the TOCTOU/data race a completion-based check had). Run under
+// -race to also catch unsynchronised access.
+func TestReserveHeavyAction_Concurrent(t *testing.T) {
+	st := &requestState{}
+	const goroutines = 64
+
+	var start sync.WaitGroup
+	var done sync.WaitGroup
+	start.Add(1)
+	done.Add(goroutines)
+
+	var wins int64
+	var mu sync.Mutex
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer done.Done()
+			start.Wait() // release all goroutines at once to maximise contention
+			if st.reserveHeavyAction() {
+				mu.Lock()
+				wins++
+				mu.Unlock()
+			}
+		}()
 	}
-	if cheap.heavyActionRan() {
-		t.Fatal("cheap date/redistribute results must not flip heavyActionRan")
+	start.Done()
+	done.Wait()
+
+	if wins != 1 {
+		t.Fatalf("exactly one reservation must win, got %d", wins)
 	}
 }
 
