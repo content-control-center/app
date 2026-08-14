@@ -88,12 +88,31 @@ func (r *assetRepository) UpdateStatus(ctx context.Context, id, status string) e
 // Delete removes the asset and, in the same transaction, scrubs its id from
 // every campaign.asset_ids and post.used_asset_ids (CON-214). Without the
 // scrub a deleted asset lingers as a dangling reference that later hard-fails
-// content generation ("asset %q not found"). The tenant predicate is added by
-// the TenantScoped BeforeUpdate/BeforeDelete hooks, so all three statements
-// stay within the caller's tenant.
+// content generation ("asset %q not found").
+//
+// In a tenant context the TenantScoped hooks scope every statement to the
+// caller's tenant. Under a system context those hooks add no predicate, so we
+// capture the deleted asset's tenant up front and scope the jsonb-scrub updates
+// to it explicitly — a system-context delete can never touch another tenant's
+// campaigns or posts.
 func (r *assetRepository) Delete(ctx context.Context, id string) (bool, error) {
 	var deleted bool
 	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Read the owning tenant before the delete so the cleanup updates below
+		// can be scoped to it even when no tenant is in context (system context).
+		var tenantID string
+		err := tx.NewSelect().
+			Model((*models.Asset)(nil)).
+			Column("tenant_id").
+			Where("id = ?", id).
+			Scan(ctx, &tenantID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil // asset not found → nothing to delete or scrub
+		}
+		if err != nil {
+			return err
+		}
+
 		res, err := tx.NewDelete().Model((*models.Asset)(nil)).Where("id = ?", id).Exec(ctx)
 		if err != nil {
 			return err
@@ -107,7 +126,8 @@ func (r *assetRepository) Delete(ctx context.Context, id string) (bool, error) {
 		// jsonb array element removal: `col - <text>` drops matching elements.
 		// The @> guard limits each update to rows that actually reference the id;
 		// the needle is the id encoded as a JSON scalar so containment matches an
-		// array element (e.g. asset_ids @> '"abc"').
+		// array element (e.g. asset_ids @> '"abc"'). The tenant_id predicate keeps
+		// the scrub within the deleted asset's tenant under a system context.
 		needle, err := json.Marshal(id)
 		if err != nil {
 			return err
@@ -115,6 +135,7 @@ func (r *assetRepository) Delete(ctx context.Context, id string) (bool, error) {
 		if _, err := tx.NewUpdate().
 			Model((*models.Campaign)(nil)).
 			Set("asset_ids = asset_ids - ?", id).
+			Where("tenant_id = ?", tenantID).
 			Where("asset_ids @> ?::jsonb", string(needle)).
 			Exec(ctx); err != nil {
 			return err
@@ -122,6 +143,7 @@ func (r *assetRepository) Delete(ctx context.Context, id string) (bool, error) {
 		if _, err := tx.NewUpdate().
 			Model((*models.Post)(nil)).
 			Set("used_asset_ids = used_asset_ids - ?", id).
+			Where("tenant_id = ?", tenantID).
 			Where("used_asset_ids @> ?::jsonb", string(needle)).
 			Exec(ctx); err != nil {
 			return err
