@@ -115,6 +115,11 @@ func TestToolDraftPost_DeclinesWithoutSource(t *testing.T) {
 	if st.draftPostResult != nil {
 		t.Fatal("draftPostResult must stay nil on decline")
 	}
+	// The decline must NOT consume the turn's heavy-action slot (CON-213): a later
+	// valid heavy tool call must still be able to reserve and run.
+	if !st.reserveHeavyAction() {
+		t.Fatal("a no-source decline must leave the heavy-action slot available")
+	}
 }
 
 // The per-call cap is a TOTAL budget across platforms: count=3 over two

@@ -636,9 +636,6 @@ const noDraftSourceNote = "There's no research in this chat to turn into a post 
 // Sonnet draft_post flow once per platform and persists each draft content-first.
 func toolDraftPost(ctx context.Context, in DraftPostInput) (*DraftPostOutput, error) {
 	st := getRequestState(ctx)
-	if !st.reserveHeavyAction() {
-		return &DraftPostOutput{Note: heavySkipNote}, nil
-	}
 	if st.draftPost == nil {
 		return nil, fmt.Errorf("post drafting is not available")
 	}
@@ -646,7 +643,9 @@ func toolDraftPost(ctx context.Context, in DraftPostInput) (*DraftPostOutput, er
 	now := time.Now().UTC()
 
 	// Source material: an explicit override, else the latest research answer from
-	// earlier in this chat. No source → graceful decline (no posts created).
+	// earlier in this chat. Resolved BEFORE the heavy-action reservation so a
+	// no-source decline (a graceful non-error return, unlike the other heavy
+	// tools) leaves the turn's single heavy slot free for another heavy tool.
 	source, err := resolveDraftSource(ctx, st, in.SourceMaterial)
 	if err != nil {
 		return nil, err
@@ -671,6 +670,15 @@ func toolDraftPost(ctx context.Context, in DraftPostInput) (*DraftPostOutput, er
 	windowStart, windowEnd, err := resolveWindow(in.PublishDate, in.PublishDate, now)
 	if err != nil {
 		return nil, err
+	}
+
+	// Reserve the turn's single heavy-action slot only now — after source and
+	// input validation succeed — so a no-source or invalid-input decline above
+	// never burns the slot for a later heavy tool (CON-213). The reservation still
+	// precedes every st.draftPost flow call, so two heavy tools dispatched in
+	// parallel can never both generate.
+	if !st.reserveHeavyAction() {
+		return &DraftPostOutput{Note: heavySkipNote}, nil
 	}
 
 	maxN := st.maxDraftPosts
