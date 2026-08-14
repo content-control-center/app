@@ -222,7 +222,7 @@ func runContentPlan(
 
 	// ── Step 1: validateInput ─────────────────────────────────────────────────
 	slog.InfoContext(ctx, "step 1/6 validateInput", logging.AttrComponent, "genkit.content_plan", "campaign_id", req.CampaignID)
-	campaign, err := validateInput(ctx, req.CampaignID, repos.Campaigns, repos.Assets)
+	campaign, err := validateInput(ctx, req.CampaignID, repos.Campaigns)
 	if err != nil {
 		slog.ErrorContext(ctx, "validateInput failed", logging.AttrComponent, "genkit.content_plan", "campaign_id", req.CampaignID, "duration_ms", time.Since(start).Milliseconds(), logging.AttrError, err)
 		return nil, err
@@ -316,7 +316,7 @@ func runGeneratePosts(
 
 	// A fully-configured campaign is still required (brief, phases, dates,
 	// platforms); the targeted window is separate.
-	campaign, err := validateInput(ctx, req.CampaignID, repos.Campaigns, repos.Assets)
+	campaign, err := validateInput(ctx, req.CampaignID, repos.Campaigns)
 	if err != nil {
 		return nil, err
 	}
