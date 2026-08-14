@@ -120,6 +120,19 @@ func TestResolvePlatform(t *testing.T) {
 		t.Fatalf("default post type = %q, want text-post", got.PostType)
 	}
 
+	// No explicit type and no campaign-selected slugs → the lexicographically
+	// first platform slug (deterministic, not map-iteration order).
+	multi := &fakePlatformRepo{platforms: []models.Platform{
+		{ID: "x", Name: "X", PostTypes: models.PostTypeMap{"zeta": "Z", "alpha": "A", "mid": "M"}},
+	}}
+	got, err = resolvePlatform(context.Background(), &models.Campaign{}, "x", "", multi)
+	if err != nil {
+		t.Fatalf("map fallback: %v", err)
+	}
+	if got.PostType != "alpha" {
+		t.Fatalf("map fallback post type = %q, want alpha (lexicographically first)", got.PostType)
+	}
+
 	// Unknown platform id → error.
 	if _, err := resolvePlatform(context.Background(), campaign, "nope", "", repo); err == nil {
 		t.Fatal("expected error for unknown platform id")

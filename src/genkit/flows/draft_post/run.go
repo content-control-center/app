@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"text/template"
 	"time"
@@ -412,11 +413,15 @@ func resolvePlatform(ctx context.Context, campaign *models.Campaign, platformID,
 	if resolvedType == "" {
 		if len(campaignSlugs) > 0 {
 			resolvedType = campaignSlugs[0]
-		} else {
+		} else if len(p.PostTypes) > 0 {
+			// Map iteration order is randomised, so pick the lexicographically first
+			// available slug for a deterministic default across identical requests.
+			slugs := make([]string, 0, len(p.PostTypes))
 			for slug := range p.PostTypes {
-				resolvedType = slug
-				break
+				slugs = append(slugs, slug)
 			}
+			sort.Strings(slugs)
+			resolvedType = slugs[0]
 		}
 	}
 	return resolvedPlatform{ID: p.ID, Name: p.Name, PostType: resolvedType, Constraints: p.Constraints}, nil
