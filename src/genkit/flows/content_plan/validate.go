@@ -10,7 +10,7 @@ import (
 	"github.com/ogen-app/ogen/src/repository"
 )
 
-func validateInput(ctx context.Context, campaignID string, campaignRepo repository.CampaignRepository, pieceRepo repository.AssetRepository) (*models.Campaign, error) {
+func validateInput(ctx context.Context, campaignID string, campaignRepo repository.CampaignRepository) (*models.Campaign, error) {
 	c, err := campaignRepo.GetByID(ctx, campaignID)
 	if err != nil {
 		return nil, err
@@ -58,14 +58,13 @@ func validateInput(ctx context.Context, campaignID string, campaignRepo reposito
 		return nil, &ValidationError{Msg: "date range must be at least 1 day"}
 	}
 
-	// Verify specific asset IDs exist when UseAssets is true and IDs are given.
-	if c.UseAssets && len(c.AssetIDs) > 0 {
-		for _, id := range c.AssetIDs {
-			if _, err := pieceRepo.GetByID(ctx, id); err != nil {
-				return nil, &ValidationError{Msg: fmt.Sprintf("asset %q not found", id)}
-			}
-		}
-	}
+	// NB: we deliberately do NOT hard-check that every id in c.AssetIDs still
+	// exists. An asset can be deleted while its id lingers in a campaign's
+	// asset_ids (CON-214), and resolveAssets → collectReadyCandidateIDs already
+	// skips missing/unready ids with a warning ("asset %q could not be loaded —
+	// skipped") and proceeds without asset context when all are gone. A strict
+	// check here only turned that recoverable stale reference into a fatal tool
+	// error that 502'd the whole assistant turn.
 
 	return c, nil
 }

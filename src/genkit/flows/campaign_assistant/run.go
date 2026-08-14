@@ -200,24 +200,40 @@ func runCampaignAssistant(
 		cfg.Provider.CallConfig(maxTokens),
 	)
 	genMs := time.Since(genStart).Milliseconds()
+	// A max-tool-iterations abort is recoverable, not fatal (CON-213): any tools
+	// that ran committed their side effects and set st.*Result, and the streamed
+	// explanation is already in the scanner. Rather than 502ing and hiding
+	// committed work, fall through to finalise from whatever the turn produced.
+	// genkit returns a nil resp on this error, so every resp.* access below is
+	// nil-guarded and the planner's final-turn usage simply goes unrecorded.
+	turnCutShort := false
 	if err != nil {
-		slog.ErrorContext(ctx, "model call failed", logging.AttrComponent, "genkit.campaign_assistant", "campaign_id", req.CampaignID, "duration_ms", time.Since(start).Milliseconds(), logging.AttrError, err)
-		return nil, &AIError{Msg: fmt.Sprintf("model call failed: %v", err)}
+		if isMaxTurnsExceeded(err) {
+			turnCutShort = true
+			slog.WarnContext(ctx, "tool-call budget exhausted; finalising from committed results", logging.AttrComponent, "genkit.campaign_assistant", "campaign_id", req.CampaignID, "max_turns", maxTurns, "duration_ms", time.Since(start).Milliseconds())
+		} else {
+			slog.ErrorContext(ctx, "model call failed", logging.AttrComponent, "genkit.campaign_assistant", "campaign_id", req.CampaignID, "duration_ms", time.Since(start).Milliseconds(), logging.AttrError, err)
+			return nil, &AIError{Msg: fmt.Sprintf("model call failed: %v", err)}
+		}
 	}
 
-	if resp.FinishReason == ai.FinishReasonLength {
+	if resp != nil && resp.FinishReason == ai.FinishReasonLength {
 		var outputTokens int64
 		if resp.Usage != nil {
 			outputTokens = int64(resp.Usage.OutputTokens)
 		}
 		slog.WarnContext(ctx, "response truncated at max tokens", logging.AttrComponent, "genkit.campaign_assistant", "campaign_id", req.CampaignID, "output_tokens", outputTokens, "cap", maxTokens)
 	}
-	if resp.Usage != nil {
+	if resp != nil && resp.Usage != nil {
 		slog.InfoContext(ctx, "tokens", logging.AttrComponent, "genkit.campaign_assistant", "campaign_id", req.CampaignID, "input", resp.Usage.InputTokens, "output", resp.Usage.OutputTokens, "total", resp.Usage.InputTokens+resp.Usage.OutputTokens)
 	}
 	// Record the planner's usage under this flow name; the sub-flows record
 	// their own under content_plan / enrich_brief, so there's no double count.
-	cfg.Recorder.RecordResp(ctx, cfg.Provider.Vendor(), cfg.Provider.Model(llm.RolePlanning), "campaign_assistant", resp)
+	// resp is nil when the turn was cut short at MaxTurns (CON-213) — nothing to
+	// record for that final partial turn; the heavy sub-flows already recorded.
+	if resp != nil {
+		cfg.Recorder.RecordResp(ctx, cfg.Provider.Vendor(), cfg.Provider.Model(llm.RolePlanning), "campaign_assistant", resp)
+	}
 
 	// ── Assemble response from scanner ───────────────────────────────────────
 	vals := scanner.Values()
@@ -319,6 +335,13 @@ func runCampaignAssistant(
 	// Genuinely unusable — nothing came through.
 	if result.Explanation == "" {
 		raw := scanner.FullText()
+		// Cut short at MaxTurns with nothing committed and no prose (CON-213):
+		// the planner kept calling tools without ever answering. Give the user an
+		// actionable nudge instead of the generic parse-failure message.
+		if turnCutShort {
+			slog.WarnContext(ctx, "turn cut short with no committed result", logging.AttrComponent, "genkit.campaign_assistant", "campaign_id", req.CampaignID, "len", len(raw))
+			return nil, &AIError{Msg: "I couldn't complete that in a single step. Try splitting it into smaller requests, or rephrasing."}
+		}
 		slog.ErrorContext(ctx, "scanner found no usable fields", logging.AttrComponent, "genkit.campaign_assistant", "campaign_id", req.CampaignID, "len", len(raw), "raw_preview", logging.Preview(raw, 500))
 		return nil, &AIError{Msg: "model response did not contain the expected fields"}
 	}
@@ -419,6 +442,15 @@ func runCampaignAssistant(
 	emit(onEvent, SSEEventComplete, &result)
 
 	return &result, nil
+}
+
+// isMaxTurnsExceeded reports whether err is genkit's "exceeded maximum tool
+// call iterations" abort (ai/generate.go). It is matched on the stable message
+// substring — genkit returns it as a core.ABORTED error with no exported
+// sentinel — so a tool-happy planner degrades gracefully instead of 502ing
+// (CON-213).
+func isMaxTurnsExceeded(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "maximum tool call iterations")
 }
 
 // persistTurn stores the user instruction verbatim and the model turn as a

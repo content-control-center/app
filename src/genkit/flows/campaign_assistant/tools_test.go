@@ -2,6 +2,8 @@ package campaign_assistant
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -259,6 +261,74 @@ func TestResolveGenerateCount(t *testing.T) {
 		}
 	}
 }
+
+// CON-213: the per-turn heavy-action latch. Exactly one reservation succeeds
+// per requestState; every later caller is turned away and skips its sub-flow.
+func TestReserveHeavyAction_Sequential(t *testing.T) {
+	st := &requestState{}
+	if !st.reserveHeavyAction() {
+		t.Fatal("first reservation must succeed")
+	}
+	for i := 0; i < 3; i++ {
+		if st.reserveHeavyAction() {
+			t.Fatalf("reservation %d must fail once the slot is taken", i+2)
+		}
+	}
+}
+
+// CON-213: genkit dispatches a turn's tool calls in parallel goroutines, so the
+// reservation must admit exactly one winner even under simultaneous contention
+// (guards against the TOCTOU/data race a completion-based check had). Run under
+// -race to also catch unsynchronised access.
+func TestReserveHeavyAction_Concurrent(t *testing.T) {
+	st := &requestState{}
+	const goroutines = 64
+
+	var start sync.WaitGroup
+	var done sync.WaitGroup
+	start.Add(1)
+	done.Add(goroutines)
+
+	var wins int64
+	var mu sync.Mutex
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer done.Done()
+			start.Wait() // release all goroutines at once to maximise contention
+			if st.reserveHeavyAction() {
+				mu.Lock()
+				wins++
+				mu.Unlock()
+			}
+		}()
+	}
+	start.Done()
+	done.Wait()
+
+	if wins != 1 {
+		t.Fatalf("exactly one reservation must win, got %d", wins)
+	}
+}
+
+// CON-213: the max-tool-iterations abort is detected by its stable message
+// substring so the turn degrades gracefully instead of 502ing.
+func TestIsMaxTurnsExceeded(t *testing.T) {
+	if isMaxTurnsExceeded(nil) {
+		t.Fatal("nil error is not a max-turns abort")
+	}
+	if isMaxTurnsExceeded(errors.New("some other failure")) {
+		t.Fatal("unrelated error must not match")
+	}
+	// The genkit message form (ai/generate.go), verbatim and wrapped.
+	if !isMaxTurnsExceeded(errors.New("exceeded maximum tool call iterations (2)")) {
+		t.Fatal("genkit abort message must match")
+	}
+	if !isMaxTurnsExceeded(fmtWrap(errors.New("exceeded maximum tool call iterations (4)"))) {
+		t.Fatal("wrapped genkit abort message must match")
+	}
+}
+
+func fmtWrap(err error) error { return errors.Join(errors.New("model call failed"), err) }
 
 // CON-114: a single post with only a start date is pinned to that day, so
 // "generate 1 for Jul 22" lands on Jul 22 instead of the midpoint of the
