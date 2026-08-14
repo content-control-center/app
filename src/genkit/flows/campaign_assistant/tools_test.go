@@ -1,9 +1,11 @@
 package campaign_assistant
 
 import (
+	"context"
 	"testing"
 	"time"
 
+	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/models"
 )
 
@@ -106,6 +108,53 @@ func TestResolveTargetPlatforms(t *testing.T) {
 	// A non-target platform is rejected (offer-to-add path).
 	if _, _, err := resolveTargetPlatforms(c, []string{"TikTok"}); err == nil {
 		t.Fatal("expected error for a non-target platform")
+	}
+}
+
+// TestGeneratePosts_SoftFailsUserInput verifies that generatePosts does NOT
+// abort the turn (return a Go error) for user-correctable input — a past date,
+// a non-target platform, or an unknown phase. Instead it returns a zero-post
+// result carrying the reason as a warning, so the assistant can relay it and
+// suggest a valid alternative (CON-215). A Go error here would surface to the
+// user as a raw "model call failed".
+func TestGeneratePosts_SoftFailsUserInput(t *testing.T) {
+	newState := func() *requestState {
+		return &requestState{
+			campaignID:       "c1",
+			campaign:         timelineCampaign(), // no repos → ensureCampaignAssetUse no-ops
+			maxGeneratePosts: 10,
+			generatePosts: func(context.Context, content_plan.GeneratePostsRequest, content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error) {
+				t.Fatal("generation engine must not run for invalid input")
+				return nil, nil
+			},
+		}
+	}
+
+	cases := []struct {
+		name string
+		in   GeneratePostsInput
+	}{
+		// 2020 is unambiguously before any real "today", so this is clock-safe.
+		{"past window", GeneratePostsInput{Platforms: []string{"Threads"}, WindowStart: "2020-01-01", WindowEnd: "2020-01-01"}},
+		{"non-target platform", GeneratePostsInput{Platforms: []string{"TikTok"}}},
+		{"unknown phase", GeneratePostsInput{Platforms: []string{"Threads"}, Phase: "Nonexistent"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newState()
+			ctx := withRequestState(context.Background(), st)
+			out, err := toolGeneratePosts(ctx, tc.in)
+			if err != nil {
+				t.Fatalf("want soft failure (nil error), got %v", err)
+			}
+			if out == nil || out.PostCount != 0 || len(out.Warnings) == 0 {
+				t.Fatalf("want zero posts + a warning, got %+v", out)
+			}
+			// Must stay conversational: a soft failure never records a generated-posts result.
+			if st.generatedPostsResult != nil {
+				t.Fatalf("soft failure must not set generatedPostsResult")
+			}
+		})
 	}
 }
 
