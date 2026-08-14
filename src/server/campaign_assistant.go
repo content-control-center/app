@@ -46,11 +46,18 @@ func initCampaignAssistant(
 		ModelID:  cfg.PlanningModelID,
 		// Router slimming (CON-112 perf): the planner only emits a short JSON
 		// envelope (explanation + action) plus tool calls, so 2048 is ample and
-		// bounds worst-case streaming; MaxTurns 2 lets it call at most one tool
-		// per turn (model → tool → compose), preventing several heavy Sonnet
-		// sub-flows from chaining inside a single chat turn.
+		// bounds worst-case streaming.
+		//
+		// MaxTurns bounds tool-use round-trips. It was 2 (CON-112), but that
+		// double-counted "turns" and heavy sub-flow cost: the cheap Haiku planner
+		// legitimately chains a couple of read tools (getCampaignOverview →
+		// listCampaignPosts → act) and blew the budget, surfacing a hard
+		// "exceeded maximum tool call iterations" 502 (CON-213). We now give the
+		// read chain room (4) and keep the real cost guard — "at most one heavy
+		// Sonnet sub-flow per turn" — enforced precisely inside the tools
+		// themselves (see requestState.reserveHeavyAction), not via a blunt turn cap.
 		MaxOutputTokens: 2048,
-		MaxTurns:        2,
+		MaxTurns:        4,
 		Hub:             hub,
 		// CON-112: pre-warm the strict-tool grammar cache at boot when we're also
 		// stabilizing tool order (otherwise the warmed key wouldn't match).
