@@ -2,6 +2,7 @@ package campaign_assistant
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -18,6 +19,7 @@ import (
 	"github.com/ogen-app/ogen/src/genkit/embedopts"
 	"github.com/ogen-app/ogen/src/genkit/flows/consistency"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
+	"github.com/ogen-app/ogen/src/genkit/flows/draft_post"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
@@ -38,6 +40,9 @@ type requestState struct {
 	campaign   *models.Campaign
 	repos      CampaignAssistantRepos
 	onEvent    OnEventFunc
+	// instruction is the current user turn, passed to draftPost as steering for
+	// the Sonnet drafter (CON-207 FR2).
+	instruction string
 	// embedder backs the askCampaignAssets read tool (CON-118); nil / unavailable
 	// degrades that tool to "search unavailable".
 	embedder ai.Embedder
@@ -51,6 +56,10 @@ type requestState struct {
 	// maxGeneratePosts caps a single call.
 	generatePosts    func(ctx context.Context, req content_plan.GeneratePostsRequest, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)
 	maxGeneratePosts int
+	// draftPost backs the draftPost tool (CON-207): rewrite chat research into
+	// extended, content-first post drafts; maxDraftPosts caps a single call.
+	draftPost     func(ctx context.Context, req draft_post.DraftPostRequest, onEvent draft_post.OnEventFunc) (*draft_post.DraftPostResponse, error)
+	maxDraftPosts int
 	// checkBrief / checkPosts back the read-only consistency review tools (CON-116).
 	checkBrief func(ctx context.Context, campaignID string, onEvent consistency.OnEventFunc) (*consistency.BriefReview, error)
 	checkPosts func(ctx context.Context, req consistency.PostsCheckRequest, onEvent consistency.OnEventFunc) (*consistency.PostsReview, error)
@@ -69,6 +78,7 @@ type requestState struct {
 	contentPlanResult    *ContentPlanResult
 	briefResult          *BriefResult
 	generatedPostsResult *GeneratedPostsResult
+	draftPostResult      *DraftPostResult
 	datesResult          *DatesResult
 	redistributeResult   *RedistributeResult
 	briefReviewResult    *consistency.BriefReview
@@ -173,6 +183,36 @@ type GeneratePostsOutput struct {
 	Note string `json:"note,omitempty"`
 }
 
+// DraftPostInput is the input for the draftPost tool (CON-207). The model
+// resolves the platform, count, and publish date from the conversation before
+// calling; the source material (the research to rewrite) is loaded server-side
+// from the chat unless SourceMaterial overrides it.
+type DraftPostInput struct {
+	Platforms      []string `json:"platforms"                jsonschema:"description=Platform names or ids to draft for, e.g. [\"LinkedIn\"]. Must be platforms the campaign already targets."`
+	Count          int      `json:"count,omitempty"          jsonschema:"description=Number of posts to draft per platform: the exact number the user names (\"draft 1 post\"->1, \"3 LinkedIn posts\"->3). Omit for 1. Capped per call."`
+	PublishDate    string   `json:"publishDate,omitempty"    jsonschema:"description=Publish date (ISO YYYY-MM-DD) resolved from the requested timeframe against today; omit to spread across the next two weeks. Must be today or later."`
+	PostType       string   `json:"postType,omitempty"       jsonschema:"description=Optional post-type slug (e.g. text-post, article); omit for the platform default."`
+	SourceMaterial string   `json:"sourceMaterial,omitempty" jsonschema:"description=Optional override source text to turn into posts. Omit to use the research already discussed earlier in this chat (the normal case)."`
+}
+
+// DraftPostOutput is returned to the model after drafts are created.
+type DraftPostOutput struct {
+	PostCount      int        `json:"postCount"`
+	RequestedCount int        `json:"requestedCount"`
+	Clamped        bool       `json:"clamped"` // true when the request exceeded the per-call cap
+	PlatformIDs    []string   `json:"platformIds"`
+	Platforms      []string   `json:"platforms"` // resolved platform names
+	PhaseID        string     `json:"phaseId"`
+	PhaseName      string     `json:"phaseName"`
+	Dates          []string   `json:"dates,omitempty"` // actual publish dates of the created posts
+	Warnings       []string   `json:"warnings,omitempty"`
+	UsedAssets     []AssetRef `json:"usedAssets,omitempty"`
+	// Note carries a status when the tool short-circuited without running — a
+	// heavy action already ran this turn (CON-213), or there's no research to
+	// draft from (CON-207).
+	Note string `json:"note,omitempty"`
+}
+
 // SetCampaignDatesInput is the input for the setCampaignDates tool (CON-115).
 // The model resolves relative phrasing ("beginning of July") against today.
 type SetCampaignDatesInput struct {
@@ -227,6 +267,7 @@ type toolSet struct {
 	listCampaignPosts     ai.ToolRef
 	getCampaignOverview   ai.ToolRef
 	generatePosts         ai.ToolRef
+	draftPost             ai.ToolRef
 	setCampaignDates      ai.ToolRef
 	redistributePosts     ai.ToolRef
 	checkBrief            ai.ToolRef
@@ -272,6 +313,17 @@ func defineTools(g *genkit.Genkit) *toolSet {
 			"Resolve the requested timeframe into windowStart/windowEnd (ISO dates) using today's date shown in the context. Returns how many posts were created.",
 		func(ctx *ai.ToolContext, in GeneratePostsInput) (*GeneratePostsOutput, error) {
 			return toolGeneratePosts(ctx, in)
+		},
+	)
+
+	draftPost := genkit.DefineTool(g, "draftPost",
+		"Turns research already discussed in THIS chat (typically an askCampaignAssets answer) into one or more finished, ready-to-publish post drafts — full copy, not a bullet outline — for a specific platform. "+
+			"Call this when the user asks to 'create/write/draft a post with this info / from this research / based on that' after you've answered a question about the campaign's assets. "+
+			"Different from generatePosts (which produces terse draft-thesis outlines for bulk planning) and runContentPlan (which regenerates the whole plan). Only platforms the campaign already targets are allowed. "+
+			"Resolve the publish date to ISO YYYY-MM-DD against today's date shown in the context; omit it to spread across the next two weeks. Set count to the number the user asks for. "+
+			"The research is loaded automatically from the conversation — do NOT paste it back; pass sourceMaterial only when the user supplied fresh material in this very message. Returns how many posts were drafted.",
+		func(ctx *ai.ToolContext, in DraftPostInput) (*DraftPostOutput, error) {
+			return toolDraftPost(ctx, in)
 		},
 	)
 
@@ -325,6 +377,7 @@ func defineTools(g *genkit.Genkit) *toolSet {
 		listCampaignPosts:     listCampaignPosts,
 		getCampaignOverview:   getCampaignOverview,
 		generatePosts:         generatePosts,
+		draftPost:             draftPost,
 		setCampaignDates:      setCampaignDates,
 		redistributePosts:     redistributePosts,
 		checkBrief:            checkBrief,
@@ -570,6 +623,187 @@ func toolGeneratePosts(ctx context.Context, in GeneratePostsInput) (*GeneratePos
 		Warnings:       resp.Warnings,
 		UsedAssets:     used,
 	}, nil
+}
+
+// noDraftSourceNote steers the planner to ask the user to research first when
+// there's no source material to draft from (CON-207).
+const noDraftSourceNote = "There's no research in this chat to turn into a post yet. Ask me a question about the campaign's assets first (or paste the material into your message), then I'll draft a post from it."
+
+// toolDraftPost turns research already discussed in the chat into finished,
+// content-first post drafts (CON-207). It loads the source material server-side
+// (the latest assistant answer, or a paste-in override), resolves the platform /
+// phase / count / date with the same helpers as generatePosts, then runs the
+// Sonnet draft_post flow once per platform and persists each draft content-first.
+func toolDraftPost(ctx context.Context, in DraftPostInput) (*DraftPostOutput, error) {
+	st := getRequestState(ctx)
+	if !st.reserveHeavyAction() {
+		return &DraftPostOutput{Note: heavySkipNote}, nil
+	}
+	if st.draftPost == nil {
+		return nil, fmt.Errorf("post drafting is not available")
+	}
+	campaign := st.campaign
+	now := time.Now().UTC()
+
+	// Source material: an explicit override, else the latest research answer from
+	// earlier in this chat. No source → graceful decline (no posts created).
+	source, err := resolveDraftSource(ctx, st, in.SourceMaterial)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(source) == "" {
+		return &DraftPostOutput{Note: noDraftSourceNote}, nil
+	}
+
+	// Reuse the generatePosts resolvers verbatim (CON-114).
+	platformIDs, platformNames, err := resolveTargetPlatforms(campaign, in.Platforms)
+	if err != nil {
+		return nil, err
+	}
+	// draftPost always targets the current phase — it drafts "now", from what was
+	// just discussed. (A future revision can accept an explicit phase.)
+	phaseID, phaseName, err := resolvePhase(campaign, "", now)
+	if err != nil {
+		return nil, err
+	}
+	// A single publish date: pin both window bounds to it so N posts land on that
+	// day; omitted → the next two weeks, across which the flow spreads them.
+	windowStart, windowEnd, err := resolveWindow(in.PublishDate, in.PublishDate, now)
+	if err != nil {
+		return nil, err
+	}
+
+	maxN := st.maxDraftPosts
+	if maxN <= 0 {
+		maxN = 5
+	}
+	perPlatform, requested, clamped := resolveGenerateCount(in.Count, maxN)
+
+	emit(st.onEvent, SSEEventDraftPostStarted, DraftPostStartedEventPayload{
+		PlatformIDs: platformIDs,
+		Count:       perPlatform,
+	})
+
+	// Forward the flow's nested events, namespaced, so drafts stream in live.
+	nested := draft_post.OnEventFunc(func(name draft_post.SSEEventKind, data any) {
+		switch name {
+		case draft_post.SSEEventStep:
+			emit(st.onEvent, SSEEventDraftPostStep, data)
+		case draft_post.SSEEventPost:
+			emit(st.onEvent, SSEEventDraftPostPost, data)
+		case draft_post.SSEEventWarning:
+			emit(st.onEvent, SSEEventDraftPostWarning, data)
+		}
+	})
+
+	// One flow call per platform, with a shared budget so the total across all
+	// platforms never exceeds the per-call cap (CON-207 §10).
+	var (
+		total    int
+		allDates []string
+		allWarn  []string
+	)
+	budget := maxN
+	for _, pid := range platformIDs {
+		if budget <= 0 {
+			clamped = true
+			break
+		}
+		n := perPlatform
+		if n > budget {
+			n = budget
+			clamped = true
+		}
+		resp, err := st.draftPost(ctx, draft_post.DraftPostRequest{
+			CampaignID:     st.campaignID,
+			PlatformID:     pid,
+			PostType:       in.PostType,
+			Count:          n,
+			SourceMaterial: source,
+			Instruction:    st.instruction,
+			WindowStart:    windowStart,
+			WindowEnd:      windowEnd,
+			PhaseID:        phaseID,
+			// UsedAssetIDs is intentionally left empty in v1: which assets the prior
+			// research cited isn't tracked, and over-stamping would pollute
+			// asset-usage provenance (cf. CON-214). The "Source research" note on
+			// each post carries the exact source instead.
+		}, nested)
+		if err != nil {
+			return nil, err
+		}
+		total += len(resp.Posts)
+		for _, p := range resp.Posts {
+			if p.PublishDate != "" {
+				allDates = append(allDates, p.PublishDate)
+			}
+		}
+		allWarn = append(allWarn, resp.Warnings...)
+		budget -= len(resp.Posts)
+	}
+
+	st.draftPostResult = &DraftPostResult{
+		PostCount:   total,
+		PlatformIDs: platformIDs,
+		PhaseID:     phaseID,
+		Dates:       allDates,
+		Warnings:    allWarn,
+	}
+	return &DraftPostOutput{
+		PostCount:      total,
+		RequestedCount: requested,
+		Clamped:        clamped,
+		PlatformIDs:    platformIDs,
+		Platforms:      platformNames,
+		PhaseID:        phaseID,
+		PhaseName:      phaseName,
+		Dates:          allDates,
+		Warnings:       allWarn,
+	}, nil
+}
+
+// resolveDraftSource returns the source text to draft from: an explicit override
+// when given, else the most recent research answer in the conversation (CON-207
+// FR2). The stored model message is the compact JSON envelope persistTurn writes
+// (action + explanation), so the research lives in the "explanation" field —
+// parse it rather than using the raw content. Only answers (action "answered" or
+// empty) qualify, so an action-confirmation turn (e.g. a prior post_drafted) is
+// never mistaken for research.
+func resolveDraftSource(ctx context.Context, st *requestState, override string) (string, error) {
+	if s := strings.TrimSpace(override); s != "" {
+		return s, nil
+	}
+	if st.repos.Messages == nil {
+		return "", nil
+	}
+	msgs, err := st.repos.Messages.ListRecentByCampaignID(ctx, st.campaignID, 10)
+	if err != nil {
+		return "", fmt.Errorf("load conversation history: %w", err)
+	}
+	// Messages come back oldest-first; scan newest-first for the latest answer.
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != "model" {
+			continue
+		}
+		var env struct {
+			Action      string `json:"action"`
+			Explanation string `json:"explanation"`
+		}
+		if err := json.Unmarshal([]byte(msgs[i].Content), &env); err != nil {
+			// Legacy/plain-text model message (not JSON-wrapped) — use it directly.
+			if s := strings.TrimSpace(msgs[i].Content); s != "" {
+				return s, nil
+			}
+			continue
+		}
+		if env.Action != "" && env.Action != "answered" {
+			continue // an action confirmation, not research
+		}
+		if s := strings.TrimSpace(env.Explanation); s != "" {
+			return s, nil
+		}
+	}
+	return "", nil
 }
 
 // resolveGenerateCount maps the model-supplied count to the number of posts the

@@ -123,6 +123,12 @@ type Config struct {
 	// tool (CON-114) so it stays an incremental add rather than a full re-plan.
 	GeneratePostsMax int `envconfig:"GENERATE_POSTS_MAX" default:"10"`
 
+	// DraftPostMax caps the Campaign Assistant's draftPost tool (CON-207) — how
+	// many finished, content-first drafts one "create a post from this research"
+	// call may produce (total across platforms). Smaller than GeneratePostsMax:
+	// each draft is full-length copy, not a terse thesis.
+	DraftPostMax int `envconfig:"DRAFT_POST_MAX" default:"5"`
+
 	// ConsistencyPostsMax caps how many posts the Campaign Assistant's posts-vs-
 	// brief consistency check (CON-116) analyzes in a single model call.
 	ConsistencyPostsMax int `envconfig:"CONSISTENCY_POSTS_MAX" default:"20"`

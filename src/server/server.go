@@ -24,6 +24,7 @@ import (
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
+	"github.com/ogen-app/ogen/src/genkit/flows/draft_post"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_quality"
@@ -528,6 +529,12 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 			Posts:     postRepo,
 			Assets:    pieceRepo,
 			Chunks:    chunksRepo,
+		},
+		draftPostRepos: draft_post.DraftPostRepos{
+			Campaigns: campaignRepo,
+			Platforms: platformRepo,
+			Posts:     postRepo,
+			Notes:     postNoteRepo,
 		},
 		campaignOverviewSvc: campaignOverviewSvc,
 		cloneSvc:            cloneSvc,

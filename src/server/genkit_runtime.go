@@ -17,6 +17,7 @@ import (
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/consistency"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
+	"github.com/ogen-app/ogen/src/genkit/flows/draft_post"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_quality"
@@ -69,6 +70,7 @@ type genkitRuntime struct {
 	postQualityRepos    post_quality.PostQualityRepos
 	enrichBriefRepos    enrich_brief.EnrichBriefRepos
 	campaignAssistRepos campaign_assistant.CampaignAssistantRepos
+	draftPostRepos      draft_post.DraftPostRepos
 	campaignOverviewSvc *overview.Service
 	cloneSvc            *clone.Service
 	restoreSvc          *restore.Service
@@ -89,6 +91,7 @@ type genkitDeps struct {
 	postQualityRepos    post_quality.PostQualityRepos
 	enrichBriefRepos    enrich_brief.EnrichBriefRepos
 	campaignAssistRepos campaign_assistant.CampaignAssistantRepos
+	draftPostRepos      draft_post.DraftPostRepos
 	campaignOverviewSvc *overview.Service
 	cloneSvc            *clone.Service
 	restoreSvc          *restore.Service
@@ -114,6 +117,7 @@ func newGenkitRuntime(ctx context.Context, deps genkitDeps, store secrets.Store)
 		postQualityRepos:    deps.postQualityRepos,
 		enrichBriefRepos:    deps.enrichBriefRepos,
 		campaignAssistRepos: deps.campaignAssistRepos,
+		draftPostRepos:      deps.draftPostRepos,
 		campaignOverviewSvc: deps.campaignOverviewSvc,
 		cloneSvc:            deps.cloneSvc,
 		restoreSvc:          deps.restoreSvc,
@@ -314,15 +318,20 @@ func (r *genkitRuntime) rebuild(ctx context.Context, store secrets.Store) error 
 	// CON-114: the targeted generation callback shares the content_plan flow
 	// (already registered by initContentPlan above).
 	generatePostsFn := content_plan.NewGeneratePostsCallback()
+	// CON-207: the draftPost generation flow (asset research → content-first drafts).
+	draftPostFn, err := initDraftPost(g, r.cfg, provider, r.recorder, r.checker, r.draftPostRepos)
+	if err != nil {
+		return fmt.Errorf("init draft post: %w", err)
+	}
 	// CON-116: read-only brief + posts consistency review.
 	checkBriefFn, checkPostsFn, err := initConsistency(g, r.cfg, provider, r.recorder, r.checker, r.hub, r.campaignAssistRepos.Campaigns, r.campaignAssistRepos.Posts)
 	if err != nil {
 		return fmt.Errorf("init consistency: %w", err)
 	}
 	// CON-112: the campaign assistant reuses the content_plan + enrich_brief
-	// callbacks (plus the CON-114 generatePosts and CON-116 consistency
-	// callbacks) as tools, so it is initialised after them.
-	campaignAssistantFn, err := initCampaignAssistant(g, r.cfg, provider, r.recorder, r.checker, r.embedder, r.hub, r.campaignAssistRepos, contentPlanFn, enrichBriefFn, r.campaignOverviewSvc, generatePostsFn, checkBriefFn, checkPostsFn)
+	// callbacks (plus the CON-114 generatePosts, CON-207 draftPost, and CON-116
+	// consistency callbacks) as tools, so it is initialised after them.
+	campaignAssistantFn, err := initCampaignAssistant(g, r.cfg, provider, r.recorder, r.checker, r.embedder, r.hub, r.campaignAssistRepos, contentPlanFn, enrichBriefFn, r.campaignOverviewSvc, generatePostsFn, draftPostFn, checkBriefFn, checkPostsFn)
 	if err != nil {
 		return fmt.Errorf("init campaign assistant: %w", err)
 	}
