@@ -1,9 +1,11 @@
 package campaign_assistant
 
 import (
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/ogen-app/ogen/src/genkit/flows/consistency"
 	"github.com/ogen-app/ogen/src/models"
 )
 
@@ -210,6 +212,62 @@ func TestResolveGenerateCount(t *testing.T) {
 		}
 	}
 }
+
+// CON-213: the per-turn heavy-action latch. Each of the five expensive
+// sub-flow results flips it; the cheap DB-only results (dates, redistribute) do
+// not, so a date change can still precede a generation in the same turn.
+func TestHeavyActionRan(t *testing.T) {
+	if (&requestState{}).heavyActionRan() {
+		t.Fatal("fresh state must report no heavy action")
+	}
+
+	heavy := []struct {
+		name string
+		set  func(*requestState)
+	}{
+		{"contentPlan", func(s *requestState) { s.contentPlanResult = &ContentPlanResult{} }},
+		{"generatedPosts", func(s *requestState) { s.generatedPostsResult = &GeneratedPostsResult{} }},
+		{"brief", func(s *requestState) { s.briefResult = &BriefResult{} }},
+		{"briefReview", func(s *requestState) { s.briefReviewResult = &consistency.BriefReview{} }},
+		{"postsReview", func(s *requestState) { s.postsReviewResult = &consistency.PostsReview{} }},
+	}
+	for _, h := range heavy {
+		st := &requestState{}
+		h.set(st)
+		if !st.heavyActionRan() {
+			t.Errorf("%s result should flip heavyActionRan", h.name)
+		}
+	}
+
+	// Cheap mutations do not count as a heavy action.
+	cheap := &requestState{
+		datesResult:        &DatesResult{},
+		redistributeResult: &RedistributeResult{},
+	}
+	if cheap.heavyActionRan() {
+		t.Fatal("cheap date/redistribute results must not flip heavyActionRan")
+	}
+}
+
+// CON-213: the max-tool-iterations abort is detected by its stable message
+// substring so the turn degrades gracefully instead of 502ing.
+func TestIsMaxTurnsExceeded(t *testing.T) {
+	if isMaxTurnsExceeded(nil) {
+		t.Fatal("nil error is not a max-turns abort")
+	}
+	if isMaxTurnsExceeded(errors.New("some other failure")) {
+		t.Fatal("unrelated error must not match")
+	}
+	// The genkit message form (ai/generate.go), verbatim and wrapped.
+	if !isMaxTurnsExceeded(errors.New("exceeded maximum tool call iterations (2)")) {
+		t.Fatal("genkit abort message must match")
+	}
+	if !isMaxTurnsExceeded(fmtWrap(errors.New("exceeded maximum tool call iterations (4)"))) {
+		t.Fatal("wrapped genkit abort message must match")
+	}
+}
+
+func fmtWrap(err error) error { return errors.Join(errors.New("model call failed"), err) }
 
 // CON-114: a single post with only a start date is pinned to that day, so
 // "generate 1 for Jul 22" lands on Jul 22 instead of the midpoint of the

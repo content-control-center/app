@@ -64,6 +64,27 @@ type requestState struct {
 	postsReviewResult    *consistency.PostsReview
 }
 
+// heavyActionRan reports whether an expensive LLM sub-flow tool (content plan,
+// targeted posts, brief enrich, or a consistency review) has already run this
+// turn. The heavy tools consult it to run at most once per chat turn (CON-213):
+// this is the precise cost guard CON-112 wanted — "don't chain several heavy
+// Sonnet sub-flows in one turn" — decoupled from the tool-call turn budget so
+// the cheap read tools can still iterate. Cheap DB-only tools (setCampaignDates,
+// redistributePosts) are intentionally excluded; they may run alongside.
+func (st *requestState) heavyActionRan() bool {
+	return st.contentPlanResult != nil ||
+		st.generatedPostsResult != nil ||
+		st.briefResult != nil ||
+		st.briefReviewResult != nil ||
+		st.postsReviewResult != nil
+}
+
+// heavySkipNote steers the planner to stop and reply after a heavy action has
+// already run this turn, rather than chaining a second expensive sub-flow. It is
+// surfaced to the model as an ordinary (non-error) tool result so the turn is
+// never aborted — genkit treats a tool that returns a Go error as fatal.
+const heavySkipNote = "A campaign action already ran in this turn. Do not call any more action tools now — reply to the user with a short summary of what was done, and offer to do anything else in a follow-up message."
+
 func withRequestState(ctx context.Context, s *requestState) context.Context {
 	return context.WithValue(ctx, requestStateKey, s)
 }
@@ -86,6 +107,9 @@ type EnrichBriefOutput struct {
 	KeyMessages    string `json:"keyMessages"`
 	ToneGuidelines string `json:"toneGuidelines"`
 	Applied        bool   `json:"applied"`
+	// Note carries a status when the tool short-circuited without running — e.g.
+	// a heavy action already ran this turn (CON-213). Empty on a normal run.
+	Note string `json:"note,omitempty"`
 }
 
 // RunContentPlanOutput is returned to the model after a content plan runs.
@@ -93,6 +117,8 @@ type RunContentPlanOutput struct {
 	PostCount    int        `json:"postCount"`
 	WarningCount int        `json:"warningCount"`
 	UsedAssets   []AssetRef `json:"usedAssets,omitempty"` // CON-118: assets that informed the plan
+	// Note carries a status when the tool short-circuited without running (CON-213).
+	Note string `json:"note,omitempty"`
 }
 
 // CampaignPostInfo is a single element of the listCampaignPosts output.
@@ -126,6 +152,8 @@ type GeneratePostsOutput struct {
 	Dates          []string   `json:"dates,omitempty"` // CON-114: actual publish dates of the created posts, so the model reports them instead of inventing dates
 	Warnings       []string   `json:"warnings,omitempty"`
 	UsedAssets     []AssetRef `json:"usedAssets,omitempty"` // CON-118: assets that informed the posts
+	// Note carries a status when the tool short-circuited without running (CON-213).
+	Note string `json:"note,omitempty"`
 }
 
 // SetCampaignDatesInput is the input for the setCampaignDates tool (CON-115).
@@ -292,6 +320,9 @@ func defineTools(g *genkit.Genkit) *toolSet {
 
 func toolRunContentPlan(ctx context.Context) (*RunContentPlanOutput, error) {
 	st := getRequestState(ctx)
+	if st.heavyActionRan() {
+		return &RunContentPlanOutput{Note: heavySkipNote}, nil
+	}
 	if st.contentPlan == nil {
 		return nil, fmt.Errorf("content plan generation is not available")
 	}
@@ -346,6 +377,9 @@ func toAssetRefs(in []content_plan.AssetRef) []AssetRef {
 
 func toolEnrichBrief(ctx context.Context, in EnrichBriefInput) (*EnrichBriefOutput, error) {
 	st := getRequestState(ctx)
+	if st.heavyActionRan() {
+		return &EnrichBriefOutput{Applied: false, Note: heavySkipNote}, nil
+	}
 	if st.enrichBrief == nil {
 		return nil, fmt.Errorf("brief enrichment is not available")
 	}
@@ -424,6 +458,9 @@ func toolGetCampaignOverview(ctx context.Context) (*overview.Overview, error) {
 
 func toolGeneratePosts(ctx context.Context, in GeneratePostsInput) (*GeneratePostsOutput, error) {
 	st := getRequestState(ctx)
+	if st.heavyActionRan() {
+		return &GeneratePostsOutput{Note: heavySkipNote}, nil
+	}
 	if st.generatePosts == nil {
 		return nil, fmt.Errorf("targeted post generation is not available")
 	}
@@ -989,6 +1026,9 @@ func dateOnly(t time.Time) time.Time {
 
 func toolCheckBrief(ctx context.Context) (*consistency.BriefReview, error) {
 	st := getRequestState(ctx)
+	if st.heavyActionRan() {
+		return &consistency.BriefReview{Summary: heavySkipNote}, nil
+	}
 	if st.checkBrief == nil {
 		return nil, fmt.Errorf("brief review is not available")
 	}
@@ -1004,6 +1044,9 @@ func toolCheckBrief(ctx context.Context) (*consistency.BriefReview, error) {
 
 func toolCheckPostsConsistency(ctx context.Context, in CheckPostsInput) (*consistency.PostsReview, error) {
 	st := getRequestState(ctx)
+	if st.heavyActionRan() {
+		return &consistency.PostsReview{Summary: heavySkipNote}, nil
+	}
 	if st.checkPosts == nil {
 		return nil, fmt.Errorf("posts review is not available")
 	}
