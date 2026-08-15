@@ -22,7 +22,11 @@ type Tenant struct {
 	// TierID is the tenant's required classification tier (CON-208). Backfilled
 	// to DefaultTierID by the migration and stamped on every new signup, so it is
 	// always set. FK is ON DELETE RESTRICT, so an assigned tier can't be deleted.
-	TierID    string    `bun:"tier_id,notnull"                              json:"tier_id"`
+	// It — and the hydrated Tier/Groups below — is an OPERATOR classification kept
+	// off the tenant-facing REST contract (json:"-"); it is surfaced only via the
+	// Harbor gRPC TenantAdminService, which maps fields explicitly. Persistence is
+	// unaffected (bun uses the `bun:` tag, not json).
+	TierID    string    `bun:"tier_id,notnull"                              json:"-"`
 	CreatedAt time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
 	UpdatedAt time.Time `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
 	// DeletedAt marks a soft-deleted workspace (CON-147 PR4). Membership
@@ -32,10 +36,11 @@ type Tenant struct {
 	DeletedAt *time.Time `bun:"deleted_at" json:"deleted_at,omitempty"`
 
 	// Tier and Groups are hydrated on the operator/admin read path only (CON-208
-	// TenantAdminService), never scanned from the tenants table (bun:"-"). They
-	// stay omitempty so existing tenant-facing REST responses are unchanged.
-	Tier   *TenantTier   `bun:"-" json:"tier,omitempty"`
-	Groups []TenantGroup `bun:"-" json:"groups,omitempty"`
+	// TenantAdminService), never scanned from the tenants table (bun:"-"), and —
+	// like TierID — excluded from tenant-facing REST (json:"-"). The gRPC service
+	// maps them explicitly, so it is unaffected by the json tag.
+	Tier   *TenantTier   `bun:"-" json:"-"`
+	Groups []TenantGroup `bun:"-" json:"-"`
 }
 
 // DefaultTenantID is the id of the tenant created by the multi-tenancy
