@@ -528,20 +528,16 @@ func toolGetCampaignOverview(ctx context.Context) (*overview.Overview, error) {
 
 func toolGeneratePosts(ctx context.Context, in GeneratePostsInput) (*GeneratePostsOutput, error) {
 	st := getRequestState(ctx)
-	if !st.reserveHeavyAction() {
-		return &GeneratePostsOutput{Note: heavySkipNote}, nil
-	}
 	if st.generatePosts == nil {
 		return nil, fmt.Errorf("targeted post generation is not available")
 	}
-	// CON-118: generate from the campaign's attached assets when it has any.
-	ensureCampaignAssetUse(ctx, st)
 	campaign := st.campaign
 	now := time.Now().UTC()
 
 	// Resolve platform names/ids against the campaign's target platforms
 	// (CON-114 "stay in scope"). A non-target platform is user-correctable, so it
-	// fails soft (CON-215) rather than aborting the whole turn.
+	// fails soft (CON-215) rather than aborting the whole turn. Resolved BEFORE the
+	// heavy-action reservation so a user-correctable decline never burns the slot.
 	platformIDs, platformNames, err := resolveTargetPlatforms(campaign, in.Platforms)
 	if err != nil {
 		return softGenerateFailure(err)
@@ -571,6 +567,21 @@ func toolGeneratePosts(ctx context.Context, in GeneratePostsInput) (*GeneratePos
 	// gave only a start for a single post, collapse the derived range to that day
 	// so validation pins the publish date exactly (CON-114).
 	windowEnd = singlePostWindowEnd(windowStart, windowEnd, in.WindowEnd, count)
+
+	// Reserve the turn's single heavy-action slot only now — after every
+	// user-correctable validation has passed — so a mis-routed or invalid
+	// generatePosts that fails soft above never burns the slot for a legitimate
+	// heavy tool in the same turn (CON-216, mirroring draftPost's late
+	// reservation). The reservation still precedes st.generatePosts, so two heavy
+	// tools dispatched in parallel can never both generate.
+	if !st.reserveHeavyAction() {
+		return &GeneratePostsOutput{Note: heavySkipNote}, nil
+	}
+
+	// CON-118: generate from the campaign's attached assets when it has any. After
+	// the reservation so a soft-failed or slot-skipped turn never flips UseAssets
+	// in the DB for work that isn't going to run.
+	ensureCampaignAssetUse(ctx, st)
 
 	emit(st.onEvent, SSEEventGeneratePostsStarted, GeneratePostsStartedEventPayload{
 		PlatformIDs: platformIDs,
