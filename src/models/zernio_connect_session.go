@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -31,14 +32,14 @@ const (
 type ZernioConnectSession struct {
 	bun.BaseModel `bun:"table:zernio_connect_sessions,alias:zcs" swaggerignore:"true"`
 
-	ID            string    `bun:"id,pk"                                        json:"id"`
-	TenantID      string    `bun:"tenant_id,notnull"                            json:"-"`
-	ProfileID     string    `bun:"profile_id,notnull"                           json:"profile_id"`
-	Platform      string    `bun:"platform,notnull"                             json:"platform"`
-	Status        string    `bun:"status,notnull"                               json:"status"`
-	SealedSecrets []byte    `bun:"sealed_secrets,nullzero"                      json:"-"`
-	Options       []byte    `bun:"options,type:jsonb,nullzero"                  json:"-"`
-	CreatedAt     time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
-	UpdatedAt     time.Time `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
-	ExpiresAt     time.Time `bun:"expires_at,notnull"                           json:"expires_at"`
+	ID            string          `bun:"id,pk"                                        json:"id"`
+	TenantID      string          `bun:"tenant_id,notnull"                            json:"-"`
+	ProfileID     string          `bun:"profile_id,notnull"                           json:"profile_id"`
+	Platform      string          `bun:"platform,notnull"                             json:"platform"`
+	Status        string          `bun:"status,notnull"                               json:"status"`
+	SealedSecrets []byte          `bun:"sealed_secrets,nullzero"                      json:"-"`
+	Options       json.RawMessage `bun:"options,type:jsonb,nullzero"                  json:"-"`
+	CreatedAt     time.Time       `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
+	UpdatedAt     time.Time       `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
+	ExpiresAt     time.Time       `bun:"expires_at,notnull"                           json:"expires_at"`
 }
