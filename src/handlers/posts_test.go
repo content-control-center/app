@@ -1161,7 +1161,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				loginBody, _ := json.Marshal(fiber.Map{"email": "sse-assist@example.com", "password": "sse-password"})
 				loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
 				loginReq.Header.Set("Content-Type", "application/json")
-				loginResp, err := stubApp.Test(loginReq)
+				loginResp, err := stubApp.Test(loginReq, -1) // -1: setup call, not a latency assertion (see BeforeEach)
 				Expect(err).NotTo(HaveOccurred())
 				var cookie *http.Cookie
 				for _, ck := range loginResp.Cookies() {
@@ -1172,7 +1172,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				campReq := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(campBody))
 				campReq.Header.Set("Content-Type", "application/json")
 				campReq.AddCookie(cookie)
-				campResp, err := stubApp.Test(campReq)
+				campResp, err := stubApp.Test(campReq, -1)
 				Expect(err).NotTo(HaveOccurred())
 				var camp models.Campaign
 				Expect(json.NewDecoder(campResp.Body).Decode(&camp)).To(Succeed())
@@ -1187,7 +1187,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				postReq := httptest.NewRequest("POST", "/api/posts", bytes.NewReader(postBody))
 				postReq.Header.Set("Content-Type", "application/json")
 				postReq.AddCookie(cookie)
-				postResp, err := stubApp.Test(postReq)
+				postResp, err := stubApp.Test(postReq, -1)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(postResp.StatusCode).To(Equal(fiber.StatusCreated))
 				var p models.Post
@@ -1340,7 +1340,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				loginBody, _ := json.Marshal(fiber.Map{"email": "sse-assess@example.com", "password": "sse-password"})
 				loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
 				loginReq.Header.Set("Content-Type", "application/json")
-				loginResp, err := stubApp.Test(loginReq)
+				loginResp, err := stubApp.Test(loginReq, -1) // -1: setup call, not a latency assertion (see BeforeEach)
 				Expect(err).NotTo(HaveOccurred())
 				var cookie *http.Cookie
 				for _, ck := range loginResp.Cookies() {
@@ -1351,7 +1351,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				campReq := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(campBody))
 				campReq.Header.Set("Content-Type", "application/json")
 				campReq.AddCookie(cookie)
-				campResp, err := stubApp.Test(campReq)
+				campResp, err := stubApp.Test(campReq, -1)
 				Expect(err).NotTo(HaveOccurred())
 				var camp models.Campaign
 				Expect(json.NewDecoder(campResp.Body).Decode(&camp)).To(Succeed())
@@ -1366,7 +1366,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				postReq := httptest.NewRequest("POST", "/api/posts", bytes.NewReader(postBody))
 				postReq.Header.Set("Content-Type", "application/json")
 				postReq.AddCookie(cookie)
-				postResp, err := stubApp.Test(postReq)
+				postResp, err := stubApp.Test(postReq, -1)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(postResp.StatusCode).To(Equal(fiber.StatusCreated))
 				var p models.Post
@@ -1461,7 +1461,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				loginBody, _ := json.Marshal(fiber.Map{"email": "sse-assess-other@example.com", "password": "sse-password"})
 				loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
 				loginReq.Header.Set("Content-Type", "application/json")
-				loginResp, err := stubApp.Test(loginReq)
+				loginResp, err := stubApp.Test(loginReq, -1) // -1: setup call, not a latency assertion (see BeforeEach)
 				Expect(err).NotTo(HaveOccurred())
 				var otherCookie *http.Cookie
 				for _, ck := range loginResp.Cookies() {
@@ -1546,7 +1546,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				loginBody, _ := json.Marshal(fiber.Map{"email": "assessment-read@example.com", "password": "read-password"})
 				loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
 				loginReq.Header.Set("Content-Type", "application/json")
-				loginResp, err := readApp.Test(loginReq)
+				loginResp, err := readApp.Test(loginReq, -1) // -1: setup call, not a latency assertion (see BeforeEach)
 				Expect(err).NotTo(HaveOccurred())
 				var cookie *http.Cookie
 				for _, ck := range loginResp.Cookies() {
@@ -1557,7 +1557,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				campReq := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(campBody))
 				campReq.Header.Set("Content-Type", "application/json")
 				campReq.AddCookie(cookie)
-				campResp, err := readApp.Test(campReq)
+				campResp, err := readApp.Test(campReq, -1)
 				Expect(err).NotTo(HaveOccurred())
 				var camp models.Campaign
 				Expect(json.NewDecoder(campResp.Body).Decode(&camp)).To(Succeed())
@@ -1572,7 +1572,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				postReq := httptest.NewRequest("POST", "/api/posts", bytes.NewReader(postBody))
 				postReq.Header.Set("Content-Type", "application/json")
 				postReq.AddCookie(cookie)
-				postResp, err := readApp.Test(postReq)
+				postResp, err := readApp.Test(postReq, -1)
 				Expect(err).NotTo(HaveOccurred())
 				var p models.Post
 				Expect(json.NewDecoder(postResp.Body).Decode(&p)).To(Succeed())

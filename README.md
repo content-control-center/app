@@ -346,7 +346,7 @@ comes up **alongside** this stack and links to it over gRPC:
 docker compose --profile harbor up     # Ogen (live-reload) + Harbor (live-reload)
 ```
 
-This brings up **three** live-reloading Harbor pieces alongside Ogen:
+This brings up **two** live-reloading Harbor services alongside Ogen:
 
 | Service | What | Reload | URL |
 | --- | --- | --- | --- |
