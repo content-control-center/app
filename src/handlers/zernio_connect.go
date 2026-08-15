@@ -88,9 +88,14 @@ func (h *ZernioHandler) ConnectCallback(c *fiber.Ctx) error {
 		return h.redirectConnectError(c, sess.Platform, "mismatch")
 	}
 
-	// Already consumed (double redirect / retry): the picker now owns an
-	// awaiting_selection row, and any non-pending status means the browser is
-	// replaying a finished step. Land it idempotently rather than re-driving.
+	// Already consumed (double redirect / retry). If the session is still
+	// awaiting an in-Ogen pick, send the user back to the picker — the account
+	// is NOT attached until they choose, so a "connected" landing would be a
+	// lie and would strand them away from the selection. Any other non-pending
+	// status is a replayed finished step → idempotent success landing.
+	if sess.Status == models.ZernioConnectStatusAwaitingSelection {
+		return h.redirectPicker(c, cn)
+	}
 	if sess.Status != models.ZernioConnectStatusPendingAuth {
 		return h.redirectConnectSuccess(c, sess.Platform)
 	}
