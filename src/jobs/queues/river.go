@@ -15,6 +15,7 @@ import (
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
+	"github.com/ogen-app/ogen/src/repository"
 )
 
 // This file holds the central River plumbing for the queue package: the
@@ -52,6 +53,10 @@ type Deps struct {
 	// (Resend sender, template/suppression/log repos, addressing config). A nil
 	// Sender (no RESEND_API_KEY) makes send_email log skipped_disabled.
 	Email EmailDeps
+
+	// CON-217: the cleanup_zernio_connect_sessions worker's repo (sweeps expired
+	// headless-connect sessions). A nil repo makes the sweep a no-op.
+	ConnectSessionRepo repository.ZernioConnectSessionRepository
 }
 
 // registrars is appended to by each worker file's init(). A job is registered
@@ -99,6 +104,9 @@ type PeriodicConfig struct {
 	IncludeAnalytics  bool // only when the Zernio integration is configured
 	FollowerEvery     time.Duration
 	IncludeFollowers  bool // CON-153: only when the Zernio integration is configured
+	// CON-217: expired headless-connect-session sweep. Gated on a configured
+	// interval so a zero value (e.g. in tests) can't create an invalid job.
+	ConnectSessionCleanupEvery time.Duration
 }
 
 // PeriodicJobs builds the River periodic-job set. Every job runs once on
@@ -136,6 +144,11 @@ func (cfg PeriodicConfig) PeriodicJobs() []*river.PeriodicJob {
 	if cfg.IncludeFollowers {
 		jobs = append(jobs, river.NewPeriodicJob(river.PeriodicInterval(cfg.FollowerEvery), func() (river.JobArgs, *river.InsertOpts) {
 			return RefreshZernioFollowersTask{}, nil
+		}, runOnStart))
+	}
+	if cfg.ConnectSessionCleanupEvery > 0 {
+		jobs = append(jobs, river.NewPeriodicJob(river.PeriodicInterval(cfg.ConnectSessionCleanupEvery), func() (river.JobArgs, *river.InsertOpts) {
+			return CleanupZernioConnectSessionsTask{}, nil
 		}, runOnStart))
 	}
 	return jobs

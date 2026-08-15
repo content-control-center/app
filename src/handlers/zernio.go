@@ -12,8 +12,10 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/ogen-app/ogen/src/crypto/envelope"
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/tenantctx"
@@ -27,6 +29,11 @@ const connectLinkTTL = 30 * time.Minute
 // connect link is issued. Per the ticket: 10 minutes.
 const fastPollWindow = 10 * time.Minute
 
+// connectSessionTTL bounds a headless connect session's lifetime (CON-217). It
+// matches Zernio's 15-minute connect_token expiry — a callback arriving after
+// this window is stale and fails closed.
+const connectSessionTTL = 15 * time.Minute
+
 // ZernioHandler exposes the integration endpoints under
 // /api/integrations/zernio.
 type ZernioHandler struct {
@@ -39,6 +46,13 @@ type ZernioHandler struct {
 	worker       *zernio.Worker
 	rateLimiter  *zernio.RateLimiter
 	auth         fiber.Handler
+
+	// CON-217: headless connect flow. connectSessions holds the short-lived
+	// per-connect state; cipher seals the Zernio connect_token/tempToken at
+	// rest; appBaseURL builds the absolute backend callback + SPA landing URLs.
+	connectSessions repository.ZernioConnectSessionRepository
+	cipher          *envelope.Cipher
+	appBaseURL      string
 }
 
 func NewZernioHandler(
@@ -51,17 +65,23 @@ func NewZernioHandler(
 	worker *zernio.Worker,
 	rateLimiter *zernio.RateLimiter,
 	auth fiber.Handler,
+	connectSessions repository.ZernioConnectSessionRepository,
+	cipher *envelope.Cipher,
+	appBaseURL string,
 ) *ZernioHandler {
 	return &ZernioHandler{
-		integ:        integ,
-		bootstrapper: bootstrapper,
-		settings:     settings,
-		platforms:    platforms,
-		accounts:     accounts,
-		posts:        posts,
-		worker:       worker,
-		rateLimiter:  rateLimiter,
-		auth:         auth,
+		integ:           integ,
+		bootstrapper:    bootstrapper,
+		settings:        settings,
+		platforms:       platforms,
+		accounts:        accounts,
+		posts:           posts,
+		worker:          worker,
+		rateLimiter:     rateLimiter,
+		auth:            auth,
+		connectSessions: connectSessions,
+		cipher:          cipher,
+		appBaseURL:      appBaseURL,
 	}
 }
 
@@ -70,9 +90,18 @@ func (h *ZernioHandler) Register(app *fiber.App) {
 	// monitoring agents need to scrape it without holding a session.
 	app.Get("/api/integrations/zernio/health", h.Health)
 
+	// CON-217: the headless OAuth callback is a browser redirect target from
+	// Zernio, so it sits OUTSIDE the cookie-auth group — the session cookie may
+	// not survive the cross-site redirect. It authenticates via the unguessable
+	// connect-session id (ogen_cn) instead.
+	app.Get("/api/integrations/zernio/connect/callback", h.ConnectCallback)
+
 	g := app.Group("/api/integrations/zernio", h.auth)
 	g.Get("/platforms", h.ListPlatforms)
 	g.Post("/connect-links", h.CreateConnectLink)
+	// CON-217: in-Ogen picker for multi-target connects (LinkedIn orgs, FB pages).
+	g.Get("/connect/pending/:id", h.GetPendingConnection)
+	g.Post("/connect/pending/:id/select", h.SelectPendingConnection)
 	g.Get("/accounts", h.ListAccounts)
 	g.Delete("/accounts/:id", h.DisconnectAccount)
 	g.Post("/sync", h.TriggerSync)
@@ -278,7 +307,34 @@ func (h *ZernioHandler) CreateConnectLink(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "integration_degraded")
 	}
 
-	connectURL, err := h.integ.Client.CreateConnectLink(c.Context(), profileID, req.Platform)
+	// CON-217: mint a short-lived connect session so the headless OAuth callback
+	// can resolve this tenant + profile without relying on the browser session
+	// (which may not survive the cross-site redirect through Zernio), and hold
+	// the pending selection when a platform has 2+ targets. The session id rides
+	// the callback URL as ogen_cn.
+	tenantID, ok := tenantctx.From(c.Context())
+	if !ok {
+		return fiber.NewError(fiber.StatusUnauthorized, "no_tenant")
+	}
+	sessionID, err := newConnectSessionID()
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	if err := h.connectSessions.Create(c.Context(), &models.ZernioConnectSession{
+		ID:        sessionID,
+		TenantID:  tenantID,
+		ProfileID: profileID,
+		Platform:  req.Platform,
+		Status:    models.ZernioConnectStatusPendingAuth,
+		CreatedAt: now,
+		UpdatedAt: now,
+		ExpiresAt: now.Add(connectSessionTTL),
+	}); err != nil {
+		return err
+	}
+
+	connectURL, err := h.integ.Client.CreateConnectLink(c.Context(), profileID, req.Platform, h.connectCallbackURL(sessionID))
 	if err != nil {
 		var apiErr *zernio.APIError
 		if errors.As(err, &apiErr) {

@@ -130,6 +130,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		followerStatsRepo = repository.NewFollowerStatsRepository(analyticsDB)
 	}
 	socialAccountRepo := repository.NewSocialAccountRepository(db)
+	zernioConnectSessionRepo := repository.NewZernioConnectSessionRepository(db)
 	autoPublishAllowlistRepo := repository.NewAutoPublishAllowlistRepository(db)
 	// CON-154: email subsystem repositories (templates, suppression list, send audit).
 	emailTemplateRepo := repository.NewEmailTemplateRepository(db)
@@ -182,6 +183,14 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// Zernio reachability. The shutdown hook waits up to 2s for the
 	// worker to exit cleanly.
 	zernioRT := initZernio(ctx, cfg, secretStore, settingRepo, socialAccountRepo, hub, usageWiring.recorder)
+	// CON-217: the headless connect callback seals Zernio's short-lived
+	// connect_token/tempToken at rest. Rebuild the envelope cipher from the same
+	// KEK the secret store uses (idempotent — LoadOrCreateKEK reads the existing
+	// file), avoiding a server.New signature change.
+	connectCipher, _, err := secrets.InitCipher(cfg.KEKPath)
+	if err != nil {
+		return nil, err
+	}
 	// Registered unconditionally so /api/integrations/zernio/* (incl. the
 	// unauthenticated /health) always exists. When no key is set the endpoints
 	// report/return integration_disabled; setting zernio_api_key via the
@@ -196,6 +205,9 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		zernioRT.Worker,
 		zernioRT.RateLimiter,
 		auth,
+		zernioConnectSessionRepo,
+		connectCipher,
+		cfg.AppBaseURL,
 	).Register(app)
 	app.Hooks().OnShutdown(func() error {
 		zernioRT.shutdown()
@@ -339,6 +351,8 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		PDF: pdfDeps,
 		// CON-154: email send + cleanup worker deps.
 		Email: emailRT.Deps,
+		// CON-217: expired headless-connect-session sweep.
+		ConnectSessionRepo: zernioConnectSessionRepo,
 	})
 
 	if err := jobs.MigrateRiver(ctx, db.DB); err != nil {
@@ -360,6 +374,10 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 			// profile-driven, so it no-ops when Zernio is unconfigured.
 			FollowerEvery:    cfg.ZernioFollowerRefreshInterval,
 			IncludeFollowers: true,
+			// CON-217: reclaim expired headless-connect sessions. Correctness
+			// doesn't depend on it (readers treat past-expiry as gone); this just
+			// keeps the table tidy.
+			ConnectSessionCleanupEvery: 15 * time.Minute,
 		}.PeriodicJobs(),
 	})
 	if err != nil {

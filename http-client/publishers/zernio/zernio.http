@@ -203,3 +203,42 @@ Accept: application/json
 ### Repair profile — re-bootstraps the CALLER'S tenant profile (idempotent)  [protected]
 POST {{baseUrl}}/api/integrations/zernio/profile/repair
 Accept: application/json
+
+# ── Headless connect selection — CON-217 ──────────────────────────────────────
+# Connect links are now issued in Zernio "headless" mode: Zernio renders NO
+# hosted account-selector screen. After the user authorizes on the platform,
+# Zernio redirects the browser to our backend callback below with a short-lived
+# connect_token/tempToken + step. The backend drives target selection itself:
+#   - single target (or non-selection platform) → auto-finalized, no UI
+#   - 2+ targets (e.g. several LinkedIn orgs / FB pages) → an Ogen picker page
+# These requests exercise the picker endpoints the SPA calls in the 2+ case.
+# {{connectionId}} is the ogen_cn id from the picker redirect
+# (…/settings/accounts/connect/<connectionId>).
+
+### Callback (browser redirect target; normally hit by Zernio, not by hand)  [nonce-auth]
+# Included for reference. In headless mode Zernio appends tempToken/connect_token/
+# step to this URL; the backend resolves the tenant from ogen_cn and 302s onward.
+GET {{baseUrl}}/api/integrations/zernio/connect/callback?ogen_cn={{connectionId}}
+
+### List pending targets for an awaiting-selection connect  [protected]
+# @name pendingConnection
+GET {{baseUrl}}/api/integrations/zernio/connect/pending/{{connectionId}}
+Accept: application/json
+
+### Select one target to finalize the connect  [protected]
+POST {{baseUrl}}/api/integrations/zernio/connect/pending/{{connectionId}}/select
+Content-Type: application/json
+Accept: application/json
+
+{
+  "targetId": "urn:li:organization:111111111"
+}
+
+### Select with an unknown target id → 400 invalid_target  [protected]
+POST {{baseUrl}}/api/integrations/zernio/connect/pending/{{connectionId}}/select
+Content-Type: application/json
+Accept: application/json
+
+{
+  "targetId": "not-in-the-list"
+}

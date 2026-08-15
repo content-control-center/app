@@ -211,6 +211,9 @@ var _ = Describe("ZernioHandler", Ordered, func() {
 			integ, bootstrapper, store, platformRepo, accountRepo, repository.NewPostRepository(db), worker,
 			zernio.NewConnectLinkRateLimiter(),
 			auth,
+			repository.NewZernioConnectSessionRepository(db),
+			nil, // cipher: only the 2+-target callback path seals tokens; unused here
+			"http://localhost",
 		).Register(app)
 
 		// Seed an auth user and grab a session cookie.

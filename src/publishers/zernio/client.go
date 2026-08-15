@@ -185,6 +185,14 @@ func (c *Client) Ping(ctx context.Context) error {
 // do performs an authenticated request and decodes the JSON body into
 // out when out != nil. Returns *APIError for non-2xx responses.
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body, out any) error {
+	return c.doHeaders(ctx, method, path, query, nil, body, out)
+}
+
+// doHeaders is do with extra request headers merged in after the standard
+// bearer/accept/content-type set. It backs the headless connect select step
+// (CON-217), which authenticates the list/finalize calls with a short-lived
+// X-Connect-Token header in addition to the bearer key.
+func (c *Client) doHeaders(ctx context.Context, method, path string, query url.Values, headers map[string]string, body, out any) error {
 	u := c.baseURL + path
 	if len(query) > 0 {
 		u += "?" + query.Encode()
@@ -215,6 +223,11 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	// Caller-supplied headers win over the defaults above (none currently
+	// collide; X-Connect-Token is orthogonal to the bearer key).
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 
 	resp, err := c.httpClient.Do(req)
