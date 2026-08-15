@@ -150,7 +150,9 @@ func (r *tenantRepository) ListWithClassification(ctx context.Context, f TenantL
 			f.GroupID,
 		)
 	}
-	total, err := q.OrderExpr("tn.created_at ASC").Limit(limit).Offset(offset).ScanAndCount(ctx)
+	// Tiebreak on the PK so ties on created_at yield a total, stable order —
+	// otherwise limit/offset paging could drop or repeat rows across pages.
+	total, err := q.OrderExpr("tn.created_at ASC, tn.id ASC").Limit(limit).Offset(offset).ScanAndCount(ctx)
 	if err != nil {
 		return nil, 0, err
 	}

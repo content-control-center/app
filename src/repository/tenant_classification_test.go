@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sort"
 	"testing"
 	"time"
 
@@ -317,6 +318,49 @@ func TestTenantClassificationHydrationAndFilters(t *testing.T) {
 	}
 	if idSet(survivors)[t3] {
 		t.Fatalf("soft-deleted t3 still listed: %v", idSet(survivors))
+	}
+}
+
+// TestTenantListPagingDeterministicOnTiedCreatedAt locks in the (created_at, id)
+// tiebreak: when created_at ties, limit/offset paging must be a total order —
+// every row exactly once, ascending by id — not arbitrary (which would drop or
+// repeat rows across pages).
+func TestTenantListPagingDeterministicOnTiedCreatedAt(t *testing.T) {
+	db := openClassificationDB(t)
+	ctx := context.Background()
+	tenantRepo := repository.NewTenantRepository(db)
+	tierRepo := repository.NewTenantTierRepository(db)
+
+	tie := &models.TenantTier{ID: mintID(t), Name: "Tie", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+	if err := tierRepo.Create(ctx, tie); err != nil {
+		t.Fatalf("create tie tier: %v", err)
+	}
+	// Three tenants sharing one created_at, so only the id tiebreak orders them.
+	ts := time.Now().UTC().Truncate(time.Second)
+	ids := []string{mintID(t), mintID(t), mintID(t)}
+	for _, id := range ids {
+		tn := &models.Tenant{ID: id, Name: id, Slug: id, TierID: tie.ID, CreatedAt: ts, UpdatedAt: ts}
+		if _, err := db.NewInsert().Model(tn).Exec(ctx); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	sort.Strings(ids) // expected page order: ascending by id
+
+	var got []string
+	for off := 0; off < 3; off++ {
+		page, total, err := tenantRepo.ListWithClassification(ctx, repository.TenantListFilter{TierID: tie.ID, Limit: 1, Offset: off})
+		if err != nil {
+			t.Fatalf("page off=%d: %v", off, err)
+		}
+		if total != 3 || len(page) != 1 {
+			t.Fatalf("page off=%d: len=%d total=%d, want len 1 total 3", off, len(page), total)
+		}
+		got = append(got, page[0].ID)
+	}
+	for i := range ids {
+		if got[i] != ids[i] {
+			t.Fatalf("paged order = %v, want ascending-by-id %v", got, ids)
+		}
 	}
 }
 
