@@ -540,16 +540,17 @@ func toolGeneratePosts(ctx context.Context, in GeneratePostsInput) (*GeneratePos
 	now := time.Now().UTC()
 
 	// Resolve platform names/ids against the campaign's target platforms
-	// (CON-114 "stay in scope").
+	// (CON-114 "stay in scope"). A non-target platform is user-correctable, so it
+	// fails soft (CON-215) rather than aborting the whole turn.
 	platformIDs, platformNames, err := resolveTargetPlatforms(campaign, in.Platforms)
 	if err != nil {
-		return nil, err
+		return softGenerateFailure(err)
 	}
 
 	// Resolve the phase — "current"/empty derives from the campaign timeline.
 	phaseID, phaseName, err := resolvePhase(campaign, in.Phase, now)
 	if err != nil {
-		return nil, err
+		return softGenerateFailure(err)
 	}
 
 	// Count: honor an explicit number exactly (so "add 1 post" yields 1); fall
@@ -558,9 +559,12 @@ func toolGeneratePosts(ctx context.Context, in GeneratePostsInput) (*GeneratePos
 	count, requested, clamped := resolveGenerateCount(in.Count, st.maxGeneratePosts)
 
 	// Window: default to the next 14 days when omitted; validate otherwise.
+	// resolveWindow only rejects model-supplied window problems (a past date, a
+	// bad range, malformed ISO) — all user-correctable — so it fails soft
+	// (CON-215) instead of aborting the turn with a raw "model call failed".
 	windowStart, windowEnd, err := resolveWindow(in.WindowStart, in.WindowEnd, now)
 	if err != nil {
-		return nil, err
+		return softGenerateFailure(err)
 	}
 	// A lone post has nothing to spread across a 14-day window, so "generate 1
 	// for Jul 22" must land ON Jul 22 — not the window's midpoint. When the model
@@ -654,22 +658,25 @@ func toolDraftPost(ctx context.Context, in DraftPostInput) (*DraftPostOutput, er
 		return &DraftPostOutput{Note: noDraftSourceNote}, nil
 	}
 
-	// Reuse the generatePosts resolvers verbatim (CON-114).
+	// Reuse the generatePosts resolvers verbatim (CON-114). A non-target platform,
+	// unknown phase, or past/invalid date is user-correctable, so it fails soft
+	// (CON-215) — a zero-post warning the planner relays — rather than aborting the
+	// turn; these run before the heavy-action reservation, so they never burn the slot.
 	platformIDs, platformNames, err := resolveTargetPlatforms(campaign, in.Platforms)
 	if err != nil {
-		return nil, err
+		return softDraftFailure(err)
 	}
 	// draftPost always targets the current phase — it drafts "now", from what was
 	// just discussed. (A future revision can accept an explicit phase.)
 	phaseID, phaseName, err := resolvePhase(campaign, "", now)
 	if err != nil {
-		return nil, err
+		return softDraftFailure(err)
 	}
 	// A single publish date: pin both window bounds to it so N posts land on that
 	// day; omitted → the next two weeks, across which the flow spreads them.
 	windowStart, windowEnd, err := resolveWindow(in.PublishDate, in.PublishDate, now)
 	if err != nil {
-		return nil, err
+		return softDraftFailure(err)
 	}
 
 	// Reserve the turn's single heavy-action slot only now — after source and
@@ -812,6 +819,26 @@ func resolveDraftSource(ctx context.Context, st *requestState, override string) 
 		}
 	}
 	return "", nil
+}
+
+// softGenerateFailure turns a user-correctable generatePosts problem — a
+// non-target platform, an unknown phase, or a past/invalid publish window — into
+// a zero-post result the planner relays to the user, rather than a Go error.
+// Returning a Go error from a tool aborts the whole Generate turn (CON-213) and
+// surfaces to the user as a raw "model call failed: ..."; returning a value lets
+// the assistant recover and suggest a valid alternative (e.g. today or a later
+// date). It leaves generatedPostsResult unset, so run.go keeps the turn
+// conversational ("answered") and the model's reply carries the suggestion.
+func softGenerateFailure(err error) (*GeneratePostsOutput, error) {
+	return &GeneratePostsOutput{PostCount: 0, Warnings: []string{err.Error()}}, nil
+}
+
+// softDraftFailure is the draftPost analogue of softGenerateFailure (CON-215):
+// a user-correctable problem (non-target platform, unknown phase, past/invalid
+// date) becomes a zero-post warning the planner relays, not a turn-aborting Go
+// error. It leaves draftPostResult unset, so the turn stays conversational.
+func softDraftFailure(err error) (*DraftPostOutput, error) {
+	return &DraftPostOutput{PostCount: 0, Warnings: []string{err.Error()}}, nil
 }
 
 // resolveGenerateCount maps the model-supplied count to the number of posts the

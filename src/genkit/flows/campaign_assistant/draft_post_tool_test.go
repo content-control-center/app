@@ -150,6 +150,46 @@ func TestToolDraftPost_BudgetAcrossPlatforms(t *testing.T) {
 	}
 }
 
+// CON-215 parity: a user-correctable input (past date, non-target platform)
+// fails soft — zero posts + a warning, no flow call, draftPostResult unset, and
+// the heavy-action slot left free — so the turn stays conversational instead of
+// aborting with a raw "model call failed".
+func TestToolDraftPost_SoftFailsUserInput(t *testing.T) {
+	research := []models.CampaignAssistantMessage{
+		modelMsg(`{"action":"answered","explanation":"the research"}`),
+	}
+
+	// A past publish date.
+	var calls []draft_post.DraftPostRequest
+	st := newDraftState(research, &calls)
+	ctx := withRequestState(context.Background(), st)
+	out, err := toolDraftPost(ctx, DraftPostInput{Platforms: []string{"LinkedIn"}, Count: 1, PublishDate: "2020-01-01"})
+	if err != nil {
+		t.Fatalf("past date must not error: %v", err)
+	}
+	if out.PostCount != 0 || len(out.Warnings) == 0 {
+		t.Fatalf("past date: out = {PostCount:%d Warnings:%v}, want zero posts + a warning", out.PostCount, out.Warnings)
+	}
+	if len(calls) != 0 || st.draftPostResult != nil {
+		t.Fatal("past date must not run the flow or set draftPostResult")
+	}
+	if !st.reserveHeavyAction() {
+		t.Fatal("a soft failure must leave the heavy-action slot available")
+	}
+
+	// A non-target platform.
+	calls = nil
+	st = newDraftState(research, &calls)
+	ctx = withRequestState(context.Background(), st)
+	out, err = toolDraftPost(ctx, DraftPostInput{Platforms: []string{"TikTok"}, Count: 1})
+	if err != nil {
+		t.Fatalf("non-target platform must not error: %v", err)
+	}
+	if out.PostCount != 0 || len(out.Warnings) == 0 || len(calls) != 0 {
+		t.Fatalf("non-target platform: out = %+v, calls = %d", out, len(calls))
+	}
+}
+
 // An explicit sourceMaterial override bypasses history lookup.
 func TestToolDraftPost_SourceOverride(t *testing.T) {
 	var calls []draft_post.DraftPostRequest
