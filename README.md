@@ -336,6 +336,34 @@ When the UI and API are served from different origins, set `CORS_ALLOWED_ORIGINS
 on the API to the UI origin(s); for local dev the Vite `/api` proxy keeps things
 same-origin, so it can stay empty.
 
+### Harbor ops dashboard (gRPC-linked)
+
+[`ogen-app/harbor`](https://github.com/ogen-app/harbor) — Ogen's operations
+dashboard — is wired into `docker-compose.yml` behind the `harbor` profile so it
+comes up **alongside** this stack and links to it over gRPC:
+
+```bash
+docker compose --profile harbor up     # Ogen (live-reload) + Harbor (live-reload)
+```
+
+Both run in live-reload dev mode (air). Harbor shares this stack's Postgres — its
+own `harbor` database, which it **auto-creates on first boot** (a separate DB on
+the same server) — reads Ogen's control-plane and analytics DBs, and reaches
+Ogen's internal operator gRPC surface at `api:9091` for the Settings → Secrets
+tab. The gRPC link authenticates with `GRPC_AUTH_TOKEN`, which the compose file
+defaults to a dev token (`ogen-harbor-dev`) shared by both services so it works
+out of the box; set a real value in `.env` to override.
+
+Open **http://localhost:9003** for Harbor (host `9003` → container `9002`, since
+the `ui` profile already uses `9002`). If your harbor checkout isn't at
+`../harbor`, point `HARBOR_PATH` at it:
+
+```bash
+HARBOR_PATH=/path/to/harbor docker compose --profile harbor up
+```
+
+Combine with `--profile ui` to run Ogen's API, its UI, and Harbor together.
+
 ### API documentation
 
 The full REST API reference (OpenAPI) is generated from swag annotations via

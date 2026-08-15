@@ -20,6 +20,40 @@ services:
       - go-build-cache:/root/.cache/go-build
       - go-mod-cache:/go/pkg/mod
 
+  # Harbor dev override — mirror the api service above: a live-reload air image
+  # over the bind-mounted harbor source, polling the FS (Docker Desktop
+  # bind-mount events don't cross the Linux VM on macOS/Windows). The dev image
+  # COPYs no source (it comes via the bind mount) and builds against harbor's
+  # committed placeholder UI export, so there's no Next.js build — backend
+  # live-reload only, exactly like `make dev-api` in harbor. All env/ports/
+  # depends_on/profile are inherited from docker-compose.yml.
+  harbor:
+    build:
+      context: ${HARBOR_PATH:-../harbor}
+      # Inline so harbor's own tree needs no dev Dockerfile. Mirrors Ogen's
+      # Dockerfile.dev (golang:1.26-alpine + air, static build).
+      dockerfile_inline: |
+        FROM golang:1.26-alpine
+        RUN apk add --no-cache git \
+         && go install github.com/air-verse/air@latest
+        WORKDIR /app
+        ENV CGO_ENABLED=0
+        EXPOSE 9002
+        CMD ["air", "-c", "/air.docker.toml"]
+    image: harbor-dev
+    volumes:
+      - "${HARBOR_PATH:-../harbor}:/app"
+      # Poll-enabled air config, lives in THIS repo so harbor's tree stays
+      # untouched. Mounted at container root (NOT under /app) — Docker Desktop
+      # can't nest a file mount inside the /app bind mount; the config sets an
+      # absolute root=/app so watching still targets the harbor source.
+      - "./.air.harbor.docker.toml:/air.docker.toml:ro"
+      # Caches off the bind mount, kept separate from the api service's.
+      - harbor-go-build-cache:/root/.cache/go-build
+      - harbor-go-mod-cache:/go/pkg/mod
+
 volumes:
   go-build-cache:
   go-mod-cache:
+  harbor-go-build-cache:
+  harbor-go-mod-cache:

@@ -11,6 +11,15 @@ services:
             # service so the stack meters out of the box. Override (or set empty
             # to disable usage analytics entirely) via ANALYTICS_DSN in .env.
             ANALYTICS_DSN: "${ANALYTICS_DSN:-postgres://ogen:ogen@timescaledb:5432/ogen_analytics?sslmode=disable}"
+            # Internal operator gRPC surface consumed by Harbor (secrets mgmt).
+            # Bind ALL interfaces (":9091") — not the code default 127.0.0.1 —
+            # so the harbor container reaches it at api:9091 over the compose
+            # network; the host-published port below stays loopback-only. The
+            # server starts only with a non-empty token, so default a dev token
+            # here to link Harbor out of the box. Set GRPC_AUTH_TOKEN in .env to
+            # override (Harbor reuses the SAME variable, so they always match).
+            GRPC_ADDR: ":9091"
+            GRPC_AUTH_TOKEN: "${GRPC_AUTH_TOKEN:-ogen-harbor-dev}"
         volumes:
             - ./ogen-keys:/var/lib/ogen/keys
         ports:
@@ -161,6 +170,50 @@ services:
         profiles: ["video"]
         expose:
             - "50051"
+
+    # Harbor (../harbor) — Ogen's operations dashboard. Brought up ALONGSIDE
+    # this stack so the two link over gRPC:
+    #   docker compose --profile harbor up
+    # Opt-in via the `harbor` profile (like ui/pdf/video) so the default
+    # `docker compose up` stays Ogen-only and needs no harbor checkout. Harbor
+    # shares THIS stack's postgres — a SEPARATE `harbor` database it creates on
+    # first boot (EnsureDatabase, connecting as the ogen superuser) — and reads
+    # Ogen's control-plane + analytics DBs. Its Settings → Secrets tab reaches
+    # Ogen's internal gRPC surface at api:9091 (token below). UI on :9003.
+    #
+    # This is the prod-like build (harbor's multi-stage Dockerfile embeds the
+    # Next.js UI); docker-compose.override.yml swaps in a live-reload air image
+    # for dev. Point HARBOR_PATH at your checkout if it isn't the sibling ../harbor.
+    harbor:
+        build:
+            context: ${HARBOR_PATH:-../harbor}
+        image: harbor:latest
+        profiles: ["harbor"]
+        environment:
+            ADDR: ":9002"
+            # Same postgres container as Ogen, DIFFERENT database. Connects as the
+            # ogen superuser so Harbor's EnsureDatabase can CREATE the harbor DB on
+            # first boot (a fresh volume); thereafter it's a no-op.
+            DATABASE_DSN: "postgres://${POSTGRES_USER:-ogen}:${POSTGRES_PASSWORD:-ogen}@postgres:5432/harbor?sslmode=disable"
+            # Ogen's control-plane + analytics DBs (Harbor reads; never migrates).
+            OGEN_DATABASE_DSN: "postgres://${POSTGRES_USER:-ogen}:${POSTGRES_PASSWORD:-ogen}@postgres:5432/${POSTGRES_DB:-ogen}?sslmode=disable"
+            ANALYTICS_DSN: "${ANALYTICS_DSN:-postgres://ogen:ogen@timescaledb:5432/ogen_analytics?sslmode=disable}"
+            # Ogen internal operator gRPC surface. Reuses the SAME token variable
+            # as the api service's GRPC_AUTH_TOKEN so they always match; the dev
+            # default links the two out of the box.
+            OGEN_GRPC_ADDR: "api:9091"
+            OGEN_GRPC_TOKEN: "${GRPC_AUTH_TOKEN:-ogen-harbor-dev}"
+            DEBUG: "true"
+        ports:
+            # Host 9003 -> container 9002 (Ogen's ui profile already uses 9002).
+            - "9003:9002"
+        depends_on:
+            postgres:
+                condition: service_healthy
+            timescaledb:
+                condition: service_healthy
+            api:
+                condition: service_started
 
 volumes:
     postgres-data:
