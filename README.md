@@ -364,6 +364,12 @@ for the Settings → Secrets tab. The gRPC link authenticates with
 (`ogen-harbor-dev`) shared by both services so it works out of the box; set a
 real value in `.env` to override.
 
+Harbor's own `${HARBOR_PATH:-../harbor}/.env` is loaded for its remaining config
+(Google OAuth creds, `AUTH_ALLOWED_EMAILS`, log level, cookie name); it's
+optional, and the compose `environment:` block overrides its DB/analytics/gRPC
+endpoints so the host `localhost` DSNs a dev `.env` carries don't leak into the
+container network.
+
 If your harbor checkout isn't at `../harbor`, point `HARBOR_PATH` at it:
 
 ```bash

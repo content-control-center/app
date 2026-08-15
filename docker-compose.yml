@@ -189,6 +189,15 @@ services:
             context: ${HARBOR_PATH:-../harbor}
         image: harbor:latest
         profiles: ["harbor"]
+        # Pick up Harbor's OWN .env (Google OAuth creds, AUTH_ALLOWED_EMAILS, log
+        # level, cookie name, …) from its checkout. Optional so a checkout without
+        # a .env still boots. The `environment:` block below is applied AFTER this
+        # and therefore WINS — that's deliberate: it pins the DB/analytics/gRPC
+        # endpoints to the compose service names, overriding the host `localhost`
+        # forms a dev .env carries (which would be wrong inside this network).
+        env_file:
+            - path: ${HARBOR_PATH:-../harbor}/.env
+              required: false
         environment:
             ADDR: ":9002"
             # Same postgres container as Ogen, DIFFERENT database. Connects as the
