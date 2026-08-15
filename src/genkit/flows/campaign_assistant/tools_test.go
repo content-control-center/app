@@ -160,6 +160,65 @@ func TestGeneratePosts_SoftFailsUserInput(t *testing.T) {
 	}
 }
 
+// TestGeneratePosts_HeavySlotOnlyBurnedOnSuccess guards the CON-216 fix: the
+// heavy-action reservation moved to AFTER generatePosts' user-correctable
+// validations (mirroring draftPost). So a generatePosts that fails soft on a
+// past date / non-target platform / unknown phase — including a mis-routed one
+// where the planner replayed a stale past-date instruction onto a read-only
+// question — must NOT consume the turn's single heavy slot, leaving it free for
+// a legitimate heavy action in the same turn. A successful generation still
+// claims the slot so a second heavy tool is turned away.
+func TestGeneratePosts_HeavySlotOnlyBurnedOnSuccess(t *testing.T) {
+	t.Run("soft failure leaves the slot free", func(t *testing.T) {
+		st := &requestState{
+			campaignID:       "c1",
+			campaign:         timelineCampaign(), // no repos → ensureCampaignAssetUse no-ops
+			maxGeneratePosts: 10,
+			generatePosts: func(context.Context, content_plan.GeneratePostsRequest, content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error) {
+				t.Fatal("generation engine must not run for invalid input")
+				return nil, nil
+			},
+		}
+		ctx := withRequestState(context.Background(), st)
+		// 2020 is unambiguously before any real "today", so this is clock-safe.
+		if _, err := toolGeneratePosts(ctx, GeneratePostsInput{Platforms: []string{"Threads"}, WindowStart: "2020-01-01", WindowEnd: "2020-01-01"}); err != nil {
+			t.Fatalf("want soft failure (nil error), got %v", err)
+		}
+		if st.heavyReserved {
+			t.Fatal("a soft-failed generatePosts must not reserve the heavy slot")
+		}
+		if !st.reserveHeavyAction() {
+			t.Fatal("the heavy slot must still be claimable after a soft failure")
+		}
+	})
+
+	t.Run("success claims the slot", func(t *testing.T) {
+		st := &requestState{
+			campaignID:       "c1",
+			campaign:         timelineCampaign(),
+			maxGeneratePosts: 10,
+			generatePosts: func(context.Context, content_plan.GeneratePostsRequest, content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error) {
+				return &content_plan.ContentPlanResponse{Posts: []content_plan.DraftPost{{Title: "t", PublishDate: "2026-01-15"}}}, nil
+			},
+		}
+		ctx := withRequestState(context.Background(), st)
+		// Omit the window → defaults to the next 14 days from today (clock-safe).
+		out, err := toolGeneratePosts(ctx, GeneratePostsInput{Platforms: []string{"Threads"}})
+		if err != nil {
+			t.Fatalf("valid generation: %v", err)
+		}
+		if out == nil || out.PostCount != 1 {
+			t.Fatalf("want one generated post, got %+v", out)
+		}
+		if !st.heavyReserved {
+			t.Fatal("a successful generatePosts must reserve the heavy slot")
+		}
+		if st.reserveHeavyAction() {
+			t.Fatal("a second heavy reservation must be turned away after a successful generation")
+		}
+	})
+}
+
 func TestResolveWindow(t *testing.T) {
 	today := day("2026-02-10")
 
