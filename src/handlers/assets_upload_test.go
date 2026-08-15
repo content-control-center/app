@@ -40,7 +40,13 @@ func (f *fakePDFEnqueuer) EnqueueProcessPDFTx(_ context.Context, _ *sql.Tx, asse
 	return f.err
 }
 
-var _ = Describe("AssetsHandler upload", Ordered, func() {
+// Serial: this suite pushes 10 MB and 50 MB bodies through the handler; under
+// `-race -procs=2` those take ~10-15s and starve 1s-budget requests on the other
+// proc, flaking unrelated specs' setup calls. Running the whole (Ordered) suite
+// serially keeps the CPU hogs out of the parallel phase. (An individual Serial
+// spec isn't allowed inside a non-Serial Ordered container, so the decorator
+// goes on the container.)
+var _ = Describe("AssetsHandler upload", Ordered, Serial, func() {
 	var (
 		app        *fiber.App
 		db         *bun.DB

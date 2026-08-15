@@ -103,7 +103,10 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		loginBody, _ := json.Marshal(fiber.Map{"email": "admin@example.com", "password": "admin-password"})
 		loginReq := httptest.NewRequest("POST", "/api/sessions", bytes.NewReader(loginBody))
 		loginReq.Header.Set("Content-Type", "application/json")
-		loginResp, err := app.Test(loginReq)
+		// -1 disables fiber's default 1s test timeout. These are setup calls, not
+		// latency assertions; under `-race -procs=2` a heavy concurrent spec (e.g.
+		// the 50 MB upload) can starve this login past 1s and flake the BeforeEach.
+		loginResp, err := app.Test(loginReq, -1)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(loginResp.StatusCode).To(Equal(fiber.StatusCreated))
 		cookies := loginResp.Cookies()
@@ -115,7 +118,7 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		cReq := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(cBody))
 		cReq.Header.Set("Content-Type", "application/json")
 		cReq.AddCookie(authCookie)
-		cResp, err := app.Test(cReq)
+		cResp, err := app.Test(cReq, -1) // -1: setup call; don't let the 1s test timeout flake under concurrent load
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cResp.StatusCode).To(Equal(fiber.StatusCreated))
 		var c models.Campaign
