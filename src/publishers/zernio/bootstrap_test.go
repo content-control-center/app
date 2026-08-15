@@ -227,7 +227,8 @@ func TestCreateConnectLinkForwardsRedirectURL(t *testing.T) {
 		Timeout:     time.Second,
 		RedirectURL: "https://app.example.com/oauth/done",
 	})
-	got, err := c.CreateConnectLink(context.Background(), "p_test", "linkedin")
+	// Empty per-call redirect falls back to the Client's configured RedirectURL.
+	got, err := c.CreateConnectLink(context.Background(), "p_test", "linkedin", "")
 	if err != nil {
 		t.Fatalf("CreateConnectLink: %v", err)
 	}
@@ -256,7 +257,7 @@ func TestCreateConnectLinkOmitsRedirectURLWhenUnset(t *testing.T) {
 	})
 
 	c := NewClient(StaticKey("test-key"), stub.URL, ClientOpts{Timeout: time.Second})
-	if _, err := c.CreateConnectLink(context.Background(), "p_test", "linkedin"); err != nil {
+	if _, err := c.CreateConnectLink(context.Background(), "p_test", "linkedin", ""); err != nil {
 		t.Fatalf("CreateConnectLink: %v", err)
 	}
 	for _, k := range redirectKeys {

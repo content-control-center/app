@@ -52,6 +52,15 @@ var (
 	ZernioAccountDisconnectSucceeded = expvar.NewInt("ogen_jobs_zernio_account_disconnect_succeeded")
 	ZernioAccountDisconnectFailed    = expvar.NewInt("ogen_jobs_zernio_account_disconnect_failed")
 
+	// Headless connect-session lifecycle (CON-217, hide Zernio's account selector).
+	ZernioConnectCallbackReceived = expvar.NewInt("ogen_jobs_zernio_connect_callback_received")
+	ZernioConnectAutoFinalized    = expvar.NewInt("ogen_jobs_zernio_connect_auto_finalized")
+	ZernioConnectSelectorShown    = expvar.NewInt("ogen_jobs_zernio_connect_selector_shown")
+	ZernioConnectSelectSucceeded  = expvar.NewInt("ogen_jobs_zernio_connect_select_succeeded")
+	ZernioConnectSelectFailed     = expvar.NewInt("ogen_jobs_zernio_connect_select_failed")
+	ZernioConnectSessionExpired   = expvar.NewInt("ogen_jobs_zernio_connect_session_expired")
+	ZernioConnectSessionsSwept    = expvar.NewInt("ogen_jobs_zernio_connect_sessions_swept")
+
 	// Post Log lifecycle.
 	PostLogTruncations = expvar.NewInt("ogen_jobs_postlog_truncations")
 	PostLogCleaned     = expvar.NewInt("ogen_jobs_postlog_cleaned")
