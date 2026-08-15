@@ -215,6 +215,40 @@ services:
             api:
                 condition: service_started
 
+    # Harbor UI dev server (Next.js) — hot-reloads the harbor UI in the browser,
+    # mirroring Ogen's `ui` service. In the same `harbor` profile, so
+    # `docker compose --profile harbor up` brings up BOTH the harbor backend
+    # (Go live-reload, :9003) and this UI dev server. `next dev` proxies /api to
+    # the harbor backend (HARBOR_API_URL), so the browser stays same-origin —
+    # open http://localhost:9005. node:22-alpine matches harbor's own Dockerfile
+    # (npm ci on musl). Override HARBOR_PATH if your checkout isn't ../harbor.
+    harbor-ui:
+        image: node:22-alpine
+        profiles: ["harbor"]
+        working_dir: /app
+        environment:
+            # next dev proxies /api here (the harbor backend on the compose network).
+            HARBOR_API_URL: "http://harbor:9002"
+            # Native FS events don't cross the bind mount on macOS/Windows, so the
+            # dev-server watcher must poll to notice host edits.
+            WATCHPACK_POLLING: "true"
+            CHOKIDAR_USEPOLLING: "true"
+        volumes:
+            # Local UI source -> live HMR. node_modules + .next stay in anonymous
+            # volumes so the host's copies don't shadow the container's and .next
+            # writes don't cross the (slow) bind mount.
+            - "${HARBOR_PATH:-../harbor}/ui:/app"
+            - /app/node_modules
+            - /app/.next
+        ports:
+            - "9005:3000" # Next dev server (container 3000 -> host 9005)
+        # `npm ci` mirrors harbor's Dockerfile; `next dev --hostname 0.0.0.0` binds
+        # all interfaces so the host reaches it through the published port.
+        command: sh -c "npm ci && npx next dev --hostname 0.0.0.0 --port 3000"
+        depends_on:
+            harbor:
+                condition: service_started
+
 volumes:
     postgres-data:
     timescale-data:
