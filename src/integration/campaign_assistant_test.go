@@ -17,6 +17,7 @@ import (
 	"github.com/ogen-app/ogen/src/campaign_actions/overview"
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
+	"github.com/ogen-app/ogen/src/genkit/flows/draft_post"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
@@ -34,6 +35,7 @@ var _ = Describe("Campaign assistant flow", Ordered, func() {
 		campaignID   string
 		campaignRepo repository.CampaignRepository
 		postRepo     repository.PostRepository
+		postNoteRepo repository.PostNoteRepository
 		messageRepo  repository.CampaignAssistantMessageRepository
 		assetRepo    repository.AssetRepository
 		callback     func(ctx context.Context, req campaign_assistant.CampaignAssistantRequest, onEvent campaign_assistant.OnEventFunc) (*campaign_assistant.CampaignAssistantResponse, error)
@@ -56,6 +58,7 @@ var _ = Describe("Campaign assistant flow", Ordered, func() {
 		campaignTypeRepo := repository.NewCampaignTypeRepository(db)
 		campaignRepo = repository.NewCampaignRepository(db, tagRepo, platformRepo, campaignTypeRepo)
 		postRepo = repository.NewPostRepository(db)
+		postNoteRepo = repository.NewPostNoteRepository(db)
 		messageRepo = repository.NewCampaignAssistantMessageRepository(db)
 
 		// Seed user.
@@ -128,6 +131,15 @@ var _ = Describe("Campaign assistant flow", Ordered, func() {
 		enrichBriefCb := enrich_brief.NewEnrichBriefCallback()
 		generatePostsCb := content_plan.NewGeneratePostsCallback()
 
+		// CON-207: register the draftPost generation flow as an assistant tool.
+		Expect(draft_post.InitDraftPost(g, draft_post.DraftPostFlowConfig{Provider: provider}, draft_post.DraftPostRepos{
+			Campaigns: campaignRepo,
+			Platforms: platformRepo,
+			Posts:     postRepo,
+			Notes:     postNoteRepo,
+		})).To(Succeed())
+		draftPostCb := draft_post.NewDraftPostCallback()
+
 		overviewSvc := overview.New(campaignRepo, postRepo, platformRepo)
 
 		Expect(campaign_assistant.InitCampaignAssistant(g, campaign_assistant.CampaignAssistantFlowConfig{
@@ -137,6 +149,8 @@ var _ = Describe("Campaign assistant flow", Ordered, func() {
 			Overview:         overviewSvc,
 			GeneratePosts:    generatePostsCb,
 			MaxGeneratePosts: 10,
+			DraftPost:        draftPostCb,
+			MaxDraftPosts:    5,
 		}, campaign_assistant.CampaignAssistantRepos{
 			Messages:  messageRepo,
 			Campaigns: campaignRepo,
@@ -148,8 +162,10 @@ var _ = Describe("Campaign assistant flow", Ordered, func() {
 	})
 
 	AfterEach(func() {
-		// Reset conversation + posts between specs; the campaign persists.
+		// Reset conversation + posts (and their notes) between specs; the campaign
+		// persists. Notes are deleted first — they FK the posts (CON-188/CON-207).
 		_, _ = db.NewDelete().TableExpr("campaign_assistant_messages").Where("1 = 1").Exec(ctx)
+		_, _ = db.NewDelete().TableExpr("post_notes").Where("post_id IN (SELECT id FROM posts WHERE campaign_id = ?)", campaignID).Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("posts").Where("campaign_id = ?", campaignID).Exec(ctx)
 	})
 
@@ -158,6 +174,7 @@ var _ = Describe("Campaign assistant flow", Ordered, func() {
 			return
 		}
 		_, _ = db.NewDelete().TableExpr("campaign_assistant_messages").Where("1 = 1").Exec(ctx)
+		_, _ = db.NewDelete().TableExpr("post_notes").Where("post_id IN (SELECT id FROM posts WHERE campaign_id = ?)", campaignID).Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("posts").Where("campaign_id = ?", campaignID).Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("campaigns").Where("id = ?", campaignID).Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("users").Where("id = ?", userID).Exec(ctx)
@@ -310,6 +327,66 @@ var _ = Describe("Campaign assistant flow", Ordered, func() {
 			for _, p := range posts {
 				Expect(p.PlatformID).To(Equal(platformID), "posts should be on the requested platform")
 			}
+		})
+	})
+
+	Describe("draft post from research", func() {
+		It("turns a prior research answer into a content-first draft with a Source research note", func() {
+			// Turn 1: a research-style answer that persists as the latest model turn.
+			_, err := callback(ctx, campaign_assistant.CampaignAssistantRequest{
+				CampaignID:  campaignID,
+				Instruction: "In two or three sentences, summarise why Go suits production AI features for this campaign.",
+			}, nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Turn 2: turn that research into a real LinkedIn post.
+			var gotDraftComplete, gotComplete bool
+			onEvent := campaign_assistant.OnEventFunc(func(name campaign_assistant.SSEEventKind, _ any) {
+				switch name {
+				case campaign_assistant.SSEEventDraftPostComplete:
+					gotDraftComplete = true
+				case campaign_assistant.SSEEventComplete:
+					gotComplete = true
+				}
+			})
+			resp, err := callback(ctx, campaign_assistant.CampaignAssistantRequest{
+				CampaignID:  campaignID,
+				Instruction: "Great — create a LinkedIn post with this info for next week.",
+			}, onEvent)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp).NotTo(BeNil())
+
+			Expect(resp.Action).To(Equal("post_drafted"))
+			Expect(resp.DraftedPosts).NotTo(BeNil())
+			Expect(resp.DraftedPosts.PostCount).To(BeNumerically(">", 0))
+			Expect(gotDraftComplete).To(BeTrue(), "the draft_post_complete event should be forwarded")
+			Expect(gotComplete).To(BeTrue(), "complete signals the canonical final response")
+
+			posts, err := postRepo.ListByCampaign(ctx, campaignID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(len(posts)).To(Equal(resp.DraftedPosts.PostCount))
+
+			p := posts[0]
+			// Content-first: the finished copy lives in the post body (not the empty
+			// content_plan body), status draft, on the requested platform.
+			Expect(strings.TrimSpace(p.Content)).NotTo(BeEmpty(), "draft should carry full copy in Content")
+			Expect(p.Status).To(Equal(models.PostStatusDraft))
+			Expect(p.PlatformID).To(Equal(platformID))
+
+			// A "Source research" note (type note, origin assistant) — and NO
+			// draft_thesis note (that's the content_plan path, not this one).
+			notes, err := postNoteRepo.ListByPostID(ctx, p.ID)
+			Expect(err).NotTo(HaveOccurred())
+			var sawSource bool
+			for _, n := range notes {
+				Expect(n.Type).NotTo(Equal(models.PostNoteTypeDraftThesis), "draftPost must not create a draft_thesis note")
+				if n.Type == models.PostNoteTypeNote && n.Title == "Source research" {
+					sawSource = true
+					Expect(n.Origin).To(Equal(models.PostNoteOriginAssistant))
+					Expect(strings.TrimSpace(n.Body)).NotTo(BeEmpty())
+				}
+			}
+			Expect(sawSource).To(BeTrue(), "the source research should be kept as a reference note")
 		})
 	})
 

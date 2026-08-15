@@ -13,6 +13,7 @@ import (
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/consistency"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
+	"github.com/ogen-app/ogen/src/genkit/flows/draft_post"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/usage"
 	"github.com/ogen-app/ogen/src/vendors/llm"
@@ -35,6 +36,7 @@ func initCampaignAssistant(
 	enrichBriefFn func(ctx context.Context, req enrich_brief.EnrichBriefRequest, onEvent enrich_brief.OnEventFunc) (*enrich_brief.EnrichBriefResponse, error),
 	overviewSvc *overview.Service,
 	generatePostsFn func(ctx context.Context, req content_plan.GeneratePostsRequest, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error),
+	draftPostFn func(ctx context.Context, req draft_post.DraftPostRequest, onEvent draft_post.OnEventFunc) (*draft_post.DraftPostResponse, error),
 	checkBriefFn func(ctx context.Context, campaignID string, onEvent consistency.OnEventFunc) (*consistency.BriefReview, error),
 	checkPostsFn func(ctx context.Context, req consistency.PostsCheckRequest, onEvent consistency.OnEventFunc) (*consistency.PostsReview, error),
 ) (func(ctx context.Context, req campaign_assistant.CampaignAssistantRequest, onEvent campaign_assistant.OnEventFunc) (*campaign_assistant.CampaignAssistantResponse, error), error) {
@@ -67,6 +69,8 @@ func initCampaignAssistant(
 		Overview:         overviewSvc,
 		GeneratePosts:    generatePostsFn,
 		MaxGeneratePosts: cfg.GeneratePostsMax,
+		DraftPost:        draftPostFn,
+		MaxDraftPosts:    cfg.DraftPostMax,
 		CheckBrief:       checkBriefFn,
 		CheckPosts:       checkPostsFn,
 	}

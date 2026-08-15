@@ -34,7 +34,7 @@ func prewarmToolCache(g *genkit.Genkit, cfg CampaignAssistantFlowConfig, t *tool
 		ai.WithPrompt("warmup"),
 		ai.WithTools(
 			t.runContentPlan, t.enrichBrief, t.listCampaignPosts, t.getCampaignOverview,
-			t.generatePosts, t.setCampaignDates, t.redistributePosts, t.checkBrief, t.checkPostsConsistency,
+			t.generatePosts, t.draftPost, t.setCampaignDates, t.redistributePosts, t.checkBrief, t.checkPostsConsistency,
 		),
 		ai.WithMaxTurns(1),
 		cfg.Provider.CallConfig(1), // max_tokens: 1 — grammar compiles during prep

@@ -99,12 +99,15 @@ func runCampaignAssistant(
 		campaign:         campaign,
 		repos:            repos,
 		onEvent:          onEvent,
+		instruction:      req.Instruction,
 		embedder:         cfg.Embedder,
 		contentPlan:      cfg.ContentPlan,
 		enrichBrief:      cfg.EnrichBrief,
 		overview:         cfg.Overview,
 		generatePosts:    cfg.GeneratePosts,
 		maxGeneratePosts: cfg.MaxGeneratePosts,
+		draftPost:        cfg.DraftPost,
+		maxDraftPosts:    cfg.MaxDraftPosts,
 		checkBrief:       cfg.CheckBrief,
 		checkPosts:       cfg.CheckPosts,
 	}
@@ -194,7 +197,7 @@ func runCampaignAssistant(
 		ai.WithSystem(systemBlock),
 		ai.WithMessages(history...),
 		ai.WithPrompt(req.Instruction),
-		ai.WithTools(tools.runContentPlan, tools.enrichBrief, tools.listCampaignPosts, tools.getCampaignOverview, tools.generatePosts, tools.setCampaignDates, tools.redistributePosts, tools.checkBrief, tools.checkPostsConsistency, tools.askCampaignAssets),
+		ai.WithTools(tools.runContentPlan, tools.enrichBrief, tools.listCampaignPosts, tools.getCampaignOverview, tools.generatePosts, tools.draftPost, tools.setCampaignDates, tools.redistributePosts, tools.checkBrief, tools.checkPostsConsistency, tools.askCampaignAssets),
 		ai.WithMaxTurns(maxTurns),
 		ai.WithStreaming(streamCb),
 		cfg.Provider.CallConfig(maxTokens),
@@ -276,6 +279,17 @@ func runCampaignAssistant(
 			}
 		}
 	}
+	if st.draftPostResult != nil {
+		result.Action = "post_drafted"
+		result.DraftedPosts = st.draftPostResult
+		if result.Explanation == "" {
+			if st.draftPostResult.PostCount == 0 {
+				result.Explanation = "I couldn't draft a post from that research."
+			} else {
+				result.Explanation = fmt.Sprintf("I drafted %d post(s) from your research, ready for review.", st.draftPostResult.PostCount)
+			}
+		}
+	}
 	if st.datesResult != nil {
 		result.Action = "dates_updated"
 		result.Dates = st.datesResult
@@ -323,7 +337,7 @@ func runCampaignAssistant(
 	// Pure-prose recovery: the model ignored the JSON envelope and answered in
 	// plain prose (common for informational questions) and no tool ran. Salvage
 	// the raw text as an "answered" reply.
-	if result.Explanation == "" && st.contentPlanResult == nil && st.briefResult == nil && st.generatedPostsResult == nil && st.datesResult == nil && st.redistributeResult == nil && st.briefReviewResult == nil && st.postsReviewResult == nil {
+	if result.Explanation == "" && st.contentPlanResult == nil && st.briefResult == nil && st.generatedPostsResult == nil && st.draftPostResult == nil && st.datesResult == nil && st.redistributeResult == nil && st.briefReviewResult == nil && st.postsReviewResult == nil {
 		raw := strings.TrimSpace(scanner.FullText())
 		if raw != "" && !strings.Contains(raw, "{") {
 			slog.WarnContext(ctx, "model emitted prose-only response, treating as answered", logging.AttrComponent, "genkit.campaign_assistant", "campaign_id", req.CampaignID, "len", len(raw))
@@ -410,6 +424,12 @@ func runCampaignAssistant(
 		emit(onEvent, SSEEventGeneratePostsComplete, GeneratePostsCompleteEventPayload{
 			PostCount: result.GeneratedPosts.PostCount,
 			Warnings:  result.GeneratedPosts.Warnings,
+		})
+	}
+	if result.DraftedPosts != nil {
+		emit(onEvent, SSEEventDraftPostComplete, DraftPostCompleteEventPayload{
+			PostCount: result.DraftedPosts.PostCount,
+			Warnings:  result.DraftedPosts.Warnings,
 		})
 	}
 	if result.Dates != nil {

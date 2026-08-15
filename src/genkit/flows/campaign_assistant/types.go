@@ -9,6 +9,7 @@ import (
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/genkit/flows/consistency"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
+	"github.com/ogen-app/ogen/src/genkit/flows/draft_post"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/usage"
@@ -28,7 +29,7 @@ type CampaignAssistantRequest struct {
 // ran this turn.
 type CampaignAssistantResponse struct {
 	Explanation string `json:"explanation"          jsonschema:"description=Conversational reply to the user"`
-	Action      string `json:"action"               jsonschema:"description=answered for a grounded reply; content_plan_generated when runContentPlan ran; brief_enriched when enrichBrief ran; posts_generated when generatePosts ran; dates_updated when setCampaignDates ran; posts_redistributed when redistributePosts ran; brief_reviewed when checkBrief ran; posts_reviewed when checkPostsConsistency ran; declined when the request is out of scope,enum=answered,enum=content_plan_generated,enum=brief_enriched,enum=posts_generated,enum=dates_updated,enum=posts_redistributed,enum=brief_reviewed,enum=posts_reviewed,enum=declined"`
+	Action      string `json:"action"               jsonschema:"description=answered for a grounded reply; content_plan_generated when runContentPlan ran; brief_enriched when enrichBrief ran; posts_generated when generatePosts ran; post_drafted when draftPost ran; dates_updated when setCampaignDates ran; posts_redistributed when redistributePosts ran; brief_reviewed when checkBrief ran; posts_reviewed when checkPostsConsistency ran; declined when the request is out of scope,enum=answered,enum=content_plan_generated,enum=brief_enriched,enum=posts_generated,enum=post_drafted,enum=dates_updated,enum=posts_redistributed,enum=brief_reviewed,enum=posts_reviewed,enum=declined"`
 	// ContentPlan is set by the server when the runContentPlan tool created
 	// draft posts this turn. Action is then "content_plan_generated".
 	ContentPlan *ContentPlanResult `json:"contentPlan,omitempty" jsonschema:"-"`
@@ -38,6 +39,10 @@ type CampaignAssistantResponse struct {
 	// GeneratedPosts is set by the server when the generatePosts tool added
 	// targeted posts this turn. Action is then "posts_generated".
 	GeneratedPosts *GeneratedPostsResult `json:"generatedPosts,omitempty" jsonschema:"-"`
+	// DraftedPosts is set by the server when the draftPost tool created
+	// content-first drafts from chat research this turn (CON-207). Action is then
+	// "post_drafted".
+	DraftedPosts *DraftPostResult `json:"draftedPosts,omitempty" jsonschema:"-"`
 	// Dates is set by the server when setCampaignDates changed the campaign's
 	// dates this turn. Action is then "dates_updated".
 	Dates *DatesResult `json:"dates,omitempty" jsonschema:"-"`
@@ -73,6 +78,18 @@ type GeneratedPostsResult struct {
 	Warnings    []string `json:"warnings,omitempty"`
 	// UsedAssets lists the campaign assets that informed the posts (CON-118);
 	// empty when none were used.
+	UsedAssets []AssetRef `json:"usedAssets,omitempty"`
+}
+
+// DraftPostResult summarises a draftPost tool invocation (CON-207).
+type DraftPostResult struct {
+	PostCount   int      `json:"postCount"`
+	PlatformIDs []string `json:"platformIds"`
+	PhaseID     string   `json:"phaseId"`
+	Dates       []string `json:"dates,omitempty"` // actual publish dates of the created posts
+	Warnings    []string `json:"warnings,omitempty"`
+	// UsedAssets lists the campaign assets that informed the drafts (CON-118);
+	// empty in v1 (provenance is carried by each post's Source research note).
 	UsedAssets []AssetRef `json:"usedAssets,omitempty"`
 }
 
@@ -150,6 +167,12 @@ type CampaignAssistantFlowConfig struct {
 	// MaxGeneratePosts caps how many posts one generatePosts call may create
 	// (CON-114). 0 falls back to 10.
 	MaxGeneratePosts int
+	// DraftPost backs the draftPost tool (CON-207): rewrite chat research into
+	// extended content-first drafts. nil disables the tool.
+	DraftPost func(ctx context.Context, req draft_post.DraftPostRequest, onEvent draft_post.OnEventFunc) (*draft_post.DraftPostResponse, error)
+	// MaxDraftPosts caps how many posts one draftPost call may create (CON-207).
+	// 0 falls back to 5.
+	MaxDraftPosts int
 	// CheckBrief / CheckPosts back the read-only consistency review tools
 	// (CON-116). nil disables the corresponding tool.
 	CheckBrief func(ctx context.Context, campaignID string, onEvent consistency.OnEventFunc) (*consistency.BriefReview, error)
@@ -197,6 +220,12 @@ const (
 	SSEEventGeneratePostsPost     SSEEventKind = "generate_posts_post"
 	SSEEventGeneratePostsWarning  SSEEventKind = "generate_posts_warning"
 	SSEEventGeneratePostsComplete SSEEventKind = "generate_posts_complete"
+
+	SSEEventDraftPostStarted  SSEEventKind = "draft_post_started"
+	SSEEventDraftPostStep     SSEEventKind = "draft_post_step"
+	SSEEventDraftPostPost     SSEEventKind = "draft_post_post"
+	SSEEventDraftPostWarning  SSEEventKind = "draft_post_warning"
+	SSEEventDraftPostComplete SSEEventKind = "draft_post_complete"
 
 	// SSEEventAssetsUsed reports which attached assets informed the generated
 	// posts (CON-118); emitted by runContentPlan/generatePosts when non-empty.
@@ -261,6 +290,18 @@ type GeneratePostsStartedEventPayload struct {
 
 // GeneratePostsCompleteEventPayload is emitted once targeted posts are persisted.
 type GeneratePostsCompleteEventPayload struct {
+	PostCount int      `json:"postCount"`
+	Warnings  []string `json:"warnings,omitempty"`
+}
+
+// DraftPostStartedEventPayload is emitted when the draftPost tool begins (CON-207).
+type DraftPostStartedEventPayload struct {
+	PlatformIDs []string `json:"platformIds"`
+	Count       int      `json:"count"`
+}
+
+// DraftPostCompleteEventPayload is emitted once content-first drafts are persisted.
+type DraftPostCompleteEventPayload struct {
 	PostCount int      `json:"postCount"`
 	Warnings  []string `json:"warnings,omitempty"`
 }
