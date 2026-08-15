@@ -63,7 +63,7 @@ func TestZernioPerTenantSyncIsolation(t *testing.T) {
 
 	// Two tenants, each with its own profile. 'default' exists from the
 	// migration; create the second (tenants is not auto-scoped).
-	if _, err := db.NewInsert().Model(&models.Tenant{ID: "tb", Name: "Beta", Slug: "beta"}).
+	if _, err := db.NewInsert().Model(&models.Tenant{ID: "tb", Name: "Beta", Slug: "beta", TierID: models.DefaultTierID}).
 		Exec(context.Background()); err != nil {
 		t.Fatalf("create tenant tb: %v", err)
 	}

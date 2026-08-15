@@ -79,7 +79,7 @@ func TestUserRepositoryGetByAccountIDTieBreak(t *testing.T) {
 	// real, live tenants rows to resolve to.
 	ts := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	for _, id := range []string{"t-1", "t-2"} {
-		if _, err := db.NewInsert().Model(&models.Tenant{ID: id, Name: id, Slug: id, CreatedAt: ts, UpdatedAt: ts}).Exec(ctx); err != nil {
+		if _, err := db.NewInsert().Model(&models.Tenant{ID: id, Name: id, Slug: id, TierID: models.DefaultTierID, CreatedAt: ts, UpdatedAt: ts}).Exec(ctx); err != nil {
 			t.Fatalf("seed tenant %s: %v", id, err)
 		}
 	}

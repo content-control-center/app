@@ -61,7 +61,12 @@ func newSecretsGRPCRig() *secretsGRPCRig {
 	db := mustOpenIntegrationDB()
 	store := newSecretsStore(db)
 
-	srv, err := grpcserver.New(secretsGRPCToken, store)
+	srv, err := grpcserver.New(
+		secretsGRPCToken, store,
+		repository.NewTenantTierRepository(db),
+		repository.NewTenantGroupRepository(db),
+		repository.NewTenantRepository(db),
+	)
 	Expect(err).NotTo(HaveOccurred())
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	Expect(err).NotTo(HaveOccurred())
