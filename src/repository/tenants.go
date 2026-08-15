@@ -151,8 +151,12 @@ func (r *tenantRepository) ListWithClassification(ctx context.Context, f TenantL
 		)
 	}
 	// Tiebreak on the PK so ties on created_at yield a total, stable order —
-	// otherwise limit/offset paging could drop or repeat rows across pages.
-	total, err := q.OrderExpr("tn.created_at ASC, tn.id ASC").Limit(limit).Offset(offset).ScanAndCount(ctx)
+	// otherwise limit/offset paging could drop or repeat rows across pages. The
+	// id tiebreak is pinned to the C (byte) collation so the order is identical
+	// across clusters regardless of their default collation: a locale collation
+	// sorts mixed-case Sqids case-insensitively (stable per-cluster but not
+	// portable across dev/CI/prod, and diverging from a bytewise sort.Strings).
+	total, err := q.OrderExpr(`tn.created_at ASC, tn.id COLLATE "C" ASC`).Limit(limit).Offset(offset).ScanAndCount(ctx)
 	if err != nil {
 		return nil, 0, err
 	}

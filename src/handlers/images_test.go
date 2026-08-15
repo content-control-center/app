@@ -106,7 +106,12 @@ func multipartBody(filename string, content []byte) (*bytes.Buffer, string) {
 	return &buf, w.FormDataContentType()
 }
 
-var _ = Describe("ImagesHandler", Ordered, func() {
+// Serial: one spec pushes an 11 MB body through the handler; under `-race
+// -procs=2` that starves 1s-budget requests on the other proc and flakes
+// unrelated specs' setup calls. Run this (Ordered) suite serially so the hog
+// stays out of the parallel phase. (A lone Serial spec isn't allowed inside a
+// non-Serial Ordered container, so the decorator goes on the container.)
+var _ = Describe("ImagesHandler", Ordered, Serial, func() {
 	var (
 		app        *fiber.App
 		db         *bun.DB

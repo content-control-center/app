@@ -336,6 +336,52 @@ When the UI and API are served from different origins, set `CORS_ALLOWED_ORIGINS
 on the API to the UI origin(s); for local dev the Vite `/api` proxy keeps things
 same-origin, so it can stay empty.
 
+### Harbor ops dashboard (gRPC-linked)
+
+[`ogen-app/harbor`](https://github.com/ogen-app/harbor) — Ogen's operations
+dashboard — is wired into `docker-compose.yml` behind the `harbor` profile so it
+comes up **alongside** this stack and links to it over gRPC:
+
+```bash
+docker compose --profile harbor up     # Ogen (live-reload) + Harbor (live-reload)
+```
+
+This brings up **two** live-reloading Harbor services alongside Ogen:
+
+| Service | What | Reload | URL |
+| --- | --- | --- | --- |
+| `harbor` | Go backend (API + embedded UI) | `air` rebuilds on `.go`/`.sql` edits | http://localhost:9003 |
+| `harbor-ui` | Next.js UI dev server | Turbopack HMR on UI edits | **http://localhost:9005** |
+
+Open **http://localhost:9005** for the hot-reloading UI (`next dev` proxies
+`/api` to the backend, so the browser stays same-origin); the backend on `:9003`
+serves the API and its embedded (placeholder) UI directly. Harbor shares this
+stack's Postgres — its own `harbor` database, which it **auto-creates on first
+boot** (a separate DB on the same server) — reads Ogen's control-plane and
+analytics DBs, and reaches Ogen's internal operator gRPC surface at `api:9091`
+for the Settings → Secrets tab. The gRPC link authenticates with
+`GRPC_AUTH_TOKEN`, which the compose file defaults to a dev token
+(`ogen-harbor-dev`) shared by both services so it works out of the box; set a
+real value in `.env` to override.
+
+Harbor's own `${HARBOR_PATH:-../harbor}/.env` is loaded for its remaining config
+(Google OAuth creds, `AUTH_ALLOWED_EMAILS`, log level, cookie name); it's
+optional, and the compose `environment:` block overrides its DB/analytics/gRPC
+endpoints so the host `localhost` DSNs a dev `.env` carries don't leak into the
+container network.
+
+If your harbor checkout isn't at `../harbor`, point `HARBOR_PATH` at it:
+
+```bash
+HARBOR_PATH=/path/to/harbor docker compose --profile harbor up
+```
+
+Ports use the `900x` family (`9003` backend, `9005` UI) to avoid Ogen's `9001`
+API and the `ui` profile's `9002`. Combine with `--profile ui` to run Ogen's
+API, its UI, and Harbor all together. (Google login through the hot-reload UI
+would need `http://localhost:9005` added as an authorized JS origin; it's
+disabled without OAuth creds, which dev doesn't require.)
+
 ### API documentation
 
 The full REST API reference (OpenAPI) is generated from swag annotations via
