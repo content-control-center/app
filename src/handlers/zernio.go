@@ -21,17 +21,16 @@ import (
 	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
-// connectLinkTTL is the client-side TTL hint returned with each connect
-// link. Zernio enforces the actual expiry; this is informational only.
-const connectLinkTTL = 30 * time.Minute
-
 // fastPollWindow is the fast-cadence window the worker honours after a
 // connect link is issued. Per the ticket: 10 minutes.
 const fastPollWindow = 10 * time.Minute
 
-// connectSessionTTL bounds a headless connect session's lifetime (CON-217). It
-// matches Zernio's 15-minute connect_token expiry — a callback arriving after
-// this window is stale and fails closed.
+// connectSessionTTL bounds a headless connect session's lifetime (CON-217) and
+// is the expiry advertised as connectLinkResponse.ExpiresAt. It matches Zernio's
+// 15-minute connect_token expiry: the whole connect flow (open link → authorize
+// → any in-Ogen pick) must complete within it, since the session row is not
+// extended on the awaiting_selection transition. A callback or pick arriving
+// later finds the session gone and fails closed.
 const connectSessionTTL = 15 * time.Minute
 
 // ZernioHandler exposes the integration endpoints under
@@ -372,7 +371,7 @@ func (h *ZernioHandler) CreateConnectLink(c *fiber.Ctx) error {
 	return c.JSON(connectLinkResponse{
 		Platform:   req.Platform,
 		ConnectURL: connectURL,
-		ExpiresAt:  time.Now().UTC().Add(connectLinkTTL),
+		ExpiresAt:  now.Add(connectSessionTTL),
 	})
 }
 

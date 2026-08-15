@@ -310,7 +310,7 @@ var _ = Describe("ZernioHandler", Ordered, func() {
 			Expect(integ.State()).To(Equal(zernio.StateOK))
 		})
 
-		It("POST /connect-links returns the URL plus a 30-min ExpiresAt for an allowlisted platform", func() {
+		It("POST /connect-links returns the URL plus a 15-min ExpiresAt for an allowlisted platform", func() {
 			body, _ := json.Marshal(fiber.Map{"platform": "linkedin"})
 			req := httptest.NewRequest("POST", "/api/integrations/zernio/connect-links", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
@@ -327,8 +327,8 @@ var _ = Describe("ZernioHandler", Ordered, func() {
 			Expect(json.NewDecoder(resp.Body).Decode(&out)).To(Succeed())
 			Expect(out.Platform).To(Equal("linkedin"))
 			Expect(out.ConnectURL).To(ContainSubstring("zernio.com/connect/linkedin"))
-			Expect(time.Until(out.ExpiresAt)).To(BeNumerically(">", 25*time.Minute))
-			Expect(time.Until(out.ExpiresAt)).To(BeNumerically("<=", 30*time.Minute))
+			Expect(time.Until(out.ExpiresAt)).To(BeNumerically(">", 10*time.Minute))
+			Expect(time.Until(out.ExpiresAt)).To(BeNumerically("<=", 15*time.Minute))
 		})
 
 		It("GET /accounts returns whatever the local table holds plus last-sync metadata", func() {
