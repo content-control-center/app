@@ -204,7 +204,7 @@ var _ = Describe("InvitationsHandler", Ordered, func() {
 		mid, err := models.NewID()
 		Expect(err).NotTo(HaveOccurred())
 		now := time.Now().UTC()
-		_, err = db.NewInsert().Model(&models.Tenant{ID: tid, Name: "Other " + aid, Slug: "other-" + aid, CreatedAt: now, UpdatedAt: now}).Exec(ctx)
+		_, err = db.NewInsert().Model(&models.Tenant{ID: tid, Name: "Other " + aid, Slug: "other-" + aid, TierID: models.DefaultTierID, CreatedAt: now, UpdatedAt: now}).Exec(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		acct := &models.Account{ID: aid, Email: email, PasswordHash: hash, Name: "Ext", CreatedAt: now, UpdatedAt: now}
 		_, err = db.NewInsert().Model(acct).Exec(ctx)

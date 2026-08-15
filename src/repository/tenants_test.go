@@ -15,7 +15,7 @@ func TestTenantRepositoryCRUD(t *testing.T) {
 	repo := repository.NewTenantRepository(db)
 	ctx := context.Background()
 
-	tn := &models.Tenant{ID: "tn-1", Name: "Acme", Slug: "acme"}
+	tn := &models.Tenant{ID: "tn-1", Name: "Acme", Slug: "acme", TierID: models.DefaultTierID}
 	if err := repo.Create(ctx, tn); err != nil {
 		t.Fatalf("create: %v", err)
 	}

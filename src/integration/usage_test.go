@@ -52,7 +52,7 @@ func i64(v int64) *int64 { return &v }
 
 func seedTenant(db *bun.DB, id, name, slug string) {
 	GinkgoHelper()
-	_, err := db.NewInsert().Model(&models.Tenant{ID: id, Name: name, Slug: slug}).Exec(context.Background())
+	_, err := db.NewInsert().Model(&models.Tenant{ID: id, Name: name, Slug: slug, TierID: models.DefaultTierID}).Exec(context.Background())
 	Expect(err).NotTo(HaveOccurred())
 }
 

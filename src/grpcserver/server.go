@@ -28,6 +28,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	secretsv1 "github.com/ogen-app/ogen/gen/secrets/v1"
+	tenantsv1 "github.com/ogen-app/ogen/gen/tenants/v1"
+	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/secrets"
 )
 
@@ -37,9 +39,17 @@ import (
 const authMetadataKey = "authorization"
 
 // New builds the internal gRPC server: a token-authenticated SecretsService
-// backed by store. An empty token is rejected — the caller must decide NOT to
+// backed by store, plus the CON-208 TenantAdminService backed by the tenant /
+// tier / group repositories. The single token interceptor gates every RPC on
+// both services. An empty token is rejected — the caller must decide NOT to
 // start the server at all rather than run it unauthenticated.
-func New(token string, store secrets.Store) (*grpc.Server, error) {
+func New(
+	token string,
+	store secrets.Store,
+	tierRepo repository.TenantTierRepository,
+	groupRepo repository.TenantGroupRepository,
+	tenantRepo repository.TenantRepository,
+) (*grpc.Server, error) {
 	// Env-configured secrets frequently arrive with a trailing newline (a very
 	// common Railway / docker-compose paste mistake). Trim it here so the
 	// byte-for-byte token compare in the interceptor doesn't silently reject an
@@ -52,6 +62,7 @@ func New(token string, store secrets.Store) (*grpc.Server, error) {
 		grpc.ChainUnaryInterceptor(tokenAuthInterceptor(token)),
 	)
 	secretsv1.RegisterSecretsServiceServer(srv, newSecretsService(store))
+	tenantsv1.RegisterTenantAdminServiceServer(srv, newTenantAdminService(tierRepo, groupRepo, tenantRepo))
 	return srv, nil
 }
 

@@ -182,7 +182,9 @@ func (h *TenantsHandler) Signup(c *fiber.Ctx) error {
 	}
 
 	now := time.Now().UTC()
-	tenant := &models.Tenant{ID: tenantID, Name: req.Tenant.Name, Slug: slug, CreatedAt: now, UpdatedAt: now}
+	// CON-208: tenant.tier_id is required (NOT NULL). New workspaces start on the
+	// seeded default tier; Harbor reassigns them later over the gRPC admin surface.
+	tenant := &models.Tenant{ID: tenantID, Name: req.Tenant.Name, Slug: slug, TierID: models.DefaultTierID, CreatedAt: now, UpdatedAt: now}
 	// Identity (the credential) lives on the account; the users row is this
 	// account's membership of the new workspace (CON-147). The signup user creates
 	// the workspace, so they are its first owner (CON-26).

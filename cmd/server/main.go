@@ -146,7 +146,15 @@ func main() {
 	if cfg.GRPCAddr != "" && cfg.GRPCAuthToken != "" {
 		if lis, err := net.Listen("tcp", cfg.GRPCAddr); err != nil {
 			slog.Error("grpc listen failed; internal grpc disabled (non-fatal)", logging.AttrComponent, "boot", logging.AttrError, err)
-		} else if gs, err := grpcserver.New(cfg.GRPCAuthToken, store); err != nil {
+		} else if gs, err := grpcserver.New(
+			cfg.GRPCAuthToken, store,
+			// CON-208: the operator-facing TenantAdminService reads/writes the
+			// global tenant-classification tables. These repos need only the DB
+			// pool, so they are built here rather than plumbed out of server.New.
+			repository.NewTenantTierRepository(db),
+			repository.NewTenantGroupRepository(db),
+			repository.NewTenantRepository(db),
+		); err != nil {
 			slog.Error("grpc init failed; internal grpc disabled (non-fatal)", logging.AttrComponent, "boot", logging.AttrError, err)
 			_ = lis.Close()
 		} else {
