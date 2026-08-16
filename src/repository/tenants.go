@@ -23,29 +23,45 @@ type TenantRepository interface {
 	Update(ctx context.Context, tenant *models.Tenant) error
 	// SoftDeleteTx marks a workspace deleted (CON-147 PR4) on the provided bun.IDB
 	// so it can join the delete handler's transaction (which also, later, enqueues
-	// the Zernio teardown). Idempotent: a second call while already deleted is a
-	// no-op. Passing nil uses the default DB.
+	// the Zernio teardown). It stamps status='deleted' alongside deleted_at
+	// (CON-190) to keep the two in lockstep. Idempotent: a second call while
+	// already deleted is a no-op. Passing nil uses the default DB.
 	SoftDeleteTx(ctx context.Context, tx bun.IDB, id string, at time.Time) error
 
 	// --- CON-208 operator/admin classification read + write (Harbor gRPC) ---
 
-	// GetByIDWithClassification loads a non-deleted tenant and hydrates its Tier
-	// and Groups. Returns sql.ErrNoRows for an unknown or soft-deleted tenant.
+	// GetByIDWithClassification loads a tenant of ANY status (CON-190: operators
+	// inspect suspended/deleted tenants too) and hydrates its Tier and Groups.
+	// Returns sql.ErrNoRows only for an unknown id.
 	GetByIDWithClassification(ctx context.Context, id string) (*models.Tenant, error)
-	// ListWithClassification returns non-deleted tenants (optionally filtered by
-	// tier and/or group), each hydrated with Tier + Groups, plus the total match
-	// count ignoring the page window.
+	// ListWithClassification returns tenants of any status (optionally filtered by
+	// tier, group and/or status), each hydrated with Tier + Groups, plus the total
+	// match count ignoring the page window.
 	ListWithClassification(ctx context.Context, f TenantListFilter) ([]models.Tenant, int, error)
 	// SetTier reassigns a non-deleted tenant's required tier. Returns false if no
 	// such (live) tenant exists; an unknown tier fails the FK (23503).
 	SetTier(ctx context.Context, tenantID, tierID string) (bool, error)
+
+	// --- CON-190 operator/admin lifecycle status (Harbor gRPC) ---
+
+	// SetStatus sets a tenant's lifecycle status + reason (CON-190). It reaches a
+	// tenant in ANY status (so it can restore a deleted one) and keeps deleted_at
+	// in lockstep: set to `at` for status='deleted', cleared to NULL otherwise.
+	// reason is stored as-is (the service clears it for non-suspended targets).
+	// Returns false if no such tenant id exists.
+	SetStatus(ctx context.Context, tenantID, status, reason string, at time.Time) (bool, error)
+	// GetStatus returns a tenant's lifecycle status (CON-190), for background-job
+	// active-tenant guards. Returns sql.ErrNoRows for an unknown id.
+	GetStatus(ctx context.Context, id string) (string, error)
 }
 
-// TenantListFilter narrows and pages ListWithClassification. Empty TierID/GroupID
-// means "no filter on that dimension"; Limit defaults to 100 and is capped at 500.
+// TenantListFilter narrows and pages ListWithClassification. Empty
+// TierID/GroupID/Status means "no filter on that dimension"; Limit defaults to
+// 100 and is capped at 500.
 type TenantListFilter struct {
 	TierID  string
 	GroupID string
+	Status  string
 	Limit   int
 	Offset  int
 }
@@ -100,6 +116,7 @@ func (r *tenantRepository) SoftDeleteTx(ctx context.Context, tx bun.IDB, id stri
 	}
 	_, err := db.NewUpdate().Model((*models.Tenant)(nil)).
 		Set("deleted_at = ?", at).
+		Set("status = ?", models.TenantStatusDeleted).
 		Set("updated_at = ?", at).
 		Where("id = ?", id).
 		Where("deleted_at IS NULL").
@@ -109,9 +126,10 @@ func (r *tenantRepository) SoftDeleteTx(ctx context.Context, tx bun.IDB, id stri
 
 func (r *tenantRepository) GetByIDWithClassification(ctx context.Context, id string) (*models.Tenant, error) {
 	tenant := new(models.Tenant)
+	// Any status: operators inspect (and restore) suspended/deleted tenants too
+	// (CON-190). Unknown id → ErrNoRows.
 	err := r.db.NewSelect().Model(tenant).
 		Where("tn.id = ?", id).
-		Where("tn.deleted_at IS NULL").
 		Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -140,7 +158,12 @@ func (r *tenantRepository) ListWithClassification(ctx context.Context, f TenantL
 	}
 
 	var tenants []models.Tenant
-	q := r.db.NewSelect().Model(&tenants).Where("tn.deleted_at IS NULL")
+	// Any status by default (CON-190): the operator console lists all tenants and
+	// badges them by status; pass f.Status to narrow (e.g. only 'suspended').
+	q := r.db.NewSelect().Model(&tenants)
+	if f.Status != "" {
+		q = q.Where("tn.status = ?", f.Status)
+	}
 	if f.TierID != "" {
 		q = q.Where("tn.tier_id = ?", f.TierID)
 	}
@@ -178,6 +201,43 @@ func (r *tenantRepository) SetTier(ctx context.Context, tenantID, tierID string)
 	}
 	n, _ := res.RowsAffected()
 	return n > 0, nil
+}
+
+func (r *tenantRepository) SetStatus(ctx context.Context, tenantID, status, reason string, at time.Time) (bool, error) {
+	// deleted_at is kept in lockstep with status (CON-190): stamped for 'deleted',
+	// cleared otherwise (so restoring a deleted tenant makes it live again). No
+	// status/deleted_at predicate here — the write must reach a tenant in ANY
+	// current state, including 'deleted', so restore works.
+	q := r.db.NewUpdate().Model((*models.Tenant)(nil)).
+		Set("status = ?", status).
+		Set("status_reason = ?", reason).
+		Set("updated_at = ?", at)
+	if status == models.TenantStatusDeleted {
+		q = q.Set("deleted_at = ?", at)
+	} else {
+		q = q.Set("deleted_at = NULL")
+	}
+	res, err := q.Where("id = ?", tenantID).Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+func (r *tenantRepository) GetStatus(ctx context.Context, id string) (string, error) {
+	var status string
+	err := r.db.NewSelect().Model((*models.Tenant)(nil)).
+		Column("status").
+		Where("id = ?", id).
+		Scan(ctx, &status)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", sql.ErrNoRows
+		}
+		return "", err
+	}
+	return status, nil
 }
 
 // hydrateClassification loads each tenant's Tier (by tier_id) and Groups (via

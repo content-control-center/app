@@ -194,7 +194,7 @@ func TestTenantGroupRepositoryAndMembership(t *testing.T) {
 
 // TestTenantClassificationHydrationAndFilters covers the tenant admin read/write
 // paths: hydration of tier+groups, tier/group filtering, paging + total, tier
-// reassignment, and exclusion of soft-deleted tenants.
+// reassignment, and (CON-190) all-status reads with an optional status filter.
 func TestTenantClassificationHydrationAndFilters(t *testing.T) {
 	db := openClassificationDB(t)
 	ctx := context.Background()
@@ -304,20 +304,34 @@ func TestTenantClassificationHydrationAndFilters(t *testing.T) {
 		t.Fatalf("set unknown tier: err = %v (state %q), want 23503", err, sqlState(err))
 	}
 
-	// Soft-deleted tenants are excluded from reads.
+	// CON-190: soft-deleting sets status='deleted' alongside deleted_at. The
+	// operator admin reads now surface tenants of ANY status (so a deleted tenant
+	// stays inspectable and restorable); the status filter is how a caller narrows.
 	if _, err := db.NewUpdate().Model((*models.Tenant)(nil)).
-		Set("deleted_at = ?", time.Now().UTC()).Where("id = ?", t3).Exec(ctx); err != nil {
+		Set("deleted_at = ?", time.Now().UTC()).
+		Set("status = ?", models.TenantStatusDeleted).
+		Where("id = ?", t3).Exec(ctx); err != nil {
 		t.Fatalf("soft-delete t3: %v", err)
 	}
-	if _, err := tenantRepo.GetByIDWithClassification(ctx, t3); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("get soft-deleted t3: err = %v, want sql.ErrNoRows", err)
+	// GetByIDWithClassification returns the deleted tenant (any status), not ErrNoRows.
+	if g, err := tenantRepo.GetByIDWithClassification(ctx, t3); err != nil || g.Status != models.TenantStatusDeleted {
+		t.Fatalf("get soft-deleted t3: got %+v err = %v, want status=deleted", g, err)
 	}
-	survivors, _, err := tenantRepo.ListWithClassification(ctx, repository.TenantListFilter{TierID: pro.ID})
+	// The unfiltered list still includes the deleted tenant (all statuses by default).
+	all, _, err := tenantRepo.ListWithClassification(ctx, repository.TenantListFilter{TierID: pro.ID})
 	if err != nil {
 		t.Fatalf("list after soft-delete: %v", err)
 	}
-	if idSet(survivors)[t3] {
-		t.Fatalf("soft-deleted t3 still listed: %v", idSet(survivors))
+	if !idSet(all)[t3] {
+		t.Fatalf("deleted t3 should still be listed by default (all statuses): %v", idSet(all))
+	}
+	// Filtering by status='active' excludes the deleted tenant.
+	active, _, err := tenantRepo.ListWithClassification(ctx, repository.TenantListFilter{TierID: pro.ID, Status: models.TenantStatusActive})
+	if err != nil {
+		t.Fatalf("list active after soft-delete: %v", err)
+	}
+	if idSet(active)[t3] {
+		t.Fatalf("deleted t3 must be excluded when filtering status=active: %v", idSet(active))
 	}
 }
 
