@@ -204,25 +204,48 @@ func (r *tenantRepository) SetTier(ctx context.Context, tenantID, tierID string)
 }
 
 func (r *tenantRepository) SetStatus(ctx context.Context, tenantID, status, reason string, at time.Time) (bool, error) {
-	// deleted_at is kept in lockstep with status (CON-190): stamped for 'deleted',
-	// cleared otherwise (so restoring a deleted tenant makes it live again). No
-	// status/deleted_at predicate here — the write must reach a tenant in ANY
-	// current state, including 'deleted', so restore works.
-	q := r.db.NewUpdate().Model((*models.Tenant)(nil)).
-		Set("status = ?", status).
-		Set("status_reason = ?", reason).
-		Set("updated_at = ?", at)
-	if status == models.TenantStatusDeleted {
-		q = q.Set("deleted_at = ?", at)
-	} else {
-		q = q.Set("deleted_at = NULL")
-	}
-	res, err := q.Where("id = ?", tenantID).Exec(ctx)
+	// Atomic read-modify-write (CON-190): lock the row, and only write when the
+	// status actually changes. Setting a tenant to the status it already has is a
+	// success no-op that leaves deleted_at, status_reason and updated_at untouched
+	// — so, e.g., a repeated delete keeps the ORIGINAL deletion timestamp rather
+	// than resetting it. There is no status/deleted_at predicate on the write, so
+	// it reaches a tenant in ANY current state (including 'deleted', for restore).
+	// deleted_at is kept in lockstep with status: stamped for 'deleted', cleared
+	// otherwise.
+	found := false
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var current string
+		err := tx.NewSelect().Model((*models.Tenant)(nil)).
+			Column("status").
+			Where("id = ?", tenantID).
+			For("UPDATE").
+			Scan(ctx, &current)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil // found stays false → distinct not-found result
+		}
+		if err != nil {
+			return err
+		}
+		found = true
+		if current == status {
+			return nil // idempotent no-op: no write, timestamps preserved
+		}
+		q := tx.NewUpdate().Model((*models.Tenant)(nil)).
+			Set("status = ?", status).
+			Set("status_reason = ?", reason).
+			Set("updated_at = ?", at)
+		if status == models.TenantStatusDeleted {
+			q = q.Set("deleted_at = ?", at)
+		} else {
+			q = q.Set("deleted_at = NULL")
+		}
+		_, err = q.Where("id = ?", tenantID).Exec(ctx)
+		return err
+	})
 	if err != nil {
 		return false, err
 	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
+	return found, nil
 }
 
 func (r *tenantRepository) GetStatus(ctx context.Context, id string) (string, error) {

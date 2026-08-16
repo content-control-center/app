@@ -335,6 +335,67 @@ func TestTenantClassificationHydrationAndFilters(t *testing.T) {
 	}
 }
 
+// TestTenantSetStatusIdempotent guards CON-190: SetStatus is an atomic
+// read-modify-write. Setting a tenant to the status it already has is a success
+// no-op that preserves deleted_at + updated_at — so a repeated delete keeps the
+// ORIGINAL deletion timestamp rather than resetting it — and an unknown id is a
+// distinct not-found (false), not a silent success.
+func TestTenantSetStatusIdempotent(t *testing.T) {
+	db := openClassificationDB(t)
+	ctx := context.Background()
+	repo := repository.NewTenantRepository(db)
+
+	id := mintID(t)
+	seedTenant(t, db, id, "Acme", models.DefaultTierID)
+
+	// First delete stamps deleted_at = at0.
+	at0 := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	if ok, err := repo.SetStatus(ctx, id, models.TenantStatusDeleted, "", at0); err != nil || !ok {
+		t.Fatalf("first delete: ok=%v err=%v, want true/nil", ok, err)
+	}
+	tn, err := repo.GetByID(ctx, id)
+	if err != nil {
+		t.Fatalf("get after delete: %v", err)
+	}
+	if tn.Status != models.TenantStatusDeleted || tn.DeletedAt == nil || !tn.DeletedAt.Equal(at0) {
+		t.Fatalf("after delete: status=%q deleted_at=%v, want deleted @ %v", tn.Status, tn.DeletedAt, at0)
+	}
+
+	// A repeated delete at a LATER time is a success no-op: deleted_at + updated_at
+	// stay pinned to the first delete.
+	at1 := at0.Add(time.Hour)
+	if ok, err := repo.SetStatus(ctx, id, models.TenantStatusDeleted, "", at1); err != nil || !ok {
+		t.Fatalf("repeated delete: ok=%v err=%v, want true/nil", ok, err)
+	}
+	tn2, err := repo.GetByID(ctx, id)
+	if err != nil {
+		t.Fatalf("get after repeated delete: %v", err)
+	}
+	if tn2.DeletedAt == nil || !tn2.DeletedAt.Equal(at0) {
+		t.Fatalf("repeated delete moved deleted_at to %v, want unchanged %v", tn2.DeletedAt, at0)
+	}
+	if !tn2.UpdatedAt.Equal(tn.UpdatedAt) {
+		t.Fatalf("repeated delete bumped updated_at to %v, want unchanged %v", tn2.UpdatedAt, tn.UpdatedAt)
+	}
+
+	// An unknown id is a distinct not-found (false), never a silent success.
+	if ok, err := repo.SetStatus(ctx, "ghost", models.TenantStatusSuspended, "why", at1); err != nil || ok {
+		t.Fatalf("unknown tenant: ok=%v err=%v, want false/nil", ok, err)
+	}
+
+	// Restore clears deleted_at and flips status back (the invariant holds).
+	if ok, err := repo.SetStatus(ctx, id, models.TenantStatusActive, "", at1); err != nil || !ok {
+		t.Fatalf("restore: ok=%v err=%v, want true/nil", ok, err)
+	}
+	tn3, err := repo.GetByID(ctx, id)
+	if err != nil {
+		t.Fatalf("get after restore: %v", err)
+	}
+	if tn3.Status != models.TenantStatusActive || tn3.DeletedAt != nil {
+		t.Fatalf("after restore: status=%q deleted_at=%v, want active / nil", tn3.Status, tn3.DeletedAt)
+	}
+}
+
 // TestTenantListPagingDeterministicOnTiedCreatedAt locks in the (created_at, id)
 // tiebreak: when created_at ties, limit/offset paging must be a total order —
 // every row exactly once, ascending by id — not arbitrary (which would drop or

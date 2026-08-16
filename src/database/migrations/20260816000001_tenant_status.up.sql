@@ -22,6 +22,14 @@ ALTER TABLE tenants
 -- keeps the 'active' default. Establishes the invariant for pre-existing rows.
 UPDATE tenants SET status = 'deleted' WHERE deleted_at IS NOT NULL;
 
+-- Enforce the invariant at the DB level (added after the backfill so existing
+-- rows already satisfy it): a tenant is 'deleted' exactly when deleted_at is set.
+-- Both writers (SoftDeleteTx, SetStatus) maintain this, so the constraint is a
+-- backstop against any future path that touches only one of the two columns.
+ALTER TABLE tenants
+    ADD CONSTRAINT tenants_status_deleted_at_consistent
+        CHECK ((status = 'deleted') = (deleted_at IS NOT NULL));
+
 -- Serves the operator ListTenants status filter and the background-job
 -- active-tenant sweeps. The hot auth path is a single-row PK lookup, so the PK
 -- index already covers its status post-filter.
