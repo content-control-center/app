@@ -187,6 +187,10 @@ func (r *postRepository) ListStuckScheduled(ctx context.Context, cutoff time.Tim
 	var posts []models.Post
 	err := r.db.NewSelect().
 		Model(&posts).
+		// Only sweep posts owned by active tenants (CON-190): a suspended or
+		// deleted tenant's scheduled posts are left untouched, not forced Failed.
+		Join("JOIN tenants AS t ON t.id = po.tenant_id").
+		Where("t.status = ?", models.TenantStatusActive).
 		Where("po.status = ?", models.PostStatusScheduled).
 		Where("po.scheduled_at IS NOT NULL").
 		Where("po.scheduled_at < ?", cutoff).
@@ -250,6 +254,10 @@ func (r *postRepository) ListWithPublisherPostID(ctx context.Context) ([]models.
 		// the analytics snapshot at refresh time (CON-125 Track B), so the
 		// overview read needs no cross-DB join back to posts/platforms.
 		Column("id", "tenant_id", "publisher_post_id", "title", "published_at", "platform_id", "publisher").
+		// Only refresh analytics for active tenants (CON-190): a suspended or
+		// deleted tenant's posts are excluded from the cross-tenant sweep.
+		Join("JOIN tenants AS t ON t.id = po.tenant_id").
+		Where("t.status = ?", models.TenantStatusActive).
 		Where("po.publisher = ?", models.PublisherZernio).
 		Where("po.publisher_post_id IS NOT NULL").
 		Where("po.publisher_post_id <> ''").

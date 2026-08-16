@@ -11,6 +11,7 @@ import (
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/pgtest"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // openMigratedDB returns a fresh, fully-migrated Postgres database with FK
@@ -261,6 +262,24 @@ func TestListWithPublisherPostID(t *testing.T) {
 		t.Fatalf("seed failed post: %v", err)
 	}
 
+	// CON-190: a Zernio post owned by a suspended tenant is excluded from the
+	// cross-tenant sweep (the query joins tenants and requires status='active').
+	// The posts above are in the seeded 'default' tenant, which is active.
+	if _, err := db.NewInsert().Model(&models.Tenant{
+		ID: "t-sus", Name: "sus", Slug: "t-sus", TierID: models.DefaultTierID,
+		Status: models.TenantStatusSuspended, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}).Exec(ctx); err != nil {
+		t.Fatalf("seed suspended tenant: %v", err)
+	}
+	if _, err := db.NewInsert().Model(&models.Post{
+		ID: "p5", CampaignID: "camp-1", Content: "content p5",
+		MediaURLs: models.StringSlice{}, UsedAssetIDs: models.StringSlice{},
+		Status: models.PostStatusPublished, Publisher: models.PublisherZernio,
+		PublisherPostID: "z-5", CTAType: models.CTATypeNone, CreatedBy: "user-1",
+	}).Exec(tenantctx.With(context.Background(), "t-sus")); err != nil {
+		t.Fatalf("seed suspended-tenant post: %v", err)
+	}
+
 	posts, err := repo.ListWithPublisherPostID(ctx)
 	if err != nil {
 		t.Fatalf("list: %v", err)
@@ -280,6 +299,9 @@ func TestListWithPublisherPostID(t *testing.T) {
 	}
 	if _, ok := byID["p3"]; ok {
 		t.Fatalf("p3 should be excluded")
+	}
+	if _, ok := byID["p5"]; ok {
+		t.Fatalf("p5 (suspended tenant) must be excluded: %+v", byID)
 	}
 }
 
