@@ -57,6 +57,11 @@ type Deps struct {
 	// CON-217: the cleanup_zernio_connect_sessions worker's repo (sweeps expired
 	// headless-connect sessions). A nil repo makes the sweep a no-op.
 	ConnectSessionRepo repository.ZernioConnectSessionRepository
+
+	// CON-190: reads a tenant's lifecycle status so per-tenant jobs (publish,
+	// bootstrap, email) skip suspended/deleted tenants. repository.TenantRepository
+	// satisfies it. A nil reader makes the guards no-ops (auth stays the gate).
+	Tenants TenantStatusReader
 }
 
 // registrars is appended to by each worker file's init(). A job is registered

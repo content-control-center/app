@@ -92,9 +92,14 @@ func (s *tenantAdminService) GetTenant(ctx context.Context, req *tenantsv1.GetTe
 }
 
 func (s *tenantAdminService) ListTenants(ctx context.Context, req *tenantsv1.ListTenantsRequest) (*tenantsv1.ListTenantsResponse, error) {
+	wantStatus := strings.TrimSpace(req.GetStatus())
+	if wantStatus != "" && !validTenantStatus(wantStatus) {
+		return nil, status.Error(codes.InvalidArgument, "status must be one of active, suspended, deleted")
+	}
 	tenants, total, err := s.tenantRepo.ListWithClassification(ctx, repository.TenantListFilter{
 		TierID:  strings.TrimSpace(req.GetTierId()),
 		GroupID: strings.TrimSpace(req.GetGroupId()),
+		Status:  wantStatus,
 		Limit:   int(req.GetPageSize()),
 		Offset:  int(req.GetOffset()),
 	})
@@ -318,7 +323,55 @@ func (s *tenantAdminService) SetTenantTier(ctx context.Context, req *tenantsv1.S
 	return &tenantsv1.SetTenantTierResponse{Tenant: toTenantProto(tenant)}, nil
 }
 
+// --- tenant lifecycle status (CON-190) ---
+
+func (s *tenantAdminService) SetTenantStatus(ctx context.Context, req *tenantsv1.SetTenantStatusRequest) (*tenantsv1.SetTenantStatusResponse, error) {
+	tenantID := strings.TrimSpace(req.GetTenantId())
+	newStatus := strings.TrimSpace(req.GetStatus())
+	if tenantID == "" {
+		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if !validTenantStatus(newStatus) {
+		return nil, status.Error(codes.InvalidArgument, "status must be one of active, suspended, deleted")
+	}
+	// The default tenant holds pre-CON-97 backfilled data and is the platform
+	// fallback; it may not be suspended or deleted (mirrors the default-tier
+	// delete protection in CON-208).
+	if tenantID == models.DefaultTenantID && newStatus != models.TenantStatusActive {
+		return nil, status.Error(codes.FailedPrecondition, "the default tenant cannot be suspended or deleted")
+	}
+	// reason is meaningful only for a suspension; clear it otherwise so a
+	// reactivated/restored tenant carries no stale note.
+	reason := ""
+	if newStatus == models.TenantStatusSuspended {
+		reason = strings.TrimSpace(req.GetReason())
+	}
+	ok, err := s.tenantRepo.SetStatus(ctx, tenantID, newStatus, reason, time.Now().UTC())
+	if err != nil {
+		return nil, s.internal(ctx, "set tenant status", err)
+	}
+	if !ok {
+		return nil, status.Error(codes.NotFound, "tenant not found")
+	}
+	tenant, err := s.tenantRepo.GetByIDWithClassification(ctx, tenantID)
+	if err != nil {
+		return nil, s.internal(ctx, "set tenant status", err)
+	}
+	slog.InfoContext(ctx, "tenant status set", logging.AttrComponent, "grpcserver", "tenant_id", tenantID, "status", newStatus, "reason", reason)
+	return &tenantsv1.SetTenantStatusResponse{Tenant: toTenantProto(tenant)}, nil
+}
+
 // --- helpers ---
+
+// validTenantStatus reports whether s is one of the closed lifecycle statuses.
+func validTenantStatus(s string) bool {
+	switch s {
+	case models.TenantStatusActive, models.TenantStatusSuspended, models.TenantStatusDeleted:
+		return true
+	default:
+		return false
+	}
+}
 
 // internal logs an unexpected error (name/id only, never sensitive values) and
 // returns a generic Internal status so DB internals never cross the wire —
@@ -378,12 +431,14 @@ func toTenantProto(t *models.Tenant) *tenantsv1.Tenant {
 		groups = append(groups, toGroupProto(&t.Groups[i]))
 	}
 	return &tenantsv1.Tenant{
-		Id:        t.ID,
-		Name:      t.Name,
-		Slug:      t.Slug,
-		Tier:      toTierProto(t.Tier),
-		Groups:    groups,
-		CreatedAt: timestamppb.New(t.CreatedAt),
-		UpdatedAt: timestamppb.New(t.UpdatedAt),
+		Id:           t.ID,
+		Name:         t.Name,
+		Slug:         t.Slug,
+		Tier:         toTierProto(t.Tier),
+		Groups:       groups,
+		CreatedAt:    timestamppb.New(t.CreatedAt),
+		UpdatedAt:    timestamppb.New(t.UpdatedAt),
+		Status:       t.Status,
+		StatusReason: t.StatusReason,
 	}
 }

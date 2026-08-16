@@ -149,16 +149,17 @@ func (r *userRepository) GetByEmail(ctx context.Context, email string) (*models.
 
 func (r *userRepository) GetByAccountID(ctx context.Context, accountID string) (*models.User, error) {
 	// Unscoped: the login/auth path resolves the membership before any tenant is
-	// known. Joins tenants to skip soft-deleted workspaces (CON-147 PR4), so an
-	// account never lands on a deleted one; ordered so it resolves to a stable
-	// default (the oldest live membership). u.id breaks ties on identical
-	// created_at (e.g. memberships seeded in one transaction) so the default is
-	// deterministic across calls, not left to the scan order.
+	// known. Joins tenants to skip non-active workspaces (status='active' covers
+	// both suspended and soft-deleted — CON-190, extending CON-147 PR4), so an
+	// account never lands on a suspended or deleted one; ordered so it resolves to
+	// a stable default (the oldest active membership). u.id breaks ties on
+	// identical created_at (e.g. memberships seeded in one transaction) so the
+	// default is deterministic across calls, not left to the scan order.
 	user := new(models.User)
 	err := r.db.NewSelect().Model(user).
 		Join("JOIN tenants AS t ON t.id = u.tenant_id").
 		Where("u.account_id = ?", accountID).
-		Where("t.deleted_at IS NULL").
+		Where("t.status = ?", models.TenantStatusActive).
 		OrderExpr("u.created_at ASC, u.id ASC").
 		Limit(1).
 		Scan(ctx)
@@ -174,15 +175,18 @@ func (r *userRepository) GetByAccountID(ctx context.Context, accountID string) (
 func (r *userRepository) GetMembership(ctx context.Context, accountID, tenantID string) (*models.User, error) {
 	// Unscoped by design: this lookup is what authorises scoping a request to
 	// tenantID, so it can't itself depend on a tenant already being in context.
-	// Joins tenants and filters deleted_at so a soft-deleted workspace resolves to
-	// ErrNoRows — indistinguishable from one the account was never in, which is
-	// what makes a deleted workspace unreachable (CON-147 PR4).
+	// Joins tenants and requires status='active' so a suspended or soft-deleted
+	// workspace resolves to ErrNoRows — indistinguishable from one the account was
+	// never in, which is what makes a non-active workspace unreachable (CON-190,
+	// extending CON-147 PR4). This single predicate is the consequence chokepoint:
+	// RequireAuth re-resolves membership on every request, so suspending a tenant
+	// locks its users out on their next request without touching their session.
 	user := new(models.User)
 	err := r.db.NewSelect().Model(user).
 		Join("JOIN tenants AS t ON t.id = u.tenant_id").
 		Where("u.account_id = ?", accountID).
 		Where("u.tenant_id = ?", tenantID).
-		Where("t.deleted_at IS NULL").
+		Where("t.status = ?", models.TenantStatusActive).
 		Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

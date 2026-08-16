@@ -62,6 +62,9 @@ func (SendEmailTask) InsertOpts() river.InsertOpts {
 type SendEmailProcessor struct {
 	river.WorkerDefaults[SendEmailTask]
 	Deps EmailDeps
+	// Tenants skips mail for a suspended/deleted tenant (CON-190) — e.g. a drip
+	// step scheduled before the tenant was frozen. Nil = no gate.
+	Tenants TenantStatusReader
 }
 
 // Work is the River entrypoint; it runs under the task's tenant scope so the
@@ -78,7 +81,7 @@ func (p *SendEmailProcessor) Timeout(*river.Job[SendEmailTask]) time.Duration {
 
 func init() {
 	register(func(w *river.Workers, d Deps) {
-		river.AddWorker(w, &SendEmailProcessor{Deps: d.Email})
+		river.AddWorker(w, &SendEmailProcessor{Deps: d.Email, Tenants: d.Tenants})
 	})
 }
 
@@ -97,6 +100,15 @@ func (p *SendEmailProcessor) Process(ctx context.Context, t SendEmailTask) error
 		return nil
 	}
 	ctx = tenantctx.With(ctx, t.TenantID)
+
+	// Skip mail for a suspended/deleted tenant (CON-190): a frozen tenant sends no
+	// welcome/drip/transactional mail. A DB error retries; otherwise terminal.
+	if active, aerr := tenantIsActive(ctx, p.Tenants, t.TenantID); aerr != nil {
+		return aerr
+	} else if !active {
+		slog.InfoContext(ctx, "send_email skipped: tenant not active", logging.AttrComponent, comp, "template", t.TemplateKey)
+		return nil
+	}
 
 	// Resolve the recipient. The usual path re-resolves it fresh from users (so an
 	// email change since enqueue is honoured and a deleted user is a clean terminal

@@ -32,6 +32,7 @@ const (
 	TenantAdminService_AddTenantToGroup_FullMethodName      = "/tenants.v1.TenantAdminService/AddTenantToGroup"
 	TenantAdminService_RemoveTenantFromGroup_FullMethodName = "/tenants.v1.TenantAdminService/RemoveTenantFromGroup"
 	TenantAdminService_SetTenantTier_FullMethodName         = "/tenants.v1.TenantAdminService/SetTenantTier"
+	TenantAdminService_SetTenantStatus_FullMethodName       = "/tenants.v1.TenantAdminService/SetTenantStatus"
 )
 
 // TenantAdminServiceClient is the client API for TenantAdminService service.
@@ -73,6 +74,11 @@ type TenantAdminServiceClient interface {
 	RemoveTenantFromGroup(ctx context.Context, in *RemoveTenantFromGroupRequest, opts ...grpc.CallOption) (*RemoveTenantFromGroupResponse, error)
 	// --- tenant tier assignment ---
 	SetTenantTier(ctx context.Context, in *SetTenantTierRequest, opts ...grpc.CallOption) (*SetTenantTierResponse, error)
+	// --- tenant lifecycle status (CON-190) ---
+	// SetTenantStatus drives the full lifecycle: suspend, reactivate, soft-delete,
+	// and restore (deleted -> active). Idempotent — setting the current status is a
+	// success no-op. The 'default' tenant cannot be suspended or deleted.
+	SetTenantStatus(ctx context.Context, in *SetTenantStatusRequest, opts ...grpc.CallOption) (*SetTenantStatusResponse, error)
 }
 
 type tenantAdminServiceClient struct {
@@ -213,6 +219,16 @@ func (c *tenantAdminServiceClient) SetTenantTier(ctx context.Context, in *SetTen
 	return out, nil
 }
 
+func (c *tenantAdminServiceClient) SetTenantStatus(ctx context.Context, in *SetTenantStatusRequest, opts ...grpc.CallOption) (*SetTenantStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetTenantStatusResponse)
+	err := c.cc.Invoke(ctx, TenantAdminService_SetTenantStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // TenantAdminServiceServer is the server API for TenantAdminService service.
 // All implementations must embed UnimplementedTenantAdminServiceServer
 // for forward compatibility.
@@ -252,6 +268,11 @@ type TenantAdminServiceServer interface {
 	RemoveTenantFromGroup(context.Context, *RemoveTenantFromGroupRequest) (*RemoveTenantFromGroupResponse, error)
 	// --- tenant tier assignment ---
 	SetTenantTier(context.Context, *SetTenantTierRequest) (*SetTenantTierResponse, error)
+	// --- tenant lifecycle status (CON-190) ---
+	// SetTenantStatus drives the full lifecycle: suspend, reactivate, soft-delete,
+	// and restore (deleted -> active). Idempotent — setting the current status is a
+	// success no-op. The 'default' tenant cannot be suspended or deleted.
+	SetTenantStatus(context.Context, *SetTenantStatusRequest) (*SetTenantStatusResponse, error)
 	mustEmbedUnimplementedTenantAdminServiceServer()
 }
 
@@ -300,6 +321,9 @@ func (UnimplementedTenantAdminServiceServer) RemoveTenantFromGroup(context.Conte
 }
 func (UnimplementedTenantAdminServiceServer) SetTenantTier(context.Context, *SetTenantTierRequest) (*SetTenantTierResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetTenantTier not implemented")
+}
+func (UnimplementedTenantAdminServiceServer) SetTenantStatus(context.Context, *SetTenantStatusRequest) (*SetTenantStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetTenantStatus not implemented")
 }
 func (UnimplementedTenantAdminServiceServer) mustEmbedUnimplementedTenantAdminServiceServer() {}
 func (UnimplementedTenantAdminServiceServer) testEmbeddedByValue()                            {}
@@ -556,6 +580,24 @@ func _TenantAdminService_SetTenantTier_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _TenantAdminService_SetTenantStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetTenantStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TenantAdminServiceServer).SetTenantStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TenantAdminService_SetTenantStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TenantAdminServiceServer).SetTenantStatus(ctx, req.(*SetTenantStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // TenantAdminService_ServiceDesc is the grpc.ServiceDesc for TenantAdminService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -614,6 +656,10 @@ var TenantAdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetTenantTier",
 			Handler:    _TenantAdminService_SetTenantTier_Handler,
+		},
+		{
+			MethodName: "SetTenantStatus",
+			Handler:    _TenantAdminService_SetTenantStatus_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

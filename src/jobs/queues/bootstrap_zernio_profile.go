@@ -46,6 +46,9 @@ type BootstrapZernioProfileProcessor struct {
 	river.WorkerDefaults[BootstrapZernioProfileTask]
 	Integration  *zernio.Integration
 	Bootstrapper *zernio.Bootstrapper
+	// Tenants skips provisioning for a suspended/deleted tenant (CON-190) — e.g.
+	// one suspended between the signup enqueue and this run. Nil = no gate.
+	Tenants TenantStatusReader
 }
 
 // Work is the River entrypoint. Unlike the cross-tenant background sweeps, this
@@ -65,6 +68,15 @@ func (p *BootstrapZernioProfileProcessor) Work(ctx context.Context, job *river.J
 	}
 
 	ctx = tenantctx.With(ctx, tid)
+
+	// Skip a tenant suspended/deleted between the signup enqueue and now (CON-190):
+	// don't provision a profile for a frozen tenant. Terminal (no retry).
+	if active, aerr := tenantIsActive(ctx, p.Tenants, tid); aerr != nil {
+		return fmt.Errorf("zernio: bootstrap tenant status (tenant=%s): %w", tid, aerr)
+	} else if !active {
+		slog.InfoContext(ctx, "bootstrap skipped: tenant not active", logging.AttrComponent, "jobs.bootstrap_zernio_profile", "tenant", tid)
+		return nil
+	}
 
 	// No key / permanently disabled: the lazy on-connect path is the guaranteed
 	// fallback, so don't burn retries waiting for a key that may never arrive.
@@ -98,6 +110,7 @@ func init() {
 		river.AddWorker(w, &BootstrapZernioProfileProcessor{
 			Integration:  d.Integration,
 			Bootstrapper: d.ProfileBootstrapper,
+			Tenants:      d.Tenants,
 		})
 	})
 }

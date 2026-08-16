@@ -26,9 +26,17 @@ type Tenant struct {
 	// off the tenant-facing REST contract (json:"-"); it is surfaced only via the
 	// Harbor gRPC TenantAdminService, which maps fields explicitly. Persistence is
 	// unaffected (bun uses the `bun:` tag, not json).
-	TierID    string    `bun:"tier_id,notnull"                              json:"-"`
-	CreatedAt time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
-	UpdatedAt time.Time `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
+	TierID string `bun:"tier_id,notnull"                              json:"-"`
+	// Status is the tenant lifecycle state (CON-190): active | suspended |
+	// deleted. 'suspended' is a reversible operator freeze; 'deleted' coincides
+	// with DeletedAt being set (invariant: status='deleted' <=> deleted_at IS NOT
+	// NULL). Like TierID it is an OPERATOR field kept off the tenant-facing REST
+	// contract (json:"-") and surfaced only via the Harbor gRPC TenantAdminService.
+	// StatusReason records why a tenant is suspended; it is cleared on 'active'.
+	Status       string    `bun:"status,notnull,default:'active'"              json:"-"`
+	StatusReason string    `bun:"status_reason,notnull,default:''"             json:"-"`
+	CreatedAt    time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
+	UpdatedAt    time.Time `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
 	// DeletedAt marks a soft-deleted workspace (CON-147 PR4). Membership
 	// resolution filters it out, so a deleted workspace can't be listed, switched
 	// to, or entered — but the row survives for support-side recovery. Plain
@@ -46,3 +54,12 @@ type Tenant struct {
 // DefaultTenantID is the id of the tenant created by the multi-tenancy
 // foundation migration. All data that predates CON-97 is backfilled onto it.
 const DefaultTenantID = "default"
+
+// Tenant lifecycle statuses (CON-190). The set is closed and CHECK-enforced in
+// the tenants table; the auth chokepoint and background-job guards treat
+// anything other than TenantStatusActive as "not live".
+const (
+	TenantStatusActive    = "active"    // normal operation
+	TenantStatusSuspended = "suspended" // reversible operator freeze
+	TenantStatusDeleted   = "deleted"   // soft-deleted; coincides with DeletedAt
+)

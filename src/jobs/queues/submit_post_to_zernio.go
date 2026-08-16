@@ -48,6 +48,9 @@ func (SubmitPostTask) InsertOpts() river.InsertOpts {
 type SubmitPostProcessor struct {
 	river.WorkerDefaults[SubmitPostTask]
 	Deps ZernioDeps
+	// Tenants gates publishing on the owning tenant's lifecycle status (CON-190):
+	// a suspended/deleted tenant's scheduled posts are not published. Nil = no gate.
+	Tenants TenantStatusReader
 	// PollLeadTime is how far in advance of scheduled_at we begin
 	// polling. Defaults to 30s when zero.
 	PollLeadTime time.Duration
@@ -68,7 +71,7 @@ func (p *SubmitPostProcessor) Timeout(*river.Job[SubmitPostTask]) time.Duration 
 
 func init() {
 	register(func(w *river.Workers, d Deps) {
-		river.AddWorker(w, &SubmitPostProcessor{Deps: d.Zernio})
+		river.AddWorker(w, &SubmitPostProcessor{Deps: d.Zernio, Tenants: d.Tenants})
 	})
 }
 
@@ -88,6 +91,16 @@ func (p *SubmitPostProcessor) Process(ctx context.Context, task SubmitPostTask) 
 		// quietly. The poll task does the same check.
 		appendLog(ctx, p.Deps, post.ID, models.PostLogEventTaskSucceeded, post.Status, post.Status,
 			"submit aborted: post no longer Scheduled", `{"reason":"status_changed"}`)
+		return nil
+	}
+	// Don't publish for a suspended/deleted tenant (CON-190). The post stays
+	// Scheduled, so it resumes if the tenant is reactivated (or the reconcile
+	// sweep — also tenant-gated — leaves it alone).
+	if active, aerr := tenantIsActive(ctx, p.Tenants, post.TenantID); aerr != nil {
+		return fmt.Errorf("submit: tenant status %s: %w", post.TenantID, aerr)
+	} else if !active {
+		appendLog(ctx, p.Deps, post.ID, models.PostLogEventTaskSucceeded, post.Status, post.Status,
+			"submit aborted: tenant not active", `{"reason":"tenant_not_active"}`)
 		return nil
 	}
 	// Idempotency / manual retry path (CON-69 §10):

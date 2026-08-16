@@ -104,3 +104,47 @@ func TestUserRepositoryGetByAccountIDTieBreak(t *testing.T) {
 		t.Fatalf("tie on created_at must resolve to the smallest id (u-aaa), got %s", got.ID)
 	}
 }
+
+// TestUserRepositoryMembershipStatusGate guards CON-190: membership resolution is
+// the consequence chokepoint, so a non-active tenant (suspended or deleted) is
+// unreachable — GetMembership resolves it to ErrNoRows and GetByAccountID falls
+// back past it, exactly like a soft-deleted workspace.
+func TestUserRepositoryMembershipStatusGate(t *testing.T) {
+	db := openMigratedDB(t)
+	repo := repository.NewUserRepository(db)
+	ctx := context.Background()
+
+	ts := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	seedTenant := func(id, status string) {
+		tn := &models.Tenant{ID: id, Name: id, Slug: id, TierID: models.DefaultTierID, Status: status, CreatedAt: ts, UpdatedAt: ts}
+		if _, err := db.NewInsert().Model(tn).Exec(ctx); err != nil {
+			t.Fatalf("seed tenant %s: %v", id, err)
+		}
+	}
+	seedTenant("t-active", models.TenantStatusActive)
+	seedTenant("t-suspended", models.TenantStatusSuspended)
+
+	// One account, member of both. The suspended membership is older AND inserted
+	// first, so a missing gate would let GetByAccountID return it.
+	for _, m := range []*models.User{
+		{ID: "u-sus", AccountID: "acc", TenantID: "t-suspended", Name: "S", Email: "e@x", CreatedAt: ts, UpdatedAt: ts},
+		{ID: "u-act", AccountID: "acc", TenantID: "t-active", Name: "A", Email: "e@x", CreatedAt: ts.Add(time.Hour), UpdatedAt: ts},
+	} {
+		if _, err := db.NewInsert().Model(m).Exec(ctx); err != nil {
+			t.Fatalf("seed membership %s: %v", m.ID, err)
+		}
+	}
+
+	// GetMembership: the active workspace resolves; the suspended one is ErrNoRows.
+	if got, err := repo.GetMembership(ctx, "acc", "t-active"); err != nil || got.ID != "u-act" {
+		t.Fatalf("GetMembership active: got %+v err=%v, want u-act", got, err)
+	}
+	if _, err := repo.GetMembership(ctx, "acc", "t-suspended"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("GetMembership suspended must fail closed with ErrNoRows, got %v", err)
+	}
+
+	// GetByAccountID skips the (older) suspended workspace and lands on the active one.
+	if got, err := repo.GetByAccountID(ctx, "acc"); err != nil || got.ID != "u-act" {
+		t.Fatalf("GetByAccountID must skip the suspended workspace, got %+v err=%v", got, err)
+	}
+}

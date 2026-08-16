@@ -353,6 +353,8 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		Email: emailRT.Deps,
 		// CON-217: expired headless-connect-session sweep.
 		ConnectSessionRepo: zernioConnectSessionRepo,
+		// CON-190: gate per-tenant jobs (publish/bootstrap/email) on tenant status.
+		Tenants: tenantRepo,
 	})
 
 	if err := jobs.MigrateRiver(ctx, db.DB); err != nil {

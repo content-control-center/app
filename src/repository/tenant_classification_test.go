@@ -194,7 +194,7 @@ func TestTenantGroupRepositoryAndMembership(t *testing.T) {
 
 // TestTenantClassificationHydrationAndFilters covers the tenant admin read/write
 // paths: hydration of tier+groups, tier/group filtering, paging + total, tier
-// reassignment, and exclusion of soft-deleted tenants.
+// reassignment, and (CON-190) all-status reads with an optional status filter.
 func TestTenantClassificationHydrationAndFilters(t *testing.T) {
 	db := openClassificationDB(t)
 	ctx := context.Background()
@@ -304,20 +304,95 @@ func TestTenantClassificationHydrationAndFilters(t *testing.T) {
 		t.Fatalf("set unknown tier: err = %v (state %q), want 23503", err, sqlState(err))
 	}
 
-	// Soft-deleted tenants are excluded from reads.
+	// CON-190: soft-deleting sets status='deleted' alongside deleted_at. The
+	// operator admin reads now surface tenants of ANY status (so a deleted tenant
+	// stays inspectable and restorable); the status filter is how a caller narrows.
 	if _, err := db.NewUpdate().Model((*models.Tenant)(nil)).
-		Set("deleted_at = ?", time.Now().UTC()).Where("id = ?", t3).Exec(ctx); err != nil {
+		Set("deleted_at = ?", time.Now().UTC()).
+		Set("status = ?", models.TenantStatusDeleted).
+		Where("id = ?", t3).Exec(ctx); err != nil {
 		t.Fatalf("soft-delete t3: %v", err)
 	}
-	if _, err := tenantRepo.GetByIDWithClassification(ctx, t3); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("get soft-deleted t3: err = %v, want sql.ErrNoRows", err)
+	// GetByIDWithClassification returns the deleted tenant (any status), not ErrNoRows.
+	if g, err := tenantRepo.GetByIDWithClassification(ctx, t3); err != nil || g.Status != models.TenantStatusDeleted {
+		t.Fatalf("get soft-deleted t3: got %+v err = %v, want status=deleted", g, err)
 	}
-	survivors, _, err := tenantRepo.ListWithClassification(ctx, repository.TenantListFilter{TierID: pro.ID})
+	// The unfiltered list still includes the deleted tenant (all statuses by default).
+	all, _, err := tenantRepo.ListWithClassification(ctx, repository.TenantListFilter{TierID: pro.ID})
 	if err != nil {
 		t.Fatalf("list after soft-delete: %v", err)
 	}
-	if idSet(survivors)[t3] {
-		t.Fatalf("soft-deleted t3 still listed: %v", idSet(survivors))
+	if !idSet(all)[t3] {
+		t.Fatalf("deleted t3 should still be listed by default (all statuses): %v", idSet(all))
+	}
+	// Filtering by status='active' excludes the deleted tenant.
+	active, _, err := tenantRepo.ListWithClassification(ctx, repository.TenantListFilter{TierID: pro.ID, Status: models.TenantStatusActive})
+	if err != nil {
+		t.Fatalf("list active after soft-delete: %v", err)
+	}
+	if idSet(active)[t3] {
+		t.Fatalf("deleted t3 must be excluded when filtering status=active: %v", idSet(active))
+	}
+}
+
+// TestTenantSetStatusIdempotent guards CON-190: SetStatus is an atomic
+// read-modify-write. Setting a tenant to the status it already has is a success
+// no-op that preserves deleted_at + updated_at — so a repeated delete keeps the
+// ORIGINAL deletion timestamp rather than resetting it — and an unknown id is a
+// distinct not-found (false), not a silent success.
+func TestTenantSetStatusIdempotent(t *testing.T) {
+	db := openClassificationDB(t)
+	ctx := context.Background()
+	repo := repository.NewTenantRepository(db)
+
+	id := mintID(t)
+	seedTenant(t, db, id, "Acme", models.DefaultTierID)
+
+	// First delete stamps deleted_at = at0.
+	at0 := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	if ok, err := repo.SetStatus(ctx, id, models.TenantStatusDeleted, "", at0); err != nil || !ok {
+		t.Fatalf("first delete: ok=%v err=%v, want true/nil", ok, err)
+	}
+	tn, err := repo.GetByID(ctx, id)
+	if err != nil {
+		t.Fatalf("get after delete: %v", err)
+	}
+	if tn.Status != models.TenantStatusDeleted || tn.DeletedAt == nil || !tn.DeletedAt.Equal(at0) {
+		t.Fatalf("after delete: status=%q deleted_at=%v, want deleted @ %v", tn.Status, tn.DeletedAt, at0)
+	}
+
+	// A repeated delete at a LATER time is a success no-op: deleted_at + updated_at
+	// stay pinned to the first delete.
+	at1 := at0.Add(time.Hour)
+	if ok, err := repo.SetStatus(ctx, id, models.TenantStatusDeleted, "", at1); err != nil || !ok {
+		t.Fatalf("repeated delete: ok=%v err=%v, want true/nil", ok, err)
+	}
+	tn2, err := repo.GetByID(ctx, id)
+	if err != nil {
+		t.Fatalf("get after repeated delete: %v", err)
+	}
+	if tn2.DeletedAt == nil || !tn2.DeletedAt.Equal(at0) {
+		t.Fatalf("repeated delete moved deleted_at to %v, want unchanged %v", tn2.DeletedAt, at0)
+	}
+	if !tn2.UpdatedAt.Equal(tn.UpdatedAt) {
+		t.Fatalf("repeated delete bumped updated_at to %v, want unchanged %v", tn2.UpdatedAt, tn.UpdatedAt)
+	}
+
+	// An unknown id is a distinct not-found (false), never a silent success.
+	if ok, err := repo.SetStatus(ctx, "ghost", models.TenantStatusSuspended, "why", at1); err != nil || ok {
+		t.Fatalf("unknown tenant: ok=%v err=%v, want false/nil", ok, err)
+	}
+
+	// Restore clears deleted_at and flips status back (the invariant holds).
+	if ok, err := repo.SetStatus(ctx, id, models.TenantStatusActive, "", at1); err != nil || !ok {
+		t.Fatalf("restore: ok=%v err=%v, want true/nil", ok, err)
+	}
+	tn3, err := repo.GetByID(ctx, id)
+	if err != nil {
+		t.Fatalf("get after restore: %v", err)
+	}
+	if tn3.Status != models.TenantStatusActive || tn3.DeletedAt != nil {
+		t.Fatalf("after restore: status=%q deleted_at=%v, want active / nil", tn3.Status, tn3.DeletedAt)
 	}
 }
 

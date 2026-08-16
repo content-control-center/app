@@ -199,6 +199,8 @@ type Tenant struct {
 	Groups        []*Group               `protobuf:"bytes,5,rep,name=groups,proto3" json:"groups,omitempty"` // possibly empty
 	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	Status        string                 `protobuf:"bytes,8,opt,name=status,proto3" json:"status,omitempty"`                                 // CON-190: active | suspended | deleted
+	StatusReason  string                 `protobuf:"bytes,9,opt,name=status_reason,json=statusReason,proto3" json:"status_reason,omitempty"` // operator note; '' when active
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -280,6 +282,20 @@ func (x *Tenant) GetUpdatedAt() *timestamppb.Timestamp {
 		return x.UpdatedAt
 	}
 	return nil
+}
+
+func (x *Tenant) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *Tenant) GetStatusReason() string {
+	if x != nil {
+		return x.StatusReason
+	}
+	return ""
 }
 
 type ListTiersRequest struct {
@@ -536,6 +552,7 @@ type ListTenantsRequest struct {
 	GroupId       string                 `protobuf:"bytes,2,opt,name=group_id,json=groupId,proto3" json:"group_id,omitempty"`     // optional filter; empty = any group
 	PageSize      int32                  `protobuf:"varint,3,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"` // default 100, capped at 500
 	Offset        int32                  `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`                     // simple offset paging
+	Status        string                 `protobuf:"bytes,5,opt,name=status,proto3" json:"status,omitempty"`                      // CON-190: optional filter; empty = any status
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -596,6 +613,13 @@ func (x *ListTenantsRequest) GetOffset() int32 {
 		return x.Offset
 	}
 	return 0
+}
+
+func (x *ListTenantsRequest) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
 }
 
 type ListTenantsResponse struct {
@@ -1516,6 +1540,111 @@ func (x *SetTenantTierResponse) GetTenant() *Tenant {
 	return nil
 }
 
+// CON-190 lifecycle status.
+type SetTenantStatusRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TenantId      string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"` // active | suspended | deleted
+	Reason        string                 `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"` // optional; recorded for 'suspended', cleared otherwise
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetTenantStatusRequest) Reset() {
+	*x = SetTenantStatusRequest{}
+	mi := &file_tenants_v1_tenants_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetTenantStatusRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetTenantStatusRequest) ProtoMessage() {}
+
+func (x *SetTenantStatusRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_tenants_v1_tenants_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetTenantStatusRequest.ProtoReflect.Descriptor instead.
+func (*SetTenantStatusRequest) Descriptor() ([]byte, []int) {
+	return file_tenants_v1_tenants_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *SetTenantStatusRequest) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *SetTenantStatusRequest) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *SetTenantStatusRequest) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type SetTenantStatusResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Tenant        *Tenant                `protobuf:"bytes,1,opt,name=tenant,proto3" json:"tenant,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetTenantStatusResponse) Reset() {
+	*x = SetTenantStatusResponse{}
+	mi := &file_tenants_v1_tenants_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetTenantStatusResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetTenantStatusResponse) ProtoMessage() {}
+
+func (x *SetTenantStatusResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_tenants_v1_tenants_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetTenantStatusResponse.ProtoReflect.Descriptor instead.
+func (*SetTenantStatusResponse) Descriptor() ([]byte, []int) {
+	return file_tenants_v1_tenants_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *SetTenantStatusResponse) GetTenant() *Tenant {
+	if x != nil {
+		return x.Tenant
+	}
+	return nil
+}
+
 var File_tenants_v1_tenants_proto protoreflect.FileDescriptor
 
 const file_tenants_v1_tenants_proto_rawDesc = "" +
@@ -1539,7 +1668,7 @@ const file_tenants_v1_tenants_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
-	"updated_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\x87\x02\n" +
+	"updated_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\xc4\x02\n" +
 	"\x06Tenant\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x12\n" +
@@ -1549,7 +1678,9 @@ const file_tenants_v1_tenants_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
-	"updated_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\x12\n" +
+	"updated_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12\x16\n" +
+	"\x06status\x18\b \x01(\tR\x06status\x12#\n" +
+	"\rstatus_reason\x18\t \x01(\tR\fstatusReason\"\x12\n" +
 	"\x10ListTiersRequest\";\n" +
 	"\x11ListTiersResponse\x12&\n" +
 	"\x05tiers\x18\x01 \x03(\v2\x10.tenants.v1.TierR\x05tiers\"\x13\n" +
@@ -1559,12 +1690,13 @@ const file_tenants_v1_tenants_proto_rawDesc = "" +
 	"\x10GetTenantRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\"?\n" +
 	"\x11GetTenantResponse\x12*\n" +
-	"\x06tenant\x18\x01 \x01(\v2\x12.tenants.v1.TenantR\x06tenant\"}\n" +
+	"\x06tenant\x18\x01 \x01(\v2\x12.tenants.v1.TenantR\x06tenant\"\x95\x01\n" +
 	"\x12ListTenantsRequest\x12\x17\n" +
 	"\atier_id\x18\x01 \x01(\tR\x06tierId\x12\x19\n" +
 	"\bgroup_id\x18\x02 \x01(\tR\agroupId\x12\x1b\n" +
 	"\tpage_size\x18\x03 \x01(\x05R\bpageSize\x12\x16\n" +
-	"\x06offset\x18\x04 \x01(\x05R\x06offset\"Y\n" +
+	"\x06offset\x18\x04 \x01(\x05R\x06offset\x12\x16\n" +
+	"\x06status\x18\x05 \x01(\tR\x06status\"Y\n" +
 	"\x13ListTenantsResponse\x12,\n" +
 	"\atenants\x18\x01 \x03(\v2\x12.tenants.v1.TenantR\atenants\x12\x14\n" +
 	"\x05total\x18\x02 \x01(\x05R\x05total\"_\n" +
@@ -1612,7 +1744,13 @@ const file_tenants_v1_tenants_proto_rawDesc = "" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x17\n" +
 	"\atier_id\x18\x02 \x01(\tR\x06tierId\"C\n" +
 	"\x15SetTenantTierResponse\x12*\n" +
-	"\x06tenant\x18\x01 \x01(\v2\x12.tenants.v1.TenantR\x06tenant2\xbf\b\n" +
+	"\x06tenant\x18\x01 \x01(\v2\x12.tenants.v1.TenantR\x06tenant\"e\n" +
+	"\x16SetTenantStatusRequest\x12\x1b\n" +
+	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\tR\x06status\x12\x16\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\"E\n" +
+	"\x17SetTenantStatusResponse\x12*\n" +
+	"\x06tenant\x18\x01 \x01(\v2\x12.tenants.v1.TenantR\x06tenant2\x9b\t\n" +
 	"\x12TenantAdminService\x12H\n" +
 	"\tListTiers\x12\x1c.tenants.v1.ListTiersRequest\x1a\x1d.tenants.v1.ListTiersResponse\x12K\n" +
 	"\n" +
@@ -1630,7 +1768,8 @@ const file_tenants_v1_tenants_proto_rawDesc = "" +
 	"\vDeleteGroup\x12\x1e.tenants.v1.DeleteGroupRequest\x1a\x1f.tenants.v1.DeleteGroupResponse\x12]\n" +
 	"\x10AddTenantToGroup\x12#.tenants.v1.AddTenantToGroupRequest\x1a$.tenants.v1.AddTenantToGroupResponse\x12l\n" +
 	"\x15RemoveTenantFromGroup\x12(.tenants.v1.RemoveTenantFromGroupRequest\x1a).tenants.v1.RemoveTenantFromGroupResponse\x12T\n" +
-	"\rSetTenantTier\x12 .tenants.v1.SetTenantTierRequest\x1a!.tenants.v1.SetTenantTierResponseB\x9a\x01\n" +
+	"\rSetTenantTier\x12 .tenants.v1.SetTenantTierRequest\x1a!.tenants.v1.SetTenantTierResponse\x12Z\n" +
+	"\x0fSetTenantStatus\x12\".tenants.v1.SetTenantStatusRequest\x1a#.tenants.v1.SetTenantStatusResponseB\x9a\x01\n" +
 	"\x0ecom.tenants.v1B\fTenantsProtoP\x01Z1github.com/ogen-app/ogen/gen/tenants/v1;tenantsv1\xa2\x02\x03TXX\xaa\x02\n" +
 	"Tenants.V1\xca\x02\n" +
 	"Tenants\\V1\xe2\x02\x16Tenants\\V1\\GPBMetadata\xea\x02\vTenants::V1b\x06proto3"
@@ -1647,7 +1786,7 @@ func file_tenants_v1_tenants_proto_rawDescGZIP() []byte {
 	return file_tenants_v1_tenants_proto_rawDescData
 }
 
-var file_tenants_v1_tenants_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
+var file_tenants_v1_tenants_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
 var file_tenants_v1_tenants_proto_goTypes = []any{
 	(*Tier)(nil),                          // 0: tenants.v1.Tier
 	(*Group)(nil),                         // 1: tenants.v1.Group
@@ -1678,17 +1817,19 @@ var file_tenants_v1_tenants_proto_goTypes = []any{
 	(*RemoveTenantFromGroupResponse)(nil), // 26: tenants.v1.RemoveTenantFromGroupResponse
 	(*SetTenantTierRequest)(nil),          // 27: tenants.v1.SetTenantTierRequest
 	(*SetTenantTierResponse)(nil),         // 28: tenants.v1.SetTenantTierResponse
-	(*timestamppb.Timestamp)(nil),         // 29: google.protobuf.Timestamp
+	(*SetTenantStatusRequest)(nil),        // 29: tenants.v1.SetTenantStatusRequest
+	(*SetTenantStatusResponse)(nil),       // 30: tenants.v1.SetTenantStatusResponse
+	(*timestamppb.Timestamp)(nil),         // 31: google.protobuf.Timestamp
 }
 var file_tenants_v1_tenants_proto_depIdxs = []int32{
-	29, // 0: tenants.v1.Tier.created_at:type_name -> google.protobuf.Timestamp
-	29, // 1: tenants.v1.Tier.updated_at:type_name -> google.protobuf.Timestamp
-	29, // 2: tenants.v1.Group.created_at:type_name -> google.protobuf.Timestamp
-	29, // 3: tenants.v1.Group.updated_at:type_name -> google.protobuf.Timestamp
+	31, // 0: tenants.v1.Tier.created_at:type_name -> google.protobuf.Timestamp
+	31, // 1: tenants.v1.Tier.updated_at:type_name -> google.protobuf.Timestamp
+	31, // 2: tenants.v1.Group.created_at:type_name -> google.protobuf.Timestamp
+	31, // 3: tenants.v1.Group.updated_at:type_name -> google.protobuf.Timestamp
 	0,  // 4: tenants.v1.Tenant.tier:type_name -> tenants.v1.Tier
 	1,  // 5: tenants.v1.Tenant.groups:type_name -> tenants.v1.Group
-	29, // 6: tenants.v1.Tenant.created_at:type_name -> google.protobuf.Timestamp
-	29, // 7: tenants.v1.Tenant.updated_at:type_name -> google.protobuf.Timestamp
+	31, // 6: tenants.v1.Tenant.created_at:type_name -> google.protobuf.Timestamp
+	31, // 7: tenants.v1.Tenant.updated_at:type_name -> google.protobuf.Timestamp
 	0,  // 8: tenants.v1.ListTiersResponse.tiers:type_name -> tenants.v1.Tier
 	1,  // 9: tenants.v1.ListGroupsResponse.groups:type_name -> tenants.v1.Group
 	2,  // 10: tenants.v1.GetTenantResponse.tenant:type_name -> tenants.v1.Tenant
@@ -1698,37 +1839,40 @@ var file_tenants_v1_tenants_proto_depIdxs = []int32{
 	1,  // 14: tenants.v1.CreateGroupResponse.group:type_name -> tenants.v1.Group
 	1,  // 15: tenants.v1.UpdateGroupResponse.group:type_name -> tenants.v1.Group
 	2,  // 16: tenants.v1.SetTenantTierResponse.tenant:type_name -> tenants.v1.Tenant
-	3,  // 17: tenants.v1.TenantAdminService.ListTiers:input_type -> tenants.v1.ListTiersRequest
-	5,  // 18: tenants.v1.TenantAdminService.ListGroups:input_type -> tenants.v1.ListGroupsRequest
-	7,  // 19: tenants.v1.TenantAdminService.GetTenant:input_type -> tenants.v1.GetTenantRequest
-	9,  // 20: tenants.v1.TenantAdminService.ListTenants:input_type -> tenants.v1.ListTenantsRequest
-	11, // 21: tenants.v1.TenantAdminService.CreateTier:input_type -> tenants.v1.CreateTierRequest
-	13, // 22: tenants.v1.TenantAdminService.UpdateTier:input_type -> tenants.v1.UpdateTierRequest
-	15, // 23: tenants.v1.TenantAdminService.DeleteTier:input_type -> tenants.v1.DeleteTierRequest
-	17, // 24: tenants.v1.TenantAdminService.CreateGroup:input_type -> tenants.v1.CreateGroupRequest
-	19, // 25: tenants.v1.TenantAdminService.UpdateGroup:input_type -> tenants.v1.UpdateGroupRequest
-	21, // 26: tenants.v1.TenantAdminService.DeleteGroup:input_type -> tenants.v1.DeleteGroupRequest
-	23, // 27: tenants.v1.TenantAdminService.AddTenantToGroup:input_type -> tenants.v1.AddTenantToGroupRequest
-	25, // 28: tenants.v1.TenantAdminService.RemoveTenantFromGroup:input_type -> tenants.v1.RemoveTenantFromGroupRequest
-	27, // 29: tenants.v1.TenantAdminService.SetTenantTier:input_type -> tenants.v1.SetTenantTierRequest
-	4,  // 30: tenants.v1.TenantAdminService.ListTiers:output_type -> tenants.v1.ListTiersResponse
-	6,  // 31: tenants.v1.TenantAdminService.ListGroups:output_type -> tenants.v1.ListGroupsResponse
-	8,  // 32: tenants.v1.TenantAdminService.GetTenant:output_type -> tenants.v1.GetTenantResponse
-	10, // 33: tenants.v1.TenantAdminService.ListTenants:output_type -> tenants.v1.ListTenantsResponse
-	12, // 34: tenants.v1.TenantAdminService.CreateTier:output_type -> tenants.v1.CreateTierResponse
-	14, // 35: tenants.v1.TenantAdminService.UpdateTier:output_type -> tenants.v1.UpdateTierResponse
-	16, // 36: tenants.v1.TenantAdminService.DeleteTier:output_type -> tenants.v1.DeleteTierResponse
-	18, // 37: tenants.v1.TenantAdminService.CreateGroup:output_type -> tenants.v1.CreateGroupResponse
-	20, // 38: tenants.v1.TenantAdminService.UpdateGroup:output_type -> tenants.v1.UpdateGroupResponse
-	22, // 39: tenants.v1.TenantAdminService.DeleteGroup:output_type -> tenants.v1.DeleteGroupResponse
-	24, // 40: tenants.v1.TenantAdminService.AddTenantToGroup:output_type -> tenants.v1.AddTenantToGroupResponse
-	26, // 41: tenants.v1.TenantAdminService.RemoveTenantFromGroup:output_type -> tenants.v1.RemoveTenantFromGroupResponse
-	28, // 42: tenants.v1.TenantAdminService.SetTenantTier:output_type -> tenants.v1.SetTenantTierResponse
-	30, // [30:43] is the sub-list for method output_type
-	17, // [17:30] is the sub-list for method input_type
-	17, // [17:17] is the sub-list for extension type_name
-	17, // [17:17] is the sub-list for extension extendee
-	0,  // [0:17] is the sub-list for field type_name
+	2,  // 17: tenants.v1.SetTenantStatusResponse.tenant:type_name -> tenants.v1.Tenant
+	3,  // 18: tenants.v1.TenantAdminService.ListTiers:input_type -> tenants.v1.ListTiersRequest
+	5,  // 19: tenants.v1.TenantAdminService.ListGroups:input_type -> tenants.v1.ListGroupsRequest
+	7,  // 20: tenants.v1.TenantAdminService.GetTenant:input_type -> tenants.v1.GetTenantRequest
+	9,  // 21: tenants.v1.TenantAdminService.ListTenants:input_type -> tenants.v1.ListTenantsRequest
+	11, // 22: tenants.v1.TenantAdminService.CreateTier:input_type -> tenants.v1.CreateTierRequest
+	13, // 23: tenants.v1.TenantAdminService.UpdateTier:input_type -> tenants.v1.UpdateTierRequest
+	15, // 24: tenants.v1.TenantAdminService.DeleteTier:input_type -> tenants.v1.DeleteTierRequest
+	17, // 25: tenants.v1.TenantAdminService.CreateGroup:input_type -> tenants.v1.CreateGroupRequest
+	19, // 26: tenants.v1.TenantAdminService.UpdateGroup:input_type -> tenants.v1.UpdateGroupRequest
+	21, // 27: tenants.v1.TenantAdminService.DeleteGroup:input_type -> tenants.v1.DeleteGroupRequest
+	23, // 28: tenants.v1.TenantAdminService.AddTenantToGroup:input_type -> tenants.v1.AddTenantToGroupRequest
+	25, // 29: tenants.v1.TenantAdminService.RemoveTenantFromGroup:input_type -> tenants.v1.RemoveTenantFromGroupRequest
+	27, // 30: tenants.v1.TenantAdminService.SetTenantTier:input_type -> tenants.v1.SetTenantTierRequest
+	29, // 31: tenants.v1.TenantAdminService.SetTenantStatus:input_type -> tenants.v1.SetTenantStatusRequest
+	4,  // 32: tenants.v1.TenantAdminService.ListTiers:output_type -> tenants.v1.ListTiersResponse
+	6,  // 33: tenants.v1.TenantAdminService.ListGroups:output_type -> tenants.v1.ListGroupsResponse
+	8,  // 34: tenants.v1.TenantAdminService.GetTenant:output_type -> tenants.v1.GetTenantResponse
+	10, // 35: tenants.v1.TenantAdminService.ListTenants:output_type -> tenants.v1.ListTenantsResponse
+	12, // 36: tenants.v1.TenantAdminService.CreateTier:output_type -> tenants.v1.CreateTierResponse
+	14, // 37: tenants.v1.TenantAdminService.UpdateTier:output_type -> tenants.v1.UpdateTierResponse
+	16, // 38: tenants.v1.TenantAdminService.DeleteTier:output_type -> tenants.v1.DeleteTierResponse
+	18, // 39: tenants.v1.TenantAdminService.CreateGroup:output_type -> tenants.v1.CreateGroupResponse
+	20, // 40: tenants.v1.TenantAdminService.UpdateGroup:output_type -> tenants.v1.UpdateGroupResponse
+	22, // 41: tenants.v1.TenantAdminService.DeleteGroup:output_type -> tenants.v1.DeleteGroupResponse
+	24, // 42: tenants.v1.TenantAdminService.AddTenantToGroup:output_type -> tenants.v1.AddTenantToGroupResponse
+	26, // 43: tenants.v1.TenantAdminService.RemoveTenantFromGroup:output_type -> tenants.v1.RemoveTenantFromGroupResponse
+	28, // 44: tenants.v1.TenantAdminService.SetTenantTier:output_type -> tenants.v1.SetTenantTierResponse
+	30, // 45: tenants.v1.TenantAdminService.SetTenantStatus:output_type -> tenants.v1.SetTenantStatusResponse
+	32, // [32:46] is the sub-list for method output_type
+	18, // [18:32] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_tenants_v1_tenants_proto_init() }
@@ -1742,7 +1886,7 @@ func file_tenants_v1_tenants_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_tenants_v1_tenants_proto_rawDesc), len(file_tenants_v1_tenants_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   29,
+			NumMessages:   31,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
