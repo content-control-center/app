@@ -43,6 +43,12 @@ service TenantAdminService {
 
   // --- tenant tier assignment ---
   rpc SetTenantTier(SetTenantTierRequest) returns (SetTenantTierResponse);
+
+  // --- tenant lifecycle status (CON-190) ---
+  // SetTenantStatus drives the full lifecycle: suspend, reactivate, soft-delete,
+  // and restore (deleted -> active). Idempotent — setting the current status is a
+  // success no-op. The 'default' tenant cannot be suspended or deleted.
+  rpc SetTenantStatus(SetTenantStatusRequest) returns (SetTenantStatusResponse);
 }
 
 message Tier {
@@ -71,6 +77,8 @@ message Tenant {
   repeated Group groups = 5; // possibly empty
   google.protobuf.Timestamp created_at = 6;
   google.protobuf.Timestamp updated_at = 7;
+  string status = 8;         // CON-190: active | suspended | deleted
+  string status_reason = 9;  // operator note; '' when active
 }
 
 message ListTiersRequest {}
@@ -95,6 +103,7 @@ message ListTenantsRequest {
   string group_id = 2;  // optional filter; empty = any group
   int32 page_size = 3;  // default 100, capped at 500
   int32 offset = 4;     // simple offset paging
+  string status = 5;    // CON-190: optional filter; empty = any status
 }
 message ListTenantsResponse {
   repeated Tenant tenants = 1;
@@ -162,5 +171,15 @@ message SetTenantTierRequest {
   string tier_id = 2;
 }
 message SetTenantTierResponse {
+  Tenant tenant = 1;
+}
+
+// CON-190 lifecycle status.
+message SetTenantStatusRequest {
+  string tenant_id = 1;
+  string status = 2; // active | suspended | deleted
+  string reason = 3; // optional; recorded for 'suspended', cleared otherwise
+}
+message SetTenantStatusResponse {
   Tenant tenant = 1;
 }

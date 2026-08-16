@@ -186,6 +186,65 @@ func TestTenantAdminRoundTrip(t *testing.T) {
 		t.Fatalf("tenant groups after group delete = %+v, want empty", got.GetTenant().GetGroups())
 	}
 
+	// --- CON-190 lifecycle status ---
+	// A freshly seeded tenant is active.
+	got, _ = cli.GetTenant(ctx, &tenantsv1.GetTenantRequest{TenantId: tenantID})
+	if got.GetTenant().GetStatus() != models.TenantStatusActive {
+		t.Fatalf("seeded tenant status = %q, want active", got.GetTenant().GetStatus())
+	}
+	// Suspend with a reason.
+	sus, err := cli.SetTenantStatus(ctx, &tenantsv1.SetTenantStatusRequest{TenantId: tenantID, Status: models.TenantStatusSuspended, Reason: "non-payment"})
+	if err != nil {
+		t.Fatalf("SetTenantStatus suspend: %v", err)
+	}
+	if sus.GetTenant().GetStatus() != models.TenantStatusSuspended || sus.GetTenant().GetStatusReason() != "non-payment" {
+		t.Fatalf("after suspend = %+v, want suspended/non-payment", sus.GetTenant())
+	}
+	// The status filter narrows: suspended includes it, active excludes it.
+	if l, _ := cli.ListTenants(ctx, &tenantsv1.ListTenantsRequest{Status: models.TenantStatusSuspended}); !containsTenant(l.GetTenants(), tenantID) {
+		t.Fatalf("ListTenants suspended should include the tenant")
+	}
+	if l, _ := cli.ListTenants(ctx, &tenantsv1.ListTenantsRequest{Status: models.TenantStatusActive}); containsTenant(l.GetTenants(), tenantID) {
+		t.Fatalf("ListTenants active should exclude the suspended tenant")
+	}
+	// Reactivating clears the reason.
+	act, err := cli.SetTenantStatus(ctx, &tenantsv1.SetTenantStatusRequest{TenantId: tenantID, Status: models.TenantStatusActive, Reason: "ignored"})
+	if err != nil {
+		t.Fatalf("SetTenantStatus reactivate: %v", err)
+	}
+	if act.GetTenant().GetStatus() != models.TenantStatusActive || act.GetTenant().GetStatusReason() != "" {
+		t.Fatalf("after reactivate = %+v, want active with empty reason", act.GetTenant())
+	}
+	// Soft-delete via the operator surface; GetTenant still returns it (all-status,
+	// CON-190) with status=deleted rather than NotFound.
+	if _, err := cli.SetTenantStatus(ctx, &tenantsv1.SetTenantStatusRequest{TenantId: tenantID, Status: models.TenantStatusDeleted}); err != nil {
+		t.Fatalf("SetTenantStatus delete: %v", err)
+	}
+	del, err := cli.GetTenant(ctx, &tenantsv1.GetTenantRequest{TenantId: tenantID})
+	if err != nil {
+		t.Fatalf("GetTenant after delete: %v (a soft-deleted tenant must stay inspectable)", err)
+	}
+	if del.GetTenant().GetStatus() != models.TenantStatusDeleted {
+		t.Fatalf("after delete status = %q, want deleted", del.GetTenant().GetStatus())
+	}
+	// Restore (deleted -> active).
+	if _, err := cli.SetTenantStatus(ctx, &tenantsv1.SetTenantStatusRequest{TenantId: tenantID, Status: models.TenantStatusActive}); err != nil {
+		t.Fatalf("SetTenantStatus restore: %v", err)
+	}
+	// Validation + guards: bad status, unknown tenant, default-tenant protection.
+	if _, err := cli.SetTenantStatus(ctx, &tenantsv1.SetTenantStatusRequest{TenantId: tenantID, Status: "frozen"}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("bad status: code = %v, want InvalidArgument", status.Code(err))
+	}
+	if _, err := cli.SetTenantStatus(ctx, &tenantsv1.SetTenantStatusRequest{TenantId: "ghost", Status: models.TenantStatusSuspended}); status.Code(err) != codes.NotFound {
+		t.Fatalf("SetTenantStatus unknown tenant: code = %v, want NotFound", status.Code(err))
+	}
+	if _, err := cli.SetTenantStatus(ctx, &tenantsv1.SetTenantStatusRequest{TenantId: models.DefaultTenantID, Status: models.TenantStatusSuspended}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("suspend default tenant: code = %v, want FailedPrecondition", status.Code(err))
+	}
+	if _, err := cli.ListTenants(ctx, &tenantsv1.ListTenantsRequest{Status: "frozen"}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("ListTenants bad status: code = %v, want InvalidArgument", status.Code(err))
+	}
+
 	// A wrong token is rejected by the shared interceptor.
 	if _, err := newClient("nope").ListTiers(ctx, &tenantsv1.ListTiersRequest{}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("wrong token: code = %v, want Unauthenticated", status.Code(err))
