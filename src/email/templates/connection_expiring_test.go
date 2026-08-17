@@ -34,7 +34,7 @@ func TestRenderConnectionExpiringStages(t *testing.T) {
 					t.Errorf("expiring_soon body missing %q in %q", want, body)
 				}
 			}
-			if strings.Contains(body, "has expired") {
+			if strings.Contains(body, "needs to be reconnected") {
 				t.Errorf("expiring_soon body should not use the action-required copy: %q", body)
 			}
 		}
@@ -56,7 +56,7 @@ func TestRenderConnectionExpiringStages(t *testing.T) {
 			t.Errorf("action_required subject: %q", r.Subject)
 		}
 		for _, body := range []string{r.HTML, r.Text} {
-			for _, want := range []string{"X (Twitter)", "acme", "has expired", "reconnect=acc2"} {
+			for _, want := range []string{"X (Twitter)", "acme", "needs to be reconnected", "reconnect=acc2"} {
 				if !strings.Contains(body, want) {
 					t.Errorf("action_required body missing %q in %q", want, body)
 				}

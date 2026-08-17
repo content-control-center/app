@@ -81,7 +81,7 @@ const (
 	varRole           = "The role the invitee will hold in the workspace (owner or member)."
 	varPlatform       = "The social platform's display name (e.g. LinkedIn, Instagram)."
 	varAccountName    = "The connected account's display name or handle."
-	varStage          = "Notification stage: expiring_soon (heads-up) or action_required (already lapsed)."
+	varStage          = "Notification stage: expiring_soon (heads-up) or action_required (expired or needs reconnecting)."
 	varExpiresAt      = "The token's expiry date, formatted (empty when Zernio can't date it)."
 	varExpiresIn      = "Human-readable time until expiry, e.g. \"in 6 days\" (empty when undated)."
 	varReconnectURL   = "Deep link into the app's accounts screen to reconnect the account."
