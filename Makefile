@@ -70,9 +70,15 @@ tidy:
 	go mod tidy
 
 # ── Protobuf / gRPC ──────────────────────────────────────────────────────────
-# Regenerate the Go gRPC stubs under gen/ from proto/ (pdf, video, secrets).
+# All four contracts (tenants, secrets, pdf, video) live in the shared
+# buf.build/ogen-app/proto module (CON-220). Regenerate the Go stubs under gen/
+# from a pinned version; bump PROTO_VERSION to adopt a new contract, then
+# `make proto` and commit gen/.
+PROTO_MODULE  := buf.build/ogen-app/proto
+PROTO_VERSION := v1.0.0
+
 proto:
-	buf generate proto
+	buf generate $(PROTO_MODULE):$(PROTO_VERSION)
 
 # ── OpenAPI ──────────────────────────────────────────────────────────────────
 openapi:

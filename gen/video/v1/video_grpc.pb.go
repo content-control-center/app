@@ -30,8 +30,8 @@ const (
 // metadata and captures a poster frame (CON-148). It is the structural
 // validator for video uploads — the mirror of pdf-service for PDFs. The
 // service is stateless and internal-only, reached by the Ogen API over the
-// Railway private network. Canonical home of this contract is the
-// ogen-app/video-service repo; the API consumes a versioned, pinned client.
+// Railway private network. Implemented by the ogen-app/video-service repo; the
+// Ogen API consumes a versioned, pinned client generated from this contract.
 type VideoServiceClient interface {
 	// Probe fetches the video at source_url (a short-lived presigned GET URL)
 	// and returns its metadata plus, when render_poster is set, a single
@@ -68,8 +68,8 @@ func (c *videoServiceClient) Probe(ctx context.Context, in *ProbeRequest, opts .
 // metadata and captures a poster frame (CON-148). It is the structural
 // validator for video uploads — the mirror of pdf-service for PDFs. The
 // service is stateless and internal-only, reached by the Ogen API over the
-// Railway private network. Canonical home of this contract is the
-// ogen-app/video-service repo; the API consumes a versioned, pinned client.
+// Railway private network. Implemented by the ogen-app/video-service repo; the
+// Ogen API consumes a versioned, pinned client generated from this contract.
 type VideoServiceServer interface {
 	// Probe fetches the video at source_url (a short-lived presigned GET URL)
 	// and returns its metadata plus, when render_poster is set, a single
