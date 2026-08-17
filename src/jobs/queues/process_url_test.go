@@ -209,6 +209,35 @@ func TestProcessURL_ImageFetchFailureIsPartial(t *testing.T) {
 	}
 }
 
+func TestProcessURL_SVGIsNotMirrored(t *testing.T) {
+	md := "words words words ![x](https://example.com/evil.svg) more words here"
+	assets := &fakeURLAssets{}
+	images := &fakeImages{}
+	blob := &fakeBlob{}
+	p := newURLProc(URLDeps{
+		Scraper:  &fakeScraper{res: &firecrawl.ScrapeResult{Markdown: md, Title: "T"}},
+		Embedder: &fakeEmbedder{}, Storage: blob, Images: images,
+		Fetcher: &fakeFetcher{data: map[string]fakeImg{
+			"https://example.com/evil.svg": {body: []byte("<svg onload=alert(1)>"), ct: "image/svg+xml"},
+		}},
+		Assets: assets, Chunks: &fakeChunks{},
+	})
+	if err := p.process(context.Background(), ProcessURLTask{AssetID: "u7", SourceURL: "https://example.com/x"}, false); err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	// SVG is never mirrored: no image row, nothing uploaded, external link kept,
+	// and it's a deliberate skip (not a failure) so the asset is still ready.
+	if len(images.got) != 0 || len(blob.uploads) != 0 {
+		t.Fatalf("SVG must not be mirrored: images=%d uploads=%d", len(images.got), len(blob.uploads))
+	}
+	if !strings.Contains(assets.content, "https://example.com/evil.svg") {
+		t.Fatalf("SVG external link should be kept, content=%q", assets.content)
+	}
+	if assets.last() != models.AssetStatusReady {
+		t.Fatalf("status = %q, want ready (SVG skip is not a failure)", assets.last())
+	}
+}
+
 func TestProcessURL_DisabledScraperNoOp(t *testing.T) {
 	assets := &fakeURLAssets{}
 	p := newURLProc(URLDeps{Scraper: nil, Assets: assets})

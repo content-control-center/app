@@ -368,6 +368,13 @@ func (p *ProcessURLProcessor) mirrorImages(ctx context.Context, assetID, markdow
 			failed++
 			continue
 		}
+		// SVGs can carry embedded scripts, so re-hosting an attacker-supplied one
+		// under our storage origin is a stored-XSS vector. Never mirror them — the
+		// original external link is kept (inert when the Markdown renders it as
+		// an <img>). Not a failure: nothing broke, we deliberately skip it.
+		if isSVGContentType(ct) {
+			continue
+		}
 		key := storage.TenantKey(ctx, fmt.Sprintf("assets/%s/images/%d%s", assetID, idx, extForImage(ct, r.url)))
 		publicURL, err := p.Deps.Storage.Upload(ctx, key, bytes.NewReader(data), int64(len(data)), ct)
 		if err != nil {
@@ -429,8 +436,16 @@ func isHTTPURL(raw string) bool {
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
+// isSVGContentType reports whether ct is an SVG media type (with or without
+// parameters, e.g. "image/svg+xml; charset=utf-8"). SVGs are never mirrored.
+func isSVGContentType(ct string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(ct)), "image/svg")
+}
+
 // extForImage picks a file extension from the content type, falling back to the
-// URL path's extension, then "".
+// URL path's extension, then "". SVG is intentionally absent (SVGs are never
+// mirrored — see isSVGContentType), and a ".svg" path fallback is rejected so no
+// stored object is ever served as SVG.
 func extForImage(contentType, rawURL string) string {
 	switch strings.ToLower(strings.TrimSpace(strings.SplitN(contentType, ";", 2)[0])) {
 	case "image/png":
@@ -441,13 +456,11 @@ func extForImage(contentType, rawURL string) string {
 		return ".gif"
 	case "image/webp":
 		return ".webp"
-	case "image/svg+xml":
-		return ".svg"
 	case "image/avif":
 		return ".avif"
 	}
 	if u, err := url.Parse(rawURL); err == nil {
-		if ext := strings.ToLower(path.Ext(u.Path)); ext != "" && len(ext) <= 5 {
+		if ext := strings.ToLower(path.Ext(u.Path)); ext != "" && ext != ".svg" && len(ext) <= 5 {
 			return ext
 		}
 	}
