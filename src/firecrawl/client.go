@@ -167,7 +167,7 @@ func (c *Client) Scrape(ctx context.Context, in ScrapeRequest) (*ScrapeResult, e
 		// Network / timeout: retryable.
 		return nil, &APIError{Transient: true, Message: err.Error()}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, errorBodyLimit))

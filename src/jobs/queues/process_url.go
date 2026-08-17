@@ -457,7 +457,7 @@ func (f *httpImageFetcher) Fetch(ctx context.Context, rawURL string) ([]byte, st
 	if err != nil {
 		return nil, "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, "", fmt.Errorf("image fetch %s: status %d", rawURL, resp.StatusCode)
 	}
