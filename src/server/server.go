@@ -22,6 +22,7 @@ import (
 	"github.com/ogen-app/ogen/src/campaign_actions/summaries"
 	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/firecrawl"
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/draft_post"
@@ -94,6 +95,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	tagRepo := repository.NewTagRepository(db)
 	chunksRepo := repository.NewAssetChunksRepository(db)
 	assetFileRepo := repository.NewAssetFileRepository(db)
+	assetImageRepo := repository.NewAssetImageRepository(db)
 	pieceRepo := repository.NewAssetRepository(db, tagRepo, assetFileRepo)
 	platformRepo := repository.NewPlatformRepository(db)
 	campaignTypeRepo := repository.NewCampaignTypeRepository(db)
@@ -290,6 +292,27 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		pdfDeps.Client = pdfClient
 	}
 
+	// CON-222: URL assets. The Firecrawl scrape client resolves firecrawl_api_key
+	// per request (hot-reload without restart, like Resend), so a key added via
+	// the secrets API enables the process_url worker + the /url endpoint with no
+	// reboot; an unset key leaves both dormant (the endpoint returns 409). Storage
+	// is optional — without it images stay as external links (best-effort mirror).
+	firecrawlClient := firecrawl.New(
+		func(ctx context.Context) (string, error) { return secretStore.Get(ctx, secrets.NameFirecrawlAPIKey) },
+		cfg.FirecrawlBaseURL, cfg.FirecrawlHTTPTimeout,
+	)
+	urlDeps := queues.URLDeps{
+		Scraper:    firecrawlClient,
+		Embedder:   embedder,
+		Storage:    store,
+		Assets:     pieceRepo,
+		Chunks:     chunksRepo,
+		Images:     assetImageRepo,
+		Hub:        hub,
+		Recorder:   usageWiring.recorder,
+		EmbedModel: cfg.EmbedModel,
+	}
+
 	// CON-87 WS3: River background-job queue. Runs on the same
 	// database/sql pool as bun (db.DB), so a submit enqueue can join the
 	// schedule transaction (CON-78 §9). The worker pool starts below and
@@ -349,6 +372,8 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		Integration:         zernioRT.Integration,
 		// CON-103: PDF ingestion worker deps.
 		PDF: pdfDeps,
+		// CON-222: URL scrape ingestion worker deps.
+		URL: urlDeps,
 		// CON-154: email send + cleanup worker deps.
 		Email: emailRT.Deps,
 		// CON-217: expired headless-connect-session sweep.
@@ -475,7 +500,10 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	if pdfIngestEnabled {
 		pdfJobs = enqueuer
 	}
-	handlers.NewAssetsHandler(pieceRepo, assetFileRepo, store, db, pdfJobs, auth, embedCallbacks.OnMarkdownSave).Register(app)
+	// CON-222: URL ingestion enqueues through the same River client; the /url
+	// endpoint gates on firecrawlClient.HasKey (409 when no key configured).
+	var urlJobs handlers.URLIngestEnqueuer = enqueuer
+	handlers.NewAssetsHandler(pieceRepo, assetFileRepo, assetImageRepo, store, db, pdfJobs, urlJobs, firecrawlClient, auth, embedCallbacks.OnMarkdownSave).Register(app)
 
 	// Anthropic-backed flows live in a hot-reloadable runtime. boot
 	// is allowed to start without an Anthropic key (callbacks return

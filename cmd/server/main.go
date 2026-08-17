@@ -121,6 +121,9 @@ func main() {
 		{Name: secrets.NameResendAPIKey, EnvValue: cfg.ResendAPIKey},
 		{Name: secrets.NameResendWebhookSecret, EnvValue: cfg.ResendWebhookSecret},
 		{Name: secrets.NameEmailLinkSecret, EnvValue: cfg.EmailLinkSecret},
+		// CON-222 URL assets: first-boot seed of the Firecrawl scrape key (empty
+		// is fine — URL ingestion degrades off, the endpoint returns 409).
+		{Name: secrets.NameFirecrawlAPIKey, EnvValue: cfg.FirecrawlAPIKey},
 	})
 	if err != nil {
 		fatal("migrate secrets from env", err)

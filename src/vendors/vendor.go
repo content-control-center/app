@@ -20,6 +20,10 @@ type Family string
 const (
 	FamilyModel     Family = "model"
 	FamilyPublisher Family = "publisher"
+	// FamilyIngest groups content-ingestion vendors — web scrapers, file
+	// extractors — metered by count of ingested items (CON-222). Kept separate
+	// from FamilyPublisher so scrape volume rolls up on its own axis.
+	FamilyIngest Family = "ingest"
 )
 
 // Kind is an open category of billable unit. Model vendors report token
@@ -41,6 +45,9 @@ const (
 	KindPost    Kind = "post"     // one published or scheduled post
 	KindAPICall Kind = "api_call" // one billable API round-trip
 	KindAccount Kind = "account"  // one connected social account
+
+	// Ingest action kinds.
+	KindURLScrape Kind = "url_scrape" // one Firecrawl URL scrape (CON-222)
 )
 
 // Usage is the vendor-neutral unit breakdown for a single call. A model

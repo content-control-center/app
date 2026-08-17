@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"mime/multipart"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/netguard"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/storage"
 	"github.com/ogen-app/ogen/src/tenantctx"
@@ -35,37 +37,60 @@ type PDFIngestEnqueuer interface {
 	EnqueueProcessPDFTx(ctx context.Context, tx *sql.Tx, assetID, tenantID, originalName, mimeType string) error
 }
 
+// URLIngestEnqueuer enqueues a URL-scrape job in the caller's transaction
+// (CON-222). Implemented by *queues.Enqueuer.
+type URLIngestEnqueuer interface {
+	EnqueueProcessURLTx(ctx context.Context, tx *sql.Tx, assetID, tenantID, sourceURL string, refresh bool) error
+}
+
+// URLScrapeGate reports whether URL scraping is currently configured, so the
+// endpoint can fail fast with 409. Implemented by *firecrawl.Client.
+type URLScrapeGate interface {
+	HasKey(ctx context.Context) bool
+}
+
 type AssetsHandler struct {
-	repo     repository.AssetRepository
-	fileRepo repository.AssetFileRepository
-	storage  storage.Storage
-	db       *bun.DB
-	auth     fiber.Handler
+	repo      repository.AssetRepository
+	fileRepo  repository.AssetFileRepository
+	imageRepo repository.AssetImageRepository
+	storage   storage.Storage
+	db        *bun.DB
+	auth      fiber.Handler
 
 	// onSave triggers async embedding for text-based Asset saves (JSON create/update + MD upload).
 	onSave func(assetID, title, content, tenantID string)
 	// pdfJobs enqueues PDF ingestion (CON-103). Nil disables it (the asset is
 	// created but left pending).
 	pdfJobs PDFIngestEnqueuer
+	// urlJobs enqueues URL scraping (CON-222); scrapeGate reports key presence.
+	// Nil urlJobs / scrapeGate makes the URL endpoint return 409.
+	urlJobs    URLIngestEnqueuer
+	scrapeGate URLScrapeGate
 }
 
 func NewAssetsHandler(
 	repo repository.AssetRepository,
 	fileRepo repository.AssetFileRepository,
+	imageRepo repository.AssetImageRepository,
 	store storage.Storage,
 	db *bun.DB,
 	pdfJobs PDFIngestEnqueuer,
+	urlJobs URLIngestEnqueuer,
+	scrapeGate URLScrapeGate,
 	auth fiber.Handler,
 	onSave func(assetID, title, content, tenantID string),
 ) *AssetsHandler {
 	return &AssetsHandler{
-		repo:     repo,
-		fileRepo: fileRepo,
-		storage:  store,
-		db:       db,
-		auth:     auth,
-		onSave:   onSave,
-		pdfJobs:  pdfJobs,
+		repo:       repo,
+		fileRepo:   fileRepo,
+		imageRepo:  imageRepo,
+		storage:    store,
+		db:         db,
+		auth:       auth,
+		onSave:     onSave,
+		pdfJobs:    pdfJobs,
+		urlJobs:    urlJobs,
+		scrapeGate: scrapeGate,
 	}
 }
 
@@ -74,6 +99,7 @@ func (h *AssetsHandler) Register(app *fiber.App) {
 	g.Get("/", h.auth, h.List)
 	g.Post("/", h.auth, h.Create)
 	g.Post("/upload", h.auth, h.Upload)
+	g.Post("/url", h.auth, h.CreateURL)
 	g.Get("/:id", h.auth, h.Get)
 	g.Put("/:id", h.auth, h.Update)
 	g.Delete("/:id", h.auth, h.Delete)
@@ -108,7 +134,37 @@ func (h *AssetsHandler) List(c *fiber.Ctx) error {
 	for i := range assets {
 		h.decorateFile(&assets[i])
 	}
+	h.decorateImagesBatch(c.Context(), assets)
 	return c.JSON(assets)
+}
+
+// decorateImagesBatch hydrates mirrored images for a list of assets in one query
+// (CON-222), URL-decorating each. No-op when the image repo is unwired.
+func (h *AssetsHandler) decorateImagesBatch(ctx context.Context, assets []models.Asset) {
+	if h.imageRepo == nil || len(assets) == 0 {
+		return
+	}
+	ids := make([]string, len(assets))
+	for i := range assets {
+		ids[i] = assets[i].ID
+	}
+	byAsset, err := h.imageRepo.ListByAssetIDs(ctx, ids)
+	if err != nil {
+		return
+	}
+	for i := range assets {
+		imgs, ok := byAsset[assets[i].ID]
+		if !ok {
+			continue
+		}
+		for j := range imgs {
+			if h.storage != nil && imgs[j].S3Key != "" {
+				u := h.storage.PublicURL(imgs[j].S3Key)
+				imgs[j].URL = &u
+			}
+		}
+		assets[i].Images = imgs
+	}
 }
 
 // decorateFile fills File.ThumbnailURL from its s3_key using the public
@@ -122,6 +178,26 @@ func (h *AssetsHandler) decorateFile(asset *models.Asset) {
 	}
 	u := h.storage.PublicURL(*asset.File.ThumbnailS3Key)
 	asset.File.ThumbnailURL = &u
+}
+
+// decorateImages hydrates a URL asset's mirrored images (CON-222) and fills each
+// image's public URL from its s3_key. No-op when the image repo/storage are
+// unwired or the asset has no images.
+func (h *AssetsHandler) decorateImages(ctx context.Context, asset *models.Asset) {
+	if asset == nil || h.imageRepo == nil {
+		return
+	}
+	images, err := h.imageRepo.GetByAssetID(ctx, asset.ID)
+	if err != nil || len(images) == 0 {
+		return
+	}
+	for i := range images {
+		if h.storage != nil && images[i].S3Key != "" {
+			u := h.storage.PublicURL(images[i].S3Key)
+			images[i].URL = &u
+		}
+	}
+	asset.Images = images
 }
 
 // Create godoc
@@ -395,6 +471,149 @@ func readFormFile(fh *multipart.FileHeader, limit int64) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(f, limit+1))
 }
 
+type createURLAssetRequest struct {
+	URL string `json:"url" validate:"required"`
+}
+
+// CreateURL godoc
+// @Summary      Create asset from a URL
+// @Description  Scrapes a web page to Markdown (with mirrored images) via Firecrawl and persists it as a URL asset (CON-222). Ingestion is asynchronous: the asset is created `pending` and a background job scrapes → embeds → flips status, publishing progress over `GET /api/events` (topic `entity:asset:<id>`). Re-submitting the same URL refreshes the existing asset in place (200) instead of duplicating it (201).
+// @Tags         content-bank
+// @Accept       json
+// @Produce      json
+// @Security     CookieAuth
+// @Param        body  body      createURLAssetRequest  true  "URL payload"
+// @Success      201   {object}  models.Asset  "new pending asset"
+// @Success      200   {object}  models.Asset  "existing asset, refresh re-enqueued"
+// @Failure      400   {object}  map[string]string
+// @Failure      401   {object}  map[string]string
+// @Failure      409   {object}  map[string]string  "URL scraping not configured"
+// @Router       /api/content-bank/assets/url [post]
+func (h *AssetsHandler) CreateURL(c *fiber.Ctx) error {
+	var req createURLAssetRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	if err := validate.Struct(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	}
+	normalized, host, err := normalizeSourceURL(req.URL)
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	// SSRF pre-flight (defense in depth; the worker's image fetcher is the
+	// authoritative connect-time guard). Reject a submission whose host resolves
+	// to a private/loopback/link-local/metadata address. Bounded so a slow
+	// resolver can't stall the request.
+	lookupCtx, cancel := context.WithTimeout(c.Context(), 3*time.Second)
+	defer cancel()
+	if err := netguard.ResolveAllowed(lookupCtx, host); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "url host is not allowed")
+	}
+
+	// URL ingestion needs the enqueuer, the DB (transactional outbox), and a
+	// configured Firecrawl key; otherwise fail fast so the caller isn't left
+	// polling a pending asset that will never process.
+	if h.urlJobs == nil || h.db == nil || h.scrapeGate == nil || !h.scrapeGate.HasKey(c.Context()) {
+		return fiber.NewError(fiber.StatusConflict, "url scraping is not configured")
+	}
+
+	session := c.Locals("session").(*models.Session)
+	ctx := c.Context()
+
+	// Dedupe: an existing URL asset with this source_url refreshes in place.
+	existing, err := h.repo.GetBySourceURL(ctx, normalized)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if existing != nil {
+		return h.refreshURLAsset(c, existing, normalized, session.TenantID)
+	}
+
+	id, err := models.NewID()
+	if err != nil {
+		return err
+	}
+	urlType := models.AssetTypeURL
+	src := normalized
+	asset := &models.Asset{
+		ID:        id,
+		Title:     normalized, // provisional; the worker sets the page title
+		Content:   "",
+		Status:    models.AssetStatusPending,
+		Type:      &urlType,
+		SourceURL: &src,
+		TagIDs:    models.StringSlice{},
+		Tags:      []models.Tag{},
+		CreatedBy: session.UserID,
+	}
+	if err := h.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewInsert().Model(asset).Exec(ctx); err != nil {
+			return err
+		}
+		return h.urlJobs.EnqueueProcessURLTx(ctx, tx.Tx, asset.ID, session.TenantID, normalized, false)
+	}); err != nil {
+		// Concurrent submit of the same new URL: the partial unique index rejects
+		// the second insert. Treat it as "already exists" and refresh in place so
+		// the call is idempotent.
+		if again, gErr := h.repo.GetBySourceURL(ctx, normalized); gErr == nil && again != nil {
+			return h.refreshURLAsset(c, again, normalized, session.TenantID)
+		}
+		return err
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(asset)
+}
+
+// refreshURLAsset resets an existing URL asset to pending and re-enqueues a
+// scrape (refresh=true), returning it with 200. Content/images/chunks are
+// replaced by the worker; id/created_at/tags are preserved.
+func (h *AssetsHandler) refreshURLAsset(c *fiber.Ctx, asset *models.Asset, sourceURL, tenantID string) error {
+	ctx := c.Context()
+	if err := h.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewUpdate().
+			Model((*models.Asset)(nil)).
+			Set("status = ?", models.AssetStatusPending).
+			Set("updated_at = ?", time.Now().UTC()).
+			Where("id = ?", asset.ID).
+			Exec(ctx); err != nil {
+			return err
+		}
+		return h.urlJobs.EnqueueProcessURLTx(ctx, tx.Tx, asset.ID, tenantID, sourceURL, true)
+	}); err != nil {
+		return err
+	}
+	asset.Status = models.AssetStatusPending
+	h.decorateFile(asset)
+	h.decorateImages(c.Context(), asset)
+	return c.Status(fiber.StatusOK).JSON(asset)
+}
+
+// normalizeSourceURL validates and canonicalises a submitted URL for dedupe:
+// http(s) only, lower-cased scheme+host, fragment stripped, trailing slash
+// trimmed (query preserved). It returns the normalised URL and its host (for
+// the caller's SSRF resolution check). Host-level SSRF filtering is applied by
+// the caller via netguard.
+func normalizeSourceURL(raw string) (normalized, host string, err error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "", "", fmt.Errorf("invalid url")
+	}
+	u.Scheme = strings.ToLower(u.Scheme)
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", "", fmt.Errorf("only http(s) urls are supported")
+	}
+	if u.Host == "" {
+		return "", "", fmt.Errorf("url is missing a host")
+	}
+	u.Host = strings.ToLower(u.Host)
+	u.Fragment = ""
+	if u.Path != "/" {
+		u.Path = strings.TrimRight(u.Path, "/")
+	}
+	return u.String(), netguard.NormalizeHost(u.Hostname()), nil
+}
+
 // Get godoc
 // @Summary      Get asset
 // @Description  Returns a single content bank asset by Sqid.
@@ -415,6 +634,7 @@ func (h *AssetsHandler) Get(c *fiber.Ctx) error {
 		return err
 	}
 	h.decorateFile(asset)
+	h.decorateImages(c.Context(), asset)
 	return c.JSON(asset)
 }
 
@@ -497,6 +717,16 @@ func (h *AssetsHandler) Delete(c *fiber.Ctx) error {
 			}
 		} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
+		}
+	}
+	// CON-222: mirrored image blobs (the DB cascade drops asset_images rows).
+	if h.imageRepo != nil {
+		if imgs, err := h.imageRepo.GetByAssetID(c.Context(), id); err == nil {
+			for i := range imgs {
+				if imgs[i].S3Key != "" {
+					keysToDelete = append(keysToDelete, imgs[i].S3Key)
+				}
+			}
 		}
 	}
 
