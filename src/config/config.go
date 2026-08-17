@@ -207,6 +207,16 @@ type Config struct {
 	ZernioFollowerRefreshInterval time.Duration `envconfig:"ZERNIO_FOLLOWER_REFRESH_INTERVAL" default:"24h"`
 	ZernioFollowerRetentionDays   int           `envconfig:"ZERNIO_FOLLOWER_RETENTION_DAYS"   default:"365"`
 
+	// Connection-expiry notifications (CON-219). The detect_expiring_connections
+	// queue reads each connected account's Zernio health on this cadence and
+	// emails workspace owners when a token is within ConnectionExpiryLeadDays of
+	// expiry (or already needs reconnecting). Profile-driven, so it no-ops when
+	// Zernio is unconfigured. A 6h cadence gives ~28 checks across a 7-day lead
+	// window; durable per-(account,stage,expiry,owner) dedupe (via email_logs)
+	// keeps that to one notification each.
+	ZernioHealthCheckInterval time.Duration `envconfig:"ZERNIO_HEALTH_CHECK_INTERVAL" default:"6h"`
+	ConnectionExpiryLeadDays  int           `envconfig:"CONNECTION_EXPIRY_LEAD_DAYS"  default:"7"`
+
 	// Optional post-OAuth redirect target. When set, every connect
 	// link Zernio issues will send the user here after authorization
 	// succeeds, with ?connected=<platform>&profileId=<id>&accountId=<id>&username=<name>

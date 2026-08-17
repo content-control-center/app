@@ -55,6 +55,25 @@ type SocialAccountRepository interface {
 	// clearing deleted_at and refreshing fields). Soft-deletes set
 	// deleted_at to the supplied moment.
 	ApplyPlan(ctx context.Context, upserts []models.SocialAccount, softDeleteIDs []string, now time.Time) error
+
+	// UpdateHealth writes a Zernio account-health snapshot onto the active row
+	// with the given id (CON-219). Scoped to the caller's tenant by the
+	// TenantScoped hook and to rows still active (deleted_at IS NULL), so it is a
+	// no-op for an id belonging to another tenant or already disconnected. Only
+	// the health columns are touched — the reconciler's mirror fields are left
+	// alone.
+	UpdateHealth(ctx context.Context, id string, h SocialAccountHealth) error
+}
+
+// SocialAccountHealth is the mutable health snapshot UpdateHealth persists,
+// projected from Zernio's per-account health (CON-219). Pointer fields carry the
+// tri-state (unknown → NULL) that a bare bool can't.
+type SocialAccountHealth struct {
+	TokenExpiresAt      *time.Time
+	TokenValid          *bool
+	HealthStatus        string
+	NeedsReconnect      *bool
+	LastHealthCheckedAt time.Time
 }
 
 // TenantProfile pairs a tenant with its Zernio profile, derived from the
@@ -154,6 +173,27 @@ func (r *socialAccountRepository) SoftDelete(ctx context.Context, id string, now
 		return false, err
 	}
 	return n > 0, nil
+}
+
+func (r *socialAccountRepository) UpdateHealth(ctx context.Context, id string, h SocialAccountHealth) error {
+	// The TenantScoped BeforeUpdate hook adds `tenant_id = <ctx tenant>` and
+	// `deleted_at IS NULL` keeps the write to still-connected rows — together they
+	// make the write tenant-safe and skip a soft-deleted account, mirroring
+	// SoftDelete. Only the health columns are set; nil pointers / "" become NULL.
+	var status any
+	if h.HealthStatus != "" {
+		status = h.HealthStatus
+	}
+	_, err := r.db.NewUpdate().Model((*models.SocialAccount)(nil)).
+		Set("token_expires_at = ?", h.TokenExpiresAt).
+		Set("token_valid = ?", h.TokenValid).
+		Set("health_status = ?", status).
+		Set("needs_reconnect = ?", h.NeedsReconnect).
+		Set("last_health_checked_at = ?", h.LastHealthCheckedAt).
+		Where("id = ?", id).
+		Where("deleted_at IS NULL").
+		Exec(ctx)
+	return err
 }
 
 func (r *socialAccountRepository) ApplyPlan(

@@ -203,12 +203,19 @@ func (p *SendEmailProcessor) Process(ctx context.Context, t SendEmailTask) error
 		AppURL:         dep.AppBaseURL,
 		UnsubscribeURL: unsubURL,
 		// Per-message vars: the password_reset template reads ResetURL (CON-161);
-		// the invitation template reads InviteURL/InviterName/Role (CON-26); other
-		// templates leave them empty.
-		ResetURL:    t.Vars["reset_url"],
-		InviteURL:   t.Vars["invite_url"],
-		InviterName: t.Vars["inviter_name"],
-		Role:        t.Vars["role"],
+		// the invitation template reads InviteURL/InviterName/Role (CON-26); the
+		// connection_expiring template reads Platform/AccountName/Stage/Expires*/
+		// ReconnectURL (CON-219); other templates leave them empty.
+		ResetURL:     t.Vars["reset_url"],
+		InviteURL:    t.Vars["invite_url"],
+		InviterName:  t.Vars["inviter_name"],
+		Role:         t.Vars["role"],
+		Platform:     t.Vars["platform"],
+		AccountName:  t.Vars["account_name"],
+		Stage:        t.Vars["stage"],
+		ExpiresAt:    t.Vars["expires_at"],
+		ExpiresIn:    t.Vars["expires_in"],
+		ReconnectURL: t.Vars["reconnect_url"],
 	})
 	if err != nil {
 		p.writeLog(ctx, logBase, models.EmailLogFailed, "", "render: "+err.Error())

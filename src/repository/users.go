@@ -52,6 +52,15 @@ type UserRepository interface {
 	// >=1-owner invariant. Returns sql.ErrNoRows if the user isn't in the tenant,
 	// or ErrLastOwner when removing the sole owner (CON-26 §7).
 	RemoveMemberGuarded(ctx context.Context, id, tenantID string) error
+
+	// ListOwnersByTenant returns every owner (role = owner) membership in
+	// tenantID, oldest-joined first (CON-219). Takes the tenant id explicitly
+	// because User is not TenantScoped — the caller is a cross-tenant background
+	// sweep that names each tenant in turn. Backs the connection-expiry
+	// notification's recipient resolution. Never returns sql.ErrNoRows (an empty
+	// slice for an unknown tenant); the >=1-owner invariant means a live tenant
+	// always has at least one.
+	ListOwnersByTenant(ctx context.Context, tenantID string) ([]models.User, error)
 }
 
 type userRepository struct {
@@ -195,6 +204,21 @@ func (r *userRepository) GetMembership(ctx context.Context, accountID, tenantID 
 		return nil, err
 	}
 	return user, nil
+}
+
+func (r *userRepository) ListOwnersByTenant(ctx context.Context, tenantID string) ([]models.User, error) {
+	// User is not TenantScoped, so the tenant filter is applied by hand (like
+	// List). Ordered oldest-first + id tiebreak so the recipient set is
+	// deterministic across ticks.
+	var owners []models.User
+	if err := r.db.NewSelect().Model(&owners).
+		Where("u.tenant_id = ?", tenantID).
+		Where("u.role = ?", models.RoleOwner).
+		OrderExpr("u.created_at ASC, u.id ASC").
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+	return owners, nil
 }
 
 func (r *userRepository) Update(ctx context.Context, user *models.User) error {

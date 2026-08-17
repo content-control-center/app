@@ -14,12 +14,21 @@ import (
 // (CON-154 §13) and is intentionally not seeded here; password_reset is seeded
 // by its consumer (CON-161).
 const (
-	KeyWelcome       = "welcome"
-	KeyPasswordReset = "password_reset"
-	KeyInvitation    = "invitation"
-	KeyDripDay2      = "drip_day2"
-	KeyDripDay5      = "drip_day5"
-	KeyDripDay7      = "drip_day7"
+	KeyWelcome            = "welcome"
+	KeyPasswordReset      = "password_reset"
+	KeyInvitation         = "invitation"
+	KeyDripDay2           = "drip_day2"
+	KeyDripDay5           = "drip_day5"
+	KeyDripDay7           = "drip_day7"
+	KeyConnectionExpiring = "connection_expiring"
+)
+
+// Connection-expiry notification stages (CON-219). The connection_expiring
+// template branches on Data.Stage: a heads-up before the token lapses, and an
+// action-required notice once it has (or Zernio flags a reconnect).
+const (
+	StageExpiringSoon   = "expiring_soon"
+	StageActionRequired = "action_required"
 )
 
 // Data is the context passed to every default template. Transactional
@@ -40,6 +49,19 @@ type Data struct {
 	InviteURL   string
 	InviterName string
 	Role        string
+	// Platform / AccountName / Stage / ExpiresAt / ExpiresIn / ReconnectURL feed
+	// the connection_expiring template (CON-219). Platform is the display label
+	// (e.g. "LinkedIn"); AccountName the account's handle/name; Stage one of
+	// StageExpiringSoon / StageActionRequired; ExpiresAt / ExpiresIn the formatted
+	// expiry (both empty when Zernio can't date it); ReconnectURL the app deep
+	// link that mints a fresh connect link. Empty and ignored for every other
+	// template.
+	Platform     string
+	AccountName  string
+	Stage        string
+	ExpiresAt    string
+	ExpiresIn    string
+	ReconnectURL string
 }
 
 //go:embed defaults/*.tmpl
@@ -57,6 +79,12 @@ const (
 	varInviteURL      = "The one-time invitation-accept link; single-use, expires in 7 days."
 	varInviterName    = "Display name of the person who sent the invitation."
 	varRole           = "The role the invitee will hold in the workspace (owner or member)."
+	varPlatform       = "The social platform's display name (e.g. LinkedIn, Instagram)."
+	varAccountName    = "The connected account's display name or handle."
+	varStage          = "Notification stage: expiring_soon (heads-up) or action_required (already lapsed)."
+	varExpiresAt      = "The token's expiry date, formatted (empty when Zernio can't date it)."
+	varExpiresIn      = "Human-readable time until expiry, e.g. \"in 6 days\" (empty when undated)."
+	varReconnectURL   = "Deep link into the app's accounts screen to reconnect the account."
 )
 
 // transactionalVars / marketingVars build the per-template variable doc sets.
@@ -95,6 +123,25 @@ func invitationVars() models.StringMap {
 	return m
 }
 
+// connectionExpiringVars documents the connection_expiring template's
+// placeholders (CON-219): the standard transactional set plus the account /
+// platform / stage / expiry details and the reconnect deep link.
+func connectionExpiringVars() models.StringMap {
+	m := transactionalVars()
+	m["Platform"] = varPlatform
+	m["AccountName"] = varAccountName
+	m["Stage"] = varStage
+	m["ExpiresAt"] = varExpiresAt
+	m["ExpiresIn"] = varExpiresIn
+	m["ReconnectURL"] = varReconnectURL
+	return m
+}
+
+// connectionExpiringSubject branches on Stage (text/template, so a conditional
+// is fine) so the same template key carries both the heads-up and the
+// action-required subject.
+const connectionExpiringSubject = `[[ if eq .Stage "action_required" ]]Action needed: reconnect [[ .AccountName ]] on [[ .Platform ]][[ else ]]Your [[ .Platform ]] connection ([[ .AccountName ]]) expires soon[[ end ]]`
+
 // defaultSpec pairs a key with its kind + subject line + variable docs; the
 // bodies are read from the embedded defaults/<key>.{html,txt}.tmpl files.
 type defaultSpec struct {
@@ -111,6 +158,7 @@ var defaultSpecs = []defaultSpec{
 	{KeyDripDay2, models.EmailKindMarketing, "Getting the most out of Ogen", marketingVars()},
 	{KeyDripDay5, models.EmailKindMarketing, "Your content, on autopilot", marketingVars()},
 	{KeyDripDay7, models.EmailKindMarketing, "A quick check-in from Ogen", marketingVars()},
+	{KeyConnectionExpiring, models.EmailKindTransactional, connectionExpiringSubject, connectionExpiringVars()},
 }
 
 // Defaults returns the built-in default templates, reading each body from the

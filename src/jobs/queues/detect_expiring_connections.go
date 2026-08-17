@@ -1,0 +1,408 @@
+package queues
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/riverqueue/river"
+
+	"github.com/ogen-app/ogen/src/email/templates"
+	"github.com/ogen-app/ogen/src/jobs"
+	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/publishers/zernio"
+	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/tenantctx"
+)
+
+// DetectExpiringConnectionsQueue is the recurring connection-health sweep
+// (CON-219). Each tick reads every connected account's Zernio health, persists
+// the token-expiry snapshot, and emails workspace owners when a token is within
+// the lead window of expiry (or already needs reconnecting). It mirrors the
+// follower-refresh sweep: a marker payload, self-registering, gated on the
+// Zernio integration being configured, harmless no-op when it isn't.
+const DetectExpiringConnectionsQueue = "detect_expiring_connections"
+
+// defaultExpiryLeadDays is the heads-up window used when no lead is configured.
+const defaultExpiryLeadDays = 7
+
+const detectComp = "jobs.detect_expiring_connections"
+
+// DetectExpiringConnectionsTask is a marker payload — this queue carries no
+// per-tick data.
+type DetectExpiringConnectionsTask struct{}
+
+// Kind implements river.JobArgs.
+func (DetectExpiringConnectionsTask) Kind() string { return DetectExpiringConnectionsQueue }
+
+// InsertOpts mirrors the other periodic sweeps: one attempt (each tick records
+// its own outcome and the persist/enqueue are idempotent), active-state
+// uniqueness so overlapping ticks don't stack.
+func (DetectExpiringConnectionsTask) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{MaxAttempts: 1, UniqueOpts: periodicUniqueOpts()}
+}
+
+// DetectExpiringConnectionsProcessor wires one health-sweep tick. Zernio
+// supplies the client + social-account repo (enumeration/persistence), Users
+// resolves the owner recipients, EmailLogs backs the durable notify-once dedupe,
+// and AppBaseURL builds the reconnect deep link. The email itself is enqueued as
+// a send_email job via the River client on the worker context.
+type DetectExpiringConnectionsProcessor struct {
+	river.WorkerDefaults[DetectExpiringConnectionsTask]
+	Zernio     ZernioDeps
+	Users      repository.UserRepository
+	EmailLogs  repository.EmailLogRepository
+	AppBaseURL string
+	LeadDays   int
+}
+
+func (p *DetectExpiringConnectionsProcessor) Work(ctx context.Context, job *river.Job[DetectExpiringConnectionsTask]) error {
+	ctx = WithJobRequestID(ctx, job.JobRow)
+	// Background job spans tenants; sweepTenant re-scopes per tenant.
+	ctx = tenantctx.WithSystem(ctx)
+	return p.Process(ctx, job.Args)
+}
+
+func (p *DetectExpiringConnectionsProcessor) Timeout(*river.Job[DetectExpiringConnectionsTask]) time.Duration {
+	return 60 * time.Second
+}
+
+func init() {
+	register(func(w *river.Workers, d Deps) {
+		river.AddWorker(w, &DetectExpiringConnectionsProcessor{
+			Zernio:     d.Zernio,
+			Users:      d.Users,
+			EmailLogs:  d.Email.Logs,
+			AppBaseURL: d.Email.AppBaseURL,
+			LeadDays:   d.ExpiryLeadDays,
+		})
+	})
+}
+
+// Process runs one sweep tick. Per-tenant failures are recorded in the tick
+// metric and log line but never returned to River — a single attempt records
+// its own outcome and reschedules on the next interval.
+func (p *DetectExpiringConnectionsProcessor) Process(ctx context.Context, _ DetectExpiringConnectionsTask) error {
+	tickStart := time.Now()
+	res, err := p.sweep(ctx, tickStart.UTC())
+	jobs.ZernioHealthAccountsChecked.Add(int64(res.checked))
+	jobs.ZernioConnectionExpiringDetected.Add(int64(res.expiringSoon))
+	jobs.ZernioConnectionActionRequiredDetected.Add(int64(res.actionRequired))
+	jobs.ZernioConnectionExpiryNotified.Add(int64(res.notified))
+	if err != nil {
+		jobs.ZernioHealthSweepFailed.Add(1)
+		slog.ErrorContext(ctx, "connection-health sweep failed", logging.AttrComponent, detectComp,
+			"checked", res.checked, "notified", res.notified, "tick_ms", time.Since(tickStart).Milliseconds(), logging.AttrError, err)
+	} else {
+		jobs.ZernioHealthSweepSucceeded.Add(1)
+		slog.InfoContext(ctx, "connection-health sweep ok", logging.AttrComponent, detectComp,
+			"checked", res.checked, "expiring_soon", res.expiringSoon, "action_required", res.actionRequired,
+			"notified", res.notified, "tick_ms", time.Since(tickStart).Milliseconds())
+	}
+	return nil
+}
+
+// sweepResult accumulates a tick's counters across tenants.
+type sweepResult struct {
+	checked        int
+	expiringSoon   int
+	actionRequired int
+	notified       int
+}
+
+func (r *sweepResult) add(o sweepResult) {
+	r.checked += o.checked
+	r.expiringSoon += o.expiringSoon
+	r.actionRequired += o.actionRequired
+	r.notified += o.notified
+}
+
+// sweep enumerates every tenant with active connected accounts and sweeps each
+// under its own tenant scope. The returned error is the first tenant-level
+// failure — used only for the tick metric, never propagated to River.
+func (p *DetectExpiringConnectionsProcessor) sweep(ctx context.Context, now time.Time) (sweepResult, error) {
+	var res sweepResult
+	if p.Zernio.Client == nil || p.Zernio.SocialAccountRepo == nil || p.Users == nil {
+		return res, errors.New("detect expiring connections: dependencies not configured")
+	}
+	pairs, err := p.Zernio.SocialAccountRepo.ListActiveTenantProfiles(tenantctx.WithSystem(ctx))
+	if err != nil {
+		return res, fmt.Errorf("detect expiring connections: list tenant profiles: %w", err)
+	}
+
+	var firstErr error
+	for _, tp := range pairs {
+		tctx := tenantctx.With(ctx, tp.TenantID)
+		tres, terr := p.sweepTenant(tctx, tp.TenantID, tp.ProfileID, now)
+		res.add(tres)
+		if terr != nil {
+			if firstErr == nil {
+				firstErr = terr
+			}
+			slog.ErrorContext(tctx, "connection-health sweep: tenant failed", logging.AttrComponent, detectComp,
+				"tenant_id", tp.TenantID, logging.AttrError, terr)
+		}
+	}
+	return res, firstErr
+}
+
+// sweepTenant reads one tenant's account health, persists each snapshot, and
+// notifies owners of accounts entering a notify stage. ctx is already
+// tenant-scoped, so the health fetch is filtered to this tenant's profile and
+// every write lands in the right tenant.
+func (p *DetectExpiringConnectionsProcessor) sweepTenant(ctx context.Context, tenantID, profileID string, now time.Time) (sweepResult, error) {
+	var res sweepResult
+	if profileID == "" {
+		return res, nil
+	}
+
+	apiStart := time.Now()
+	healths, err := p.Zernio.Client.GetAccountsHealth(ctx, profileID)
+	jobs.ObserveZernioCall(time.Since(apiStart))
+	if err != nil {
+		return res, err
+	}
+	if len(healths) == 0 {
+		return res, nil
+	}
+
+	// The local active mirror both filters the health list (skip accounts we
+	// don't track / are soft-deleted) and provides a display-name fallback.
+	active, err := p.Zernio.SocialAccountRepo.ListActive(ctx, profileID)
+	if err != nil {
+		return res, err
+	}
+	known := make(map[string]models.SocialAccount, len(active))
+	for _, a := range active {
+		known[a.ID] = a
+	}
+
+	// Owners are the recipient set; resolve once per tenant. A lookup failure is
+	// recorded but doesn't abort persistence (health is still worth saving).
+	owners, ownersErr := p.Users.ListOwnersByTenant(ctx, tenantID)
+
+	var firstErr error
+	for _, h := range healths {
+		local, ok := known[h.AccountID]
+		if !ok {
+			continue // not a tracked/active account
+		}
+		res.checked++
+
+		if perr := p.persistHealth(ctx, h, now); perr != nil {
+			if firstErr == nil {
+				firstErr = perr
+			}
+			continue
+		}
+
+		stage := classifyHealth(h, now, p.leadDays())
+		switch stage {
+		case templates.StageExpiringSoon:
+			res.expiringSoon++
+		case templates.StageActionRequired:
+			res.actionRequired++
+		default:
+			continue // healthy
+		}
+
+		if ownersErr != nil {
+			if firstErr == nil {
+				firstErr = ownersErr
+			}
+			continue // can't notify without recipients
+		}
+		notified, nerr := p.notifyOwners(ctx, tenantID, owners, h, local, stage, now)
+		res.notified += notified
+		if nerr != nil && firstErr == nil {
+			firstErr = nerr
+		}
+	}
+	return res, firstErr
+}
+
+// persistHealth writes the health snapshot onto the local account row.
+func (p *DetectExpiringConnectionsProcessor) persistHealth(ctx context.Context, h zernio.AccountHealth, now time.Time) error {
+	tokenValid := h.TokenValid
+	needsReconnect := h.NeedsReconnect
+	return p.Zernio.SocialAccountRepo.UpdateHealth(ctx, h.AccountID, repository.SocialAccountHealth{
+		TokenExpiresAt:      h.TokenExpiresAt,
+		TokenValid:          &tokenValid,
+		HealthStatus:        h.Status,
+		NeedsReconnect:      &needsReconnect,
+		LastHealthCheckedAt: now,
+	})
+}
+
+// notifyOwners enqueues one connection_expiring email per owner, skipping any
+// (account, stage, expiry, owner) already notified. Returns the count enqueued.
+func (p *DetectExpiringConnectionsProcessor) notifyOwners(ctx context.Context, tenantID string, owners []models.User, h zernio.AccountHealth, local models.SocialAccount, stage string, now time.Time) (int, error) {
+	if len(owners) == 0 {
+		slog.WarnContext(ctx, "connection-health: no owners to notify", logging.AttrComponent, detectComp, "tenant_id", tenantID, "account_id", h.AccountID)
+		return 0, nil
+	}
+	notified := 0
+	var firstErr error
+	for _, owner := range owners {
+		key := expiryIdempotencyKey(h.AccountID, stage, h.TokenExpiresAt, owner.ID)
+		if p.EmailLogs != nil {
+			exists, cerr := p.EmailLogs.ExistsByIdempotencyKey(ctx, key)
+			if cerr != nil {
+				if firstErr == nil {
+					firstErr = cerr
+				}
+				continue
+			}
+			if exists {
+				continue // already notified this owner for this (account, stage, expiry)
+			}
+		}
+		if eerr := p.enqueueEmail(ctx, owner, tenantID, h, local, stage, key, now); eerr != nil {
+			if firstErr == nil {
+				firstErr = eerr
+			}
+			continue
+		}
+		notified++
+	}
+	return notified, firstErr
+}
+
+// enqueueEmail inserts a send_email job for one owner. The River client is
+// pulled from the worker context (the client is built after the workers are
+// registered, so it can't ride the processor struct), mirroring the submit
+// worker's poll enqueue.
+func (p *DetectExpiringConnectionsProcessor) enqueueEmail(ctx context.Context, owner models.User, tenantID string, h zernio.AccountHealth, local models.SocialAccount, stage, idemKey string, now time.Time) error {
+	client, err := river.ClientFromContextSafely[*sql.Tx](ctx)
+	if err != nil || client == nil {
+		return fmt.Errorf("river client unavailable for send_email enqueue: %w", err)
+	}
+	vars := map[string]string{
+		"platform":      platformLabel(h.Platform),
+		"account_name":  accountLabel(h, local),
+		"stage":         stage,
+		"reconnect_url": p.reconnectURL(h.AccountID),
+	}
+	if h.TokenExpiresAt != nil {
+		vars["expires_at"] = h.TokenExpiresAt.UTC().Format("January 2, 2006")
+		vars["expires_in"] = humanizeUntil(*h.TokenExpiresAt, now)
+	}
+	_, err = client.Insert(ctx, SendEmailTask{
+		UserID:         owner.ID,
+		TenantID:       tenantID,
+		TemplateKey:    templates.KeyConnectionExpiring,
+		EmailKind:      models.EmailKindTransactional,
+		IdempotencyKey: idemKey,
+		Vars:           vars,
+	}, insertOptsWithRequestID(ctx, nil))
+	return err
+}
+
+func (p *DetectExpiringConnectionsProcessor) reconnectURL(accountID string) string {
+	base := strings.TrimRight(p.AppBaseURL, "/")
+	return base + "/settings/accounts?reconnect=" + url.QueryEscape(accountID)
+}
+
+func (p *DetectExpiringConnectionsProcessor) leadDays() int {
+	if p.LeadDays > 0 {
+		return p.LeadDays
+	}
+	return defaultExpiryLeadDays
+}
+
+// classifyHealth maps a Zernio health entry to a notify stage, or "" for
+// healthy. action_required wins over expiring_soon: an account that is both past
+// expiry and flagged warning is already broken. leadDays is the heads-up window
+// for a not-yet-expired token.
+func classifyHealth(h zernio.AccountHealth, now time.Time, leadDays int) string {
+	expired := h.TokenExpiresAt != nil && !h.TokenExpiresAt.After(now)
+	if h.Status == "error" || h.NeedsReconnect || expired {
+		return templates.StageActionRequired
+	}
+	if h.Status == "warning" {
+		return templates.StageExpiringSoon
+	}
+	if h.TokenExpiresAt != nil {
+		lead := time.Duration(leadDays) * 24 * time.Hour
+		if h.TokenExpiresAt.Sub(now) <= lead {
+			return templates.StageExpiringSoon
+		}
+	}
+	return ""
+}
+
+// expiryIdempotencyKey keys notify-once on (account, stage, expiry date, owner)
+// so a moved expiry after a reconnect yields a fresh key and re-notifies
+// cleanly, while re-sweeping the same expiry window never re-sends.
+func expiryIdempotencyKey(accountID, stage string, expiresAt *time.Time, ownerID string) string {
+	date := "none"
+	if expiresAt != nil {
+		date = expiresAt.UTC().Format("2006-01-02")
+	}
+	return "conn_expiring:" + accountID + ":" + stage + ":" + date + ":" + ownerID
+}
+
+// accountLabel is the human name for an account, preferring the live health
+// payload and falling back to the local mirror, then the platform.
+func accountLabel(h zernio.AccountHealth, local models.SocialAccount) string {
+	for _, s := range []string{h.DisplayName, h.Username, local.DisplayName, local.Username} {
+		if s != "" {
+			return s
+		}
+	}
+	return "your account"
+}
+
+// platformLabels maps Zernio platform slugs to display names; slugs not listed
+// fall back to a capitalized form.
+var platformLabels = map[string]string{
+	"facebook":       "Facebook",
+	"instagram":      "Instagram",
+	"linkedin":       "LinkedIn",
+	"twitter":        "X (Twitter)",
+	"tiktok":         "TikTok",
+	"youtube":        "YouTube",
+	"threads":        "Threads",
+	"pinterest":      "Pinterest",
+	"reddit":         "Reddit",
+	"bluesky":        "Bluesky",
+	"googlebusiness": "Google Business",
+	"telegram":       "Telegram",
+	"snapchat":       "Snapchat",
+	"discord":        "Discord",
+	"slack":          "Slack",
+	"whatsapp":       "WhatsApp",
+}
+
+func platformLabel(slug string) string {
+	if s, ok := platformLabels[slug]; ok {
+		return s
+	}
+	if slug == "" {
+		return "social"
+	}
+	return strings.ToUpper(slug[:1]) + slug[1:]
+}
+
+// humanizeUntil renders a coarse "in N days" relative to now, floored at days.
+func humanizeUntil(t, now time.Time) string {
+	d := t.Sub(now)
+	if d <= 0 {
+		return "today"
+	}
+	days := int(d.Hours() / 24)
+	switch {
+	case days <= 0:
+		return "in less than a day"
+	case days == 1:
+		return "in 1 day"
+	default:
+		return fmt.Sprintf("in %d days", days)
+	}
+}

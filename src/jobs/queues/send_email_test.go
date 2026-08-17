@@ -64,6 +64,9 @@ func (f *fakeUserRepo) SetRoleGuarded(context.Context, string, string, string) (
 	return nil, nil
 }
 func (f *fakeUserRepo) RemoveMemberGuarded(context.Context, string, string) error { return nil }
+func (f *fakeUserRepo) ListOwnersByTenant(context.Context, string) ([]models.User, error) {
+	return nil, nil
+}
 
 type fakeTemplateRepo struct {
 	m map[string]*models.EmailTemplate
@@ -131,6 +134,14 @@ func (f *fakeEmailLogRepo) UpdateStatusByProviderMessageID(context.Context, stri
 	return false, nil
 }
 func (f *fakeEmailLogRepo) DeleteOlderThan(context.Context, time.Time) (int64, error) { return 0, nil }
+func (f *fakeEmailLogRepo) ExistsByIdempotencyKey(_ context.Context, key string) (bool, error) {
+	for _, r := range f.rows {
+		if r.IdempotencyKey != "" && r.IdempotencyKey == key {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 
 // fakeActivityWriter satisfies activity.Writer so a real Recorder can be driven
 // against an in-memory sink. Close drains onto the loop goroutine, so reads are
