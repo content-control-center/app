@@ -214,6 +214,19 @@ type Config struct {
 	// default success page.
 	ZernioRedirectURL string `envconfig:"ZERNIO_REDIRECT_URL" default:""`
 
+	// Firecrawl web-scrape (CON-222). URL assets are ingested by scraping the
+	// page to Markdown via the Firecrawl.dev API (POST /v2/scrape). Like the
+	// Anthropic / Zernio / Resend keys, FirecrawlAPIKey is a first-boot seed
+	// source only: migrated into the encrypted `secret` table on startup and
+	// thereafter read from — and rotated via — the gRPC secrets service
+	// (secrets.NameFirecrawlAPIKey), so the scrape client resolves the current
+	// key per request with no restart. Empty key disables URL ingestion (the
+	// endpoint returns 409). The 90s timeout covers Firecrawl's server-side
+	// render, which its API caps at 60s.
+	FirecrawlAPIKey      string        `envconfig:"FIRECRAWL_API_KEY"      default:""`
+	FirecrawlBaseURL     string        `envconfig:"FIRECRAWL_BASE_URL"     default:"https://api.firecrawl.dev"`
+	FirecrawlHTTPTimeout time.Duration `envconfig:"FIRECRAWL_HTTP_TIMEOUT" default:"90s"`
+
 	// Email (CON-154). Transactional + marketing mail via Resend. ResendAPIKey,
 	// ResendWebhookSecret, and EmailLinkSecret are first-boot seed sources only:
 	// migrated into the encrypted `secret` table on startup and thereafter read

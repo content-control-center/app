@@ -34,6 +34,8 @@ const (
 	NameResendAPIKey        = "resend_api_key"
 	NameResendWebhookSecret = "resend_webhook_secret"
 	NameEmailLinkSecret     = "email_link_secret"
+	// CON-222 URL assets: Firecrawl.dev web-scrape API key.
+	NameFirecrawlAPIKey = "firecrawl_api_key"
 )
 
 // AllowedNames is the closed set of accepted secret names. Anything
@@ -45,6 +47,7 @@ var AllowedNames = []string{
 	NameResendAPIKey,
 	NameResendWebhookSecret,
 	NameEmailLinkSecret,
+	NameFirecrawlAPIKey,
 }
 
 // MaxValueLen is the inclusive upper bound on a plaintext secret. The

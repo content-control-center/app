@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/uptrace/bun"
 
@@ -16,8 +17,15 @@ type AssetRepository interface {
 	List(ctx context.Context) ([]models.Asset, error)
 	Create(ctx context.Context, asset *models.Asset) error
 	GetByID(ctx context.Context, id string) (*models.Asset, error)
+	// GetBySourceURL returns the caller-tenant's URL asset with this source_url,
+	// or sql.ErrNoRows when none exists — the dedupe lookup behind create-or-
+	// refresh (CON-222). Tenant scoping comes from the TenantScoped hooks.
+	GetBySourceURL(ctx context.Context, sourceURL string) (*models.Asset, error)
 	Update(ctx context.Context, asset *models.Asset) error
 	UpdateStatus(ctx context.Context, id, status string) error
+	// UpdateContent sets title + content (and bumps updated_at) without touching
+	// status/source_url — the process_url worker's write after a scrape (CON-222).
+	UpdateContent(ctx context.Context, id, title, content string) error
 	Delete(ctx context.Context, id string) (bool, error)
 }
 
@@ -71,6 +79,29 @@ func (r *assetRepository) GetByID(ctx context.Context, id string) (*models.Asset
 	return &assets[0], nil
 }
 
+func (r *assetRepository) GetBySourceURL(ctx context.Context, sourceURL string) (*models.Asset, error) {
+	asset := new(models.Asset)
+	err := r.db.NewSelect().
+		Model(asset).
+		Where("a.source_url = ?", sourceURL).
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, sql.ErrNoRows
+		}
+		return nil, err
+	}
+	assets := []models.Asset{*asset}
+	if err := r.hydrateTags(ctx, assets); err != nil {
+		return nil, err
+	}
+	if err := r.hydrateFiles(ctx, assets); err != nil {
+		return nil, err
+	}
+	return &assets[0], nil
+}
+
 func (r *assetRepository) Update(ctx context.Context, asset *models.Asset) error {
 	_, err := r.db.NewUpdate().Model(asset).WherePK().Exec(ctx)
 	return err
@@ -80,6 +111,17 @@ func (r *assetRepository) UpdateStatus(ctx context.Context, id, status string) e
 	_, err := r.db.NewUpdate().
 		Model((*models.Asset)(nil)).
 		Set("status = ?", status).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
+func (r *assetRepository) UpdateContent(ctx context.Context, id, title, content string) error {
+	_, err := r.db.NewUpdate().
+		Model((*models.Asset)(nil)).
+		Set("title = ?", title).
+		Set("content = ?", content).
+		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", id).
 		Exec(ctx)
 	return err

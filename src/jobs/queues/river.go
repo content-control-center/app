@@ -49,6 +49,11 @@ type Deps struct {
 	// the job a no-op.
 	PDF PDFDeps
 
+	// CON-222: the process_url worker's dependencies (Firecrawl scrape client,
+	// embedder, storage, asset/image repos, eventhub). A nil Scraper (no
+	// firecrawl_api_key) makes the job a no-op.
+	URL URLDeps
+
 	// CON-154: the send_email + cleanup_email_logs workers' dependencies
 	// (Resend sender, template/suppression/log repos, addressing config). A nil
 	// Sender (no RESEND_API_KEY) makes send_email log skipped_disabled.
@@ -364,6 +369,24 @@ func (e *Enqueuer) EnqueueProcessPDFTx(ctx context.Context, tx *sql.Tx, assetID,
 		TenantID:     tenantID,
 		OriginalName: originalName,
 		MimeType:     mimeType,
+	}, insertOptsWithRequestID(ctx, nil))
+	return err
+}
+
+// EnqueueProcessURLTx enqueues a URL-scrape task inside the given transaction,
+// so it commits atomically with the asset insert/reset (CON-222): a committed
+// submit always has a job, a rolled-back one never does. Refresh flips
+// Firecrawl's cache off for a re-submit of an existing URL. Takes primitives so
+// the handler depends on a narrow interface, not this package.
+func (e *Enqueuer) EnqueueProcessURLTx(ctx context.Context, tx *sql.Tx, assetID, tenantID, sourceURL string, refresh bool) error {
+	if e == nil || e.Client == nil {
+		return nil
+	}
+	_, err := e.Client.InsertTx(ctx, tx, ProcessURLTask{
+		AssetID:   assetID,
+		TenantID:  tenantID,
+		SourceURL: sourceURL,
+		Refresh:   refresh,
 	}, insertOptsWithRequestID(ctx, nil))
 	return err
 }
