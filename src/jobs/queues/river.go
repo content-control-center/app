@@ -173,7 +173,11 @@ func (cfg PeriodicConfig) PeriodicJobs() []*river.PeriodicJob {
 			return CleanupZernioConnectSessionsTask{}, nil
 		}, runOnStart))
 	}
-	if cfg.IncludeConnectionExpiry {
+	// CON-219: connection-health / expiry sweep. Also requires a positive
+	// interval — River doesn't validate it and PeriodicInterval(0).Next(t)==t, so
+	// a zero HealthCheckEvery would spin the periodic enqueuer (mirrors the
+	// EmailCleanup/ConnectSessionCleanup guards above).
+	if cfg.IncludeConnectionExpiry && cfg.HealthCheckEvery > 0 {
 		jobs = append(jobs, river.NewPeriodicJob(river.PeriodicInterval(cfg.HealthCheckEvery), func() (river.JobArgs, *river.InsertOpts) {
 			return DetectExpiringConnectionsTask{}, nil
 		}, runOnStart))

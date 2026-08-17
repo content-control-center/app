@@ -53,3 +53,23 @@ func TestPeriodicJobsAnalyticsGated(t *testing.T) {
 		t.Fatalf("periodic jobs without analytics: got %d, want 2", got)
 	}
 }
+
+// TestPeriodicJobsConnectionExpiryNeedsInterval keeps the CON-219 health sweep
+// from registering with a zero interval, which River doesn't validate and which
+// would spin the periodic enqueuer (PeriodicInterval(0).Next(t) == t).
+func TestPeriodicJobsConnectionExpiryNeedsInterval(t *testing.T) {
+	base := PeriodicConfig{CleanupEvery: time.Hour, ReconcileEvery: 5 * time.Minute}
+
+	zero := base
+	zero.IncludeConnectionExpiry = true // HealthCheckEvery left 0
+	if got := len(zero.PeriodicJobs()); got != 2 {
+		t.Fatalf("enabled with zero interval should register no sweep: got %d, want 2", got)
+	}
+
+	set := base
+	set.IncludeConnectionExpiry = true
+	set.HealthCheckEvery = 6 * time.Hour
+	if got := len(set.PeriodicJobs()); got != 3 {
+		t.Fatalf("enabled with a positive interval should register the sweep: got %d, want 3", got)
+	}
+}
