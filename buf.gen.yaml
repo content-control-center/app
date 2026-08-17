@@ -1,7 +1,9 @@
-# CON-103: generate the Go gRPC client/server stubs for proto/pdf/v1.
-# Bootstrap: stubs are generated into ./gen so the API can build its client now.
-# When ogen-app/pdf-service ships, the proto's canonical home moves there (BSR /
-# a pinned module) and the API switches its import path.
+# All four gRPC contracts (tenants.v1, secrets.v1, pdf.v1, video.v1) live in the
+# shared buf.build/ogen-app/proto module (CON-220), not in this repo. `make
+# proto` generates from a pinned version of that module. Managed mode keeps the
+# go_package_prefix below, so the generated import paths
+# (github.com/ogen-app/ogen/gen/...) are unchanged — ogen serves TenantAdmin +
+# Secrets and consumes Pdf + Video from exactly the same packages as before.
 version: v1
 managed:
   enabled: true

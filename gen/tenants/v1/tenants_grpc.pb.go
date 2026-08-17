@@ -39,10 +39,11 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// TenantAdminService is the internal, operator-facing surface Harbor uses to
-// READ and MANAGE tenant classification — a required tier (1 per tenant) and
-// optional groups (many-to-many) (CON-208). It shares the listener and the
-// shared-bearer-token gate with SecretsService (src/grpcserver).
+// TenantAdminService is Ogen's internal, operator-facing surface for READING and
+// MANAGING tenant classification — a required tier (1 per tenant) and optional
+// groups (many-to-many) (CON-208). Harbor is the client of this service; it
+// shares the listener and the shared-bearer-token gate with SecretsService
+// (implemented in the ogen repo, src/grpcserver).
 //
 // Cross-tenant by design: tenants, tenant_tiers and tenant_groups are global
 // tables, so no per-tenant scoping applies. Tier is required, so there is no
@@ -233,10 +234,11 @@ func (c *tenantAdminServiceClient) SetTenantStatus(ctx context.Context, in *SetT
 // All implementations must embed UnimplementedTenantAdminServiceServer
 // for forward compatibility.
 //
-// TenantAdminService is the internal, operator-facing surface Harbor uses to
-// READ and MANAGE tenant classification — a required tier (1 per tenant) and
-// optional groups (many-to-many) (CON-208). It shares the listener and the
-// shared-bearer-token gate with SecretsService (src/grpcserver).
+// TenantAdminService is Ogen's internal, operator-facing surface for READING and
+// MANAGING tenant classification — a required tier (1 per tenant) and optional
+// groups (many-to-many) (CON-208). Harbor is the client of this service; it
+// shares the listener and the shared-bearer-token gate with SecretsService
+// (implemented in the ogen repo, src/grpcserver).
 //
 // Cross-tenant by design: tenants, tenant_tiers and tenant_groups are global
 // tables, so no per-tenant scoping applies. Tier is required, so there is no

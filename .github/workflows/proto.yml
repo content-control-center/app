@@ -1,0 +1,44 @@
+name: proto
+
+# The four gRPC contracts live in buf.build/ogen-app/proto (CON-220). This gate
+# regenerates the committed stubs from the pinned module and fails if they drift
+# (someone bumped the contract or hand-edited gen/ without regenerating).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  proto:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: bufbuild/buf-setup-action@v1
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Pin to the versions in the generated headers so regeneration is
+      # byte-identical.
+      - name: Install protoc-gen-go plugins
+        run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Verify generated code is up to date
+        run: |
+          make proto
+          if [ -n "$(git status --porcelain -- gen/)" ]; then
+            echo "::error::gen/ is out of date — run 'make proto' and commit the result"
+            git diff -- gen/
+            exit 1
+          fi

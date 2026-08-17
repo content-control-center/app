@@ -28,17 +28,17 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// SecretsService is the internal, operator-facing surface over Ogen's
+// SecretsService is Ogen's internal, operator-facing surface over its
 // envelope-encrypted `secret` table. It exists so Harbor (Ogen's operations
 // dashboard) can list / rotate / clear the third-party API keys WITHOUT
 // re-implementing the KEK envelope crypto, the name allowlist, or the
-// hot-reload subscription hooks — all of which live behind secrets.Store in
-// this repo (src/secrets/store.go).
+// hot-reload subscription hooks — all of which live behind secrets.Store in the
+// ogen repo (src/secrets/store.go).
 //
-// The service is internal-only, reached over the private network and gated by
-// a shared bearer token (see src/grpcserver). Plaintext travels ONE WAY: it is
+// The service is internal-only, reached over the private network and gated by a
+// shared bearer token (ogen's src/grpcserver). Plaintext travels ONE WAY: it is
 // accepted on Set and is never returned by any RPC. List / Set expose metadata
-// only, mirroring the existing REST handler (src/handlers/secrets.go).
+// only, mirroring the existing REST handler (ogen's src/handlers/secrets.go).
 type SecretsServiceClient interface {
 	// List returns one entry PER ALLOWLISTED NAME (secrets.AllowedNames),
 	// whether or not a value is stored — so the caller renders the full set of
@@ -95,17 +95,17 @@ func (c *secretsServiceClient) Delete(ctx context.Context, in *DeleteRequest, op
 // All implementations must embed UnimplementedSecretsServiceServer
 // for forward compatibility.
 //
-// SecretsService is the internal, operator-facing surface over Ogen's
+// SecretsService is Ogen's internal, operator-facing surface over its
 // envelope-encrypted `secret` table. It exists so Harbor (Ogen's operations
 // dashboard) can list / rotate / clear the third-party API keys WITHOUT
 // re-implementing the KEK envelope crypto, the name allowlist, or the
-// hot-reload subscription hooks — all of which live behind secrets.Store in
-// this repo (src/secrets/store.go).
+// hot-reload subscription hooks — all of which live behind secrets.Store in the
+// ogen repo (src/secrets/store.go).
 //
-// The service is internal-only, reached over the private network and gated by
-// a shared bearer token (see src/grpcserver). Plaintext travels ONE WAY: it is
+// The service is internal-only, reached over the private network and gated by a
+// shared bearer token (ogen's src/grpcserver). Plaintext travels ONE WAY: it is
 // accepted on Set and is never returned by any RPC. List / Set expose metadata
-// only, mirroring the existing REST handler (src/handlers/secrets.go).
+// only, mirroring the existing REST handler (ogen's src/handlers/secrets.go).
 type SecretsServiceServer interface {
 	// List returns one entry PER ALLOWLISTED NAME (secrets.AllowedNames),
 	// whether or not a value is stored — so the caller renders the full set of
