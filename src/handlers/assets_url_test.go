@@ -116,7 +116,9 @@ var _ = Describe("AssetsHandler POST /url", Ordered, func() {
 
 	It("returns 409 when scraping is not configured", func() {
 		gate.has = false
-		resp := post("https://example.com/a")
+		// Literal public IP: the handler's SSRF resolve-check short-circuits on a
+		// literal IP, so the test needs no DNS resolution.
+		resp := post("https://8.8.8.8/a")
 		Expect(resp.StatusCode).To(Equal(fiber.StatusConflict))
 		Expect(enq.calls).To(BeEmpty())
 	})
@@ -127,7 +129,8 @@ var _ = Describe("AssetsHandler POST /url", Ordered, func() {
 	})
 
 	It("creates a pending URL asset and enqueues a scrape (201)", func() {
-		resp := post("https://Example.com/Path/")
+		// Literal public IP so the SSRF resolve-check short-circuits (no DNS).
+		resp := post("https://8.8.8.8/Path/")
 		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
 
 		var a models.Asset
@@ -136,23 +139,23 @@ var _ = Describe("AssetsHandler POST /url", Ordered, func() {
 		Expect(a.Status).To(Equal(models.AssetStatusPending))
 		Expect(a.Type).NotTo(BeNil())
 		Expect(*a.Type).To(Equal(models.AssetTypeURL))
-		// Host lower-cased, trailing slash trimmed, scheme lower-cased.
+		// Trailing slash trimmed, path case preserved.
 		Expect(a.SourceURL).NotTo(BeNil())
-		Expect(*a.SourceURL).To(Equal("https://example.com/Path"))
+		Expect(*a.SourceURL).To(Equal("https://8.8.8.8/Path"))
 
 		Expect(enq.calls).To(HaveLen(1))
 		Expect(enq.calls[0].assetID).To(Equal(a.ID))
-		Expect(enq.calls[0].sourceURL).To(Equal("https://example.com/Path"))
+		Expect(enq.calls[0].sourceURL).To(Equal("https://8.8.8.8/Path"))
 		Expect(enq.calls[0].refresh).To(BeFalse())
 	})
 
 	It("refreshes in place on a duplicate URL (200, same id, refresh=true)", func() {
-		first := post("https://example.com/dup")
+		first := post("https://8.8.8.8/dup")
 		Expect(first.StatusCode).To(Equal(fiber.StatusCreated))
 		var a1 models.Asset
 		Expect(json.NewDecoder(first.Body).Decode(&a1)).To(Succeed())
 
-		second := post("https://example.com/dup")
+		second := post("https://8.8.8.8/dup")
 		Expect(second.StatusCode).To(Equal(fiber.StatusOK))
 		var a2 models.Asset
 		Expect(json.NewDecoder(second.Body).Decode(&a2)).To(Succeed())
@@ -160,7 +163,7 @@ var _ = Describe("AssetsHandler POST /url", Ordered, func() {
 
 		// Exactly one asset row exists for this URL.
 		n, err := db.NewSelect().Model((*models.Asset)(nil)).
-			Where("source_url = ?", "https://example.com/dup").Count(context.Background())
+			Where("source_url = ?", "https://8.8.8.8/dup").Count(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(n).To(Equal(1))
 
