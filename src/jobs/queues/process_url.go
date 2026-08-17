@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -396,9 +397,22 @@ func (p *ProcessURLProcessor) mirrorImages(ctx context.Context, assetID, markdow
 		idx++
 	}
 
+	// Apply replacements longest-key-first (deterministic) so a source URL that
+	// is a prefix of another (e.g. ".../a.png" vs ".../a.png?w=100") can't clobber
+	// the longer one before it is itself replaced.
+	keys := make([]string, 0, len(replacements))
+	for k := range replacements {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if len(keys[i]) != len(keys[j]) {
+			return len(keys[i]) > len(keys[j])
+		}
+		return keys[i] < keys[j]
+	})
 	out := markdown
-	for oldURL, newURL := range replacements {
-		out = strings.ReplaceAll(out, oldURL, newURL)
+	for _, oldURL := range keys {
+		out = strings.ReplaceAll(out, oldURL, replacements[oldURL])
 	}
 	return out, images, failed
 }
