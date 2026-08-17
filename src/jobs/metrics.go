@@ -52,6 +52,16 @@ var (
 	ZernioAccountDisconnectSucceeded = expvar.NewInt("ogen_jobs_zernio_account_disconnect_succeeded")
 	ZernioAccountDisconnectFailed    = expvar.NewInt("ogen_jobs_zernio_account_disconnect_failed")
 
+	// Connection-expiry notification sweep (CON-219). Detected counts every
+	// account entering a notify stage on a tick (may repeat across ticks until
+	// reconnected); Notified counts emails actually enqueued (deduped).
+	ZernioHealthSweepSucceeded             = expvar.NewInt("ogen_jobs_zernio_health_sweep_succeeded")
+	ZernioHealthSweepFailed                = expvar.NewInt("ogen_jobs_zernio_health_sweep_failed")
+	ZernioHealthAccountsChecked            = expvar.NewInt("ogen_jobs_zernio_health_accounts_checked")
+	ZernioConnectionExpiringDetected       = expvar.NewInt("ogen_jobs_zernio_connection_expiring_detected")
+	ZernioConnectionActionRequiredDetected = expvar.NewInt("ogen_jobs_zernio_connection_action_required_detected")
+	ZernioConnectionExpiryNotified         = expvar.NewInt("ogen_jobs_zernio_connection_expiry_notified")
+
 	// Headless connect-session lifecycle (CON-217, hide Zernio's account selector).
 	ZernioConnectCallbackReceived = expvar.NewInt("ogen_jobs_zernio_connect_callback_received")
 	ZernioConnectAutoFinalized    = expvar.NewInt("ogen_jobs_zernio_connect_auto_finalized")

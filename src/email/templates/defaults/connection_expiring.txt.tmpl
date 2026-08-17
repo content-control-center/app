@@ -1,0 +1,23 @@
+[[ if eq .Stage "action_required" ]]Reconnect your [[ .Platform ]] account
+
+Hi [[ .Name ]],
+
+The connection to your [[ .Platform ]] account [[ .AccountName ]] in
+[[ .WorkspaceName ]] needs to be reconnected. Until then, scheduled posts to this
+account won't publish and its analytics won't update.
+[[ else ]]Your [[ .Platform ]] connection expires soon
+
+Hi [[ .Name ]],
+
+The connection to your [[ .Platform ]] account [[ .AccountName ]] in
+[[ .WorkspaceName ]] is about to expire[[ if .ExpiresIn ]] [[ .ExpiresIn ]][[ end ]][[ if .ExpiresAt ]] (on [[ .ExpiresAt ]])[[ end ]].
+Reconnect it now so your scheduled posts keep publishing without interruption.
+[[ end ]]
+Reconnect [[ .Platform ]]:
+
+[[ .ReconnectURL ]]
+
+Reconnecting takes a few seconds and re-authorizes Ogen to keep posting on your
+behalf.
+
+— The Ogen team

@@ -18,6 +18,13 @@ type EmailLogRepository interface {
 	// DeleteOlderThan drops rows created before cutoff (retention sweep),
 	// mirroring PostLogRepository. Returns the number removed.
 	DeleteOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
+	// ExistsByIdempotencyKey reports whether any log row already carries this
+	// idempotency key (CON-219). The connection-expiry sweep calls it before
+	// enqueuing so a multi-day expiry window swept many times notifies each
+	// (account, stage, expiry, owner) at most once — durable dedupe that outlives
+	// the provider's own idempotency-key TTL. The key is globally unique (partial
+	// unique index), so no tenant scope is needed.
+	ExistsByIdempotencyKey(ctx context.Context, key string) (bool, error)
 }
 
 type emailLogRepository struct {
@@ -49,6 +56,16 @@ func (r *emailLogRepository) UpdateStatusByProviderMessageID(ctx context.Context
 	}
 	n, _ := res.RowsAffected()
 	return n > 0, nil
+}
+
+func (r *emailLogRepository) ExistsByIdempotencyKey(ctx context.Context, key string) (bool, error) {
+	if key == "" {
+		return false, nil
+	}
+	return r.db.NewSelect().
+		Model((*models.EmailLog)(nil)).
+		Where("idempotency_key = ?", key).
+		Exists(ctx)
 }
 
 func (r *emailLogRepository) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {

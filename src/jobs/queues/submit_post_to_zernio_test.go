@@ -195,6 +195,9 @@ func (r *fakeAccountRepo) ApplyPlan(context.Context, []models.SocialAccount, []s
 func (r *fakeAccountRepo) SoftDelete(context.Context, string, time.Time) (bool, error) {
 	return false, nil
 }
+func (r *fakeAccountRepo) UpdateHealth(context.Context, string, repository.SocialAccountHealth) error {
+	return nil
+}
 func (r *fakeAccountRepo) ListActiveTenantProfiles(context.Context) ([]repository.TenantProfile, error) {
 	seen := map[string]bool{}
 	var out []repository.TenantProfile

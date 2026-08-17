@@ -380,6 +380,12 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		ConnectSessionRepo: zernioConnectSessionRepo,
 		// CON-190: gate per-tenant jobs (publish/bootstrap/email) on tenant status.
 		Tenants: tenantRepo,
+		// CON-219: connection-expiry sweep deps (owner recipients + reconnect link
+		// base + lead window). Its client/account repo ride Zernio, its email log
+		// repo rides Email.Logs.
+		Users:          userRepo,
+		AppBaseURL:     cfg.AppBaseURL,
+		ExpiryLeadDays: cfg.ConnectionExpiryLeadDays,
 	})
 
 	if err := jobs.MigrateRiver(ctx, db.DB); err != nil {
@@ -405,6 +411,11 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 			// doesn't depend on it (readers treat past-expiry as gone); this just
 			// keeps the table tidy.
 			ConnectSessionCleanupEvery: 15 * time.Minute,
+			// CON-219: connection-health / expiry-notification sweep. Like analytics
+			// and followers it is profile-driven, so it no-ops when Zernio is
+			// unconfigured.
+			HealthCheckEvery:        cfg.ZernioHealthCheckInterval,
+			IncludeConnectionExpiry: true,
 		}.PeriodicJobs(),
 	})
 	if err != nil {

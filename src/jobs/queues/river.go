@@ -67,6 +67,15 @@ type Deps struct {
 	// bootstrap, email) skip suspended/deleted tenants. repository.TenantRepository
 	// satisfies it. A nil reader makes the guards no-ops (auth stays the gate).
 	Tenants TenantStatusReader
+
+	// CON-219: the detect_expiring_connections sweep's extra deps. Users resolves
+	// the owner recipients; AppBaseURL builds the reconnect deep link;
+	// ExpiryLeadDays is the heads-up window (days before token expiry). The
+	// sweep's client/account repo come from Zernio and its email log repo from
+	// Email.Logs.
+	Users          repository.UserRepository
+	AppBaseURL     string
+	ExpiryLeadDays int
 }
 
 // registrars is appended to by each worker file's init(). A job is registered
@@ -117,6 +126,9 @@ type PeriodicConfig struct {
 	// CON-217: expired headless-connect-session sweep. Gated on a configured
 	// interval so a zero value (e.g. in tests) can't create an invalid job.
 	ConnectSessionCleanupEvery time.Duration
+	// CON-219: connection-health / expiry-notification sweep.
+	HealthCheckEvery        time.Duration
+	IncludeConnectionExpiry bool // only when the Zernio integration is configured
 }
 
 // PeriodicJobs builds the River periodic-job set. Every job runs once on
@@ -159,6 +171,15 @@ func (cfg PeriodicConfig) PeriodicJobs() []*river.PeriodicJob {
 	if cfg.ConnectSessionCleanupEvery > 0 {
 		jobs = append(jobs, river.NewPeriodicJob(river.PeriodicInterval(cfg.ConnectSessionCleanupEvery), func() (river.JobArgs, *river.InsertOpts) {
 			return CleanupZernioConnectSessionsTask{}, nil
+		}, runOnStart))
+	}
+	// CON-219: connection-health / expiry sweep. Also requires a positive
+	// interval — River doesn't validate it and PeriodicInterval(0).Next(t)==t, so
+	// a zero HealthCheckEvery would spin the periodic enqueuer (mirrors the
+	// EmailCleanup/ConnectSessionCleanup guards above).
+	if cfg.IncludeConnectionExpiry && cfg.HealthCheckEvery > 0 {
+		jobs = append(jobs, river.NewPeriodicJob(river.PeriodicInterval(cfg.HealthCheckEvery), func() (river.JobArgs, *river.InsertOpts) {
+			return DetectExpiringConnectionsTask{}, nil
 		}, runOnStart))
 	}
 	return jobs
