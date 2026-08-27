@@ -306,7 +306,7 @@ func (p *DetectExpiringConnectionsProcessor) enqueueEmail(ctx context.Context, o
 
 func (p *DetectExpiringConnectionsProcessor) reconnectURL(accountID string) string {
 	base := strings.TrimRight(p.AppBaseURL, "/")
-	return base + "/settings/accounts?reconnect=" + url.QueryEscape(accountID)
+	return base + "/workspace-settings?reconnect=" + url.QueryEscape(accountID)
 }
 
 func (p *DetectExpiringConnectionsProcessor) leadDays() int {
