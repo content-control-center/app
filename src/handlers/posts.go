@@ -1559,21 +1559,38 @@ func (h *PostsHandler) VerifyExternal(c *fiber.Ctx) error {
 		return err
 	}
 
-	// Write a first analytics snapshot (best-effort) and emit the update event
-	// so open analytics streams refresh. The response carries the fetched
-	// metrics regardless of whether persistence is available.
+	// Refresh the current-state analytics row (best-effort) and emit the update
+	// event so open analytics streams refresh. The response carries the fetched
+	// metrics regardless of whether persistence is available. Mirrors the refresh
+	// job's dedup discipline (CON-236): preserve first_seen_at, always bump
+	// last_checked_at, and append a trend point / publish only on a real change —
+	// so re-verifying an already-tracked post doesn't clobber its history.
 	metrics := externalMetrics(ext.Analytics)
 	if h.analyticsRepo != nil {
 		now := time.Now().UTC()
-		if cur, berr := h.buildExternalCurrent(post, ext, now); berr == nil {
-			// Upsert the current-state row, then append one trend point (this is a
-			// post's first observation, so it's always a real change) — CON-236.
-			if uerr := h.analyticsRepo.Upsert(c.Context(), cur); uerr == nil {
-				if id, ierr := models.NewID(); ierr == nil {
-					_ = h.analyticsRepo.AppendSnapshot(c.Context(), cur.NewSnapshot(id, now))
-				}
-				h.publishAnalyticsUpdated(c.Context(), cur)
+		built := h.buildExternalCurrent(post, ext)
+		prev, _ := h.analyticsRepo.GetByPostID(c.Context(), post.ID)
+		changed := prev == nil || prev.MetricsKey() != built.MetricsKey()
+		built.LastCheckedAt = now
+		if prev == nil {
+			built.FirstSeenAt = now
+			built.LastChangedAt = now
+		} else {
+			built.FirstSeenAt = prev.FirstSeenAt
+			if changed {
+				built.LastChangedAt = now
+			} else {
+				built.LastChangedAt = prev.LastChangedAt
 			}
+		}
+		if changed {
+			if id, ierr := models.NewID(); ierr == nil {
+				if werr := h.analyticsRepo.UpsertWithSnapshot(c.Context(), built, built.NewSnapshot(id, now)); werr == nil {
+					h.publishAnalyticsUpdated(c.Context(), built)
+				}
+			}
+		} else {
+			_ = h.analyticsRepo.Upsert(c.Context(), built)
 		}
 	}
 
@@ -1655,9 +1672,10 @@ func externalMetrics(a zernio.ExternalPostAnalytics) models.PostAnalyticsMetrics
 
 // buildExternalCurrent builds the current-state analytics row from a synced
 // external post, denormalising the post's display fields exactly like the
-// refresh job (CON-236). now stamps first_seen/last_changed/last_checked — this
-// is the post's first observation.
-func (h *PostsHandler) buildExternalCurrent(post *models.Post, ext *zernio.ExternalPost, now time.Time) (*models.PostAnalytics, error) {
+// refresh job (CON-236). The first_seen/last_changed/last_checked timestamps are
+// stamped by the caller (they depend on the dedup comparison against any
+// existing current row).
+func (h *PostsHandler) buildExternalCurrent(post *models.Post, ext *zernio.ExternalPost) *models.PostAnalytics {
 	m := externalMetrics(ext.Analytics)
 	platformName := ext.Platform
 	if post.Platform != nil && post.Platform.Name != "" {
@@ -1690,10 +1708,7 @@ func (h *PostsHandler) buildExternalCurrent(post *models.Post, ext *zernio.Exter
 		}},
 		SyncStatus:         "synced",
 		MetricsLastUpdated: ext.Analytics.LastUpdatedTime(),
-		FirstSeenAt:        now,
-		LastChangedAt:      now,
-		LastCheckedAt:      now,
-	}, nil
+	}
 }
 
 // publishAnalyticsUpdated emits the post.analytics.updated event (CON-93 §8)

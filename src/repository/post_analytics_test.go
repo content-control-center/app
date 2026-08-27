@@ -307,6 +307,38 @@ func TestListWithPublisherPostID(t *testing.T) {
 	}
 }
 
+func TestPostAnalyticsUpsertWithSnapshot(t *testing.T) {
+	db := openMigratedDB(t)
+	ctx := tenantCtx()
+	repo := repository.NewPostAnalyticsRepository(db)
+	now := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
+
+	cur := &models.PostAnalytics{
+		PostID: "p1", PublisherPostID: "z-1", Publisher: models.PublisherZernio, Platform: "linkedin",
+		Impressions: 100, EngagementRate: 0.1, PlatformAnalytics: models.PlatformAnalyticsList{},
+		SyncStatus: "synced", FirstSeenAt: now, LastChangedAt: now, LastCheckedAt: now,
+	}
+	// One transactional call writes both the current row and its trend point.
+	if err := repo.UpsertWithSnapshot(ctx, cur, cur.NewSnapshot(mustID(t), now)); err != nil {
+		t.Fatalf("upsert with snapshot: %v", err)
+	}
+	got, _ := repo.GetByPostID(ctx, "p1")
+	if got == nil || got.Impressions != 100 {
+		t.Fatalf("current not written: %+v", got)
+	}
+	curCount, err := db.NewSelect().Model((*models.PostAnalytics)(nil)).Count(ctx)
+	if err != nil {
+		t.Fatalf("current count: %v", err)
+	}
+	histCount, err := db.NewSelect().Model((*models.PostAnalyticsSnapshot)(nil)).Count(ctx)
+	if err != nil {
+		t.Fatalf("history count: %v", err)
+	}
+	if curCount != 1 || histCount != 1 {
+		t.Fatalf("expected 1 current + 1 history, got %d/%d", curCount, histCount)
+	}
+}
+
 func mustID(t *testing.T) string {
 	t.Helper()
 	id, err := models.NewID()

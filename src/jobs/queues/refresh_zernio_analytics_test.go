@@ -47,6 +47,14 @@ func (r *fakeAnalyticsRepo) AppendSnapshot(context.Context, *models.PostAnalytic
 	r.snapshots++
 	return nil
 }
+func (r *fakeAnalyticsRepo) UpsertWithSnapshot(_ context.Context, a *models.PostAnalytics, _ *models.PostAnalyticsSnapshot) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cp := *a
+	r.upserted[a.PostID] = &cp
+	r.snapshots++
+	return nil
+}
 func (r *fakeAnalyticsRepo) GetByPostID(_ context.Context, postID string) (*models.PostAnalytics, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

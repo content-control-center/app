@@ -65,11 +65,17 @@ type PostAnalyticsOverview struct {
 type PostAnalyticsRepository interface {
 	// Upsert writes the current state for a post, keyed on (tenant_id, post_id):
 	// the per-check write refreshes the metrics/display fields in place rather
-	// than appending. tenant_id is stamped by the TenantScoped hook.
+	// than appending. tenant_id is stamped by the TenantScoped hook. Used on the
+	// unchanged path (bump last_checked_at only).
 	Upsert(ctx context.Context, a *models.PostAnalytics) error
 	// AppendSnapshot appends one point to the trend history (CON-236: only when
 	// the metrics changed). ID + OccurredAt are set by the caller.
 	AppendSnapshot(ctx context.Context, s *models.PostAnalyticsSnapshot) error
+	// UpsertWithSnapshot writes the current-state row and appends the trend point
+	// in ONE transaction (CON-236): on a changed refresh both commit together, so
+	// a snapshot failure can't leave the current row advanced without its history
+	// point (which dedup would then hide forever). Use on the changed path.
+	UpsertWithSnapshot(ctx context.Context, a *models.PostAnalytics, s *models.PostAnalyticsSnapshot) error
 	// GetByPostID returns the current-state row for a post, or (nil, nil) when
 	// the post has no snapshot yet (refresh hasn't covered it).
 	GetByPostID(ctx context.Context, postID string) (*models.PostAnalytics, error)
@@ -93,9 +99,15 @@ func NewPostAnalyticsRepository(db *bun.DB) PostAnalyticsRepository {
 }
 
 func (r *postAnalyticsRepository) Upsert(ctx context.Context, a *models.PostAnalytics) error {
-	// tenant_id is stamped per row by the TenantScoped BeforeAppendModel hook, so
-	// the (tenant_id, post_id) conflict target always has a value.
-	_, err := r.db.NewInsert().Model(a).
+	_, err := upsertCurrentQuery(r.db, a).Exec(ctx)
+	return err
+}
+
+// upsertCurrentQuery builds the (tenant_id, post_id) current-state upsert on the
+// given db/tx. tenant_id is stamped per row by the TenantScoped BeforeAppendModel
+// hook, so the conflict target always has a value.
+func upsertCurrentQuery(idb bun.IDB, a *models.PostAnalytics) *bun.InsertQuery {
+	return idb.NewInsert().Model(a).
 		On("CONFLICT (tenant_id, post_id) DO UPDATE").
 		Set("publisher = EXCLUDED.publisher").
 		Set("publisher_post_id = EXCLUDED.publisher_post_id").
@@ -115,14 +127,24 @@ func (r *postAnalyticsRepository) Upsert(ctx context.Context, a *models.PostAnal
 		Set("sync_status = EXCLUDED.sync_status").
 		Set("metrics_last_updated = EXCLUDED.metrics_last_updated").
 		Set("last_changed_at = EXCLUDED.last_changed_at").
-		Set("last_checked_at = EXCLUDED.last_checked_at").
-		Exec(ctx)
-	return err
+		Set("last_checked_at = EXCLUDED.last_checked_at")
 }
 
 func (r *postAnalyticsRepository) AppendSnapshot(ctx context.Context, s *models.PostAnalyticsSnapshot) error {
 	_, err := r.db.NewInsert().Model(s).Exec(ctx)
 	return err
+}
+
+func (r *postAnalyticsRepository) UpsertWithSnapshot(ctx context.Context, a *models.PostAnalytics, s *models.PostAnalyticsSnapshot) error {
+	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := upsertCurrentQuery(tx, a).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewInsert().Model(s).Exec(ctx); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func (r *postAnalyticsRepository) GetByPostID(ctx context.Context, postID string) (*models.PostAnalytics, error) {

@@ -48,20 +48,39 @@ CREATE UNIQUE INDEX idx_post_analytics_current_uniq ON post_analytics_current (t
 CREATE INDEX idx_post_analytics_current_tenant_pub ON post_analytics_current (tenant_id, publisher);
 
 -- Backfill current from the latest snapshot per post in the existing fat table.
+-- last_changed_at is the occurred_at of the last row whose metric key differed
+-- from its predecessor (the same LAG comparison used to compact the history
+-- below), NOT the latest observation — which stays as last_checked_at. Every
+-- post has at least one such row (its first observation), so the join always
+-- matches.
+WITH marked AS (
+    SELECT s.tenant_id, s.post_id, s.occurred_at,
+        LAG(ROW(impressions, reach, likes, comments, shares, saves, clicks, views, engagement_rate, sync_status))
+            OVER (PARTITION BY tenant_id, post_id ORDER BY occurred_at, id) AS prev_key,
+        ROW(impressions, reach, likes, comments, shares, saves, clicks, views, engagement_rate, sync_status) AS cur_key
+    FROM post_analytics_snapshots s
+),
+last_change AS (
+    SELECT tenant_id, post_id, MAX(occurred_at) AS last_changed_at
+    FROM marked
+    WHERE prev_key IS DISTINCT FROM cur_key
+    GROUP BY tenant_id, post_id
+)
 INSERT INTO post_analytics_current
     (tenant_id, post_id, publisher, publisher_post_id, platform, title, published_at,
      impressions, reach, likes, comments, shares, saves, clicks, views, engagement_rate,
      platform_analytics, sync_status, metrics_last_updated,
      first_seen_at, last_changed_at, last_checked_at)
-SELECT DISTINCT ON (tenant_id, post_id)
-    tenant_id, post_id, publisher, publisher_post_id, platform, title, published_at,
-    impressions, reach, likes, comments, shares, saves, clicks, views, engagement_rate,
-    COALESCE(platform_analytics, '[]'::jsonb), sync_status, metrics_last_updated,
-    MIN(occurred_at) OVER (PARTITION BY tenant_id, post_id),  -- first_seen_at
-    occurred_at,                                              -- last_changed_at (best-effort: latest check)
-    occurred_at                                               -- last_checked_at
-FROM post_analytics_snapshots
-ORDER BY tenant_id, post_id, occurred_at DESC, id DESC;
+SELECT DISTINCT ON (s.tenant_id, s.post_id)
+    s.tenant_id, s.post_id, s.publisher, s.publisher_post_id, s.platform, s.title, s.published_at,
+    s.impressions, s.reach, s.likes, s.comments, s.shares, s.saves, s.clicks, s.views, s.engagement_rate,
+    COALESCE(s.platform_analytics, '[]'::jsonb), s.sync_status, s.metrics_last_updated,
+    MIN(s.occurred_at) OVER (PARTITION BY s.tenant_id, s.post_id),  -- first_seen_at
+    lc.last_changed_at,                                            -- last_changed_at (last real change)
+    s.occurred_at                                                  -- last_checked_at (latest observation)
+FROM post_analytics_snapshots s
+JOIN last_change lc ON lc.tenant_id = s.tenant_id AND lc.post_id = s.post_id
+ORDER BY s.tenant_id, s.post_id, s.occurred_at DESC, s.id DESC;
 
 -- 2. Slim history table (build-new). Same name suffixed _v2; swapped in below.
 CREATE TABLE post_analytics_snapshots_v2 (

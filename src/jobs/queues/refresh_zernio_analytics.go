@@ -58,6 +58,18 @@ type AnalyticsDecay struct {
 	ColdEvery   time.Duration
 }
 
+// defaultDecay is applied only when the processor's Decay is entirely unset (a
+// directly-constructed processor, e.g. in tests). In production envconfig always
+// populates the cadence, so an explicit zero for a bucket is honoured (disabled
+// gating for that bucket) rather than being overwritten by a default.
+var defaultDecay = AnalyticsDecay{
+	FreshWindow: defaultDecayFreshWindow,
+	WarmWindow:  defaultDecayWarmWindow,
+	FreshEvery:  defaultDecayFreshEvery,
+	WarmEvery:   defaultDecayWarmEvery,
+	ColdEvery:   defaultDecayColdEvery,
+}
+
 // RefreshZernioAnalyticsTask is a marker payload — like
 // ReconcileScheduledPostsTask, this queue carries no per-tick data.
 type RefreshZernioAnalyticsTask struct{}
@@ -284,23 +296,33 @@ func (p *RefreshZernioAnalyticsProcessor) refreshTenant(ctx context.Context, pos
 				}
 			}
 
-			if uerr := p.Deps.AnalyticsRepo.Upsert(ctx, built); uerr != nil {
-				slog.ErrorContext(ctx, "analytics upsert failed", logging.AttrComponent, "jobs.refresh_analytics", "post_id", postID, logging.AttrError, uerr)
+			if !changed {
+				// Unchanged: just bump the current row (last_checked_at + latest
+				// breakdown); no new history point.
+				if uerr := p.Deps.AnalyticsRepo.Upsert(ctx, built); uerr != nil {
+					slog.ErrorContext(ctx, "analytics upsert failed", logging.AttrComponent, "jobs.refresh_analytics", "post_id", postID, logging.AttrError, uerr)
+					continue
+				}
+				current[postID] = built
+				jobs.ZernioAnalyticsPostsUnchanged.Add(1)
+				continue
+			}
+
+			// Changed: write the current row and append the trend point atomically
+			// so a snapshot failure can't leave the current row advanced without
+			// its history point (dedup would then hide the change forever).
+			id, ierr := models.NewID()
+			if ierr != nil {
+				slog.ErrorContext(ctx, "analytics id gen failed", logging.AttrComponent, "jobs.refresh_analytics", "post_id", postID, logging.AttrError, ierr)
+				continue
+			}
+			if werr := p.Deps.AnalyticsRepo.UpsertWithSnapshot(ctx, built, built.NewSnapshot(id, now)); werr != nil {
+				slog.ErrorContext(ctx, "analytics upsert+snapshot failed", logging.AttrComponent, "jobs.refresh_analytics", "post_id", postID, logging.AttrError, werr)
 				continue
 			}
 			// Keep the in-memory map current so a duplicate item later in the
 			// same tick dedups against the value we just wrote.
 			current[postID] = built
-
-			if !changed {
-				jobs.ZernioAnalyticsPostsUnchanged.Add(1)
-				continue
-			}
-			if id, ierr := models.NewID(); ierr == nil {
-				if aerr := p.Deps.AnalyticsRepo.AppendSnapshot(ctx, built.NewSnapshot(id, now)); aerr != nil {
-					slog.ErrorContext(ctx, "analytics snapshot append failed", logging.AttrComponent, "jobs.refresh_analytics", "post_id", postID, logging.AttrError, aerr)
-				}
-			}
 			upserts++
 			p.publishUpdated(ctx, built)
 		}
@@ -328,10 +350,19 @@ func (p *RefreshZernioAnalyticsProcessor) refreshTenant(ctx context.Context, pos
 // schedule (CON-236). A post never seen before is always due. Otherwise the
 // age bucket (from published_at) picks the interval, and the post is due once
 // that much time (minus a small slack for tick jitter) has passed since the
-// last check. A zero interval for the bucket disables gating (always due).
+// last check. A zero interval for the bucket means gating is explicitly disabled
+// (always due) — reachable only via config, since an entirely-unset Decay is
+// replaced with the defaults below.
 func (p *RefreshZernioAnalyticsProcessor) due(post models.Post, prev *models.PostAnalytics, now time.Time) bool {
 	if prev == nil {
 		return true
+	}
+	// Distinguish "unconfigured" (a directly-built processor, e.g. in tests) from
+	// an explicit zero: only the fully-zero struct falls back to defaults, so a
+	// configured 0 for a bucket is honoured (always due) rather than defaulted.
+	d := p.Decay
+	if d == (AnalyticsDecay{}) {
+		d = defaultDecay
 	}
 	var age time.Duration
 	if post.PublishedAt != nil {
@@ -339,12 +370,12 @@ func (p *RefreshZernioAnalyticsProcessor) due(post models.Post, prev *models.Pos
 	}
 	var every time.Duration
 	switch {
-	case age < p.decayFreshWindow():
-		every = p.decayFreshEvery()
-	case age < p.decayWarmWindow():
-		every = p.decayWarmEvery()
+	case age < d.FreshWindow:
+		every = d.FreshEvery
+	case age < d.WarmWindow:
+		every = d.WarmEvery
 	default:
-		every = p.decayColdEvery()
+		every = d.ColdEvery
 	}
 	if every <= 0 {
 		return true
@@ -513,44 +544,6 @@ func (p *RefreshZernioAnalyticsProcessor) pageLimit() int {
 		return p.PageLimit
 	}
 	return defaultAnalyticsPageLimit
-}
-
-// Decay-schedule accessors: fall back to the package defaults when a tunable is
-// zero. The windows delimit the age buckets; the *Every values are the re-check
-// intervals per bucket.
-func (p *RefreshZernioAnalyticsProcessor) decayFreshWindow() time.Duration {
-	if p.Decay.FreshWindow > 0 {
-		return p.Decay.FreshWindow
-	}
-	return defaultDecayFreshWindow
-}
-
-func (p *RefreshZernioAnalyticsProcessor) decayWarmWindow() time.Duration {
-	if p.Decay.WarmWindow > 0 {
-		return p.Decay.WarmWindow
-	}
-	return defaultDecayWarmWindow
-}
-
-func (p *RefreshZernioAnalyticsProcessor) decayFreshEvery() time.Duration {
-	if p.Decay.FreshEvery > 0 {
-		return p.Decay.FreshEvery
-	}
-	return defaultDecayFreshEvery
-}
-
-func (p *RefreshZernioAnalyticsProcessor) decayWarmEvery() time.Duration {
-	if p.Decay.WarmEvery > 0 {
-		return p.Decay.WarmEvery
-	}
-	return defaultDecayWarmEvery
-}
-
-func (p *RefreshZernioAnalyticsProcessor) decayColdEvery() time.Duration {
-	if p.Decay.ColdEvery > 0 {
-		return p.Decay.ColdEvery
-	}
-	return defaultDecayColdEvery
 }
 
 func truncateAnalyticsErr(s string) string {
