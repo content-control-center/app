@@ -97,6 +97,12 @@ type PostAnalyticsRepository interface {
 	// Tenant-scoped. Bounded per-tenant volume — the seam where a continuous
 	// aggregate can replace the raw scan later.
 	ReachByAgeSamples(ctx context.Context) ([]ReachAgeSample, error)
+	// LifespanSamples returns per-(post, age-hour) reach observations for the
+	// CON-239 post-lifespan curve: the slim history joined to the current row for
+	// published_at, max reach per age-hour (hour resolution captures t50 ≈ 19h;
+	// CON-236's hourly fresh-post decay makes that granularity real). Workspace-
+	// wide (no platform split). Tenant-scoped.
+	LifespanSamples(ctx context.Context) ([]LifespanSample, error)
 }
 
 // ReachAgeSample is one historical (platform, post, age-day) observation for the
@@ -107,6 +113,14 @@ type ReachAgeSample struct {
 	AgeDay       int    `bun:"age_day"`
 	Reach        int    `bun:"reach"`
 	Interactions int    `bun:"interactions"`
+}
+
+// LifespanSample is one (post, age-hour) reach observation for the CON-239
+// post-lifespan curve.
+type LifespanSample struct {
+	PostID   string `bun:"post_id"`
+	AgeHours int    `bun:"age_hours"`
+	Reach    int    `bun:"reach"`
 }
 
 type postAnalyticsRepository struct {
@@ -151,6 +165,26 @@ func (r *postAnalyticsRepository) ReachByAgeSamples(ctx context.Context) ([]Reac
 		Where("pac.published_at IS NOT NULL").
 		Where("pas.occurred_at >= pac.published_at").
 		GroupExpr("pac.platform, pas.post_id, "+ageExpr).
+		Scan(ctx, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// LifespanSamples joins the slim history to the current row and reduces to one
+// (post, age-hour) row with the max reach in that hour. Same tenant-scoping as
+// ReachByAgeSamples; hour resolution rather than day, and no platform split.
+func (r *postAnalyticsRepository) LifespanSamples(ctx context.Context) ([]LifespanSample, error) {
+	const ageExpr = "FLOOR(EXTRACT(EPOCH FROM (pas.occurred_at - pac.published_at)) / 3600)::int"
+	var out []LifespanSample
+	if err := r.db.NewSelect().Model((*models.PostAnalyticsSnapshot)(nil)).
+		Join("JOIN post_analytics_current AS pac ON pac.tenant_id = pas.tenant_id AND pac.post_id = pas.post_id").
+		ColumnExpr("pas.post_id AS post_id").
+		ColumnExpr(ageExpr+" AS age_hours").
+		ColumnExpr("MAX(pas.reach) AS reach").
+		Where("pac.published_at IS NOT NULL").
+		Where("pas.occurred_at >= pac.published_at").
+		GroupExpr("pas.post_id, "+ageExpr).
 		Scan(ctx, &out); err != nil {
 		return nil, err
 	}

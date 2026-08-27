@@ -81,6 +81,10 @@ func (r *fakeAnalyticsRepo) ReachByAgeSamples(context.Context) ([]repository.Rea
 	return nil, nil
 }
 
+func (r *fakeAnalyticsRepo) LifespanSamples(context.Context) ([]repository.LifespanSample, error) {
+	return nil, nil
+}
+
 // fakeSettings is an in-memory zernio.SettingsStore keyed by (tenant, key) —
 // the tenant is read from the context exactly as the real tenant-scoped
 // settings repo would, so per-tenant profile ids and per-tenant refresh status

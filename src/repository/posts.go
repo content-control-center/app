@@ -56,6 +56,11 @@ type PostRepository interface {
 	// the main DB (source of truth for what shipped), composed app-side with the
 	// analytics-DB series.
 	PublishedAtsBetween(ctx context.Context, from, to time.Time) ([]time.Time, error)
+	// ListPublishedSince returns the tenant's Zernio-published posts with
+	// published_at >= since (zero since = all-time), ascending, WITHOUT relation
+	// hydration — the CON-239 "what works / fading" miner reads only the scalar
+	// content/media/cta columns and joins metrics app-side by post id.
+	ListPublishedSince(ctx context.Context, since time.Time) ([]models.Post, error)
 }
 
 type postRepository struct {
@@ -65,6 +70,23 @@ type postRepository struct {
 // NewPostRepository returns a Bun-backed PostRepository.
 func NewPostRepository(db *bun.DB) PostRepository {
 	return &postRepository{db: db}
+}
+
+func (r *postRepository) ListPublishedSince(ctx context.Context, since time.Time) ([]models.Post, error) {
+	var posts []models.Post
+	q := r.db.NewSelect().Model(&posts).
+		Where("po.publisher = ?", "zernio").
+		Where("po.published_at IS NOT NULL").
+		OrderExpr("po.published_at ASC")
+	if !since.IsZero() {
+		q = q.Where("po.published_at >= ?", since)
+	}
+	// No hydrateRelations: the miner reads only scalar columns (content,
+	// media_urls, platform_post_type, cta_*, published_at).
+	if err := q.Scan(ctx); err != nil {
+		return nil, err
+	}
+	return posts, nil
 }
 
 func (r *postRepository) PublishedAtsBetween(ctx context.Context, from, to time.Time) ([]time.Time, error) {
