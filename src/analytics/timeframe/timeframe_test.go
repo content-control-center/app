@@ -66,6 +66,9 @@ func TestResolveErrors(t *testing.T) {
 		{"one-sided", "2026-08-07", "", "", ErrInvalidRange},
 		{"bad-window", "", "", "banana", ErrInvalidRange},
 		{"too-large", "", "", "500d", ErrWindowTooLarge},
+		// Regression: a huge day count must be rejected as too-large, not wrap the
+		// Duration math into a bogus (or invalid_range) window.
+		{"overflow", "", "", "281474976710684d", ErrWindowTooLarge},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

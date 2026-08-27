@@ -143,10 +143,10 @@ func Build(in Inputs) Response {
 	// --- followers (level: carry-forward daily total) ---
 	folCur := followerLevels(in.Rng, in.FollowerTotals)
 	folPrev := followerLevels(in.Prev, in.FollowerTotals)
+	// FollowersNow from the summary is authoritative — trust it even when 0, so a
+	// genuine zero total isn't overwritten by a stale carry-forward level (the
+	// value also feeds the insights' FollowersCur).
 	followersNow := float64(in.FollowersNow)
-	if in.FollowersNow == 0 {
-		followersNow = last(folCur)
-	}
 	followersStart := firstNonZero(folCur)
 
 	series := map[string]Series{

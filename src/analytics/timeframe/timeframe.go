@@ -81,6 +81,15 @@ func Resolve(fromStr, toStr, windowStr, granStr string, now time.Time) (Range, e
 			}
 			days = d
 		}
+		// Bound the relative window BEFORE the Duration math below: a huge day
+		// count would overflow time.Duration(days)*day and wrap `from`, slipping
+		// past the maxDays check further down.
+		if days < 1 {
+			return Range{}, ErrInvalidRange
+		}
+		if days > maxDays {
+			return Range{}, ErrWindowTooLarge
+		}
 		toExcl = today.Add(day) // include today
 		from = toExcl.Add(-time.Duration(days) * day)
 	}
