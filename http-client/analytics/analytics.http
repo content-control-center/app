@@ -305,3 +305,30 @@ Accept: application/json
 # Invalid sort → 400 invalid_sort.
 GET {{baseUrl}}/api/analytics/performers?by=nonsense
 Accept: application/json
+
+###
+# ── Learnings (all-time) — GET /api/analytics/learnings (CON-239) ─────────────
+# "What we've learned": a day×hour heatmap, a post-lifespan curve (t50/t75/t95),
+# and structural what-works/what's-fading patterns. All-time by default and
+# decoupled from the dashboard window; each section degrades independently to
+# {insufficient_history:true} until there's enough data.
+###
+
+# All-time, reach-based (default).
+GET {{baseUrl}}/api/analytics/learnings
+Accept: application/json
+
+###
+# Optional baseline lower bound + saves as the primary metric.
+GET {{baseUrl}}/api/analytics/learnings?since=2026-01-01&metric=saves
+Accept: application/json
+
+###
+# Wider fading comparison window.
+GET {{baseUrl}}/api/analytics/learnings?trend_window=6mo
+Accept: application/json
+
+###
+# Invalid metric → 400 invalid_param.
+GET {{baseUrl}}/api/analytics/learnings?metric=nonsense
+Accept: application/json

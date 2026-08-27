@@ -90,6 +90,9 @@ func (r *fakePostRepo) CountPendingByAccount(context.Context, string) (int, erro
 func (r *fakePostRepo) PublishedAtsBetween(context.Context, time.Time, time.Time) ([]time.Time, error) {
 	return nil, nil
 }
+func (r *fakePostRepo) ListPublishedSince(context.Context, time.Time) ([]models.Post, error) {
+	return nil, nil
+}
 func (r *fakePostRepo) Create(context.Context, *models.Post) error                 { return nil }
 func (r *fakePostRepo) CreateBatch(context.Context, []*models.Post) error          { return nil }
 func (r *fakePostRepo) Delete(context.Context, string) (bool, error)               { return false, nil }
