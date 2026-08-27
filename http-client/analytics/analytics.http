@@ -273,3 +273,35 @@ Accept: application/json
 # Invalid range → 400 invalid_range.
 GET {{baseUrl}}/api/analytics/overview?from=2026-08-19&to=2026-07-22
 Accept: application/json
+
+###
+# ── Performers & outliers — GET /api/analytics/performers (CON-238) ───────────
+# Best/Worst posts for the window, each scored against the account's typical
+# post for its platform and age (against_typical multiplier), + no-AI insights.
+# Multiplier is null (baseline "insufficient_history") until a platform has
+# enough history; those posts rank by the raw metric.
+###
+
+# Default: ranked by "against your typical", last 28 days, 5 per list.
+GET {{baseUrl}}/api/analytics/performers
+Accept: application/json
+
+###
+# Re-rank by raw reach.
+GET {{baseUrl}}/api/analytics/performers?by=reach
+Accept: application/json
+
+###
+# By engagement rate, longer window, bigger lists.
+GET {{baseUrl}}/api/analytics/performers?by=engagement_rate&window=90d&limit=10
+Accept: application/json
+
+###
+# Filter to one platform, explicit date range.
+GET {{baseUrl}}/api/analytics/performers?platform=linkedin&from=2026-07-22&to=2026-08-19
+Accept: application/json
+
+###
+# Invalid sort → 400 invalid_sort.
+GET {{baseUrl}}/api/analytics/performers?by=nonsense
+Accept: application/json

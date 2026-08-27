@@ -90,6 +90,23 @@ type PostAnalyticsRepository interface {
 	// [from, to) — the analytics side of the CON-237 overview (reach/interactions
 	// attributed to publish day). Ordered by published_at. Tenant-scoped.
 	PublishedBetween(ctx context.Context, from, to time.Time) ([]models.PostAnalytics, error)
+	// ReachByAgeSamples returns per-(platform, post, age-day) metric observations
+	// for the CON-238 per-platform expected-at-age baseline curve: it joins the
+	// slim history (post_analytics_snapshots) to the current row for published_at
+	// and platform, and takes the max metric within each age-day (both monotonic).
+	// Tenant-scoped. Bounded per-tenant volume — the seam where a continuous
+	// aggregate can replace the raw scan later.
+	ReachByAgeSamples(ctx context.Context) ([]ReachAgeSample, error)
+}
+
+// ReachAgeSample is one historical (platform, post, age-day) observation for the
+// CON-238 accrual-curve baseline.
+type ReachAgeSample struct {
+	Platform     string `bun:"platform"`
+	PostID       string `bun:"post_id"`
+	AgeDay       int    `bun:"age_day"`
+	Reach        int    `bun:"reach"`
+	Interactions int    `bun:"interactions"`
 }
 
 type postAnalyticsRepository struct {
@@ -115,6 +132,29 @@ func (r *postAnalyticsRepository) PublishedBetween(ctx context.Context, from, to
 		return nil, err
 	}
 	return rows, nil
+}
+
+// ReachByAgeSamples joins the slim history to the current row and reduces to one
+// (platform, post, age-day) row carrying the max reach/interactions seen in that
+// age-day. The snapshot model's TenantScoped hook scopes `pas`; the join keeps
+// `pac` on the same tenant. age_day = whole days since publish.
+func (r *postAnalyticsRepository) ReachByAgeSamples(ctx context.Context) ([]ReachAgeSample, error) {
+	const ageExpr = "FLOOR(EXTRACT(EPOCH FROM (pas.occurred_at - pac.published_at)) / 86400)::int"
+	var out []ReachAgeSample
+	if err := r.db.NewSelect().Model((*models.PostAnalyticsSnapshot)(nil)).
+		Join("JOIN post_analytics_current AS pac ON pac.tenant_id = pas.tenant_id AND pac.post_id = pas.post_id").
+		ColumnExpr("pac.platform AS platform").
+		ColumnExpr("pas.post_id AS post_id").
+		ColumnExpr(ageExpr+" AS age_day").
+		ColumnExpr("MAX(pas.reach) AS reach").
+		ColumnExpr("MAX(pas.likes + pas.comments + pas.shares) AS interactions").
+		Where("pac.published_at IS NOT NULL").
+		Where("pas.occurred_at >= pac.published_at").
+		GroupExpr("pac.platform, pas.post_id, "+ageExpr).
+		Scan(ctx, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (r *postAnalyticsRepository) Upsert(ctx context.Context, a *models.PostAnalytics) error {
