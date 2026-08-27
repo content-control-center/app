@@ -36,7 +36,13 @@ var (
 	// Analytics refresh lifecycle (CON-93 §11).
 	ZernioAnalyticsRefreshSucceeded = expvar.NewInt("ogen_jobs_zernio_analytics_refresh_succeeded")
 	ZernioAnalyticsRefreshFailed    = expvar.NewInt("ogen_jobs_zernio_analytics_refresh_failed")
-	ZernioAnalyticsPostsUpserted    = expvar.NewInt("ogen_jobs_zernio_analytics_posts_upserted")
+	// ZernioAnalyticsPostsUpserted counts posts whose metrics actually CHANGED
+	// this tick (a new trend-history point was appended) — CON-236. Unchanged
+	// and decay-skipped posts are tracked separately so the dedup/decay
+	// reduction is observable at /debug/vars.
+	ZernioAnalyticsPostsUpserted   = expvar.NewInt("ogen_jobs_zernio_analytics_posts_upserted")
+	ZernioAnalyticsPostsUnchanged  = expvar.NewInt("ogen_jobs_zernio_analytics_posts_unchanged")
+	ZernioAnalyticsPostsDueSkipped = expvar.NewInt("ogen_jobs_zernio_analytics_posts_due_skipped")
 
 	// Follower refresh lifecycle (CON-153).
 	ZernioFollowerRefreshSucceeded = expvar.NewInt("ogen_jobs_zernio_follower_refresh_succeeded")

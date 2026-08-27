@@ -22,9 +22,9 @@ import (
 
 var _ = Describe("Analytics endpoints", Ordered, func() {
 	var (
-		app           *fiber.App
-		db            *bun.DB
-		authCookie    *http.Cookie
+		app               *fiber.App
+		db                *bun.DB
+		authCookie        *http.Cookie
 		campaignID        string
 		userID            string
 		postRepo          repository.PostRepository
@@ -104,6 +104,7 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 
 	AfterEach(func() {
 		ctx := tenantCtx()
+		_, _ = db.NewDelete().TableExpr("post_analytics_current").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("post_analytics_snapshots").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("social_accounts").Where("1 = 1").Exec(ctx)
 		_, _ = db.NewDelete().TableExpr("posts").Where("1 = 1").Exec(ctx)
@@ -133,10 +134,8 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 	}
 
 	seedSnapshot := func(postID, pubPostID string, impressions, likes int, rate float64) {
-		id, err := models.NewID()
-		Expect(err).NotTo(HaveOccurred())
-		Expect(analyticsRepo.Insert(tenantCtx(), &models.PostAnalytics{
-			ID:              id,
+		now := time.Now().UTC()
+		Expect(analyticsRepo.Upsert(tenantCtx(), &models.PostAnalytics{
 			PostID:          postID,
 			PublisherPostID: pubPostID,
 			Publisher:       models.PublisherZernio,
@@ -148,9 +147,10 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 			PlatformAnalytics: models.PlatformAnalyticsList{
 				{Platform: "linkedin", SyncStatus: "synced", Analytics: models.PostAnalyticsMetrics{Impressions: impressions, Likes: likes}},
 			},
-			SyncStatus: "synced",
-			RawJSON:    "{}",
-			OccurredAt: time.Now().UTC(),
+			SyncStatus:    "synced",
+			FirstSeenAt:   now,
+			LastChangedAt: now,
+			LastCheckedAt: now,
 		})).To(Succeed())
 	}
 

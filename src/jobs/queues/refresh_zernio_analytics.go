@@ -34,7 +34,29 @@ const (
 	// back-catalog can't make one tick unbounded; the uncovered tail is
 	// picked up on subsequent ticks (CON-93 §10).
 	maxAnalyticsPages = 20
+
+	// Decay-schedule defaults (CON-236). A post is "due" this tick when it has
+	// gone longer than its age bucket's interval since the last check.
+	defaultDecayFreshWindow = 48 * time.Hour      // age < this → fresh bucket
+	defaultDecayWarmWindow  = 14 * 24 * time.Hour // age < this → warm bucket
+	defaultDecayFreshEvery  = time.Hour
+	defaultDecayWarmEvery   = 24 * time.Hour
+	defaultDecayColdEvery   = 7 * 24 * time.Hour
+	// decaySlack absorbs periodic-tick jitter so a post whose bucket interval
+	// equals the base cadence isn't skipped every other tick by a few seconds.
+	decaySlack = time.Minute
 )
+
+// AnalyticsDecay is the age-based refresh cadence (CON-236): the older a post,
+// the less often its analytics are re-checked. Zero fields fall back to the
+// defaults above; a zero *Every disables gating for that bucket (always due).
+type AnalyticsDecay struct {
+	FreshWindow time.Duration
+	WarmWindow  time.Duration
+	FreshEvery  time.Duration
+	WarmEvery   time.Duration
+	ColdEvery   time.Duration
+}
 
 // RefreshZernioAnalyticsTask is a marker payload — like
 // ReconcileScheduledPostsTask, this queue carries no per-tick data.
@@ -63,8 +85,9 @@ type RefreshZernioAnalyticsProcessor struct {
 	Settings zernio.SettingsStore
 	Hub      eventhub.Hub
 
-	WindowDays int // analytics lookback window (defaults to 90)
-	PageLimit  int // page size, 1–100 (defaults to 100)
+	WindowDays int            // analytics lookback window (defaults to 90)
+	PageLimit  int            // page size, 1–100 (defaults to 100)
+	Decay      AnalyticsDecay // CON-236 age-based re-check cadence
 }
 
 // Work is the River entrypoint; it delegates to Process.
@@ -87,6 +110,7 @@ func init() {
 			Settings:   d.AnalyticsSettings,
 			Hub:        d.AnalyticsHub,
 			WindowDays: d.AnalyticsWindowDays,
+			Decay:      d.AnalyticsDecay,
 		})
 	})
 }
@@ -185,13 +209,24 @@ func (p *RefreshZernioAnalyticsProcessor) refreshTenant(ctx context.Context, pos
 	}
 
 	// publisher_post_id → post_id match map for this tenant, plus the per-post
-	// fields denormalised onto the snapshot. Zernio returns analytics for every
-	// late post under the profile; we write only the ones Ogen owns.
+	// fields denormalised onto the current-state row. Zernio returns analytics
+	// for every late post under the profile; we write only the ones Ogen owns.
 	byPublisherID := make(map[string]string, len(posts))
 	postByID := make(map[string]models.Post, len(posts))
 	for _, post := range posts {
 		byPublisherID[post.PublisherPostID] = post.ID
 		postByID[post.ID] = post
+	}
+
+	// Preload the tenant's current-state rows once: the decay gate reads
+	// last_checked_at from them and dedup compares metric keys, both without a
+	// per-post query (CON-236). A nil map is fine (every post is a first sight).
+	current, cerr := p.Deps.AnalyticsRepo.CurrentByPostID(ctx)
+	if cerr != nil {
+		return upserts, true, fmt.Errorf("load current analytics: %w", cerr)
+	}
+	if current == nil {
+		current = map[string]*models.PostAnalytics{}
 	}
 
 	from := now.AddDate(0, 0, -p.windowDays()).Format("2006-01-02")
@@ -217,17 +252,57 @@ func (p *RefreshZernioAnalyticsProcessor) refreshTenant(ctx context.Context, pos
 				continue
 			}
 			post := postByID[postID]
-			snapshot, berr := buildSnapshot(post, publisherPostID, platformName[post.PlatformID], &items[i], now)
-			if berr != nil {
-				slog.ErrorContext(ctx, "analytics snapshot build failed", logging.AttrComponent, "jobs.refresh_analytics", "post_id", postID, logging.AttrError, berr)
+			prev := current[postID]
+
+			// Decay gate: skip posts whose age bucket says they aren't due yet.
+			if !p.due(post, prev, now) {
+				jobs.ZernioAnalyticsPostsDueSkipped.Add(1)
 				continue
 			}
-			if uerr := p.Deps.AnalyticsRepo.Insert(ctx, snapshot); uerr != nil {
-				slog.ErrorContext(ctx, "analytics insert failed", logging.AttrComponent, "jobs.refresh_analytics", "post_id", postID, logging.AttrError, uerr)
+
+			built, berr := buildCurrent(post, publisherPostID, platformName[post.PlatformID], &items[i])
+			if berr != nil {
+				slog.ErrorContext(ctx, "analytics build failed", logging.AttrComponent, "jobs.refresh_analytics", "post_id", postID, logging.AttrError, berr)
 				continue
+			}
+
+			// Dedup: a new history point is written only when the metric key
+			// moved (or this is the first sighting). Either way we upsert the
+			// current row so last_checked_at (freshness) and the latest breakdown
+			// stay current.
+			changed := prev == nil || prev.MetricsKey() != built.MetricsKey()
+			built.LastCheckedAt = now
+			if prev == nil {
+				built.FirstSeenAt = now
+				built.LastChangedAt = now
+			} else {
+				built.FirstSeenAt = prev.FirstSeenAt
+				if changed {
+					built.LastChangedAt = now
+				} else {
+					built.LastChangedAt = prev.LastChangedAt
+				}
+			}
+
+			if uerr := p.Deps.AnalyticsRepo.Upsert(ctx, built); uerr != nil {
+				slog.ErrorContext(ctx, "analytics upsert failed", logging.AttrComponent, "jobs.refresh_analytics", "post_id", postID, logging.AttrError, uerr)
+				continue
+			}
+			// Keep the in-memory map current so a duplicate item later in the
+			// same tick dedups against the value we just wrote.
+			current[postID] = built
+
+			if !changed {
+				jobs.ZernioAnalyticsPostsUnchanged.Add(1)
+				continue
+			}
+			if id, ierr := models.NewID(); ierr == nil {
+				if aerr := p.Deps.AnalyticsRepo.AppendSnapshot(ctx, built.NewSnapshot(id, now)); aerr != nil {
+					slog.ErrorContext(ctx, "analytics snapshot append failed", logging.AttrComponent, "jobs.refresh_analytics", "post_id", postID, logging.AttrError, aerr)
+				}
 			}
 			upserts++
-			p.publishUpdated(ctx, snapshot)
+			p.publishUpdated(ctx, built)
 		}
 
 		// Stop paging on the last page, robust to whichever pagination shape the
@@ -247,6 +322,34 @@ func (p *RefreshZernioAnalyticsProcessor) refreshTenant(ctx context.Context, pos
 		}
 	}
 	return upserts, true, nil
+}
+
+// due reports whether a post should be re-checked this tick under the decay
+// schedule (CON-236). A post never seen before is always due. Otherwise the
+// age bucket (from published_at) picks the interval, and the post is due once
+// that much time (minus a small slack for tick jitter) has passed since the
+// last check. A zero interval for the bucket disables gating (always due).
+func (p *RefreshZernioAnalyticsProcessor) due(post models.Post, prev *models.PostAnalytics, now time.Time) bool {
+	if prev == nil {
+		return true
+	}
+	var age time.Duration
+	if post.PublishedAt != nil {
+		age = now.Sub(*post.PublishedAt)
+	}
+	var every time.Duration
+	switch {
+	case age < p.decayFreshWindow():
+		every = p.decayFreshEvery()
+	case age < p.decayWarmWindow():
+		every = p.decayWarmEvery()
+	default:
+		every = p.decayColdEvery()
+	}
+	if every <= 0 {
+		return true
+	}
+	return now.Sub(prev.LastCheckedAt)+decaySlack >= every
 }
 
 // platformNames resolves platform_id → display name once per tick (platforms is
@@ -299,19 +402,15 @@ func (p *RefreshZernioAnalyticsProcessor) matchPostID(byPublisherID map[string]s
 	return "", ""
 }
 
-// buildSnapshot maps a Zernio analytics item onto a new append-only snapshot
-// row (CON-125 Track B). publisherPostID is the matched key from the local post
-// (kept consistent with posts.publisher_post_id); platformName is the resolved
-// display name for the post's platform. The post's publisher/title/published_at
-// are denormalised so the overview read needs no cross-DB join. A fresh id and
-// occurred_at (the refresh time) make each tick a distinct row.
-func buildSnapshot(post models.Post, publisherPostID, platformName string, item *zernio.AnalyticsItem, now time.Time) (*models.PostAnalytics, error) {
-	id, err := models.NewID()
-	if err != nil {
-		return nil, err
-	}
-	a := &models.PostAnalytics{
-		ID:                 id,
+// buildCurrent maps a Zernio analytics item onto the current-state row for a
+// post (CON-236). publisherPostID is the matched key from the local post (kept
+// consistent with posts.publisher_post_id); platformName is the resolved display
+// name for the post's platform. The post's publisher/title/published_at are
+// denormalised so the overview read needs no cross-DB join. The first_seen/
+// last_changed/last_checked timestamps are stamped by the caller (they depend on
+// the dedup comparison against the previous row).
+func buildCurrent(post models.Post, publisherPostID, platformName string, item *zernio.AnalyticsItem) (*models.PostAnalytics, error) {
+	return &models.PostAnalytics{
 		PostID:             post.ID,
 		PublisherPostID:    publisherPostID,
 		Publisher:          post.Publisher,
@@ -330,10 +429,7 @@ func buildSnapshot(post models.Post, publisherPostID, platformName string, item 
 		PlatformAnalytics:  mapPlatformAnalytics(item.PlatformAnalytics),
 		SyncStatus:         item.SyncStatus,
 		MetricsLastUpdated: item.Analytics.LastUpdatedTime(),
-		RawJSON:            rawOrEmpty(item.Raw),
-		OccurredAt:         now,
-	}
-	return a, nil
+	}, nil
 }
 
 func mapPlatformAnalytics(in []zernio.PlatformAnalytics) models.PlatformAnalyticsList {
@@ -363,13 +459,6 @@ func mapPlatformAnalytics(in []zernio.PlatformAnalytics) models.PlatformAnalytic
 		})
 	}
 	return out
-}
-
-func rawOrEmpty(raw []byte) string {
-	if len(raw) == 0 {
-		return "{}"
-	}
-	return string(raw)
 }
 
 // publishUpdated emits the optional post.analytics.updated event
@@ -424,6 +513,44 @@ func (p *RefreshZernioAnalyticsProcessor) pageLimit() int {
 		return p.PageLimit
 	}
 	return defaultAnalyticsPageLimit
+}
+
+// Decay-schedule accessors: fall back to the package defaults when a tunable is
+// zero. The windows delimit the age buckets; the *Every values are the re-check
+// intervals per bucket.
+func (p *RefreshZernioAnalyticsProcessor) decayFreshWindow() time.Duration {
+	if p.Decay.FreshWindow > 0 {
+		return p.Decay.FreshWindow
+	}
+	return defaultDecayFreshWindow
+}
+
+func (p *RefreshZernioAnalyticsProcessor) decayWarmWindow() time.Duration {
+	if p.Decay.WarmWindow > 0 {
+		return p.Decay.WarmWindow
+	}
+	return defaultDecayWarmWindow
+}
+
+func (p *RefreshZernioAnalyticsProcessor) decayFreshEvery() time.Duration {
+	if p.Decay.FreshEvery > 0 {
+		return p.Decay.FreshEvery
+	}
+	return defaultDecayFreshEvery
+}
+
+func (p *RefreshZernioAnalyticsProcessor) decayWarmEvery() time.Duration {
+	if p.Decay.WarmEvery > 0 {
+		return p.Decay.WarmEvery
+	}
+	return defaultDecayWarmEvery
+}
+
+func (p *RefreshZernioAnalyticsProcessor) decayColdEvery() time.Duration {
+	if p.Decay.ColdEvery > 0 {
+		return p.Decay.ColdEvery
+	}
+	return defaultDecayColdEvery
 }
 
 func truncateAnalyticsErr(s string) string {

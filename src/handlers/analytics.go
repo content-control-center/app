@@ -48,9 +48,10 @@ func newPostAnalyticsResponse(post *models.Post, a *models.PostAnalytics) postAn
 		PublisherPostID:    a.PublisherPostID,
 		SyncStatus:         a.SyncStatus,
 		MetricsLastUpdated: a.MetricsLastUpdated,
-		// OccurredAt is the refresh time; exposed as last_refreshed_at for API
-		// compatibility (CON-125 Track B renamed the column).
-		LastRefreshedAt:   a.OccurredAt,
+		// LastCheckedAt is when the refresh last looked; exposed as
+		// last_refreshed_at for API compatibility. It is bumped every check, so
+		// this stays accurate even when dedup writes no new history row (CON-236).
+		LastRefreshedAt:   a.LastCheckedAt,
 		Analytics:         a.Metrics(),
 		PlatformAnalytics: platforms,
 	}

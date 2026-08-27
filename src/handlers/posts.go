@@ -1564,9 +1564,15 @@ func (h *PostsHandler) VerifyExternal(c *fiber.Ctx) error {
 	// metrics regardless of whether persistence is available.
 	metrics := externalMetrics(ext.Analytics)
 	if h.analyticsRepo != nil {
-		if snap, berr := h.buildExternalSnapshot(post, ext); berr == nil {
-			if ierr := h.analyticsRepo.Insert(c.Context(), snap); ierr == nil {
-				h.publishAnalyticsUpdated(c.Context(), snap)
+		now := time.Now().UTC()
+		if cur, berr := h.buildExternalCurrent(post, ext, now); berr == nil {
+			// Upsert the current-state row, then append one trend point (this is a
+			// post's first observation, so it's always a real change) — CON-236.
+			if uerr := h.analyticsRepo.Upsert(c.Context(), cur); uerr == nil {
+				if id, ierr := models.NewID(); ierr == nil {
+					_ = h.analyticsRepo.AppendSnapshot(c.Context(), cur.NewSnapshot(id, now))
+				}
+				h.publishAnalyticsUpdated(c.Context(), cur)
 			}
 		}
 	}
@@ -1647,25 +1653,17 @@ func externalMetrics(a zernio.ExternalPostAnalytics) models.PostAnalyticsMetrics
 	}
 }
 
-// buildExternalSnapshot builds a first analytics snapshot from a synced
+// buildExternalCurrent builds the current-state analytics row from a synced
 // external post, denormalising the post's display fields exactly like the
-// refresh job (CON-125 Track B).
-func (h *PostsHandler) buildExternalSnapshot(post *models.Post, ext *zernio.ExternalPost) (*models.PostAnalytics, error) {
-	id, err := models.NewID()
-	if err != nil {
-		return nil, err
-	}
+// refresh job (CON-236). now stamps first_seen/last_changed/last_checked — this
+// is the post's first observation.
+func (h *PostsHandler) buildExternalCurrent(post *models.Post, ext *zernio.ExternalPost, now time.Time) (*models.PostAnalytics, error) {
 	m := externalMetrics(ext.Analytics)
 	platformName := ext.Platform
 	if post.Platform != nil && post.Platform.Name != "" {
 		platformName = post.Platform.Name
 	}
-	rawJSON := "{}"
-	if b, merr := json.Marshal(ext); merr == nil {
-		rawJSON = string(b)
-	}
 	return &models.PostAnalytics{
-		ID:     id,
 		PostID: post.ID,
 		// The synced external post's id — kept consistent with the metrics
 		// below (ext.Analytics), not the post's possibly-preexisting linkage.
@@ -1692,8 +1690,9 @@ func (h *PostsHandler) buildExternalSnapshot(post *models.Post, ext *zernio.Exte
 		}},
 		SyncStatus:         "synced",
 		MetricsLastUpdated: ext.Analytics.LastUpdatedTime(),
-		RawJSON:            rawJSON,
-		OccurredAt:         time.Now().UTC(),
+		FirstSeenAt:        now,
+		LastChangedAt:      now,
+		LastCheckedAt:      now,
 	}, nil
 }
 

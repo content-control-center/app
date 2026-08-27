@@ -38,6 +38,9 @@ type Deps struct {
 	AnalyticsSettings   zernio.SettingsStore
 	AnalyticsHub        eventhub.Hub
 	AnalyticsWindowDays int
+	// CON-236: age-based refresh-decay schedule. Zero fields fall back to the
+	// processor defaults (fresh<48h→hourly, warm<14d→daily, else weekly).
+	AnalyticsDecay AnalyticsDecay
 	// CON-102: eager per-tenant Zernio profile provisioning. The bootstrap job
 	// reuses the connect-link handler's Bootstrapper (tenant-scoped profile
 	// create/adopt + settings write) and Integration (enabled/state gating).
