@@ -241,3 +241,35 @@ Accept: application/json
 ### Follower stats — malformed date → 400  [protected]
 GET {{baseUrl}}/api/analytics/followers?from=07-2026
 Accept: application/json
+
+###
+# ── Cumulative overview — GET /api/analytics/overview (CON-237) ───────────────
+# Five KPI cards + per-metric series (current/previous/band) + no-AI insights,
+# in one tenant-scoped call. Latest-per-post from post_analytics_current; posts
+# published from the main-DB posts table. Baseline band is "insufficient_history"
+# until enough prior windows accrue.
+###
+
+# Default window (last 28 days).
+GET {{baseUrl}}/api/analytics/overview
+Accept: application/json
+
+###
+# Relative window shorthand.
+GET {{baseUrl}}/api/analytics/overview?window=7d
+Accept: application/json
+
+###
+# Explicit inclusive date range (overrides window).
+GET {{baseUrl}}/api/analytics/overview?from=2026-07-22&to=2026-08-19
+Accept: application/json
+
+###
+# Longer window auto-buckets weekly; force with &granularity=week.
+GET {{baseUrl}}/api/analytics/overview?window=120d
+Accept: application/json
+
+###
+# Invalid range → 400 invalid_range.
+GET {{baseUrl}}/api/analytics/overview?from=2026-08-19&to=2026-07-22
+Accept: application/json

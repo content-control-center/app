@@ -683,7 +683,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// CON-93 FR5 + CON-153: analytics surface under its own /api/analytics group
 	// (avoids the /api/posts/:id route collision). The post overview + follower
 	// series are served from the DB; the insight aggregates live-proxy to Zernio.
-	handlers.NewAnalyticsHandler(postAnalyticsRepo, followerStatsRepo, zernioRT.Integration.Client, profileIDResolver, auth).Register(app)
+	handlers.NewAnalyticsHandler(postAnalyticsRepo, followerStatsRepo, postRepo, zernioRT.Integration.Client, profileIDResolver, auth).Register(app)
 
 	handlers.NewImagesHandler(store, auth).Register(app)
 	// CON-103: PDF attachment page-count + thumbnail now come from pdf-service.
