@@ -20,7 +20,7 @@ func TestRenderConnectionExpiringStages(t *testing.T) {
 			Stage:         StageExpiringSoon,
 			ExpiresAt:     "September 15, 2026",
 			ExpiresIn:     "in 6 days",
-			ReconnectURL:  "https://app.example/settings/accounts?reconnect=acc1",
+			ReconnectURL:  "https://app.example/workspace-settings?reconnect=acc1",
 		})
 		if err != nil {
 			t.Fatalf("render: %v", err)
@@ -47,7 +47,7 @@ func TestRenderConnectionExpiringStages(t *testing.T) {
 			Platform:      "X (Twitter)",
 			AccountName:   "acme",
 			Stage:         StageActionRequired,
-			ReconnectURL:  "https://app.example/settings/accounts?reconnect=acc2",
+			ReconnectURL:  "https://app.example/workspace-settings?reconnect=acc2",
 		})
 		if err != nil {
 			t.Fatalf("render: %v", err)

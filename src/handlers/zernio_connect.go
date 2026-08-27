@@ -326,11 +326,11 @@ func (h *ZernioHandler) connectCallbackURL(sessionID string) string {
 }
 
 func (h *ZernioHandler) redirectConnectSuccess(c *fiber.Ctx, platform string) error {
-	return c.Redirect(h.spaBase()+"/settings/accounts?connected="+url.QueryEscape(platform), fiber.StatusFound)
+	return c.Redirect(h.spaBase()+"/workspace-settings?connected="+url.QueryEscape(platform), fiber.StatusFound)
 }
 
 func (h *ZernioHandler) redirectConnectError(c *fiber.Ctx, platform, code string) error {
-	u := h.spaBase() + "/settings/accounts?connect_error=" + url.QueryEscape(code)
+	u := h.spaBase() + "/workspace-settings?connect_error=" + url.QueryEscape(code)
 	if platform != "" {
 		u += "&platform=" + url.QueryEscape(platform)
 	}
@@ -338,7 +338,7 @@ func (h *ZernioHandler) redirectConnectError(c *fiber.Ctx, platform, code string
 }
 
 func (h *ZernioHandler) redirectPicker(c *fiber.Ctx, connectionID string) error {
-	return c.Redirect(h.spaBase()+"/settings/accounts/connect/"+url.PathEscape(connectionID), fiber.StatusFound)
+	return c.Redirect(h.spaBase()+"/workspace-settings/connect/"+url.PathEscape(connectionID), fiber.StatusFound)
 }
 
 // --- token sealing ----------------------------------------------------------
