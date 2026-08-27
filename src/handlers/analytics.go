@@ -90,6 +90,7 @@ func NewAnalyticsHandler(repo repository.PostAnalyticsRepository, followerRepo r
 func (h *AnalyticsHandler) Register(app *fiber.App) {
 	g := app.Group("/api/analytics")
 	g.Get("/overview", h.auth, h.Overview)
+	g.Get("/performers", h.auth, h.Performers)
 	g.Get("/posts", h.auth, h.ListPosts)
 	g.Get("/best-times", h.auth, h.BestTimes)
 	g.Get("/content-decay", h.auth, h.ContentDecay)
