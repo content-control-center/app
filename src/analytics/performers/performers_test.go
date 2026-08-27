@@ -137,6 +137,58 @@ func TestInsightsRankDivergenceAndSampleSize(t *testing.T) {
 	}
 }
 
+// Finding 1 regression: the platform has ≥ baselineMinPosts, but only one post
+// lived to the candidate's age, so the median rests on a single post — must be
+// suppressed as insufficient_history, not scored off one point.
+func TestThinContributorsAtAge(t *testing.T) {
+	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
+	samples := []Sample{
+		{Platform: "linkedin", PostID: "b1", AgeDay: 2, Reach: 500},
+		{Platform: "linkedin", PostID: "b1", AgeDay: 10, Reach: 3000}, // only b1 reaches age 10
+		{Platform: "linkedin", PostID: "b2", AgeDay: 2, Reach: 500},
+		{Platform: "linkedin", PostID: "b3", AgeDay: 2, Reach: 500},
+	}
+	cands := []Candidate{{PostID: "c", Platform: "linkedin", Reach: 6000, PublishedAt: now.AddDate(0, 0, -10), AgeDays: 10}}
+	res := Build(cands, samples, Options{By: ByAgainstTypical})
+	if res.Best[0].AgainstTypical != nil {
+		t.Fatalf("one contributor at age 10 must not yield a multiplier, got %v", *res.Best[0].AgainstTypical)
+	}
+	if res.Best[0].Baseline != baselineInsufficient {
+		t.Fatalf("baseline = %s, want insufficient_history", res.Best[0].Baseline)
+	}
+}
+
+// Finding 2 regression: two posts whose multipliers round to the same 2-dp value
+// but differ in the 3rd dp must order by the raw multiplier, even when the reach
+// tie-breaker would disagree.
+func TestRawMultiplierOrdering(t *testing.T) {
+	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
+	samples := []Sample{
+		// linkedin expected-at-age-5 = 1000
+		{Platform: "linkedin", PostID: "l1", AgeDay: 5, Reach: 1000},
+		{Platform: "linkedin", PostID: "l2", AgeDay: 5, Reach: 1000},
+		{Platform: "linkedin", PostID: "l3", AgeDay: 5, Reach: 1000},
+		// facebook expected-at-age-5 = 500
+		{Platform: "facebook", PostID: "f1", AgeDay: 5, Reach: 500},
+		{Platform: "facebook", PostID: "f2", AgeDay: 5, Reach: 500},
+		{Platform: "facebook", PostID: "f3", AgeDay: 5, Reach: 500},
+	}
+	cands := []Candidate{
+		// A: 1900/1000 = 1.900× (higher reach)
+		{PostID: "A", Platform: "linkedin", Reach: 1900, PublishedAt: now.AddDate(0, 0, -5), AgeDays: 5},
+		// B: 951/500 = 1.902× (lower reach, but higher raw multiplier)
+		{PostID: "B", Platform: "facebook", Reach: 951, PublishedAt: now.AddDate(0, 0, -5), AgeDays: 5},
+	}
+	res := Build(cands, samples, Options{By: ByAgainstTypical})
+	if res.Best[0].PostID != "B" {
+		t.Fatalf("best[0] = %s, want B (raw 1.902 > 1.900 despite lower reach)", res.Best[0].PostID)
+	}
+	// both display as 1.9 after rounding
+	if *res.Best[0].AgainstTypical != 1.9 || *res.Best[1].AgainstTypical != 1.9 {
+		t.Fatalf("rounded multipliers = %v/%v, want 1.9/1.9", *res.Best[0].AgainstTypical, *res.Best[1].AgainstTypical)
+	}
+}
+
 func TestValidBy(t *testing.T) {
 	for _, b := range []string{ByAgainstTypical, ByReach, ByEngagementRate, ByInteractions} {
 		if !ValidBy(b) {

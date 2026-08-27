@@ -129,6 +129,11 @@ type Row struct {
 	Baseline           string    `json:"baseline,omitempty"`
 	PublishedAt        time.Time `json:"published_at"`
 	AgeDays            int       `json:"age_days"`
+
+	// rawMultiplier is the unrounded against_typical value kept for stable
+	// sorting (AgainstTypical exposes the rounded value). Unexported → not
+	// serialized.
+	rawMultiplier *float64
 }
 
 // Result is the assembled board.
@@ -189,8 +194,10 @@ func Build(candidates []Candidate, samples []Sample, opts Options) Result {
 			AgeDays:     c.AgeDays,
 		}
 		if mult, ok := curve.multiplier(c.Platform, c.AgeDays, metric, candidateMetric(c, metric)); ok {
+			raw := mult
 			m := round2(mult)
 			row.AgainstTypical = &m
+			row.rawMultiplier = &raw
 			row.Direction = direction(mult)
 		} else {
 			row.Baseline = baselineInsufficient
@@ -251,11 +258,12 @@ func rankKey(r Row, by string) float64 {
 		return r.Metrics.EngagementRate
 	case ByInteractions:
 		return float64(r.Metrics.Likes + r.Metrics.Comments + r.Metrics.Shares)
-	default: // against_typical
-		if r.AgainstTypical == nil {
+	default: // against_typical — sort on the raw (unrounded) multiplier so the
+		// reach tie-breaker only fires on genuine ties, not rounding collisions.
+		if r.rawMultiplier == nil {
 			return math.Inf(-1)
 		}
-		return *r.AgainstTypical
+		return *r.rawMultiplier
 	}
 }
 

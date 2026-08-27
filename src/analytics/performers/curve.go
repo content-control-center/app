@@ -104,19 +104,23 @@ func (c curve) expectedAtAge(posts map[string][]agePoint, ageTarget int, metric 
 		return vals
 	}
 	vals := collect(ageTarget)
-	if len(vals) == 0 {
+	if len(vals) < baselineMinPosts {
+		// The target may be beyond every post's observed age; clamp to the
+		// plateau (largest age any post reached) and retry.
 		maxAge := 0
 		for _, pts := range posts {
 			if len(pts) > 0 && pts[len(pts)-1].age > maxAge {
 				maxAge = pts[len(pts)-1].age
 			}
 		}
-		if maxAge >= ageTarget || maxAge == 0 {
-			return 0, false
+		if maxAge > 0 && maxAge < ageTarget {
+			vals = collect(maxAge)
 		}
-		vals = collect(maxAge)
 	}
-	if len(vals) == 0 {
+	// A median is only meaningful over enough contributors — require at least
+	// baselineMinPosts values (not just a non-empty platform), else the multiplier
+	// would rest on one or two posts.
+	if len(vals) < baselineMinPosts {
 		return 0, false
 	}
 	return median(vals), true
