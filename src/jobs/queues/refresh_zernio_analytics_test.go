@@ -73,6 +73,10 @@ func (r *fakeAnalyticsRepo) List(context.Context, repository.PostAnalyticsListOp
 	return nil, repository.PostAnalyticsOverview{}, nil
 }
 
+func (r *fakeAnalyticsRepo) PublishedBetween(context.Context, time.Time, time.Time) ([]models.PostAnalytics, error) {
+	return nil, nil
+}
+
 // fakeSettings is an in-memory zernio.SettingsStore keyed by (tenant, key) —
 // the tenant is read from the context exactly as the real tenant-scoped
 // settings repo would, so per-tenant profile ids and per-tenant refresh status

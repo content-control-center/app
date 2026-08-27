@@ -132,7 +132,7 @@ var _ = Describe("Post analytics — CON-93", Ordered, func() {
 			repository.NewPostAttachmentRepository(db), auth, nil, nil)
 		postsHandler.SetAnalyticsRepo(analyticsRepo)
 		postsHandler.Register(app)
-		handlers.NewAnalyticsHandler(analyticsRepo, nil, nil, nil, auth).Register(app)
+		handlers.NewAnalyticsHandler(analyticsRepo, nil, nil, nil, nil, auth).Register(app)
 
 		u := seedTenantUser(db, "Admin", "analytics@example.com", "analytics-password")
 		userID = u.ID

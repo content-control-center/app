@@ -75,7 +75,7 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 		ph.SetAnalyticsRepo(analyticsRepo)
 		ph.Register(app)
 		postsHandlerRef = ph
-		handlers.NewAnalyticsHandler(analyticsRepo, nil, nil, nil, auth).Register(app)
+		handlers.NewAnalyticsHandler(analyticsRepo, nil, nil, nil, nil, auth).Register(app)
 
 		// Auth user + login.
 		createdUser := seedTenantUser(db, "Admin", "admin@example.com", "admin-password")

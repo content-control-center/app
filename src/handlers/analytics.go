@@ -72,6 +72,7 @@ type ProfileIDResolver func(ctx context.Context) (string, error)
 type AnalyticsHandler struct {
 	repo         repository.PostAnalyticsRepository
 	followerRepo repository.FollowerStatsRepository
+	posts        repository.PostRepository // main DB; CON-237 "posts published" count/series
 	client       *zernio.Client
 	profileID    ProfileIDResolver
 	auth         fiber.Handler
@@ -82,12 +83,13 @@ type AnalyticsHandler struct {
 // insight endpoints report {available:false, reason:"not_configured"}, and a
 // nil followerRepo makes /followers return 503 — matching the existing
 // analytics-disabled behaviour.
-func NewAnalyticsHandler(repo repository.PostAnalyticsRepository, followerRepo repository.FollowerStatsRepository, client *zernio.Client, profileID ProfileIDResolver, auth fiber.Handler) *AnalyticsHandler {
-	return &AnalyticsHandler{repo: repo, followerRepo: followerRepo, client: client, profileID: profileID, auth: auth}
+func NewAnalyticsHandler(repo repository.PostAnalyticsRepository, followerRepo repository.FollowerStatsRepository, posts repository.PostRepository, client *zernio.Client, profileID ProfileIDResolver, auth fiber.Handler) *AnalyticsHandler {
+	return &AnalyticsHandler{repo: repo, followerRepo: followerRepo, posts: posts, client: client, profileID: profileID, auth: auth}
 }
 
 func (h *AnalyticsHandler) Register(app *fiber.App) {
 	g := app.Group("/api/analytics")
+	g.Get("/overview", h.auth, h.Overview)
 	g.Get("/posts", h.auth, h.ListPosts)
 	g.Get("/best-times", h.auth, h.BestTimes)
 	g.Get("/content-decay", h.auth, h.ContentDecay)

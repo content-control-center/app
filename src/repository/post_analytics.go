@@ -86,6 +86,10 @@ type PostAnalyticsRepository interface {
 	// List returns one page of current-state rows plus the overview computed over
 	// the full filtered set and the total count.
 	List(ctx context.Context, opts PostAnalyticsListOptions) ([]PostAnalyticsListItem, PostAnalyticsOverview, error)
+	// PublishedBetween returns the current-state rows whose post was published in
+	// [from, to) — the analytics side of the CON-237 overview (reach/interactions
+	// attributed to publish day). Ordered by published_at. Tenant-scoped.
+	PublishedBetween(ctx context.Context, from, to time.Time) ([]models.PostAnalytics, error)
 }
 
 type postAnalyticsRepository struct {
@@ -96,6 +100,21 @@ type postAnalyticsRepository struct {
 // analytics *bun.DB (post_analytics_current / post_analytics_snapshots live there).
 func NewPostAnalyticsRepository(db *bun.DB) PostAnalyticsRepository {
 	return &postAnalyticsRepository{db: db}
+}
+
+// PublishedBetween returns current-state rows whose published_at falls in
+// [from, to). The TenantScoped hook adds the tenant predicate. Post counts per
+// tenant are modest, so this is a plain indexed scan of post_analytics_current.
+func (r *postAnalyticsRepository) PublishedBetween(ctx context.Context, from, to time.Time) ([]models.PostAnalytics, error) {
+	var rows []models.PostAnalytics
+	if err := r.db.NewSelect().Model(&rows).
+		Where("pa.published_at >= ?", from).
+		Where("pa.published_at < ?", to).
+		OrderExpr("pa.published_at ASC").
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 func (r *postAnalyticsRepository) Upsert(ctx context.Context, a *models.PostAnalytics) error {

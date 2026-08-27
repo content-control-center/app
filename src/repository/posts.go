@@ -50,6 +50,12 @@ type PostRepository interface {
 	// disconnect uses it to guard against stranding queued posts: a non-zero
 	// count blocks the disconnect with 409 unless the caller forces it.
 	CountPendingByAccount(ctx context.Context, socialAccountID string) (int, error)
+	// PublishedAtsBetween returns the publish timestamps of the tenant's
+	// Zernio-published posts in [from, to), ascending — the "posts published"
+	// metric for the CON-237 overview (count + cumulative-by-day series). Kept on
+	// the main DB (source of truth for what shipped), composed app-side with the
+	// analytics-DB series.
+	PublishedAtsBetween(ctx context.Context, from, to time.Time) ([]time.Time, error)
 }
 
 type postRepository struct {
@@ -59,6 +65,22 @@ type postRepository struct {
 // NewPostRepository returns a Bun-backed PostRepository.
 func NewPostRepository(db *bun.DB) PostRepository {
 	return &postRepository{db: db}
+}
+
+func (r *postRepository) PublishedAtsBetween(ctx context.Context, from, to time.Time) ([]time.Time, error) {
+	var ats []time.Time
+	// BeforeSelect adds the tenant predicate. published_at IS NOT NULL is implied
+	// by the range bounds (NULL compares false), but stated for clarity.
+	if err := r.db.NewSelect().Model((*models.Post)(nil)).
+		Column("published_at").
+		Where("po.publisher = ?", "zernio").
+		Where("po.published_at >= ?", from).
+		Where("po.published_at < ?", to).
+		OrderExpr("po.published_at ASC").
+		Scan(ctx, &ats); err != nil {
+		return nil, err
+	}
+	return ats, nil
 }
 
 func (r *postRepository) List(ctx context.Context) ([]models.Post, error) {
