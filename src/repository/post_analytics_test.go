@@ -32,13 +32,19 @@ import (
 func openMigratedDB(t *testing.T) *bun.DB {
 	t.Helper()
 	db := pgtest.MustDB()
+	// Apply the analytics migrations FIRST, in normal replication mode. The
+	// CON-236 migration rebuilds the post_analytics_snapshots hypertable
+	// (drop + rename), and TimescaleDB maintains its internal catalog via
+	// triggers that session_replication_role=replica would skip — which corrupts
+	// the drop (a stale hypertable catalog row survives). So migrate before
+	// flipping to replica for the FK-free seeding below.
+	if err := database.MigrateAnalytics(context.Background(), db); err != nil {
+		t.Fatalf("migrate analytics: %v", err)
+	}
 	db.DB.SetMaxOpenConns(1)
 	db.DB.SetMaxIdleConns(1)
 	if _, err := db.Exec("SET session_replication_role = replica"); err != nil {
 		t.Fatalf("disable fks: %v", err)
-	}
-	if err := database.MigrateAnalytics(context.Background(), db); err != nil {
-		t.Fatalf("migrate analytics: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return db
