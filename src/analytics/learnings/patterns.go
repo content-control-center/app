@@ -103,11 +103,22 @@ func buildPatterns(posts []PostFact, metric string, now time.Time, trendDays int
 		}
 	}
 
-	// works ranked by lift × log(support); fading by steepest decline.
+	// works ranked by lift × log(support); fading by steepest decline. ID breaks
+	// ties so capCards picks the same cards deterministically across runs.
 	sort.Slice(works, func(i, j int) bool {
-		return works[i].Lift*math.Log(float64(works[i].Support+1)) > works[j].Lift*math.Log(float64(works[j].Support+1))
+		a := works[i].Lift * math.Log(float64(works[i].Support+1))
+		b := works[j].Lift * math.Log(float64(works[j].Support+1))
+		if a != b {
+			return a > b
+		}
+		return works[i].ID < works[j].ID
 	})
-	sort.Slice(fading, func(i, j int) bool { return fading[i].Trend < fading[j].Trend })
+	sort.Slice(fading, func(i, j int) bool {
+		if fading[i].Trend != fading[j].Trend {
+			return fading[i].Trend < fading[j].Trend
+		}
+		return fading[i].ID < fading[j].ID
+	})
 
 	return &Patterns{Works: capCards(works), Fading: capCards(fading)}
 }

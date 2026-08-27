@@ -77,9 +77,12 @@ func buildHeatmap(posts []PostFact, metric string) *Heatmap {
 
 func strongestSlot(cells []HeatCell) *Slot {
 	best := -1
+	// Compare on Median (monotonic in Score but unaffected by Score's 4-dp
+	// rounding, and lossless for integer metrics) so PostCount only breaks
+	// genuine median ties, not rounding collisions.
 	for i, c := range cells {
-		if best == -1 || c.Score > cells[best].Score ||
-			(c.Score == cells[best].Score && c.PostCount > cells[best].PostCount) {
+		if best == -1 || c.Median > cells[best].Median ||
+			(c.Median == cells[best].Median && c.PostCount > cells[best].PostCount) {
 			best = i
 		}
 	}

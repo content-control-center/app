@@ -51,7 +51,7 @@ func TestLifespanSamples(t *testing.T) {
 		}
 	}
 
-	samples, err := repo.LifespanSamples(ctx)
+	samples, err := repo.LifespanSamples(ctx, time.Time{})
 	if err != nil {
 		t.Fatalf("LifespanSamples: %v", err)
 	}

@@ -103,6 +103,52 @@ func TestPatternsWorks(t *testing.T) {
 	}
 }
 
+// Finding 3 regression: with many tied works cards, ranking + capCards must be
+// deterministic (ID tie-breaker) across repeated runs.
+func TestPatternsDeterministicOrder(t *testing.T) {
+	pub := now.AddDate(0, 0, -10)
+	// Build >3 dimensions that each clear the works threshold with the SAME
+	// lift/support, so only the ID tie-breaker orders them. Each dimension gets a
+	// strong segment (8 posts at 3000) and a weak one (8 at 1000); overall median
+	// lands at 2000 → strong lift 1.5 in every dimension.
+	base := func(f *PostFact, strong bool) {
+		if strong {
+			f.Reach = 3000
+		} else {
+			f.Reach = 1000
+		}
+	}
+	var posts []PostFact
+	for i := 0; i < 8; i++ {
+		// media_format: carousel(strong) vs single_image(weak)
+		c := PostFact{PublishedAt: pub, Platform: "linkedin", MediaCount: 2, ContentLength: 50, HashtagCount: 0, HasLink: true}
+		s := PostFact{PublishedAt: pub, Platform: "instagram", MediaCount: 1, ContentLength: 500, HashtagCount: 5, HasLink: false}
+		base(&c, true)
+		base(&s, false)
+		posts = append(posts, c, s)
+	}
+	var firstIDs []string
+	for run := 0; run < 5; run++ {
+		p := buildPatterns(posts, MetricReach, now, 90)
+		if len(p.Works) == 0 || len(p.Works) > maxCards {
+			t.Fatalf("works len = %d, want 1..%d", len(p.Works), maxCards)
+		}
+		ids := make([]string, len(p.Works))
+		for i, c := range p.Works {
+			ids[i] = c.ID
+		}
+		if run == 0 {
+			firstIDs = ids
+			continue
+		}
+		for i := range ids {
+			if ids[i] != firstIDs[i] {
+				t.Fatalf("run %d order %v differs from %v", run, ids, firstIDs)
+			}
+		}
+	}
+}
+
 func TestPatternsInsufficient(t *testing.T) {
 	posts := []PostFact{{PublishedAt: now, Reach: 100}}
 	if p := buildPatterns(posts, MetricReach, now, 90); !p.InsufficientHistory {

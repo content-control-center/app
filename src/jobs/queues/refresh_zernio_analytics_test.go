@@ -81,7 +81,7 @@ func (r *fakeAnalyticsRepo) ReachByAgeSamples(context.Context) ([]repository.Rea
 	return nil, nil
 }
 
-func (r *fakeAnalyticsRepo) LifespanSamples(context.Context) ([]repository.LifespanSample, error) {
+func (r *fakeAnalyticsRepo) LifespanSamples(context.Context, time.Time) ([]repository.LifespanSample, error) {
 	return nil, nil
 }
 

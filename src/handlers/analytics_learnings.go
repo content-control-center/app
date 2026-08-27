@@ -72,7 +72,7 @@ func (h *AnalyticsHandler) Learnings(c *fiber.Ctx) error {
 			return err
 		}
 	}
-	lifeSamples, err := h.repo.LifespanSamples(ctx)
+	lifeSamples, err := h.repo.LifespanSamples(ctx, sinceVal)
 	if err != nil {
 		return err
 	}

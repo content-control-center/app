@@ -108,16 +108,23 @@ func settledPosts(points []LifespanPoint) []settledPost {
 		if maxAge < settledMinHours || final <= 0 {
 			continue
 		}
-		byHour := make([]float64, maxAge+1)
+		// The blended curve is only read up to gridCapHours, so cap the grid
+		// there rather than allocating out to a very old post's maxAge. final
+		// stays the post's true eventual reach (its last sample).
+		gridMax := maxAge
+		if gridMax > gridCapHours {
+			gridMax = gridCapHours
+		}
+		byHour := make([]float64, gridMax+1)
 		pi, last := 0, 0.0
-		for a := 0; a <= maxAge; a++ {
+		for a := 0; a <= gridMax; a++ {
 			for pi < len(pts) && pts[pi].AgeHours <= a {
 				last = float64(pts[pi].Reach)
 				pi++
 			}
 			byHour[a] = last
 		}
-		out = append(out, settledPost{maxAge: maxAge, final: final, byHour: byHour})
+		out = append(out, settledPost{maxAge: gridMax, final: final, byHour: byHour})
 	}
 	return out
 }
@@ -135,16 +142,21 @@ func firstCross(blended []float64, frac float64) int {
 
 func downsampleCurve(blended []float64) []CurvePoint {
 	n := len(blended)
-	step := 1
-	if n > curveMaxPoints {
-		step = (n + curveMaxPoints - 1) / curveMaxPoints
+	if n == 0 {
+		return nil
 	}
-	var out []CurvePoint
-	for a := 0; a < n; a += step {
+	last := n - 1
+	// Reserve one slot for the always-included final point so the total never
+	// exceeds curveMaxPoints.
+	budget := curveMaxPoints - 1
+	step := 1
+	if budget > 0 && last > budget {
+		step = (last + budget - 1) / budget
+	}
+	out := make([]CurvePoint, 0, curveMaxPoints)
+	for a := 0; a < last; a += step {
 		out = append(out, CurvePoint{AgeHours: a, ShareOfFinal: round4(blended[a])})
 	}
-	if last := n - 1; last%step != 0 {
-		out = append(out, CurvePoint{AgeHours: last, ShareOfFinal: round4(blended[last])})
-	}
+	out = append(out, CurvePoint{AgeHours: last, ShareOfFinal: round4(blended[last])})
 	return out
 }
