@@ -26,9 +26,9 @@ type PostAnalyticsListOptions struct {
 	Order     string
 }
 
-// PostAnalyticsListItem is one row of the overview, joined to the owning
-// post for title/platform/published_at and shaped to the §7 response
-// contract (aggregate metrics nested under `analytics`).
+// PostAnalyticsListItem is one row of the overview, read from the current-state
+// table (CON-236: one row per post, no latest-per-post subquery) and shaped to
+// the §7 response contract (aggregate metrics nested under `analytics`).
 type PostAnalyticsListItem struct {
 	PostID             string                      `json:"post_id"`
 	PublisherPostID    string                      `json:"publisher_post_id"`
@@ -57,20 +57,34 @@ type PostAnalyticsOverview struct {
 	EngagementRateAvg float64 `json:"engagement_rate_avg"`
 }
 
-// PostAnalyticsRepository persists analytics snapshots for Posts published
-// through a publisher (CON-93 §6 FR2), migrated to an append-only time series
-// in the isolated analytics DB (CON-125). Insert appends a new row per refresh;
-// reads select the latest snapshot per post_id.
+// PostAnalyticsRepository persists analytics for Posts published through a
+// publisher (CON-93; storage reworked in CON-236, isolated analytics DB). The
+// current state is ONE upserted row per post (post_analytics_current); the
+// append-only trend history is a separate table written only on change
+// (post_analytics_snapshots). Reads serve entirely from the current-state row.
 type PostAnalyticsRepository interface {
-	// Insert appends one snapshot. ID + OccurredAt are set by the caller;
-	// tenant_id is stamped by the TenantScoped hook from the write context.
-	Insert(ctx context.Context, a *models.PostAnalytics) error
-	// GetByPostID returns the LATEST snapshot for a post, or (nil, nil) when
+	// Upsert writes the current state for a post, keyed on (tenant_id, post_id):
+	// the per-check write refreshes the metrics/display fields in place rather
+	// than appending. tenant_id is stamped by the TenantScoped hook. Used on the
+	// unchanged path (bump last_checked_at only).
+	Upsert(ctx context.Context, a *models.PostAnalytics) error
+	// AppendSnapshot appends one point to the trend history (CON-236: only when
+	// the metrics changed). ID + OccurredAt are set by the caller.
+	AppendSnapshot(ctx context.Context, s *models.PostAnalyticsSnapshot) error
+	// UpsertWithSnapshot writes the current-state row and appends the trend point
+	// in ONE transaction (CON-236): on a changed refresh both commit together, so
+	// a snapshot failure can't leave the current row advanced without its history
+	// point (which dedup would then hide forever). Use on the changed path.
+	UpsertWithSnapshot(ctx context.Context, a *models.PostAnalytics, s *models.PostAnalyticsSnapshot) error
+	// GetByPostID returns the current-state row for a post, or (nil, nil) when
 	// the post has no snapshot yet (refresh hasn't covered it).
 	GetByPostID(ctx context.Context, postID string) (*models.PostAnalytics, error)
-	// List returns one page of latest-per-post snapshots (post display fields
-	// read from the denormalised columns — no cross-DB join), plus the
-	// overview computed over the full filtered latest set and the total count.
+	// CurrentByPostID returns the current-state rows for the ctx tenant keyed by
+	// post_id, so the refresh job can dedup (compare metric keys) and apply the
+	// decay schedule (last_checked_at) without a per-post query.
+	CurrentByPostID(ctx context.Context) (map[string]*models.PostAnalytics, error)
+	// List returns one page of current-state rows plus the overview computed over
+	// the full filtered set and the total count.
 	List(ctx context.Context, opts PostAnalyticsListOptions) ([]PostAnalyticsListItem, PostAnalyticsOverview, error)
 }
 
@@ -79,14 +93,58 @@ type postAnalyticsRepository struct {
 }
 
 // NewPostAnalyticsRepository builds a PostAnalyticsRepository. Pass the
-// analytics *bun.DB (the post_analytics_snapshots table lives there).
+// analytics *bun.DB (post_analytics_current / post_analytics_snapshots live there).
 func NewPostAnalyticsRepository(db *bun.DB) PostAnalyticsRepository {
 	return &postAnalyticsRepository{db: db}
 }
 
-func (r *postAnalyticsRepository) Insert(ctx context.Context, a *models.PostAnalytics) error {
-	_, err := r.db.NewInsert().Model(a).Exec(ctx)
+func (r *postAnalyticsRepository) Upsert(ctx context.Context, a *models.PostAnalytics) error {
+	_, err := upsertCurrentQuery(r.db, a).Exec(ctx)
 	return err
+}
+
+// upsertCurrentQuery builds the (tenant_id, post_id) current-state upsert on the
+// given db/tx. tenant_id is stamped per row by the TenantScoped BeforeAppendModel
+// hook, so the conflict target always has a value.
+func upsertCurrentQuery(idb bun.IDB, a *models.PostAnalytics) *bun.InsertQuery {
+	return idb.NewInsert().Model(a).
+		On("CONFLICT (tenant_id, post_id) DO UPDATE").
+		Set("publisher = EXCLUDED.publisher").
+		Set("publisher_post_id = EXCLUDED.publisher_post_id").
+		Set("platform = EXCLUDED.platform").
+		Set("title = EXCLUDED.title").
+		Set("published_at = EXCLUDED.published_at").
+		Set("impressions = EXCLUDED.impressions").
+		Set("reach = EXCLUDED.reach").
+		Set("likes = EXCLUDED.likes").
+		Set("comments = EXCLUDED.comments").
+		Set("shares = EXCLUDED.shares").
+		Set("saves = EXCLUDED.saves").
+		Set("clicks = EXCLUDED.clicks").
+		Set("views = EXCLUDED.views").
+		Set("engagement_rate = EXCLUDED.engagement_rate").
+		Set("platform_analytics = EXCLUDED.platform_analytics").
+		Set("sync_status = EXCLUDED.sync_status").
+		Set("metrics_last_updated = EXCLUDED.metrics_last_updated").
+		Set("last_changed_at = EXCLUDED.last_changed_at").
+		Set("last_checked_at = EXCLUDED.last_checked_at")
+}
+
+func (r *postAnalyticsRepository) AppendSnapshot(ctx context.Context, s *models.PostAnalyticsSnapshot) error {
+	_, err := r.db.NewInsert().Model(s).Exec(ctx)
+	return err
+}
+
+func (r *postAnalyticsRepository) UpsertWithSnapshot(ctx context.Context, a *models.PostAnalytics, s *models.PostAnalyticsSnapshot) error {
+	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := upsertCurrentQuery(tx, a).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewInsert().Model(s).Exec(ctx); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func (r *postAnalyticsRepository) GetByPostID(ctx context.Context, postID string) (*models.PostAnalytics, error) {
@@ -94,7 +152,6 @@ func (r *postAnalyticsRepository) GetByPostID(ctx context.Context, postID string
 	err := r.db.NewSelect().
 		Model(a).
 		Where("pa.post_id = ?", postID).
-		OrderExpr("pa.occurred_at DESC").
 		Limit(1).
 		Scan(ctx)
 	if err != nil {
@@ -106,10 +163,22 @@ func (r *postAnalyticsRepository) GetByPostID(ctx context.Context, postID string
 	return a, nil
 }
 
-// postAnalyticsSortColumns whitelists the §5 sort_by values, mapping each
-// to a fully-qualified column. Keeping the map closed prevents arbitrary
-// expressions reaching ORDER BY. All columns are on the snapshot now
-// (published_at is denormalised), so there is no join to sort against.
+func (r *postAnalyticsRepository) CurrentByPostID(ctx context.Context) (map[string]*models.PostAnalytics, error) {
+	var rows []models.PostAnalytics
+	// TenantScoped hook restricts to the ctx tenant.
+	if err := r.db.NewSelect().Model(&rows).Scan(ctx); err != nil {
+		return nil, err
+	}
+	out := make(map[string]*models.PostAnalytics, len(rows))
+	for i := range rows {
+		out[rows[i].PostID] = &rows[i]
+	}
+	return out, nil
+}
+
+// postAnalyticsSortColumns whitelists the §5 sort_by values, mapping each to a
+// fully-qualified column on the current-state table. Keeping the map closed
+// prevents arbitrary expressions reaching ORDER BY.
 var postAnalyticsSortColumns = map[string]string{
 	"engagement":   "pa.engagement_rate",
 	"impressions":  "pa.impressions",
@@ -123,7 +192,7 @@ var postAnalyticsSortColumns = map[string]string{
 	"published_at": "pa.published_at",
 }
 
-// postAnalyticsListRow is the flat scan target for the join.
+// postAnalyticsListRow is the flat scan target for the current-state read.
 type postAnalyticsListRow struct {
 	PostID             string     `bun:"post_id"`
 	PublisherPostID    string     `bun:"publisher_post_id"`
@@ -166,22 +235,12 @@ func (r *postAnalyticsRepository) List(ctx context.Context, opts PostAnalyticsLi
 		order = "ASC"
 	}
 
-	// latestForTenant builds a fresh Model query restricted to the LATEST
-	// snapshot per post (append-only: many rows per post) plus the publisher /
-	// platform filters. It stays a Model query so the TenantScoped hook adds
-	// `pa.tenant_id = <ctx tenant>`; the correlated subquery re-scopes to
-	// pa.tenant_id, so it never crosses tenants. Post display fields are the
-	// denormalised columns on the snapshot — no join to posts/platforms (they
-	// live in a different database now).
-	//
-	// The match is on the (occurred_at, id) tuple, not just MAX(occurred_at),
-	// with an id tiebreaker: if two snapshots for a post share the maximum
-	// occurred_at, a plain `= MAX(occurred_at)` would match BOTH and duplicate
-	// the item / double-count the overview totals. Ordering the correlated pick
-	// by (occurred_at DESC, id DESC) LIMIT 1 guarantees exactly one row per post.
-	latestForTenant := func() *bun.SelectQuery {
-		q := r.db.NewSelect().Model((*models.PostAnalytics)(nil)).
-			Where("(pa.occurred_at, pa.id) = (SELECT s.occurred_at, s.id FROM post_analytics_snapshots AS s WHERE s.post_id = pa.post_id AND s.tenant_id = pa.tenant_id ORDER BY s.occurred_at DESC, s.id DESC LIMIT 1)")
+	// filtered builds a fresh Model query over the current-state table with the
+	// publisher / platform filters. It stays a Model query so the TenantScoped
+	// hook adds `pa.tenant_id = <ctx tenant>`. One row per post already, so no
+	// latest-per-post subquery is needed (CON-236).
+	filtered := func() *bun.SelectQuery {
+		q := r.db.NewSelect().Model((*models.PostAnalytics)(nil))
 		if opts.Publisher != "" {
 			q = q.Where("pa.publisher = ?", opts.Publisher)
 		}
@@ -191,9 +250,9 @@ func (r *postAnalyticsRepository) List(ctx context.Context, opts PostAnalyticsLi
 		return q
 	}
 
-	// Overview + total over the full filtered latest set.
+	// Overview + total over the full filtered set.
 	var overview PostAnalyticsOverview
-	err := latestForTenant().
+	err := filtered().
 		ColumnExpr("COUNT(*) AS post_count").
 		ColumnExpr("COALESCE(SUM(pa.impressions), 0) AS impressions").
 		ColumnExpr("COALESCE(SUM(pa.reach), 0) AS reach").
@@ -214,8 +273,8 @@ func (r *postAnalyticsRepository) List(ctx context.Context, opts PostAnalyticsLi
 	}
 
 	var rows []postAnalyticsListRow
-	err = latestForTenant().
-		ColumnExpr("pa.post_id, pa.publisher_post_id, pa.sync_status, pa.metrics_last_updated, pa.occurred_at AS last_refreshed_at").
+	err = filtered().
+		ColumnExpr("pa.post_id, pa.publisher_post_id, pa.sync_status, pa.metrics_last_updated, pa.last_checked_at AS last_refreshed_at").
 		ColumnExpr("pa.impressions, pa.reach, pa.likes, pa.comments, pa.shares, pa.saves, pa.clicks, pa.views, pa.engagement_rate").
 		ColumnExpr("pa.title AS title, pa.publisher AS publisher, pa.published_at AS published_at").
 		ColumnExpr("COALESCE(pa.platform, '') AS platform").

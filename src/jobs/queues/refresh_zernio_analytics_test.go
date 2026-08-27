@@ -21,26 +21,53 @@ func tctx(tenantID string) context.Context {
 	return tenantctx.With(context.Background(), tenantID)
 }
 
-// fakeAnalyticsRepo records inserts for assertions. Append-only in production;
-// the fake keeps the latest row per post_id, which is all these tests assert on.
+// fakeAnalyticsRepo records the current-state upserts and counts the append-only
+// history points, so tests can assert both the latest row (upserted) and that
+// dedup/decay suppress redundant history appends (snapshots) — CON-236.
 type fakeAnalyticsRepo struct {
-	mu       sync.Mutex
-	upserted map[string]*models.PostAnalytics
+	mu        sync.Mutex
+	upserted  map[string]*models.PostAnalytics
+	snapshots int // total history points appended across all ticks
 }
 
 func newFakeAnalyticsRepo() *fakeAnalyticsRepo {
 	return &fakeAnalyticsRepo{upserted: map[string]*models.PostAnalytics{}}
 }
 
-func (r *fakeAnalyticsRepo) Insert(_ context.Context, a *models.PostAnalytics) error {
+func (r *fakeAnalyticsRepo) Upsert(_ context.Context, a *models.PostAnalytics) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	cp := *a
 	r.upserted[a.PostID] = &cp
 	return nil
 }
-func (r *fakeAnalyticsRepo) GetByPostID(context.Context, string) (*models.PostAnalytics, error) {
-	return nil, nil
+func (r *fakeAnalyticsRepo) AppendSnapshot(context.Context, *models.PostAnalyticsSnapshot) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.snapshots++
+	return nil
+}
+func (r *fakeAnalyticsRepo) UpsertWithSnapshot(_ context.Context, a *models.PostAnalytics, _ *models.PostAnalyticsSnapshot) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cp := *a
+	r.upserted[a.PostID] = &cp
+	r.snapshots++
+	return nil
+}
+func (r *fakeAnalyticsRepo) GetByPostID(_ context.Context, postID string) (*models.PostAnalytics, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.upserted[postID], nil
+}
+func (r *fakeAnalyticsRepo) CurrentByPostID(context.Context) (map[string]*models.PostAnalytics, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make(map[string]*models.PostAnalytics, len(r.upserted))
+	for k, v := range r.upserted {
+		out[k] = v
+	}
+	return out, nil
 }
 func (r *fakeAnalyticsRepo) List(context.Context, repository.PostAnalyticsListOptions) ([]repository.PostAnalyticsListItem, repository.PostAnalyticsOverview, error) {
 	return nil, repository.PostAnalyticsOverview{}, nil
@@ -180,6 +207,85 @@ func TestRefreshMatchesAndUpsertsOnlyKnownPosts(t *testing.T) {
 	}
 	if v, _, _ := settings.Get(tctx("t1"), zernio.SettingAnalyticsLastRefreshAt); v == "" {
 		t.Errorf("last_refresh_at not written")
+	}
+}
+
+// TestRefreshDedupSuppressesUnchangedHistory: when a post's metrics don't move
+// between checks, the tick upserts the current row but appends NO new history
+// point (CON-236 dedup). Decay is forced "always due" so the second tick
+// reaches the dedup comparison instead of being short-circuited by the gate.
+func TestRefreshDedupSuppressesUnchangedHistory(t *testing.T) {
+	stub := newStubZernio()
+	defer stub.Close()
+	stub.handle("GET", "/analytics", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"analytics": []any{
+				map[string]any{"postId": "z-1", "syncStatus": "synced",
+					"analytics": map[string]any{"impressions": 1234, "likes": 56}},
+			},
+			"pagination": map[string]any{"page": 1, "limit": 100, "total": 1, "pages": 1},
+		})
+	})
+
+	postRepo := newFakePostRepo()
+	seedPublishedPost(postRepo, "post-1", "z-1", "t1")
+	analyticsRepo := newFakeAnalyticsRepo()
+	settings := newFakeSettings()
+	seedProfile(settings, "t1", "prof-1")
+
+	proc := newRefreshProcessor(stub, postRepo, analyticsRepo, settings)
+	proc.Decay = queues.AnalyticsDecay{FreshEvery: time.Nanosecond, WarmEvery: time.Nanosecond, ColdEvery: time.Nanosecond}
+
+	for i := 0; i < 2; i++ {
+		if err := proc.Process(context.Background(), queues.RefreshZernioAnalyticsTask{}); err != nil {
+			t.Fatalf("process tick %d: %v", i, err)
+		}
+	}
+	if len(analyticsRepo.upserted) != 1 {
+		t.Fatalf("upserted: got %d want 1", len(analyticsRepo.upserted))
+	}
+	if analyticsRepo.snapshots != 1 {
+		t.Fatalf("dedup failed: history appended %d times, want 1 (second tick unchanged)", analyticsRepo.snapshots)
+	}
+}
+
+// TestRefreshDecaySkipsRecentlyChecked: a post checked moments ago is skipped on
+// the next tick under the default fresh-bucket cadence — even though the fetch
+// returns different numbers, no upsert and no history point happen (CON-236).
+func TestRefreshDecaySkipsRecentlyChecked(t *testing.T) {
+	stub := newStubZernio()
+	defer stub.Close()
+	var calls atomic.Int64
+	stub.handle("GET", "/analytics", func(w http.ResponseWriter, r *http.Request) {
+		n := calls.Add(1)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"analytics": []any{
+				map[string]any{"postId": "z-1", "syncStatus": "synced",
+					"analytics": map[string]any{"impressions": 100 * n}},
+			},
+			"pagination": map[string]any{"page": 1, "limit": 100, "total": 1, "pages": 1},
+		})
+	})
+
+	postRepo := newFakePostRepo()
+	seedPublishedPost(postRepo, "post-1", "z-1", "t1")
+	analyticsRepo := newFakeAnalyticsRepo()
+	settings := newFakeSettings()
+	seedProfile(settings, "t1", "prof-1")
+
+	// Default decay (fresh bucket = hourly). Two back-to-back ticks: the second
+	// is within the hour, so the post is due-skipped.
+	proc := newRefreshProcessor(stub, postRepo, analyticsRepo, settings)
+	for i := 0; i < 2; i++ {
+		if err := proc.Process(context.Background(), queues.RefreshZernioAnalyticsTask{}); err != nil {
+			t.Fatalf("process tick %d: %v", i, err)
+		}
+	}
+	if analyticsRepo.snapshots != 1 {
+		t.Fatalf("decay failed: history appended %d times, want 1 (second tick skipped)", analyticsRepo.snapshots)
+	}
+	if got := analyticsRepo.upserted["post-1"]; got == nil || got.Impressions != 100 {
+		t.Fatalf("current row should still show tick-1 metrics (100); got %+v", got)
 	}
 }
 

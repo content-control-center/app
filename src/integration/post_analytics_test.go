@@ -162,7 +162,7 @@ var _ = Describe("Post analytics — CON-93", Ordered, func() {
 			zernioStub.Close()
 		}
 		ctx := tenantCtx()
-		for _, t := range []string{"post_analytics_snapshots", "post_versions", "post_logs", "post_assistant_messages", "posts", "campaigns", "sessions", "users", "accounts"} {
+		for _, t := range []string{"post_analytics_current", "post_analytics_snapshots", "post_versions", "post_logs", "post_assistant_messages", "posts", "campaigns", "sessions", "users", "accounts"} {
 			_, _ = db.NewDelete().TableExpr(t).Where("1 = 1").Exec(ctx)
 		}
 	})

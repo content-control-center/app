@@ -32,13 +32,19 @@ import (
 func openMigratedDB(t *testing.T) *bun.DB {
 	t.Helper()
 	db := pgtest.MustDB()
+	// Apply the analytics migrations FIRST, in normal replication mode. The
+	// CON-236 migration rebuilds the post_analytics_snapshots hypertable
+	// (drop + rename), and TimescaleDB maintains its internal catalog via
+	// triggers that session_replication_role=replica would skip — which corrupts
+	// the drop (a stale hypertable catalog row survives). So migrate before
+	// flipping to replica for the FK-free seeding below.
+	if err := database.MigrateAnalytics(context.Background(), db); err != nil {
+		t.Fatalf("migrate analytics: %v", err)
+	}
 	db.DB.SetMaxOpenConns(1)
 	db.DB.SetMaxIdleConns(1)
 	if _, err := db.Exec("SET session_replication_role = replica"); err != nil {
 		t.Fatalf("disable fks: %v", err)
-	}
-	if err := database.MigrateAnalytics(context.Background(), db); err != nil {
-		t.Fatalf("migrate analytics: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return db
@@ -67,24 +73,23 @@ func seedPost(t *testing.T, db *bun.DB, id, publisher, publisherPostID string, p
 	}
 }
 
-func TestPostAnalyticsInsertAppendsAndGetLatest(t *testing.T) {
+func TestPostAnalyticsUpsertInPlaceAndGet(t *testing.T) {
 	db := openMigratedDB(t)
 	ctx := tenantCtx()
 	repo := repository.NewPostAnalyticsRepository(db)
 
-	// No snapshot yet → (nil, nil).
+	// No current row yet → (nil, nil).
 	got, err := repo.GetByPostID(ctx, "p1")
 	if err != nil {
 		t.Fatalf("get (empty): %v", err)
 	}
 	if got != nil {
-		t.Fatalf("expected nil snapshot, got %+v", got)
+		t.Fatalf("expected nil, got %+v", got)
 	}
 
 	lu := time.Date(2026, 6, 15, 9, 0, 0, 0, time.UTC)
 	t0 := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
 	first := &models.PostAnalytics{
-		ID:              mustID(t),
 		PostID:          "p1",
 		PublisherPostID: "z-1",
 		Publisher:       models.PublisherZernio,
@@ -97,11 +102,12 @@ func TestPostAnalyticsInsertAppendsAndGetLatest(t *testing.T) {
 		},
 		SyncStatus:         "synced",
 		MetricsLastUpdated: &lu,
-		RawJSON:            `{"postId":"z-1"}`,
-		OccurredAt:         t0,
+		FirstSeenAt:        t0,
+		LastChangedAt:      t0,
+		LastCheckedAt:      t0,
 	}
-	if err := repo.Insert(ctx, first); err != nil {
-		t.Fatalf("insert: %v", err)
+	if err := repo.Upsert(ctx, first); err != nil {
+		t.Fatalf("upsert: %v", err)
 	}
 
 	got, err = repo.GetByPostID(ctx, "p1")
@@ -109,31 +115,43 @@ func TestPostAnalyticsInsertAppendsAndGetLatest(t *testing.T) {
 		t.Fatalf("get: %v", err)
 	}
 	if got == nil || got.Impressions != 100 || got.Likes != 10 {
-		t.Fatalf("snapshot mismatch: %+v", got)
+		t.Fatalf("current mismatch: %+v", got)
 	}
 	if len(got.PlatformAnalytics) != 1 || got.PlatformAnalytics[0].Platform != "linkedin" {
 		t.Fatalf("platform breakdown not persisted: %+v", got.PlatformAnalytics)
 	}
 
-	// A later refresh APPENDS a new row; GetByPostID returns the latest by
-	// occurred_at, and both rows remain (append-only, not overwrite).
+	// A later refresh UPSERTS in place — same (tenant, post) row, no second row.
 	second := *first
-	second.ID = mustID(t)
 	second.Impressions = 250
-	second.OccurredAt = t0.Add(30 * time.Minute)
-	if err := repo.Insert(ctx, &second); err != nil {
-		t.Fatalf("insert second: %v", err)
+	second.LastChangedAt = t0.Add(30 * time.Minute)
+	second.LastCheckedAt = t0.Add(30 * time.Minute)
+	if err := repo.Upsert(ctx, &second); err != nil {
+		t.Fatalf("upsert second: %v", err)
 	}
 	got, _ = repo.GetByPostID(ctx, "p1")
 	if got.Impressions != 250 {
-		t.Fatalf("latest-per-post failed: impressions=%d want 250", got.Impressions)
+		t.Fatalf("upsert-in-place failed: impressions=%d want 250", got.Impressions)
 	}
 	count, err := db.NewSelect().Model((*models.PostAnalytics)(nil)).Count(ctx)
 	if err != nil {
 		t.Fatalf("count: %v", err)
 	}
-	if count != 2 {
-		t.Fatalf("expected 2 rows after append, got %d", count)
+	if count != 1 {
+		t.Fatalf("expected 1 current row after upsert-in-place, got %d", count)
+	}
+
+	// Trend history is a separate append-only table.
+	snap := got.NewSnapshot(mustID(t), t0.Add(30*time.Minute))
+	if err := repo.AppendSnapshot(ctx, snap); err != nil {
+		t.Fatalf("append snapshot: %v", err)
+	}
+	hist, err := db.NewSelect().Model((*models.PostAnalyticsSnapshot)(nil)).Count(ctx)
+	if err != nil {
+		t.Fatalf("history count: %v", err)
+	}
+	if hist != 1 {
+		t.Fatalf("expected 1 history row, got %d", hist)
 	}
 }
 
@@ -143,10 +161,10 @@ func TestPostAnalyticsListAndOverview(t *testing.T) {
 	repo := repository.NewPostAnalyticsRepository(db)
 
 	base := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
-	mustInsert(t, repo, "p1", "z-1", 100, 10, 0.10, base)
-	mustInsert(t, repo, "p2", "z-2", 300, 30, 0.20, base)
-	// A stale earlier snapshot for p1 must be ignored by the latest-per-post read.
-	mustInsert(t, repo, "p1", "z-1", 999, 999, 0.99, base.Add(-2*time.Hour))
+	mustUpsert(t, repo, "p1", "z-1", 100, 10, 0.10, base)
+	mustUpsert(t, repo, "p2", "z-2", 300, 30, 0.20, base)
+	// A later check for p1 upserts in place (250) — the overview reads current.
+	mustUpsert(t, repo, "p1", "z-1", 250, 10, 0.10, base.Add(30*time.Minute))
 
 	items, overview, err := repo.List(ctx, repository.PostAnalyticsListOptions{
 		Publisher: models.PublisherZernio,
@@ -161,14 +179,18 @@ func TestPostAnalyticsListAndOverview(t *testing.T) {
 	if len(items) != 2 {
 		t.Fatalf("items: got %d want 2", len(items))
 	}
-	// Sorted by impressions desc → p2 first; p1 shows its LATEST (100, not 999).
+	// Sorted by impressions desc → p2 (300) first, then p1 (its current 250).
 	if items[0].PostID != "p2" || items[1].PostID != "p1" {
 		t.Fatalf("sort order wrong: %s, %s", items[0].PostID, items[1].PostID)
 	}
-	if items[0].Analytics.Impressions != 300 || items[1].Analytics.Impressions != 100 {
-		t.Fatalf("latest-per-post nested analytics wrong: %+v / %+v", items[0].Analytics, items[1].Analytics)
+	if items[0].Analytics.Impressions != 300 || items[1].Analytics.Impressions != 250 {
+		t.Fatalf("current-state nested analytics wrong: %+v / %+v", items[0].Analytics, items[1].Analytics)
 	}
-	if overview.PostCount != 2 || overview.Impressions != 400 || overview.Likes != 40 {
+	// last_refreshed_at is sourced from last_checked_at.
+	if !items[1].LastRefreshedAt.Equal(base.Add(30 * time.Minute)) {
+		t.Fatalf("last_refreshed_at should track last_checked_at: %v", items[1].LastRefreshedAt)
+	}
+	if overview.PostCount != 2 || overview.Impressions != 550 || overview.Likes != 40 {
 		t.Fatalf("overview sums wrong: %+v", overview)
 	}
 	if overview.EngagementRateAvg < 0.149 || overview.EngagementRateAvg > 0.151 {
@@ -190,48 +212,28 @@ func TestPostAnalyticsListAndOverview(t *testing.T) {
 	}
 }
 
-func TestPostAnalyticsListTieBreak(t *testing.T) {
+func TestPostAnalyticsCurrentByPostID(t *testing.T) {
 	db := openMigratedDB(t)
 	ctx := tenantCtx()
 	repo := repository.NewPostAnalyticsRepository(db)
-	ts := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
 
-	insertSnapID := func(id string, impressions int) {
-		if err := repo.Insert(ctx, &models.PostAnalytics{
-			ID:                id,
-			PostID:            "p1",
-			PublisherPostID:   "z-1",
-			Publisher:         models.PublisherZernio,
-			Platform:          "linkedin",
-			Impressions:       impressions,
-			PlatformAnalytics: models.PlatformAnalyticsList{},
-			SyncStatus:        "synced",
-			RawJSON:           "{}",
-			OccurredAt:        ts,
-		}); err != nil {
-			t.Fatalf("insert %s: %v", id, err)
-		}
-	}
+	base := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
+	mustUpsert(t, repo, "p1", "z-1", 100, 10, 0.10, base)
+	mustUpsert(t, repo, "p2", "z-2", 300, 30, 0.20, base)
 
-	// Two snapshots for the SAME post at the SAME occurred_at (a tie at the max).
-	// The id DESC tiebreaker must select exactly "s-b" (> "s-a").
-	insertSnapID("s-a", 100)
-	insertSnapID("s-b", 200)
-
-	items, overview, err := repo.List(ctx, repository.PostAnalyticsListOptions{
-		Publisher: models.PublisherZernio, SortBy: "impressions", Order: "desc", Page: 1, Limit: 50,
-	})
+	cur, err := repo.CurrentByPostID(ctx)
 	if err != nil {
-		t.Fatalf("list: %v", err)
+		t.Fatalf("current by post: %v", err)
 	}
-	if len(items) != 1 {
-		t.Fatalf("tie produced %d items, want 1 (no duplicate)", len(items))
+	if len(cur) != 2 {
+		t.Fatalf("expected 2 current rows, got %d", len(cur))
 	}
-	if items[0].Analytics.Impressions != 200 {
-		t.Fatalf("tiebreak winner impressions=%d, want 200 (max id)", items[0].Analytics.Impressions)
+	if cur["p1"] == nil || cur["p1"].Impressions != 100 || cur["p2"] == nil || cur["p2"].Impressions != 300 {
+		t.Fatalf("current map wrong: %+v", cur)
 	}
-	if overview.PostCount != 1 || overview.Impressions != 200 {
-		t.Fatalf("overview double-counted the tie: count=%d imp=%d, want 1/200", overview.PostCount, overview.Impressions)
+	// The map is the dedup source: the metric key round-trips.
+	if cur["p1"].MetricsKey() != (models.MetricsKey{Impressions: 100, Likes: 10, EngagementRate: 0.10, SyncStatus: "synced"}) {
+		t.Fatalf("metric key wrong: %+v", cur["p1"].MetricsKey())
 	}
 }
 
@@ -305,6 +307,38 @@ func TestListWithPublisherPostID(t *testing.T) {
 	}
 }
 
+func TestPostAnalyticsUpsertWithSnapshot(t *testing.T) {
+	db := openMigratedDB(t)
+	ctx := tenantCtx()
+	repo := repository.NewPostAnalyticsRepository(db)
+	now := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
+
+	cur := &models.PostAnalytics{
+		PostID: "p1", PublisherPostID: "z-1", Publisher: models.PublisherZernio, Platform: "linkedin",
+		Impressions: 100, EngagementRate: 0.1, PlatformAnalytics: models.PlatformAnalyticsList{},
+		SyncStatus: "synced", FirstSeenAt: now, LastChangedAt: now, LastCheckedAt: now,
+	}
+	// One transactional call writes both the current row and its trend point.
+	if err := repo.UpsertWithSnapshot(ctx, cur, cur.NewSnapshot(mustID(t), now)); err != nil {
+		t.Fatalf("upsert with snapshot: %v", err)
+	}
+	got, _ := repo.GetByPostID(ctx, "p1")
+	if got == nil || got.Impressions != 100 {
+		t.Fatalf("current not written: %+v", got)
+	}
+	curCount, err := db.NewSelect().Model((*models.PostAnalytics)(nil)).Count(ctx)
+	if err != nil {
+		t.Fatalf("current count: %v", err)
+	}
+	histCount, err := db.NewSelect().Model((*models.PostAnalyticsSnapshot)(nil)).Count(ctx)
+	if err != nil {
+		t.Fatalf("history count: %v", err)
+	}
+	if curCount != 1 || histCount != 1 {
+		t.Fatalf("expected 1 current + 1 history, got %d/%d", curCount, histCount)
+	}
+}
+
 func mustID(t *testing.T) string {
 	t.Helper()
 	id, err := models.NewID()
@@ -314,10 +348,9 @@ func mustID(t *testing.T) string {
 	return id
 }
 
-func mustInsert(t *testing.T, repo repository.PostAnalyticsRepository, postID, pubPostID string, impressions, likes int, rate float64, occurredAt time.Time) {
+func mustUpsert(t *testing.T, repo repository.PostAnalyticsRepository, postID, pubPostID string, impressions, likes int, rate float64, checkedAt time.Time) {
 	t.Helper()
-	err := repo.Insert(tenantCtx(), &models.PostAnalytics{
-		ID:                mustID(t),
+	err := repo.Upsert(tenantCtx(), &models.PostAnalytics{
 		PostID:            postID,
 		PublisherPostID:   pubPostID,
 		Publisher:         models.PublisherZernio,
@@ -327,10 +360,11 @@ func mustInsert(t *testing.T, repo repository.PostAnalyticsRepository, postID, p
 		EngagementRate:    rate,
 		PlatformAnalytics: models.PlatformAnalyticsList{},
 		SyncStatus:        "synced",
-		RawJSON:           "{}",
-		OccurredAt:        occurredAt,
+		FirstSeenAt:       checkedAt,
+		LastChangedAt:     checkedAt,
+		LastCheckedAt:     checkedAt,
 	})
 	if err != nil {
-		t.Fatalf("insert %s: %v", postID, err)
+		t.Fatalf("upsert %s: %v", postID, err)
 	}
 }

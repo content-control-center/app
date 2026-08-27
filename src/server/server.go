@@ -367,6 +367,16 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		AnalyticsSettings:   zernioRT.Settings,
 		AnalyticsHub:        hub,
 		AnalyticsWindowDays: cfg.ZernioAnalyticsWindowDays,
+		// CON-236: age-based refresh-decay schedule (new posts checked often,
+		// settled posts rarely) so the trend history and current-state writes
+		// stay proportional to how fast a post's numbers still move.
+		AnalyticsDecay: queues.AnalyticsDecay{
+			FreshWindow: cfg.ZernioAnalyticsFreshWindow,
+			WarmWindow:  cfg.ZernioAnalyticsWarmWindow,
+			FreshEvery:  cfg.ZernioAnalyticsFreshEvery,
+			WarmEvery:   cfg.ZernioAnalyticsWarmEvery,
+			ColdEvery:   cfg.ZernioAnalyticsColdEvery,
+		},
 		// CON-102: eager per-tenant profile provisioning at signup.
 		ProfileBootstrapper: zernioRT.Bootstrapper,
 		Integration:         zernioRT.Integration,

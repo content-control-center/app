@@ -194,9 +194,23 @@ type Config struct {
 	// Analytics refresh (CON-93 §6 FR3). The refresh_zernio_analytics
 	// queue batch-fetches engagement analytics on this cadence and only
 	// considers posts published within the lookback window (Zernio caps
-	// the analytics range at 366 days).
-	ZernioAnalyticsRefreshInterval time.Duration `envconfig:"ZERNIO_ANALYTICS_REFRESH_INTERVAL" default:"30m"`
+	// the analytics range at 366 days). CON-236 made this the BASE (finest)
+	// tick and added a per-post age-based decay gate on top, so the default
+	// moved from 30m to 1h (matching the fresh-bucket cadence).
+	ZernioAnalyticsRefreshInterval time.Duration `envconfig:"ZERNIO_ANALYTICS_REFRESH_INTERVAL" default:"1h"`
 	ZernioAnalyticsWindowDays      int           `envconfig:"ZERNIO_ANALYTICS_WINDOW_DAYS"      default:"90"`
+
+	// Analytics refresh decay schedule (CON-236). A post is re-checked more often
+	// while it's young and its numbers still move, then progressively less. The
+	// windows delimit the age buckets (fresh < FreshWindow, warm < WarmWindow,
+	// else cold); each *Every is that bucket's re-check interval. A zero *Every
+	// disables gating for its bucket (always due). Setting all three to the base
+	// interval reverts to "check every tick".
+	ZernioAnalyticsFreshWindow time.Duration `envconfig:"ZERNIO_ANALYTICS_FRESH_WINDOW" default:"48h"`
+	ZernioAnalyticsWarmWindow  time.Duration `envconfig:"ZERNIO_ANALYTICS_WARM_WINDOW"  default:"336h"`
+	ZernioAnalyticsFreshEvery  time.Duration `envconfig:"ZERNIO_ANALYTICS_FRESH_EVERY"  default:"1h"`
+	ZernioAnalyticsWarmEvery   time.Duration `envconfig:"ZERNIO_ANALYTICS_WARM_EVERY"   default:"24h"`
+	ZernioAnalyticsColdEvery   time.Duration `envconfig:"ZERNIO_ANALYTICS_COLD_EVERY"   default:"168h"`
 
 	// Follower-stats refresh (CON-153). The refresh_zernio_followers queue
 	// snapshots each connected account's follower count on this cadence. Zernio

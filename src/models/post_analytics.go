@@ -27,7 +27,7 @@ type PostAnalyticsMetrics struct {
 }
 
 // PostPlatformAnalytics is one per-platform row of the breakdown stored
-// in post_analytics_snapshots.platform_analytics (CON-93 §7). SyncStatus /
+// in post_analytics_current.platform_analytics (CON-93 §7). SyncStatus /
 // ErrorMessage / ReauthorizeURL carry the per-platform scope-gap nuance
 // (412/reauthorizeUrl): a platform connected before analytics scopes
 // were granted surfaces its error here without failing the whole
@@ -79,26 +79,29 @@ func (l *PlatformAnalyticsList) Scan(src any) error {
 	}
 }
 
-// PostAnalytics is one engagement snapshot for a Post published through a
-// publisher (CON-93, migrated to an append-only time series in CON-125). It
-// lives in the isolated analytics database (table post_analytics_snapshots):
-// the refresh queue INSERTs a new row per post per tick, so many rows
-// accumulate over time and reads select the latest per post_id. Retention
-// drops old chunks.
+// PostAnalytics is the CURRENT engagement state for one Post published through
+// a publisher (CON-93; storage reworked in CON-236). It lives in the isolated
+// analytics database as ONE row per post (table post_analytics_current): the
+// refresh queue UPSERTs it every time it checks a post, so it always reflects
+// the newest numbers and every analytics read is a plain indexed scan — no
+// latest-per-post subquery. The append-only trend history lives separately in
+// post_analytics_snapshots (PostAnalyticsSnapshot), written only when the
+// metrics actually change (CON-236 dedup).
 //
 // The post display fields (Publisher/Platform/Title/PublishedAt) are
-// DENORMALISED here because the overview read can no longer JOIN to
-// posts/platforms across databases; they reflect the post at refresh time.
+// DENORMALISED here because the analytics DB can't JOIN across to
+// posts/platforms; they are refreshed to the current post values on each check.
 // The aggregate metrics are their own columns (sortable in the list/overview);
-// PlatformAnalytics holds the per-platform breakdown as JSON. MetricsLastUpdated
-// is the publisher's own "numbers last computed" timestamp; OccurredAt is when
-// Ogen fetched — together they expose staleness. RawJSON keeps the verbatim
-// publisher item. Like UsageEvent, tenant_id carries no FK in this database.
+// PlatformAnalytics holds the LATEST per-platform breakdown as JSON.
+// MetricsLastUpdated is the publisher's own "numbers last computed" timestamp.
+// LastCheckedAt is when Ogen last fetched (bumped every check, so freshness
+// survives dedup); LastChangedAt is when the metrics last actually moved;
+// together they expose staleness. Like UsageEvent, tenant_id carries no FK in
+// this database.
 type PostAnalytics struct {
-	bun.BaseModel `bun:"table:post_analytics_snapshots,alias:pa" swaggerignore:"true"`
+	bun.BaseModel `bun:"table:post_analytics_current,alias:pa" swaggerignore:"true"`
 	TenantScoped  // CON-97: tenant_id column + central scoping hooks (no FK in the analytics DB)
 
-	ID                 string                `bun:"id,notnull"                            json:"-"`
 	PostID             string                `bun:"post_id,notnull"                       json:"post_id"`
 	PublisherPostID    string                `bun:"publisher_post_id,notnull"             json:"publisher_post_id"`
 	Publisher          string                `bun:"publisher,notnull"                     json:"-"`
@@ -117,10 +120,13 @@ type PostAnalytics struct {
 	PlatformAnalytics  PlatformAnalyticsList `bun:"platform_analytics,notnull,type:jsonb" json:"platform_analytics"`
 	SyncStatus         string                `bun:"sync_status,nullzero"                  json:"sync_status"`
 	MetricsLastUpdated *time.Time            `bun:"metrics_last_updated"                  json:"metrics_last_updated"`
-	RawJSON            string                `bun:"raw_json,nullzero"                     json:"-"`
-	// OccurredAt is the refresh time (replaces last_refreshed_at). The handler
-	// still exposes it to clients as last_refreshed_at for API compatibility.
-	OccurredAt time.Time `bun:"occurred_at,notnull,default:current_timestamp" json:"-"`
+	// FirstSeenAt is when the first snapshot for this post was recorded;
+	// LastChangedAt when the metrics last moved; LastCheckedAt when the refresh
+	// last looked (bumped every check). The handler exposes LastCheckedAt to
+	// clients as last_refreshed_at (API compatibility).
+	FirstSeenAt   time.Time `bun:"first_seen_at,notnull,default:current_timestamp"   json:"-"`
+	LastChangedAt time.Time `bun:"last_changed_at,notnull,default:current_timestamp" json:"-"`
+	LastCheckedAt time.Time `bun:"last_checked_at,notnull,default:current_timestamp" json:"-"`
 }
 
 // Metrics assembles the denormalised aggregate columns into the response
@@ -137,4 +143,89 @@ func (a *PostAnalytics) Metrics() PostAnalyticsMetrics {
 		Views:          a.Views,
 		EngagementRate: a.EngagementRate,
 	}
+}
+
+// MetricsKey is the change-detection fingerprint (CON-236): two checks whose
+// keys are equal represent identical engagement, so no new history snapshot is
+// written. It covers the aggregate metrics plus sync_status (a status
+// transition — e.g. error→synced — is a meaningful change even at equal
+// numbers). Kept as a comparable struct so callers dedup with ==.
+type MetricsKey struct {
+	Impressions    int
+	Reach          int
+	Likes          int
+	Comments       int
+	Shares         int
+	Saves          int
+	Clicks         int
+	Views          int
+	EngagementRate float64
+	SyncStatus     string
+}
+
+// MetricsKey returns the current row's change-detection fingerprint.
+func (a *PostAnalytics) MetricsKey() MetricsKey {
+	return MetricsKey{
+		Impressions:    a.Impressions,
+		Reach:          a.Reach,
+		Likes:          a.Likes,
+		Comments:       a.Comments,
+		Shares:         a.Shares,
+		Saves:          a.Saves,
+		Clicks:         a.Clicks,
+		Views:          a.Views,
+		EngagementRate: a.EngagementRate,
+		SyncStatus:     a.SyncStatus,
+	}
+}
+
+// NewSnapshot builds an append-only history point from the current-state row,
+// copying only the varying metric columns (CON-236). id + occurredAt are set by
+// the caller; tenant_id is stamped by the TenantScoped hook on insert.
+func (a *PostAnalytics) NewSnapshot(id string, occurredAt time.Time) *PostAnalyticsSnapshot {
+	return &PostAnalyticsSnapshot{
+		ID:                 id,
+		PostID:             a.PostID,
+		Impressions:        a.Impressions,
+		Reach:              a.Reach,
+		Likes:              a.Likes,
+		Comments:           a.Comments,
+		Shares:             a.Shares,
+		Saves:              a.Saves,
+		Clicks:             a.Clicks,
+		Views:              a.Views,
+		EngagementRate:     a.EngagementRate,
+		SyncStatus:         a.SyncStatus,
+		MetricsLastUpdated: a.MetricsLastUpdated,
+		OccurredAt:         occurredAt,
+	}
+}
+
+// PostAnalyticsSnapshot is one point in a post's append-only engagement trend
+// history (CON-236). The refresh queue appends a row ONLY when the metrics
+// change (dedup), so the series holds real movement rather than one row per
+// tick. It lives in the isolated analytics DB (hypertable post_analytics_snapshots,
+// partitioned on occurred_at, retention-pruned). No current endpoint reads it;
+// it is the durable trend archive. Only the varying data lives here — the
+// static post display fields stay on PostAnalytics (one row per post).
+type PostAnalyticsSnapshot struct {
+	bun.BaseModel `bun:"table:post_analytics_snapshots,alias:pas" swaggerignore:"true"`
+	TenantScoped  // CON-97: tenant_id column + central scoping hooks (no FK in the analytics DB)
+
+	ID                 string     `bun:"id,notnull"`
+	PostID             string     `bun:"post_id,notnull"`
+	Impressions        int        `bun:"impressions,notnull"`
+	Reach              int        `bun:"reach,notnull"`
+	Likes              int        `bun:"likes,notnull"`
+	Comments           int        `bun:"comments,notnull"`
+	Shares             int        `bun:"shares,notnull"`
+	Saves              int        `bun:"saves,notnull"`
+	Clicks             int        `bun:"clicks,notnull"`
+	Views              int        `bun:"views,notnull"`
+	EngagementRate     float64    `bun:"engagement_rate,notnull"`
+	SyncStatus         string     `bun:"sync_status,nullzero"`
+	MetricsLastUpdated *time.Time `bun:"metrics_last_updated"`
+	// OccurredAt is the moment this change was recorded (the hypertable's
+	// partition column).
+	OccurredAt time.Time `bun:"occurred_at,notnull,default:current_timestamp"`
 }
