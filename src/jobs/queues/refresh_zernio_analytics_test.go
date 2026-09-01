@@ -85,6 +85,10 @@ func (r *fakeAnalyticsRepo) LifespanSamples(context.Context, time.Time) ([]repos
 	return nil, nil
 }
 
+func (r *fakeAnalyticsRepo) SnapshotsByPostID(context.Context, string) ([]models.PostAnalyticsSnapshot, error) {
+	return nil, nil
+}
+
 // fakeSettings is an in-memory zernio.SettingsStore keyed by (tenant, key) —
 // the tenant is read from the context exactly as the real tenant-scoped
 // settings repo would, so per-tenant profile ids and per-tenant refresh status
