@@ -620,7 +620,23 @@ func (h *AssetsHandler) processImageUpload(c *fiber.Ctx, fh *multipart.FileHeade
 		_, err := tx.NewInsert().Model(file).Exec(ctx)
 		return err
 	}); err != nil {
+		// The blob was uploaded before the tx, so any rollback orphans it.
 		_ = h.storage.Delete(ctx, key)
+		// Concurrent identical upload: the pre-check missed but the unique
+		// checksum index (tenant_id, checksum_sha256) rejected this second insert.
+		// Treat it as dedupe — the winner already exists — so the upload stays
+		// idempotent instead of returning a spurious failure.
+		if isUniqueViolationOn(err, "idx_asset_files_tenant_checksum") && h.fileRepo != nil {
+			if existing, derr := h.fileRepo.GetByChecksum(ctx, probe.SHA256); derr == nil && existing != nil {
+				if a, aerr := h.repo.GetByID(ctx, existing.AssetID); aerr == nil && a != nil {
+					h.decorateFile(a)
+					res.AssetID = a.ID
+					res.Status = "created"
+					res.Asset = a
+					return res
+				}
+			}
+		}
 		res.Status = "failed"
 		res.Error = "could not create asset"
 		return res

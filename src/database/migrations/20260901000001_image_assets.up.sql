@@ -31,8 +31,15 @@ ALTER TABLE asset_files
     ADD COLUMN is_animated     BOOLEAN NOT NULL DEFAULT false,
     ADD COLUMN checksum_sha256 TEXT;
 
--- Dedupe support: an identical file (same tenant, same checksum) returns the
--- existing asset instead of creating a second one. Partial index because only
--- probed image rows carry a checksum.
-CREATE INDEX idx_asset_files_tenant_checksum
-    ON asset_files (tenant_id, checksum_sha256) WHERE checksum_sha256 IS NOT NULL;
+-- Dedupe support: an identical file (same tenant, same non-empty checksum) is
+-- the same asset. UNIQUE so the guarantee holds even under a race between two
+-- concurrent identical uploads — the handler catches the conflict and returns
+-- the existing asset rather than failing or duplicating.
+--
+-- Partial AND empty-excluding: only probed image rows carry a real checksum. PDF
+-- rows leave it NULL (rows predating this migration) or '' (the worker's
+-- zero-value insert), so both are excluded — otherwise every checksum-less PDF
+-- in a tenant would collide with the next.
+CREATE UNIQUE INDEX idx_asset_files_tenant_checksum
+    ON asset_files (tenant_id, checksum_sha256)
+    WHERE checksum_sha256 IS NOT NULL AND checksum_sha256 <> '';
