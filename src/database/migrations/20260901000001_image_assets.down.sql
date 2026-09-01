@@ -1,7 +1,21 @@
--- CON-246 down: remove image-asset support. IMG assets (and their cascaded
--- files/chunks) are deleted first so the reinstated 'MD'/'PDF'/'URL'-only CHECK
--- holds.
-DELETE FROM assets WHERE type = 'IMG';
+-- CON-246 down: remove image-asset support (reinstate the 'MD'/'PDF'/'URL'-only
+-- type CHECK and drop the image columns/index).
+--
+-- This migration created no rows — it only enabled the 'IMG' type — so every IMG
+-- asset is user data (an upload) or a CON-105 generated image. The rollback must
+-- not destroy either. Instead of deleting them, it ABORTS when any IMG asset
+-- exists: an operator has to consciously remove or reclassify them before the
+-- schema can be rolled back. The guard runs first, so nothing below executes on
+-- the abort path (the rollback is all-or-nothing regardless of transaction
+-- wrapping), and it gives a clear reason rather than a raw CHECK violation.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM assets WHERE type = 'IMG') THEN
+        RAISE EXCEPTION
+            'cannot roll back 20260901000001_image_assets: % IMG asset(s) exist; remove or reclassify them before down-migrating (rollback refuses to delete user / CON-105 image data)',
+            (SELECT count(*) FROM assets WHERE type = 'IMG');
+    END IF;
+END $$;
 
 DROP INDEX IF EXISTS idx_asset_files_tenant_checksum;
 
