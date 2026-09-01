@@ -14,6 +14,10 @@ import (
 // AssetFileRepository defines persistence operations for AssetFile metadata.
 type AssetFileRepository interface {
 	GetByAssetID(ctx context.Context, assetID string) (*models.AssetFile, error)
+	// GetByChecksum returns the caller-tenant's file row with this SHA-256, or
+	// sql.ErrNoRows when none exists — the dedupe lookup behind image upload
+	// (CON-246). Tenant scoping comes from the TenantScoped hooks.
+	GetByChecksum(ctx context.Context, checksum string) (*models.AssetFile, error)
 	Upsert(ctx context.Context, file *models.AssetFile) error
 	DeleteByAssetID(ctx context.Context, assetID string) error
 	ListByAssetIDs(ctx context.Context, assetIDs []string) (map[string]*models.AssetFile, error)
@@ -39,6 +43,25 @@ func (r *assetFileRepository) GetByAssetID(ctx context.Context, assetID string) 
 	return f, nil
 }
 
+func (r *assetFileRepository) GetByChecksum(ctx context.Context, checksum string) (*models.AssetFile, error) {
+	if checksum == "" {
+		return nil, sql.ErrNoRows
+	}
+	f := new(models.AssetFile)
+	err := r.db.NewSelect().
+		Model(f).
+		Where("checksum_sha256 = ?", checksum).
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, sql.ErrNoRows
+		}
+		return nil, err
+	}
+	return f, nil
+}
+
 func (r *assetFileRepository) Upsert(ctx context.Context, file *models.AssetFile) error {
 	file.UpdatedAt = time.Now().UTC()
 	_, err := r.db.NewInsert().
@@ -50,6 +73,10 @@ func (r *assetFileRepository) Upsert(ctx context.Context, file *models.AssetFile
 		Set("s3_key = EXCLUDED.s3_key").
 		Set("thumbnail_s3_key = EXCLUDED.thumbnail_s3_key").
 		Set("page_count = EXCLUDED.page_count").
+		Set("width = EXCLUDED.width").
+		Set("height = EXCLUDED.height").
+		Set("is_animated = EXCLUDED.is_animated").
+		Set("checksum_sha256 = EXCLUDED.checksum_sha256").
 		Set("updated_at = EXCLUDED.updated_at").
 		Exec(ctx)
 	return err

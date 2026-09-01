@@ -22,12 +22,20 @@ import (
 	"github.com/ogen-app/ogen/src/netguard"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/storage"
+	"github.com/ogen-app/ogen/src/storage/imageprobe"
 	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 const (
 	maxMarkdownUploadSize = 10 << 20 // 10 MB
 	maxPDFUploadSize      = 50 << 20 // 50 MB
+	// maxImageUploadSize matches POST /api/images and the post-attachment path —
+	// one number across every image path (CON-246 R4).
+	maxImageUploadSize = 10 << 20 // 10 MB
+	// maxImageDimension caps each side of an uploaded image (CON-246 R5). Bounds
+	// total area to ~67 MP, guarding the future thumbnail job and platform layout
+	// against decompression-bomb dimensions.
+	maxImageDimension = 8192
 )
 
 // PDFIngestEnqueuer enqueues a PDF-ingestion job in the caller's transaction
@@ -108,12 +116,18 @@ func (h *AssetsHandler) Register(app *fiber.App) {
 type createAssetRequest struct {
 	Title   string             `json:"title"   validate:"required"`
 	Content string             `json:"content" validate:"required"`
+	AltText string             `json:"alt_text"`
 	TagIDs  models.StringSlice `json:"tag_ids"`
 }
 
+// updateAssetRequest carries a whole-resource write. Content is not
+// `validate:"required"` because an image asset's description may legitimately be
+// empty (CON-246 R9); Update enforces it for the document types that still need
+// it once the asset's type is known.
 type updateAssetRequest struct {
 	Title   string             `json:"title"   validate:"required"`
-	Content string             `json:"content" validate:"required"`
+	Content string             `json:"content"`
+	AltText string             `json:"alt_text"`
 	TagIDs  models.StringSlice `json:"tag_ids"`
 }
 
@@ -167,17 +181,22 @@ func (h *AssetsHandler) decorateImagesBatch(ctx context.Context, assets []models
 	}
 }
 
-// decorateFile fills File.ThumbnailURL from its s3_key using the public
-// storage URL, when both are present.
+// decorateFile fills File.URL (the original) and File.ThumbnailURL from their
+// s3 keys using the public storage URL, when present. URL is what an image
+// viewer renders (CON-246); ThumbnailURL is the PDF/first-page preview and, in
+// future, the image grid thumbnail.
 func (h *AssetsHandler) decorateFile(asset *models.Asset) {
 	if asset == nil || asset.File == nil || h.storage == nil {
 		return
 	}
-	if asset.File.ThumbnailS3Key == nil || *asset.File.ThumbnailS3Key == "" {
-		return
+	if asset.File.S3Key != "" {
+		u := h.storage.PublicURL(asset.File.S3Key)
+		asset.File.URL = &u
 	}
-	u := h.storage.PublicURL(*asset.File.ThumbnailS3Key)
-	asset.File.ThumbnailURL = &u
+	if asset.File.ThumbnailS3Key != nil && *asset.File.ThumbnailS3Key != "" {
+		u := h.storage.PublicURL(*asset.File.ThumbnailS3Key)
+		asset.File.ThumbnailURL = &u
+	}
 }
 
 // decorateImages hydrates a URL asset's mirrored images (CON-222) and fills each
@@ -221,6 +240,11 @@ func (h *AssetsHandler) Create(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
 	}
 
+	altText, err := normalizeAltText(req.AltText)
+	if err != nil {
+		return err
+	}
+
 	session := c.Locals("session").(*models.Session)
 
 	id, err := models.NewID()
@@ -232,6 +256,7 @@ func (h *AssetsHandler) Create(c *fiber.Ctx) error {
 		ID:        id,
 		Title:     req.Title,
 		Content:   req.Content,
+		AltText:   altText,
 		Status:    models.AssetStatusPending,
 		TagIDs:    nullSlice(req.TagIDs),
 		Tags:      []models.Tag{},
@@ -259,13 +284,13 @@ type uploadResult struct {
 }
 
 // Upload godoc
-// @Summary      Upload Markdown or PDF file(s)
-// @Description  Accepts one or more `.md` (max 10 MB) or `.pdf` (max 50 MB) files. Markdown files are converted to BlockNote JSON synchronously; PDFs are uploaded to object storage and processed asynchronously (text extraction, page-aware chunking, embedding, thumbnail). Files are processed independently — one failure does not block others.
+// @Summary      Upload Markdown, PDF, or image file(s)
+// @Description  Accepts one or more `.md` (max 10 MB), `.pdf` (max 50 MB), or image (JPEG/PNG/WebP/GIF, max 10 MB) files. Markdown files are converted to BlockNote JSON synchronously; PDFs are uploaded to object storage and processed asynchronously (text extraction, page-aware chunking, embedding, thumbnail); images (CON-246) are probed and stored synchronously as `IMG` assets (`ready`), deduplicated within the tenant by checksum. Files are processed independently — one failure does not block others.
 // @Tags         content-bank
 // @Accept       multipart/form-data
 // @Produce      json
 // @Security     CookieAuth
-// @Param        files  formData  file  true  "Markdown or PDF file(s)"
+// @Param        files  formData  file  true  "Markdown, PDF, or image file(s)"
 // @Success      201    {object}  map[string]any
 // @Failure      400    {object}  map[string]string
 // @Failure      401    {object}  map[string]string
@@ -291,9 +316,11 @@ func (h *AssetsHandler) Upload(c *fiber.Ctx) error {
 			res = h.processMarkdownUpload(c, fh, session)
 		case uploadKindPDF:
 			res = h.processPDFUpload(c, fh, session)
+		case uploadKindImage:
+			res = h.processImageUpload(c, fh, session)
 		default:
 			res.Status = "failed"
-			res.Error = "only .md and .pdf files are accepted"
+			res.Error = "only .md, .pdf and image files are accepted"
 		}
 		results = append(results, res)
 	}
@@ -307,6 +334,7 @@ const (
 	uploadKindUnknown uploadKind = iota
 	uploadKindMarkdown
 	uploadKindPDF
+	uploadKindImage
 )
 
 func detectUploadKind(filename string) uploadKind {
@@ -315,6 +343,10 @@ func detectUploadKind(filename string) uploadKind {
 		return uploadKindMarkdown
 	case ".pdf":
 		return uploadKindPDF
+	case ".jpg", ".jpeg", ".png", ".webp", ".gif":
+		// Advisory only — imageprobe sniffs the body to decide the real MIME
+		// (CON-246 R3). The extension just routes to the image branch.
+		return uploadKindImage
 	}
 	return uploadKindUnknown
 }
@@ -456,6 +488,152 @@ func (h *AssetsHandler) processPDFUpload(c *fiber.Ctx, fh *multipart.FileHeader,
 		return res
 	}
 
+	res.AssetID = asset.ID
+	res.Status = "created"
+	res.Asset = asset
+	return res
+}
+
+// processImageUpload ingests an image asset (CON-246). Unlike PDF ingestion it
+// is fully synchronous: the probe (MIME sniff, dimensions, animation, checksum)
+// is cheap and its failures are the ones the user needs worded immediately, so
+// the asset is created `ready` with no background job. Bytes land at
+// assets/{id}/original.<ext>, mirroring the PDF `original.pdf` convention, and an
+// asset_files row carries the image metadata. Identical bytes (same tenant,
+// same checksum) return the existing asset rather than duplicating it.
+func (h *AssetsHandler) processImageUpload(c *fiber.Ctx, fh *multipart.FileHeader, session *models.Session) uploadResult {
+	res := uploadResult{Filename: fh.Filename}
+
+	// Images require object storage and the DB (asset + file row written
+	// atomically). Without them, fail the file rather than create an asset that
+	// points at bytes that were never stored.
+	if h.storage == nil || h.db == nil {
+		res.Status = "failed"
+		res.Error = "image uploads are not configured"
+		return res
+	}
+	if fh.Size > maxImageUploadSize {
+		res.Status = "failed"
+		res.Error = fmt.Sprintf("file exceeds maximum size of %d MB", maxImageUploadSize>>20)
+		return res
+	}
+
+	f, err := fh.Open()
+	if err != nil {
+		res.Status = "failed"
+		res.Error = "could not read file"
+		return res
+	}
+	defer f.Close()
+
+	// Probe sniffs the real MIME from the body (never the client Content-Type),
+	// decodes dimensions, detects animated GIFs and computes the SHA-256, while
+	// enforcing the byte cap. The returned bytes are what we store.
+	probe, data, err := imageprobe.Probe(f, maxImageUploadSize)
+	if err != nil {
+		res.Status = "failed"
+		switch {
+		case errors.Is(err, imageprobe.ErrUnsupportedMIME):
+			res.Error = err.Error()
+		default:
+			// Oversized/empty/undecodable — imageprobe's message is caller-facing.
+			res.Error = err.Error()
+		}
+		return res
+	}
+	if probe.Width > maxImageDimension || probe.Height > maxImageDimension {
+		res.Status = "failed"
+		res.Error = fmt.Sprintf("image dimensions exceed %d×%d px", maxImageDimension, maxImageDimension)
+		return res
+	}
+
+	ctx := c.Context()
+
+	// Dedupe within the tenant by checksum (R-Dedup): the same logo uploaded
+	// twice returns the first asset instead of a near-duplicate.
+	if h.fileRepo != nil {
+		if existing, derr := h.fileRepo.GetByChecksum(ctx, probe.SHA256); derr == nil && existing != nil {
+			if a, aerr := h.repo.GetByID(ctx, existing.AssetID); aerr == nil && a != nil {
+				h.decorateFile(a)
+				res.AssetID = a.ID
+				res.Status = "created"
+				res.Asset = a
+				return res
+			}
+		}
+	}
+
+	title := strings.TrimSuffix(filepath.Base(fh.Filename), filepath.Ext(fh.Filename))
+	id, err := models.NewID()
+	if err != nil {
+		res.Status = "failed"
+		res.Error = "could not generate id"
+		return res
+	}
+	fileID, err := models.NewID()
+	if err != nil {
+		res.Status = "failed"
+		res.Error = "could not generate id"
+		return res
+	}
+
+	imgType := models.AssetTypeImage
+	asset := &models.Asset{
+		ID:        id,
+		Title:     title,
+		Content:   "", // the image's description; empty is valid (R9)
+		Status:    models.AssetStatusReady,
+		Type:      &imgType,
+		TagIDs:    models.StringSlice{},
+		Tags:      []models.Tag{},
+		CreatedBy: session.UserID,
+	}
+	key := storage.TenantKey(ctx, fmt.Sprintf("assets/%s/original%s", asset.ID, probe.Extension))
+	file := &models.AssetFile{
+		ID:             fileID,
+		AssetID:        asset.ID,
+		OriginalName:   fh.Filename,
+		MimeType:       probe.MIME,
+		SizeBytes:      probe.Size,
+		S3Key:          key,
+		Width:          probe.Width,
+		Height:         probe.Height,
+		IsAnimated:     probe.IsAnimated,
+		ChecksumSHA256: probe.SHA256,
+	}
+
+	// Store the original before the row exists so a failed upload never leaves a
+	// row pointing at missing bytes.
+	if _, err := h.storage.Upload(ctx, key, bytes.NewReader(data), probe.Size, probe.MIME); err != nil {
+		res.Status = "failed"
+		res.Error = "could not store image"
+		return res
+	}
+
+	// Insert the asset and its file row atomically: a committed asset always has
+	// its file, a rolled-back one leaves neither. On rollback, delete the blob
+	// stored above so it isn't orphaned.
+	if err := h.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewInsert().Model(asset).Exec(ctx); err != nil {
+			return err
+		}
+		_, err := tx.NewInsert().Model(file).Exec(ctx)
+		return err
+	}); err != nil {
+		_ = h.storage.Delete(ctx, key)
+		res.Status = "failed"
+		res.Error = "could not create asset"
+		return res
+	}
+
+	// Embed the (possibly empty) description so the image is retrievable.
+	if h.onSave != nil {
+		tid, _ := tenantctx.From(ctx)
+		go h.onSave(asset.ID, asset.Title, asset.Content, tid)
+	}
+
+	asset.File = file
+	h.decorateFile(asset)
 	res.AssetID = asset.ID
 	res.Status = "created"
 	res.Asset = asset
@@ -669,12 +847,26 @@ func (h *AssetsHandler) Update(c *fiber.Ctx) error {
 		return err
 	}
 
+	// Content is required for document assets but optional for images, whose
+	// description may be empty (CON-246 R9). The type is only known now, after
+	// the load, which is why this isn't a struct-tag validation.
+	isImage := asset.Type != nil && *asset.Type == models.AssetTypeImage
+	if !isImage && strings.TrimSpace(req.Content) == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "content is required")
+	}
+
+	altText, err := normalizeAltText(req.AltText)
+	if err != nil {
+		return err
+	}
+
 	// Detect whether the embedding inputs (title or content) actually changed,
-	// so we don't re-embed an asset when only a tag was toggled.
+	// so we don't re-embed an asset when only a tag or the alt text was toggled.
 	embedInputChanged := asset.Title != req.Title || asset.Content != req.Content
 
 	asset.Title = req.Title
 	asset.Content = req.Content
+	asset.AltText = altText
 	asset.TagIDs = nullSlice(req.TagIDs)
 	asset.UpdatedAt = time.Now().UTC()
 
