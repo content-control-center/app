@@ -283,17 +283,19 @@ var _ = Describe("BrandHandler", Ordered, func() {
 			Expect(json.NewDecoder(resp.Body).Decode(&first)).To(Succeed())
 			Expect(first.UpdatedAt.IsZero()).To(BeFalse())
 
-			// Identical save → updatedAt unchanged (FR8).
+			// Read the stored timestamp back. Postgres truncates timestamptz to
+			// microseconds, so comparing the reloaded value (not the ns-precision
+			// in-memory response) keeps both sides at DB precision — and is the
+			// stronger claim anyway: the unchanged save must return what's stored.
+			storedBefore := getBrand().Guardrails
+			Expect(storedBefore).NotTo(BeNil())
+
+			// Identical save → returns the same stored timestamp, not a new one (FR8).
 			resp = do("PUT", "/api/brand/guardrails", validBody)
 			Expect(resp.StatusCode).To(Equal(200))
 			var second models.BrandGuardrails
 			Expect(json.NewDecoder(resp.Body).Decode(&second)).To(Succeed())
-			// Same instant (Postgres round-trips timestamptz in local zone, so
-			// compare instants, not the wall-clock struct).
-			Expect(second.UpdatedAt).To(BeTemporally("==", first.UpdatedAt))
-
-			// Present in the aggregate.
-			Expect(getBrand().Guardrails).NotTo(BeNil())
+			Expect(second.UpdatedAt).To(BeTemporally("==", storedBefore.UpdatedAt))
 
 			// DELETE → null.
 			resp = do("DELETE", "/api/brand/guardrails", nil)
