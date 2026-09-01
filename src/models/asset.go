@@ -21,6 +21,9 @@ const (
 	AssetTypePDF = "PDF"
 	// AssetTypeURL marks assets scraped from a web page URL (CON-222).
 	AssetTypeURL = "URL"
+	// AssetTypeImage marks assets that are an uploaded image (CON-246). Its
+	// content is a plain-text description, not a document; empty is valid.
+	AssetTypeImage = "IMG"
 )
 
 type Asset struct {
@@ -35,10 +38,14 @@ type Asset struct {
 	// SourceURL is the origin URL for URL-scraped assets (CON-222); nil for
 	// MD/PDF/text assets. Unique per tenant, so re-submitting a URL refreshes
 	// the same asset instead of duplicating it.
-	SourceURL *string     `bun:"source_url"                                   json:"source_url,omitempty"`
-	TagIDs    StringSlice `bun:"tag_ids,notnull,type:jsonb"                   json:"tag_ids"`
-	Tags      []Tag       `bun:"-"                                            json:"tags"`
-	File      *AssetFile  `bun:"-"                                            json:"file,omitempty"`
+	SourceURL *string `bun:"source_url"                                   json:"source_url,omitempty"`
+	// AltText is a short accessibility description for image assets (CON-246),
+	// distinct from content (the longer, embeddable description). Empty for
+	// non-image assets.
+	AltText string      `bun:"alt_text,notnull,default:''"                  json:"alt_text"`
+	TagIDs  StringSlice `bun:"tag_ids,notnull,type:jsonb"                   json:"tag_ids"`
+	Tags    []Tag       `bun:"-"                                            json:"tags"`
+	File    *AssetFile  `bun:"-"                                            json:"file,omitempty"`
 	// Images are the mirrored page images for URL assets (CON-222), hydrated and
 	// URL-decorated by the handler layer. Not persisted on assets.
 	Images    []AssetImage `bun:"-" json:"images,omitempty"`
