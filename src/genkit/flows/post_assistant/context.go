@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/ogen-app/ogen/src/brandresolve"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/platforms"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
@@ -80,6 +81,32 @@ func postFingerprint(post *models.Post) string {
 	return b.String()
 }
 
+// brandFingerprint captures the identity (id + updatedAt) of the resolved brand
+// material so the context cache invalidates when a voice/audience/guardrails is
+// edited (CON-245 FR6), not just when the post itself changes.
+func brandFingerprint(r *brandresolve.Resolved) string {
+	if r == nil {
+		return ""
+	}
+	var b strings.Builder
+	if r.Voice != nil {
+		b.WriteString(r.Voice.ID)
+		b.WriteByte(':')
+		b.WriteString(r.Voice.UpdatedAt.String())
+	}
+	b.WriteByte('\x1f')
+	if r.Audience != nil {
+		b.WriteString(r.Audience.ID)
+		b.WriteByte(':')
+		b.WriteString(r.Audience.UpdatedAt.String())
+	}
+	b.WriteByte('\x1f')
+	if r.Guardrails != nil {
+		b.WriteString(r.Guardrails.UpdatedAt.String())
+	}
+	return b.String()
+}
+
 // assembleContextCached returns the cached context for the given post if
 // the fingerprint matches and the TTL hasn't expired. Otherwise it
 // assembles a fresh context, caches it, and returns it.
@@ -89,7 +116,21 @@ func assembleContextCached(
 	repos PostAssistantRepos,
 	systemTmpl, contextTmpl *template.Template,
 ) (*assistantContext, error) {
-	fp := postFingerprint(post)
+	// Load the campaign once — both the brand fingerprint and the rendered
+	// context need it.
+	campaign := post.Campaign
+	if campaign == nil {
+		c, err := repos.Campaigns.GetByID(ctx, post.CampaignID)
+		if err != nil {
+			return nil, fmt.Errorf("load campaign: %w", err)
+		}
+		campaign = c
+	}
+	// CON-245: resolve the brand and fold its identity into the fingerprint, so
+	// an edited voice/audience/guardrails invalidates the cached context (FR6).
+	// Fails open — resolved is usable even on a repo error.
+	resolved, _ := brandresolve.Resolve(ctx, repos.Brands, campaign, post)
+	fp := postFingerprint(post) + "\x1f" + brandFingerprint(resolved)
 
 	contextCacheMu.Lock()
 	if entry, ok := contextCache[post.ID]; ok {
@@ -102,7 +143,7 @@ func assembleContextCached(
 	gen := contextCacheGen[post.ID]
 	contextCacheMu.Unlock()
 
-	actx, err := assembleContext(ctx, post, repos, systemTmpl, contextTmpl)
+	actx, err := assembleContext(ctx, post, campaign, resolved, repos, systemTmpl, contextTmpl)
 	if err != nil {
 		return nil, err
 	}
@@ -141,18 +182,11 @@ func invalidateContextCache(postID string) {
 func assembleContext(
 	ctx context.Context,
 	post *models.Post,
+	campaign *models.Campaign,
+	resolved *brandresolve.Resolved,
 	repos PostAssistantRepos,
 	systemTmpl, contextTmpl *template.Template,
 ) (*assistantContext, error) {
-	campaign := post.Campaign
-	if campaign == nil {
-		c, err := repos.Campaigns.GetByID(ctx, post.CampaignID)
-		if err != nil {
-			return nil, fmt.Errorf("load campaign: %w", err)
-		}
-		campaign = c
-	}
-
 	var phaseName, phaseDescription string
 	if post.CampaignTypePhase != nil {
 		phaseName = post.CampaignTypePhase.Name
@@ -190,6 +224,7 @@ func assembleContext(
 		TargetPersona:       campaign.TargetPersona,
 		KeyMessages:         campaign.KeyMessages,
 		ToneGuidelines:      campaign.ToneGuidelines,
+		BrandBlock:          resolved.PromptBlock(post.PlatformID),
 		Language:            campaign.Language,
 		PhaseName:           phaseName,
 		PhaseDescription:    phaseDescription,
@@ -221,14 +256,17 @@ type contextTemplateData struct {
 	TargetPersona       string
 	KeyMessages         string
 	ToneGuidelines      string
-	Language            string
-	PhaseName           string
-	PhaseDescription    string
-	PostContent         string
-	Assets              []assetSummary
-	Platforms           []platformOption
-	Versions            []versionSummary
-	Notes               []noteSummary
+	// BrandBlock is the resolved brand voice/audience/guardrails block (CON-245),
+	// which supersedes TargetPersona/ToneGuidelines in the template.
+	BrandBlock       string
+	Language         string
+	PhaseName        string
+	PhaseDescription string
+	PostContent      string
+	Assets           []assetSummary
+	Platforms        []platformOption
+	Versions         []versionSummary
+	Notes            []noteSummary
 }
 
 // noteBodyPreviewChars bounds a single note's body in the context block so a

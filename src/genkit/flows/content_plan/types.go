@@ -33,6 +33,9 @@ type DraftPost struct {
 	ToneNotes   string   `json:"toneNotes"               jsonschema:"description=How the campaign tone guidelines apply to this specific post"`
 	PhaseID     string   `json:"phaseId"                 jsonschema:"description=Exact phase ID from the campaign phases list; every post must be assigned to one phase"`
 	AssetRefs   []string `json:"assetRefs,omitempty"     jsonschema:"description=IDs of assets whose facts or ideas were directly used in this post; omit if none"`
+	// BrandVoiceID is the resolved brand voice for this post (CON-245), set
+	// server-side after generation. json:"-" keeps it out of the model schema.
+	BrandVoiceID *string `json:"-"`
 }
 
 // ContentPlanResponse is returned by the handler and the flow.
@@ -98,14 +101,17 @@ type contentPlanTemplateData struct {
 	TargetPersona           string
 	KeyMessages             string
 	ToneGuidelines          string
-	Language                string
-	StartDate               string
-	EndDate                 string
-	DayCount                int
-	EstimatedPostCount      int
-	Platforms               []resolvedPlatform
-	Assets                  []resolvedPiece
-	Batch                   *batchSpec
+	// BrandBlock is the resolved brand voice/audience/guardrails prompt block
+	// (CON-245); supersedes TargetPersona/ToneGuidelines in the template.
+	BrandBlock         string
+	Language           string
+	StartDate          string
+	EndDate            string
+	DayCount           int
+	EstimatedPostCount int
+	Platforms          []resolvedPlatform
+	Assets             []resolvedPiece
+	Batch              *batchSpec
 	// PublishingDays is the comma-separated label list of enabled weekdays
 	// (e.g. "Mon, Wed, Fri"), or "" when every day is enabled (CON-181). The
 	// server snaps any stray date to an enabled day regardless; this just

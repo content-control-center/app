@@ -26,6 +26,9 @@ type contextTemplateData struct {
 	TargetPersona  string
 	KeyMessages    string
 	ToneGuidelines string
+	// BrandBlock is the resolved brand voice/audience/guardrails block (CON-245),
+	// which supersedes TargetPersona/ToneGuidelines in the template.
+	BrandBlock string
 	// Today is the current date (YYYY-MM-DD), so the planner can resolve
 	// relative timeframes like "upcoming weeks" into concrete dates (CON-114).
 	Today string
@@ -52,7 +55,7 @@ type phaseContext struct {
 // the cached prefix rotates daily and on brief edits — fine, since consecutive
 // turns within the cache TTL share it. Note this is separate from the
 // strict-tool grammar cache the tool-order stabilizer keeps warm.
-func assembleContext(campaign *models.Campaign, today time.Time, systemTmpl, contextTmpl *template.Template) (*assistantContext, error) {
+func assembleContext(campaign *models.Campaign, brandBlock string, today time.Time, systemTmpl, contextTmpl *template.Template) (*assistantContext, error) {
 	campaignType := campaign.CampaignTypeID
 	var phases []phaseContext
 	if campaign.CampaignType != nil {
@@ -75,6 +78,7 @@ func assembleContext(campaign *models.Campaign, today time.Time, systemTmpl, con
 		TargetPersona:  campaign.TargetPersona,
 		KeyMessages:    campaign.KeyMessages,
 		ToneGuidelines: campaign.ToneGuidelines,
+		BrandBlock:     brandBlock,
 		Today:          today.Format("2006-01-02"),
 		Phases:         phases,
 	}

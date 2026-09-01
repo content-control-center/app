@@ -61,6 +61,9 @@ type DraftPostRepos struct {
 	// Notes stores the source research as a reference note on each created post
 	// (CON-207). nil skips note creation (the post is still created).
 	Notes repository.PostNoteRepository
+	// Brands resolves the campaign's brand voice/audience/guardrails into the
+	// prompt (CON-245). nil falls back to the legacy tone_guidelines prose.
+	Brands repository.BrandRepository
 }
 
 // DraftPostFlowConfig holds static settings for the flow. Unlike content_plan it

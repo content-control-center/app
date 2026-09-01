@@ -49,7 +49,7 @@ func Resolve(ctx context.Context, repo repository.BrandRepository, campaign *mod
 
 	data, err := repo.GetAll(ctx)
 	if err != nil {
-		return nil, err
+		return r, err // fail open: r still carries the legacy prose fallback
 	}
 
 	// Voice: explicit ref (post, then campaign), else the workspace default.

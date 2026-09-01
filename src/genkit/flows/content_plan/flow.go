@@ -80,6 +80,9 @@ type ContentPlanRepos struct {
 	// draft_thesis note instead of the post body (CON-188). nil skips note
 	// creation (the post is still created with an empty body).
 	Notes repository.PostNoteRepository
+	// Brands resolves the campaign's brand voice/audience/guardrails into the
+	// prompt (CON-245). nil falls back to the legacy tone_guidelines prose.
+	Brands repository.BrandRepository
 }
 
 // InitContentPlan registers the generateContentPlan Genkit flow. It must be

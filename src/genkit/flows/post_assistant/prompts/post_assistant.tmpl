@@ -182,14 +182,12 @@ Rules:
 {{- if .CampaignDescription}}
 **Description**: {{.CampaignDescription}}
 {{- end}}
-{{- if .TargetPersona}}
-**Target persona**: {{.TargetPersona}}
-{{- end}}
 {{- if .KeyMessages}}
 **Key messages**: {{.KeyMessages}}
 {{- end}}
-{{- if .ToneGuidelines}}
-**Tone guidelines**: {{.ToneGuidelines}}
+{{- if .BrandBlock}}
+
+{{.BrandBlock}}
 {{- end}}
 {{- if .Language}}
 **Language**: {{.Language}}

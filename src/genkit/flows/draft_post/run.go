@@ -16,6 +16,7 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
+	"github.com/ogen-app/ogen/src/brandresolve"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/notes"
@@ -38,13 +39,16 @@ type contextTemplateData struct {
 	TargetPersona     string
 	KeyMessages       string
 	ToneGuidelines    string
-	Language          string
-	PlatformName      string
-	PostType          string
-	Constraints       string
-	Count             int
-	SourceMaterial    string
-	Instruction       string
+	// BrandBlock is the resolved brand voice/audience/guardrails block (CON-245);
+	// supersedes TargetPersona/ToneGuidelines in the template.
+	BrandBlock     string
+	Language       string
+	PlatformName   string
+	PostType       string
+	Constraints    string
+	Count          int
+	SourceMaterial string
+	Instruction    string
 }
 
 // resolvedPlatform is the platform metadata the flow needs: the persisted
@@ -126,6 +130,14 @@ func runDraftPost(
 	if campaign.CampaignType != nil {
 		typeLabel = campaign.CampaignType.Label
 	}
+	// CON-245: resolve the brand voice/audience/guardrails once for the batch;
+	// the block supersedes the legacy tone/persona prose (falling back to it).
+	resolved, rerr := brandresolve.Resolve(ctx, repos.Brands, campaign, nil)
+	if rerr != nil {
+		slog.WarnContext(ctx, "brand resolve failed; using legacy tone",
+			logging.AttrComponent, "genkit.draft_post", "error", rerr)
+	}
+	brandVoiceID := resolved.VoiceID()
 	data := contextTemplateData{
 		CampaignName:      campaign.Name,
 		CampaignTypeLabel: typeLabel,
@@ -134,6 +146,7 @@ func runDraftPost(
 		TargetPersona:     campaign.TargetPersona,
 		KeyMessages:       campaign.KeyMessages,
 		ToneGuidelines:    campaign.ToneGuidelines,
+		BrandBlock:        resolved.PromptBlock(platform.ID),
 		Language:          campaign.Language,
 		PlatformName:      platform.Name,
 		PostType:          platform.PostType,
@@ -181,7 +194,7 @@ func runDraftPost(
 			return
 		}
 		publishDate := dates[len(out)] // len(out) < count == len(dates)
-		dp, id, perr := persistDraft(ctx, campaign, platform, req.PhaseID, publishDate, loc, &winStart, &winEnd, title, content, req.UsedAssetIDs, source, repos)
+		dp, id, perr := persistDraft(ctx, campaign, platform, req.PhaseID, publishDate, loc, &winStart, &winEnd, title, content, req.UsedAssetIDs, source, brandVoiceID, repos)
 		if perr != nil {
 			slog.ErrorContext(ctx, "persist draft failed", logging.AttrComponent, "genkit.draft_post", "title", title, logging.AttrError, perr)
 			msg := fmt.Sprintf("draft %q could not be saved: %v", title, perr)
@@ -292,6 +305,7 @@ func persistDraft(
 	title, content string,
 	usedAssetIDs []string,
 	source string,
+	brandVoiceID *string,
 	repos DraftPostRepos,
 ) (DraftedPost, string, error) {
 	id, err := models.NewID()
@@ -330,6 +344,7 @@ func persistDraft(
 		UsedAssetIDs:        models.StringSlice(usedAssetIDs),
 		CampaignTypePhaseID: phaseIDPtr,
 		ScheduledAt:         scheduledAt,
+		BrandVoiceID:        brandVoiceID, // CON-245
 		CreatedBy:           campaign.CreatedBy,
 	}
 	if err := repos.Posts.Create(ctx, row); err != nil {

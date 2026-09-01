@@ -565,6 +565,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 			Platforms: platformRepo,
 			Posts:     postRepo,
 			Notes:     postNoteRepo,
+			Brands:    brandRepo, // CON-245
 		},
 		postAssistRepos: post_assistant.PostAssistantRepos{
 			Posts:       postRepo,
@@ -578,6 +579,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 			Allowlist:   autoPublishAllowlistRepo,
 			Attachments: postAttachmentRepo,
 			Notes:       postNoteRepo,
+			Brands:      brandRepo, // CON-245
 		},
 		postQualityRepos: post_quality.PostQualityRepos{
 			Posts:       postRepo,
@@ -599,12 +601,14 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 			Posts:     postRepo,
 			Assets:    pieceRepo,
 			Chunks:    chunksRepo,
+			Brands:    brandRepo, // CON-245
 		},
 		draftPostRepos: draft_post.DraftPostRepos{
 			Campaigns: campaignRepo,
 			Platforms: platformRepo,
 			Posts:     postRepo,
 			Notes:     postNoteRepo,
+			Brands:    brandRepo, // CON-245
 		},
 		campaignOverviewSvc: campaignOverviewSvc,
 		cloneSvc:            cloneSvc,

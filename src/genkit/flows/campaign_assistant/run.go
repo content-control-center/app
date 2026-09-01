@@ -14,6 +14,7 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
+	"github.com/ogen-app/ogen/src/brandresolve"
 	"github.com/ogen-app/ogen/src/genkit/jsonstream"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
@@ -72,7 +73,10 @@ func runCampaignAssistant(
 	tAfterLoad := time.Now()
 
 	// ── Assemble context + load history ──────────────────────────────────────
-	actx, err := assembleContext(campaign, time.Now().UTC(), systemTmpl, contextTmpl)
+	// CON-245: resolve the campaign's brand voice/audience/guardrails into the
+	// context block (falls back to the legacy tone prose). Fails open.
+	brandResolved, _ := brandresolve.Resolve(ctx, repos.Brands, campaign, nil)
+	actx, err := assembleContext(campaign, brandResolved.PromptBlock(""), time.Now().UTC(), systemTmpl, contextTmpl)
 	if err != nil {
 		return nil, fmt.Errorf("assemble context: %w", err)
 	}
