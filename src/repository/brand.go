@@ -89,6 +89,10 @@ func (r *brandRepository) GetAll(ctx context.Context) (*models.BrandData, error)
 	if templates == nil {
 		templates = []models.BrandTemplate{}
 	}
+	// CON-245: fill the derived draft/published usage counts from the post refs.
+	if err := r.fillUsage(ctx, voices, audiences); err != nil {
+		return nil, err
+	}
 	return &models.BrandData{
 		Voices:     voices,
 		Audiences:  audiences,
@@ -96,6 +100,67 @@ func (r *brandRepository) GetAll(ctx context.Context) (*models.BrandData, error)
 		Look:       look,
 		Templates:  templates,
 	}, nil
+}
+
+// fillUsage sets each voice's/audience's derived usage {drafts, published}
+// (CON-245, unblocks CON-228 FR7): a voice counts the posts stamped with it; an
+// audience counts posts whose effective audience — the post's own, else its
+// campaign's — is that audience. "published" is the terminal published status;
+// everything else counts as a still-ours draft. A missing tenant leaves the
+// zero counts in place rather than counting across tenants.
+func (r *brandRepository) fillUsage(ctx context.Context, voices []models.BrandVoice, audiences []models.BrandAudience) error {
+	tid, ok := tenantctx.From(ctx)
+	if !ok {
+		return nil
+	}
+	type usageRow struct {
+		Key       string `bun:"key"`
+		Published int    `bun:"published"`
+		Drafts    int    `bun:"drafts"`
+	}
+	pub := string(models.PostStatusPublished)
+
+	var vrows []usageRow
+	if err := r.db.NewSelect().
+		ColumnExpr("brand_voice_id AS key").
+		ColumnExpr("COUNT(*) FILTER (WHERE status = ?) AS published", pub).
+		ColumnExpr("COUNT(*) FILTER (WHERE status <> ?) AS drafts", pub).
+		TableExpr("posts").
+		Where("tenant_id = ?", tid).
+		Where("brand_voice_id IS NOT NULL").
+		GroupExpr("brand_voice_id").
+		Scan(ctx, &vrows); err != nil {
+		return err
+	}
+	vmap := make(map[string]models.BrandUsage, len(vrows))
+	for _, row := range vrows {
+		vmap[row.Key] = models.BrandUsage{Drafts: row.Drafts, Published: row.Published}
+	}
+	for i := range voices {
+		voices[i].Usage = vmap[voices[i].ID]
+	}
+
+	var arows []usageRow
+	if err := r.db.NewSelect().
+		ColumnExpr("COALESCE(p.brand_audience_id, c.brand_audience_id) AS key").
+		ColumnExpr("COUNT(*) FILTER (WHERE p.status = ?) AS published", pub).
+		ColumnExpr("COUNT(*) FILTER (WHERE p.status <> ?) AS drafts", pub).
+		TableExpr("posts AS p").
+		Join("JOIN campaigns AS c ON c.id = p.campaign_id").
+		Where("p.tenant_id = ?", tid).
+		Where("COALESCE(p.brand_audience_id, c.brand_audience_id) IS NOT NULL").
+		GroupExpr("COALESCE(p.brand_audience_id, c.brand_audience_id)").
+		Scan(ctx, &arows); err != nil {
+		return err
+	}
+	amap := make(map[string]models.BrandUsage, len(arows))
+	for _, row := range arows {
+		amap[row.Key] = models.BrandUsage{Drafts: row.Drafts, Published: row.Published}
+	}
+	for i := range audiences {
+		audiences[i].Usage = amap[audiences[i].ID]
+	}
+	return nil
 }
 
 // ── Voices ──────────────────────────────────────────────────────────────────

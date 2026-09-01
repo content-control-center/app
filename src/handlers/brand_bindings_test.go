@@ -140,6 +140,24 @@ var _ = Describe("Brand bindings (CON-245)", Ordered, func() {
 			Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
 			Expect(got.BrandVoiceID).To(Equal(strptr("v-1")))
 			Expect(got.BrandAudienceID).To(Equal(strptr("a-1")))
+
+			// CON-245: usage is now computable (unblocks CON-228 FR7). The draft
+			// post now counts against voice v-1 and audience a-1.
+			brand, err := brandRepo.GetAll(tenantCtx())
+			Expect(err).NotTo(HaveOccurred())
+			var vu, au models.BrandUsage
+			for _, v := range brand.Voices {
+				if v.ID == "v-1" {
+					vu = v.Usage
+				}
+			}
+			for _, a := range brand.Audiences {
+				if a.ID == "a-1" {
+					au = a.Usage
+				}
+			}
+			Expect(vu).To(Equal(models.BrandUsage{Drafts: 1, Published: 0}))
+			Expect(au).To(Equal(models.BrandUsage{Drafts: 1, Published: 0}))
 		})
 
 		It("clears the refs when set to null", func() {
