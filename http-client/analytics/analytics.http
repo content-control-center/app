@@ -332,3 +332,48 @@ Accept: application/json
 # Invalid metric → 400 invalid_param.
 GET {{baseUrl}}/api/analytics/learnings?metric=nonsense
 Accept: application/json
+
+###
+# ── Per-post statistics — GET /api/analytics/posts/:post_id (CON-250) ──────────
+# The single-post drill-down: the post header, six metric cards (reach,
+# impressions, interactions, engagement_rate, saves, clicks) — each with an
+# age-adjusted against_typical multiplier + a per-metric usual-range band
+# (above/typical/below from p25/p50/p75-at-age) — the per-metric running-total
+# series since publishing, and a deterministic narrative wired to the CON-239
+# lifespan (t50 half-life + t95 "still counting"). No window params: the series
+# spans [published_at, now]. Distinct from GET /api/posts/:id/analytics (CON-93).
+#
+# States:
+#   - ready              → data.overview.state = "ready", six cards + series
+#   - platform silent    → data.overview.state = "awaiting_platform" (header only,
+#                          empty cards/series) — the post is out but the refresh
+#                          hasn't recorded a row yet ("nothing back yet")
+#   - thin baseline      → per-card baseline:"insufficient_history" (value only)
+#   - analytics disabled → 200 { available:false, reason:"not_configured" }
+#
+# Set {{postId}} to a Zernio-published post id.
+###
+
+### Per-post statistics — ready post  [protected]
+# → 200 { available:true, data: {
+#     updated_at, still_counting,
+#     post:    { post_id, publisher_post_id, title, media_format, platform,
+#                account{ id, username, display_name, avatar_url },
+#                published_at, age_hours, campaign{ id, name }, open_url },
+#     overview:{ state:"ready", window_label:"first 4 hours",
+#                cards:[ { metric, value, against_typical, delta_pct, band,
+#                          baseline } ],
+#                narrative:[ { id, severity, text } ] },
+#     series:  { reach:[ { age_hours, value } ], impressions:[...], ... } } }
+GET {{baseUrl}}/api/analytics/posts/{{postId}}
+Accept: application/json
+
+### Per-post statistics — post not published via a publisher → 409  [protected]
+# Run createDraftForAnalytics (above) first.
+# → 409 { "code": "not_published_via_publisher", "error": "..." }
+GET {{baseUrl}}/api/analytics/posts/{{draftAnalyticsId}}
+Accept: application/json
+
+### Per-post statistics — unknown / cross-tenant post → 404  [protected]
+GET {{baseUrl}}/api/analytics/posts/nonexistent
+Accept: application/json

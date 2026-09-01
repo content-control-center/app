@@ -95,8 +95,16 @@ type PostAnalyticsRepository interface {
 	// slim history (post_analytics_snapshots) to the current row for published_at
 	// and platform, and takes the max metric within each age-day (both monotonic).
 	// Tenant-scoped. Bounded per-tenant volume — the seam where a continuous
-	// aggregate can replace the raw scan later.
+	// aggregate can replace the raw scan later. CON-250 widened the projection to
+	// impressions/saves/clicks so the same samples feed the per-post p25/p50/p75
+	// "usual range" band across all six card metrics (performers reads only
+	// reach/interactions and ignores the rest).
 	ReachByAgeSamples(ctx context.Context) ([]ReachAgeSample, error)
+	// SnapshotsByPostID returns one post's full deduped trend history (all metric
+	// columns + occurred_at), ascending. The per-post running-total series
+	// (CON-250) is built from these change points carried forward. Tenant-scoped
+	// (the snapshot model's hook scopes to the ctx tenant); bounded to one post.
+	SnapshotsByPostID(ctx context.Context, postID string) ([]models.PostAnalyticsSnapshot, error)
 	// LifespanSamples returns per-(post, age-hour) reach observations for the
 	// CON-239 post-lifespan curve: the slim history joined to the current row for
 	// published_at, max reach per age-hour (hour resolution captures t50 ≈ 19h;
@@ -108,13 +116,17 @@ type PostAnalyticsRepository interface {
 }
 
 // ReachAgeSample is one historical (platform, post, age-day) observation for the
-// CON-238 accrual-curve baseline.
+// CON-238 accrual-curve baseline. Reach/Interactions drive the CON-238
+// multiplier; Impressions/Saves/Clicks were added for CON-250's per-metric band.
 type ReachAgeSample struct {
 	Platform     string `bun:"platform"`
 	PostID       string `bun:"post_id"`
 	AgeDay       int    `bun:"age_day"`
 	Reach        int    `bun:"reach"`
 	Interactions int    `bun:"interactions"`
+	Impressions  int    `bun:"impressions"`
+	Saves        int    `bun:"saves"`
+	Clicks       int    `bun:"clicks"`
 }
 
 // LifespanSample is one (post, age-hour) reach observation for the CON-239
@@ -164,6 +176,9 @@ func (r *postAnalyticsRepository) ReachByAgeSamples(ctx context.Context) ([]Reac
 		ColumnExpr(ageExpr+" AS age_day").
 		ColumnExpr("MAX(pas.reach) AS reach").
 		ColumnExpr("MAX(pas.likes + pas.comments + pas.shares) AS interactions").
+		ColumnExpr("MAX(pas.impressions) AS impressions").
+		ColumnExpr("MAX(pas.saves) AS saves").
+		ColumnExpr("MAX(pas.clicks) AS clicks").
 		Where("pac.published_at IS NOT NULL").
 		Where("pas.occurred_at >= pac.published_at").
 		GroupExpr("pac.platform, pas.post_id, "+ageExpr).
@@ -171,6 +186,20 @@ func (r *postAnalyticsRepository) ReachByAgeSamples(ctx context.Context) ([]Reac
 		return nil, err
 	}
 	return out, nil
+}
+
+// SnapshotsByPostID returns one post's deduped trend history, ascending by
+// occurred_at. The TenantScoped hook on the snapshot model restricts to the ctx
+// tenant, so a cross-tenant post_id yields an empty slice.
+func (r *postAnalyticsRepository) SnapshotsByPostID(ctx context.Context, postID string) ([]models.PostAnalyticsSnapshot, error) {
+	var rows []models.PostAnalyticsSnapshot
+	if err := r.db.NewSelect().Model(&rows).
+		Where("pas.post_id = ?", postID).
+		OrderExpr("pas.occurred_at ASC").
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 // LifespanSamples joins the slim history to the current row and reduces to one

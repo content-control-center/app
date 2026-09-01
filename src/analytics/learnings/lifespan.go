@@ -32,6 +32,13 @@ type settledPost struct {
 	byHour []float64 // carry-forward reach at each hour 0..maxAge
 }
 
+// BuildLifespan exposes the lifespan section builder so other analytics
+// surfaces (CON-250's per-post detail) can consume the canonical
+// t50/t75/t95/settled_posts maturity signals without recomputing the heatmap or
+// pattern sections. It returns {InsufficientHistory:true} below the settled-post
+// floor, exactly as the learnings board does.
+func BuildLifespan(points []LifespanPoint) *Lifespan { return buildLifespan(points) }
+
 // buildLifespan normalises each settled post's reach trajectory to its final
 // value and blends them into one share-of-final curve, then reads t50/t75/t95.
 func buildLifespan(points []LifespanPoint) *Lifespan {
