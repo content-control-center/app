@@ -79,6 +79,27 @@ func (r *Resolved) VoiceID() *string {
 	return &id
 }
 
+// ChannelNotesBlock renders the resolved voice's per-channel notes for the given
+// platforms. content_plan generates across several platforms in one prompt, so —
+// unlike the single-platform flows, which pass their one platform to PromptBlock —
+// it needs every relevant note, not just one. Returns "" when there is no voice
+// or none of the platforms has a note.
+func (r *Resolved) ChannelNotesBlock(platformIDs []string) string {
+	if r == nil || r.Voice == nil || len(r.Voice.ChannelNotes) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, id := range platformIDs {
+		if note := r.Voice.ChannelNotes[id]; note != "" {
+			fmt.Fprintf(&b, "- %s: %s\n", id, note)
+		}
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	return "## Per-channel voice notes\n" + b.String()
+}
+
 // PromptBlock renders the resolved material as a markdown block for injection
 // into a generation prompt. platformID selects the voice's per-channel note.
 // Returns "" only when there is genuinely nothing to say (no voice, no audience,

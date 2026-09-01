@@ -128,6 +128,25 @@ func TestPromptBlockRendersVoiceAudienceGuardrails(t *testing.T) {
 	}
 }
 
+func TestChannelNotesBlock(t *testing.T) {
+	r := &Resolved{Voice: &models.BrandVoice{ChannelNotes: models.StringMap{
+		"linkedin": "dial it down", "x-twitter": "punchier",
+	}}}
+	out := r.ChannelNotesBlock([]string{"linkedin", "instagram"})
+	if !strings.Contains(out, "linkedin: dial it down") {
+		t.Fatalf("expected linkedin note, got: %q", out)
+	}
+	if strings.Contains(out, "punchier") {
+		t.Fatalf("x-twitter note should not render — not in the platform list: %q", out)
+	}
+	if got := r.ChannelNotesBlock([]string{"tiktok"}); got != "" {
+		t.Fatalf("no matching platform should yield empty block, got %q", got)
+	}
+	if got := (&Resolved{}).ChannelNotesBlock([]string{"linkedin"}); got != "" {
+		t.Fatalf("no voice should yield empty block, got %q", got)
+	}
+}
+
 func TestVoiceIDNilWhenLegacy(t *testing.T) {
 	// No brand material and nil repo → VoiceID nil (legacy path), so nothing is
 	// stamped on the post.

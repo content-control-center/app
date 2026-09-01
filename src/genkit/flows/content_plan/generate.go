@@ -141,6 +141,17 @@ func generatePosts(
 			logging.AttrComponent, "genkit.content_plan", "error", rerr)
 	}
 	brandVoiceID := resolved.VoiceID()
+	// This batch spans every target platform, so append the voice's per-channel
+	// notes for all of them (PromptBlock's single-platform note can't cover a
+	// multi-platform run).
+	platformIDs := make([]string, len(platforms))
+	for i, p := range platforms {
+		platformIDs[i] = p.ID
+	}
+	brandBlock := resolved.PromptBlock("")
+	if notes := resolved.ChannelNotesBlock(platformIDs); notes != "" {
+		brandBlock += "\n\n" + notes
+	}
 
 	data := contentPlanTemplateData{
 		Name:                    campaign.Name,
@@ -151,7 +162,7 @@ func generatePosts(
 		TargetPersona:           campaign.TargetPersona,
 		KeyMessages:             campaign.KeyMessages,
 		ToneGuidelines:          campaign.ToneGuidelines,
-		BrandBlock:              resolved.PromptBlock(""),
+		BrandBlock:              brandBlock,
 		Language:                campaign.Language,
 		StartDate:               startDate.Format("2006-01-02"),
 		EndDate:                 endDate.Format("2006-01-02"),

@@ -75,7 +75,13 @@ func runCampaignAssistant(
 	// ── Assemble context + load history ──────────────────────────────────────
 	// CON-245: resolve the campaign's brand voice/audience/guardrails into the
 	// context block (falls back to the legacy tone prose). Fails open.
-	brandResolved, _ := brandresolve.Resolve(ctx, repos.Brands, campaign, nil)
+	brandResolved, brerr := brandresolve.Resolve(ctx, repos.Brands, campaign, nil)
+	if brerr != nil {
+		// Fail open (resolved still carries the legacy prose), but log so a
+		// persistent brand-repo failure is observable rather than silent.
+		slog.WarnContext(ctx, "brand resolve failed; using legacy tone",
+			logging.AttrComponent, "genkit.campaign_assistant", "error", brerr)
+	}
 	actx, err := assembleContext(campaign, brandResolved.PromptBlock(""), time.Now().UTC(), systemTmpl, contextTmpl)
 	if err != nil {
 		return nil, fmt.Errorf("assemble context: %w", err)

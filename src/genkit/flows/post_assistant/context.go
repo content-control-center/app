@@ -73,6 +73,10 @@ func postFingerprint(post *models.Post) string {
 	var b strings.Builder
 	b.WriteString(post.Content)
 	b.WriteByte('\x1f')
+	// CON-245: the resolved brand block renders the voice's channel note for
+	// post.PlatformID, so a platform change must invalidate the cached context.
+	b.WriteString(post.PlatformID)
+	b.WriteByte('\x1f')
 	b.WriteString(strings.Join(post.UsedAssetIDs, ","))
 	b.WriteByte('\x1f')
 	if post.CampaignTypePhaseID != nil {
