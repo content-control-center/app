@@ -12,7 +12,7 @@ DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM assets WHERE type = 'IMG') THEN
         RAISE EXCEPTION
-            'cannot roll back 20260901000001_image_assets: % IMG asset(s) exist; remove or reclassify them before down-migrating (rollback refuses to delete user / CON-105 image data)',
+            'cannot roll back 20260901000002_image_assets: % IMG asset(s) exist; remove or reclassify them before down-migrating (rollback refuses to delete user / CON-105 image data)',
             (SELECT count(*) FROM assets WHERE type = 'IMG');
     END IF;
 END $$;
