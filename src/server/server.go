@@ -626,6 +626,12 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	campaignsHandler.SetConsistency(gkRuntime.CheckBrief, gkRuntime.CheckPosts)
 	campaignsHandler.SetActivityRecorder(activityWiring.recorder)
 	campaignsHandler.Register(app)
+	// CON-228: Brand materials — tenant-scoped voices/audiences/guardrails/look/
+	// templates behind /api/brand. The ui repo built its /brand screens against a
+	// stub whose shapes this endpoint answers verbatim (CON-227).
+	brandHandler := handlers.NewBrandHandler(repository.NewBrandRepository(db), store, auth)
+	brandHandler.SetActivityRecorder(activityWiring.recorder)
+	brandHandler.Register(app)
 	handlers.NewPlatformsHandler(platformRepo, pubs, autoPublishAllowlistRepo, auth).Register(app)
 	handlers.NewTagsHandler(tagRepo, auth).Register(app)
 	postsHandler := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, platformRepo, postAttachmentRepo, auth, gkRuntime.RunPostAssistant, gkRuntime.IsAnthropicAvailable)
