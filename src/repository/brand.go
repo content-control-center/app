@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -154,9 +155,14 @@ func (r *brandRepository) DeleteVoice(ctx context.Context, id string) (bool, err
 
 // promoteEarliestVoice hands the default flag to the earliest remaining voice.
 // FR4: a workspace with voices and no default is a state the UI cannot repair.
+//
+// The survivor is selected FOR UPDATE so a concurrent delete of that same row
+// cannot slip between the select and the update and leave the library with no
+// default; the row-count check turns any such surprise into a rolled-back
+// (fail-closed) delete rather than a silently broken invariant.
 func promoteEarliestVoice(ctx context.Context, tx bun.Tx) error {
 	survivor := new(models.BrandVoice)
-	err := tx.NewSelect().Model(survivor).OrderExpr("created_at ASC").Limit(1).Scan(ctx)
+	err := tx.NewSelect().Model(survivor).OrderExpr("created_at ASC").Limit(1).For("UPDATE").Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil // last voice deleted; nothing to promote
 	}
@@ -165,8 +171,14 @@ func promoteEarliestVoice(ctx context.Context, tx bun.Tx) error {
 	}
 	survivor.IsDefault = true
 	survivor.UpdatedAt = time.Now().UTC()
-	_, err = tx.NewUpdate().Model(survivor).Column("is_default", "updated_at").WherePK().Exec(ctx)
-	return err
+	res, err := tx.NewUpdate().Model(survivor).Column("is_default", "updated_at").WherePK().Exec(ctx)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return fmt.Errorf("promote voice: expected 1 row updated, got %d", n)
+	}
+	return nil
 }
 
 // ── Audiences ───────────────────────────────────────────────────────────────
@@ -213,23 +225,24 @@ func (r *brandRepository) GetGuardrails(ctx context.Context) (*models.BrandGuard
 	return g, nil
 }
 
+// UpsertGuardrails writes the tenant's one guardrails row. An atomic
+// tenant-keyed upsert, not select-then-insert: FOR UPDATE cannot lock an absent
+// row, so two concurrent first-writes would both insert and one would hit the
+// unique(tenant_id) violation. ON CONFLICT collapses that to one statement.
+// id / created_at / tenant_id stay out of the SET so an existing row keeps them;
+// FR8's "unchanged save does not restamp" is enforced upstream in the handler,
+// which only reaches here when content actually differs.
 func (r *brandRepository) UpsertGuardrails(ctx context.Context, g *models.BrandGuardrails) error {
-	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		existing := new(models.BrandGuardrails)
-		err := tx.NewSelect().Model(existing).For("UPDATE").Limit(1).Scan(ctx)
-		if errors.Is(err, sql.ErrNoRows) {
-			_, ierr := tx.NewInsert().Model(g).Exec(ctx)
-			return ierr
-		}
-		if err != nil {
-			return err
-		}
-		g.ID = existing.ID
-		g.TenantID = existing.TenantID
-		g.CreatedAt = existing.CreatedAt
-		_, uerr := tx.NewUpdate().Model(g).WherePK().Exec(ctx)
-		return uerr
-	})
+	_, err := r.db.NewInsert().Model(g).
+		On("CONFLICT (tenant_id) DO UPDATE").
+		Set("facts = EXCLUDED.facts").
+		Set("may_claim = EXCLUDED.may_claim").
+		Set("never_claim = EXCLUDED.never_claim").
+		Set("banned_words = EXCLUDED.banned_words").
+		Set("disclaimer = EXCLUDED.disclaimer").
+		Set("updated_at = EXCLUDED.updated_at").
+		Exec(ctx)
+	return err
 }
 
 func (r *brandRepository) DeleteGuardrails(ctx context.Context) (bool, error) {
@@ -250,23 +263,18 @@ func (r *brandRepository) GetLook(ctx context.Context) (*models.BrandLook, error
 	return l, nil
 }
 
+// UpsertLook is UpsertGuardrails for the look singleton — same atomic ON
+// CONFLICT rationale.
 func (r *brandRepository) UpsertLook(ctx context.Context, l *models.BrandLook) error {
-	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		existing := new(models.BrandLook)
-		err := tx.NewSelect().Model(existing).For("UPDATE").Limit(1).Scan(ctx)
-		if errors.Is(err, sql.ErrNoRows) {
-			_, ierr := tx.NewInsert().Model(l).Exec(ctx)
-			return ierr
-		}
-		if err != nil {
-			return err
-		}
-		l.ID = existing.ID
-		l.TenantID = existing.TenantID
-		l.CreatedAt = existing.CreatedAt
-		_, uerr := tx.NewUpdate().Model(l).WherePK().Exec(ctx)
-		return uerr
-	})
+	_, err := r.db.NewInsert().Model(l).
+		On("CONFLICT (tenant_id) DO UPDATE").
+		Set("logos = EXCLUDED.logos").
+		Set("palette = EXCLUDED.palette").
+		Set("typefaces = EXCLUDED.typefaces").
+		Set("reference_images = EXCLUDED.reference_images").
+		Set("updated_at = EXCLUDED.updated_at").
+		Exec(ctx)
+	return err
 }
 
 func (r *brandRepository) DeleteLook(ctx context.Context) (bool, error) {
@@ -307,12 +315,50 @@ func (r *brandRepository) UpdateTemplate(ctx context.Context, t *models.BrandTem
 }
 
 func (r *brandRepository) DeleteTemplate(ctx context.Context, id string) (bool, error) {
-	res, err := r.db.NewDelete().Model((*models.BrandTemplate)(nil)).Where("id = ?", id).Exec(ctx)
-	if err != nil {
-		return false, err
+	var deleted bool
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		target := new(models.BrandTemplate)
+		err := tx.NewSelect().Model(target).Where("bt.id = ?", id).For("UPDATE").Scan(ctx)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil // not found → deleted stays false
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := tx.NewDelete().Model((*models.BrandTemplate)(nil)).Where("id = ?", id).Exec(ctx); err != nil {
+			return err
+		}
+		deleted = true
+		if target.IsDefault {
+			return promoteEarliestTemplate(ctx, tx)
+		}
+		return nil
+	})
+	return deleted, err
+}
+
+// promoteEarliestTemplate mirrors promoteEarliestVoice: templates carry the same
+// one-default invariant (FR4), so deleting the default hands the flag on rather
+// than leaving the workspace with a default-less template set.
+func promoteEarliestTemplate(ctx context.Context, tx bun.Tx) error {
+	survivor := new(models.BrandTemplate)
+	err := tx.NewSelect().Model(survivor).OrderExpr("created_at ASC").Limit(1).For("UPDATE").Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil // last template deleted; nothing to promote
 	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
+	if err != nil {
+		return err
+	}
+	survivor.IsDefault = true
+	survivor.UpdatedAt = time.Now().UTC()
+	res, err := tx.NewUpdate().Model(survivor).Column("is_default", "updated_at").WherePK().Exec(ctx)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return fmt.Errorf("promote template: expected 1 row updated, got %d", n)
+	}
+	return nil
 }
 
 // ── shared helpers ──────────────────────────────────────────────────────────

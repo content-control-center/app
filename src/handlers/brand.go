@@ -47,6 +47,13 @@ func (h *BrandHandler) recordActivity(c *fiber.Ctx, typ string, opts ...activity
 		append([]activity.Option{activity.WithSource(activity.SourceAPI)}, opts...)...)
 }
 
+// brandNow is time.Now normalised to the microsecond resolution Postgres stores
+// timestamptz at, so a value we persist and echo on a write matches exactly what
+// a later GET returns — no ns-vs-µs drift between a POST/PUT response and a read.
+func brandNow() time.Time {
+	return time.Now().UTC().Truncate(time.Microsecond)
+}
+
 func (h *BrandHandler) Register(app *fiber.App) {
 	g := app.Group("/api/brand")
 	g.Get("/", h.auth, h.GetAll)
@@ -98,7 +105,7 @@ func (h *BrandHandler) CreateVoice(c *fiber.Ctx) error {
 	// genkit River job) is a CON-228 follow-up; until then it is withdrawn to ""
 	// — the honest rendering of a voice with nothing read back off it yet.
 	v.Summary = ""
-	now := time.Now().UTC()
+	now := brandNow()
 	v.CreatedAt, v.UpdatedAt = now, now
 	if err := h.repo.CreateVoice(c.Context(), &v); err != nil {
 		return err
@@ -119,7 +126,7 @@ func (h *BrandHandler) UpdateVoice(c *fiber.Ctx) error {
 		return err
 	}
 	v.Summary = "" // FR5: withdrawn; regeneration is a follow-up.
-	v.UpdatedAt = time.Now().UTC()
+	v.UpdatedAt = brandNow()
 	if err := h.repo.UpdateVoice(c.Context(), &v); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fiber.NewError(fiber.StatusNotFound, "voice not found")
@@ -160,7 +167,7 @@ func (h *BrandHandler) CreateAudience(c *fiber.Ctx) error {
 	}
 	a.ID = id
 	a.Summary = "" // FR5
-	now := time.Now().UTC()
+	now := brandNow()
 	a.CreatedAt, a.UpdatedAt = now, now
 	if err := h.repo.CreateAudience(c.Context(), &a); err != nil {
 		return err
@@ -181,7 +188,7 @@ func (h *BrandHandler) UpdateAudience(c *fiber.Ctx) error {
 		return err
 	}
 	a.Summary = "" // FR5
-	a.UpdatedAt = time.Now().UTC()
+	a.UpdatedAt = brandNow()
 	if err := h.repo.UpdateAudience(c.Context(), &a); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fiber.NewError(fiber.StatusNotFound, "audience not found")
@@ -225,7 +232,7 @@ func (h *BrandHandler) PutGuardrails(c *fiber.Ctx) error {
 	if existing != nil && guardrailsEqual(existing, &g) {
 		return c.JSON(existing)
 	}
-	now := time.Now().UTC()
+	now := brandNow()
 	g.UpdatedAt = now
 	if existing == nil {
 		id, err := models.NewID()
@@ -234,6 +241,11 @@ func (h *BrandHandler) PutGuardrails(c *fiber.Ctx) error {
 		}
 		g.ID = id
 		g.CreatedAt = now
+	} else {
+		// The repo upsert is ON CONFLICT DO UPDATE and does not touch id /
+		// created_at, so carry the stored ones through for an accurate response.
+		g.ID = existing.ID
+		g.CreatedAt = existing.CreatedAt
 	}
 	if err := h.repo.UpsertGuardrails(c.Context(), &g); err != nil {
 		return err
@@ -269,7 +281,7 @@ func (h *BrandHandler) PutLook(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	now := time.Now().UTC()
+	now := brandNow()
 	l.UpdatedAt = now
 	if existing == nil {
 		id, err := models.NewID()
@@ -278,6 +290,10 @@ func (h *BrandHandler) PutLook(c *fiber.Ctx) error {
 		}
 		l.ID = id
 		l.CreatedAt = now
+	} else {
+		// See PutGuardrails: ON CONFLICT upsert leaves id / created_at untouched.
+		l.ID = existing.ID
+		l.CreatedAt = existing.CreatedAt
 	}
 	if err := h.repo.UpsertLook(c.Context(), &l); err != nil {
 		return err
@@ -313,7 +329,7 @@ func (h *BrandHandler) CreateTemplate(c *fiber.Ctx) error {
 		return err
 	}
 	t.ID = id
-	now := time.Now().UTC()
+	now := brandNow()
 	t.CreatedAt, t.UpdatedAt = now, now
 	if err := h.repo.CreateTemplate(c.Context(), &t); err != nil {
 		return err
@@ -332,7 +348,7 @@ func (h *BrandHandler) UpdateTemplate(c *fiber.Ctx) error {
 	if err := validateTemplate(&t); err != nil {
 		return err
 	}
-	t.UpdatedAt = time.Now().UTC()
+	t.UpdatedAt = brandNow()
 	if err := h.repo.UpdateTemplate(c.Context(), &t); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fiber.NewError(fiber.StatusNotFound, "template not found")
@@ -416,6 +432,7 @@ const (
 	maxBrandBannedWords     = 100
 	maxBrandDisclaimerBytes = 2 << 10 // 2 KB
 	maxBrandLineBytes       = 1 << 10 // 1 KB
+	maxBrandChannelNotes    = 50
 )
 
 var (
@@ -458,12 +475,23 @@ func validateVoice(v *models.BrandVoice) error {
 	if strings.TrimSpace(v.Name) == "" {
 		return unprocessable("name is required")
 	}
+	if len(v.WhenToUse) > maxBrandLineBytes {
+		return unprocessable("whenToUse exceeds %d KB", maxBrandLineBytes>>10)
+	}
 	if len(v.Samples) > maxBrandSamples {
 		return unprocessable("at most %d samples", maxBrandSamples)
 	}
 	for _, s := range v.Samples {
 		if len(s) > maxBrandSampleBytes {
 			return unprocessable("a sample exceeds %d KB", maxBrandSampleBytes>>10)
+		}
+	}
+	if len(v.ChannelNotes) > maxBrandChannelNotes {
+		return unprocessable("at most %d channel notes", maxBrandChannelNotes)
+	}
+	for platform, note := range v.ChannelNotes {
+		if len(note) > maxBrandLineBytes {
+			return unprocessable("channel note for %q exceeds %d KB", platform, maxBrandLineBytes>>10)
 		}
 	}
 	if err := checkEnum("rules.emoji", v.Rules.Emoji, voiceEmoji); err != nil {

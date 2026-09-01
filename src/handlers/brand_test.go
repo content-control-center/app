@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	. "github.com/onsi/ginkgo/v2"
@@ -198,6 +200,30 @@ var _ = Describe("BrandHandler", Ordered, func() {
 			Expect(resp.StatusCode).To(Equal(422))
 		})
 
+		It("caps oversized whenToUse and too many channel notes (422)", func() {
+			big := voiceBody("Big", false)
+			big["whenToUse"] = strings.Repeat("x", (1<<10)+1)
+			Expect(do("POST", "/api/brand/voices", big).StatusCode).To(Equal(422))
+
+			notes := fiber.Map{}
+			for i := 0; i < 51; i++ {
+				notes[fmt.Sprintf("p%d", i)] = "note"
+			}
+			many := voiceBody("Many", false)
+			many["channelNotes"] = notes
+			Expect(do("POST", "/api/brand/voices", many).StatusCode).To(Equal(422))
+		})
+
+		It("returns an updatedAt that matches the stored value (no ns/µs drift)", func() {
+			resp := do("POST", "/api/brand/voices", voiceBody("Precise", false))
+			Expect(resp.StatusCode).To(Equal(201))
+			var created models.BrandVoice
+			Expect(json.NewDecoder(resp.Body).Decode(&created)).To(Succeed())
+			stored := getBrand().Voices
+			Expect(stored).To(HaveLen(1))
+			Expect(created.UpdatedAt).To(BeTemporally("==", stored[0].UpdatedAt))
+		})
+
 		It("replaces a voice and preserves write-once origin (FR6)", func() {
 			body := voiceBody("Corp", false)
 			body["origin"] = fiber.Map{"kind": "website", "url": "quantwealth.example.com/about"}
@@ -340,6 +366,52 @@ var _ = Describe("BrandHandler", Ordered, func() {
 			Expect(json.NewDecoder(resp.Body).Decode(&t)).To(Succeed())
 			Expect(t.IsDefault).To(BeTrue())
 			Expect(t.Ratios).To(HaveLen(1))
+		})
+
+		It("hands the default to a survivor when the default template is deleted", func() {
+			mk := func(name string, def bool) models.BrandTemplate {
+				resp := do("POST", "/api/brand/templates", fiber.Map{
+					"name": name, "role": "foreground", "isDefault": def,
+					"ratios": []fiber.Map{{"ratio": "1:1", "url": "/x.png"}},
+				})
+				Expect(resp.StatusCode).To(Equal(201))
+				var t models.BrandTemplate
+				Expect(json.NewDecoder(resp.Body).Decode(&t)).To(Succeed())
+				return t
+			}
+			a := mk("A", true)
+			b := mk("B", false)
+
+			Expect(do("DELETE", "/api/brand/templates/"+a.ID, nil).StatusCode).To(Equal(204))
+
+			data := getBrand()
+			Expect(data.Templates).To(HaveLen(1))
+			Expect(data.Templates[0].ID).To(Equal(b.ID))
+			Expect(data.Templates[0].IsDefault).To(BeTrue())
+		})
+
+		It("round-trips look via the ON CONFLICT upsert, then deletes to null", func() {
+			resp := do("PUT", "/api/brand/look", fiber.Map{
+				"logos":           []fiber.Map{{"job": "profile", "url": "/logo.png"}},
+				"palette":         []fiber.Map{{"role": "Primary", "hex": "#10243E"}},
+				"typefaces":       []string{"Inter"},
+				"referenceImages": []string{},
+			})
+			Expect(resp.StatusCode).To(Equal(200))
+			Expect(getBrand().Look).NotTo(BeNil())
+
+			// A second PUT exercises the ON CONFLICT DO UPDATE branch.
+			resp = do("PUT", "/api/brand/look", fiber.Map{
+				"logos":           []fiber.Map{{"job": "mark", "url": "/logo2.png"}},
+				"palette":         []fiber.Map{},
+				"typefaces":       []string{},
+				"referenceImages": []string{},
+			})
+			Expect(resp.StatusCode).To(Equal(200))
+			Expect(getBrand().Look.Logos).To(HaveLen(1))
+
+			Expect(do("DELETE", "/api/brand/look", nil).StatusCode).To(Equal(204))
+			Expect(getBrand().Look).To(BeNil())
 		})
 	})
 })
