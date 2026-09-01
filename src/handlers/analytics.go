@@ -93,6 +93,7 @@ func (h *AnalyticsHandler) Register(app *fiber.App) {
 	g.Get("/performers", h.auth, h.Performers)
 	g.Get("/learnings", h.auth, h.Learnings)
 	g.Get("/posts", h.auth, h.ListPosts)
+	g.Get("/posts/:post_id", h.auth, h.PostDetail)
 	g.Get("/best-times", h.auth, h.BestTimes)
 	g.Get("/content-decay", h.auth, h.ContentDecay)
 	g.Get("/posting-frequency", h.auth, h.PostingFrequency)
