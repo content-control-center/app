@@ -54,7 +54,10 @@ type PostsHandler struct {
 	messageRepo    repository.PostAssistantMessageRepository
 	platformRepo   repository.PlatformRepository
 	attachmentRepo repository.PostAttachmentRepository
-	auth           fiber.Handler
+	// brandRepo validates a post's brand_voice_id/brand_audience_id belong to
+	// the tenant (CON-245). Optional (SetBrandRepo); nil skips validation.
+	brandRepo repository.BrandRepository
+	auth      fiber.Handler
 	assistant      func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error)
 	// assessQuality runs the Post quality assessment agent (CON-85). nil
 	// makes the /assess endpoint return 503. Wired via SetQualityAssessor.
@@ -207,6 +210,12 @@ func (h *PostsHandler) SetRestoreService(s *restore.Service) {
 // back to a plain status update.
 func (h *PostsHandler) SetScheduleService(s *schedule.Service) {
 	h.scheduleSvc = s
+}
+
+// SetBrandRepo wires the CON-245 brand repository so a post's brand refs can be
+// tenant-validated. Optional; nil skips validation.
+func (h *PostsHandler) SetBrandRepo(r repository.BrandRepository) {
+	h.brandRepo = r
 }
 
 // SetActivityRecorder wires the CON-125 activity recorder. nil (analytics
@@ -699,6 +708,41 @@ func NewPostsHandler(
 	}
 }
 
+// postBrandRequest is the body of PUT /api/posts/:id/brand — a targeted set of
+// just the post's voice + audience (CON-245), so the editor's picker need not
+// round-trip the whole resource.
+type postBrandRequest struct {
+	BrandVoiceID    *string `json:"brand_voice_id"`
+	BrandAudienceID *string `json:"brand_audience_id"`
+}
+
+// SetBrand sets a post's own brand voice + audience. Both are tenant-checked and
+// nullable (null clears the ref). It changes only the two refs — no status
+// machine, no publish gate — so it is a plain scoped update.
+func (h *PostsHandler) SetBrand(c *fiber.Ctx) error {
+	var req postBrandRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	post, err := h.repo.GetByID(c.Context(), c.Params("id"))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "post not found")
+		}
+		return err
+	}
+	if err := validateBrandRefs(c.Context(), h.brandRepo, req.BrandVoiceID, req.BrandAudienceID); err != nil {
+		return err
+	}
+	post.BrandVoiceID = req.BrandVoiceID
+	post.BrandAudienceID = req.BrandAudienceID
+	post.UpdatedAt = time.Now().UTC()
+	if err := h.repo.Update(c.Context(), post); err != nil {
+		return err
+	}
+	return c.JSON(post)
+}
+
 func (h *PostsHandler) Register(app *fiber.App) {
 	g := app.Group("/api/posts")
 	g.Get("/", h.auth, h.List)
@@ -708,6 +752,8 @@ func (h *PostsHandler) Register(app *fiber.App) {
 	g.Post("/convert-to-manual", h.auth, h.ConvertToManual)
 	g.Get("/:id", h.auth, h.Get)
 	g.Put("/:id", h.auth, h.Update)
+	// CON-245: targeted set of a post's own brand voice + audience.
+	g.Put("/:id/brand", h.auth, h.SetBrand)
 	g.Delete("/:id", h.auth, h.Delete)
 	g.Post("/:id/assistant", h.auth, h.Assistant)
 	g.Post("/:id/assess", h.auth, h.Assess)
@@ -747,6 +793,8 @@ type postRequest struct {
 	TargetAudienceNotes string             `json:"target_audience_notes"`
 	UsedAssetIDs        models.StringSlice `json:"used_asset_ids"`
 	CampaignTypePhaseID *string            `json:"campaign_type_phase_id"`
+	BrandVoiceID        *string            `json:"brand_voice_id"`
+	BrandAudienceID     *string            `json:"brand_audience_id"`
 }
 
 func (r *postRequest) toStatus() models.PostStatus {
@@ -782,6 +830,8 @@ func (r *postRequest) apply(post *models.Post, status models.PostStatus, ctaType
 	post.CTAUrl = r.CTAUrl
 	post.CampaignTypePhaseID = r.CampaignTypePhaseID
 	post.TargetAudienceNotes = r.TargetAudienceNotes
+	post.BrandVoiceID = r.BrandVoiceID
+	post.BrandAudienceID = r.BrandAudienceID
 	post.UsedAssetIDs = nullSlice(r.UsedAssetIDs)
 	post.UpdatedAt = time.Now().UTC()
 }
@@ -1073,6 +1123,10 @@ func (h *PostsHandler) Update(c *fiber.Ctx) error {
 	ctaType := req.toCTAType()
 	if !validCTATypes[ctaType] {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid cta_type")
+	}
+
+	if err := validateBrandRefs(c.Context(), h.brandRepo, req.BrandVoiceID, req.BrandAudienceID); err != nil {
+		return err
 	}
 
 	post, err := h.repo.GetByID(c.Context(), c.Params("id"))

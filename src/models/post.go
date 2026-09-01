@@ -122,6 +122,12 @@ type Post struct {
 	CTAType             PostCTAType `bun:"cta_type,notnull"                             json:"cta_type"`
 	CTAUrl              string      `bun:"cta_url,notnull"                              json:"cta_url"`
 	TargetAudienceNotes string      `bun:"target_audience_notes,notnull"                json:"target_audience_notes"`
+	// Brand bindings (CON-245): this post's own voice/audience. Nullable —
+	// resolution falls back to the campaign's, then the workspace default /
+	// legacy prose. content_plan/draft_post stamp the voice; both are overridable
+	// via PUT /api/posts/:id or the targeted /:id/brand. FK ON DELETE SET NULL.
+	BrandVoiceID        *string     `bun:"brand_voice_id"                               json:"brand_voice_id"`
+	BrandAudienceID     *string     `bun:"brand_audience_id"                            json:"brand_audience_id"`
 	UsedAssetIDs        StringSlice `bun:"used_asset_ids,notnull,type:jsonb"           json:"used_asset_ids"`
 	CampaignTypePhaseID *string     `bun:"campaign_type_phase_id"                       json:"campaign_type_phase_id"`
 	CreatedBy           string      `bun:"created_by,notnull"                           json:"created_by"`

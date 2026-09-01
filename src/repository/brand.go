@@ -23,10 +23,12 @@ type BrandRepository interface {
 	// (empty, not null); singletons are nil when unset.
 	GetAll(ctx context.Context) (*models.BrandData, error)
 
+	GetVoice(ctx context.Context, id string) (*models.BrandVoice, error) // nil when not in tenant
 	CreateVoice(ctx context.Context, v *models.BrandVoice) error
 	UpdateVoice(ctx context.Context, v *models.BrandVoice) error // sql.ErrNoRows when unknown
 	DeleteVoice(ctx context.Context, id string) (bool, error)
 
+	GetAudience(ctx context.Context, id string) (*models.BrandAudience, error) // nil when not in tenant
 	CreateAudience(ctx context.Context, a *models.BrandAudience) error
 	UpdateAudience(ctx context.Context, a *models.BrandAudience) error // sql.ErrNoRows when unknown
 	DeleteAudience(ctx context.Context, id string) (bool, error)
@@ -97,6 +99,20 @@ func (r *brandRepository) GetAll(ctx context.Context) (*models.BrandData, error)
 }
 
 // ── Voices ──────────────────────────────────────────────────────────────────
+
+// GetVoice returns the voice by id within the caller's tenant, or nil when
+// absent (unknown id, or a foreign-tenant id the scoping hook filters out).
+func (r *brandRepository) GetVoice(ctx context.Context, id string) (*models.BrandVoice, error) {
+	v := new(models.BrandVoice)
+	err := r.db.NewSelect().Model(v).Where("bv.id = ?", id).Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return v, nil
+}
 
 func (r *brandRepository) CreateVoice(ctx context.Context, v *models.BrandVoice) error {
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -182,6 +198,20 @@ func promoteEarliestVoice(ctx context.Context, tx bun.Tx) error {
 }
 
 // ── Audiences ───────────────────────────────────────────────────────────────
+
+// GetAudience returns the audience by id within the caller's tenant, or nil
+// when absent. See GetVoice.
+func (r *brandRepository) GetAudience(ctx context.Context, id string) (*models.BrandAudience, error) {
+	a := new(models.BrandAudience)
+	err := r.db.NewSelect().Model(a).Where("ba.id = ?", id).Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return a, nil
+}
 
 func (r *brandRepository) CreateAudience(ctx context.Context, a *models.BrandAudience) error {
 	_, err := r.db.NewInsert().Model(a).Exec(ctx)

@@ -26,10 +26,15 @@ type Campaign struct {
 	Name string `bun:"name,notnull"                                 json:"name"`
 
 	// meta
-	Description        string            `bun:"description,notnull"                          json:"description"`
-	TargetPersona      string            `bun:"target_persona,notnull"                       json:"target_persona"`
-	KeyMessages        string            `bun:"key_messages,notnull"                         json:"key_messages"`
-	ToneGuidelines     string            `bun:"tone_guidelines,notnull"                      json:"tone_guidelines"`
+	Description    string `bun:"description,notnull"                          json:"description"`
+	TargetPersona  string `bun:"target_persona,notnull"                       json:"target_persona"`
+	KeyMessages    string `bun:"key_messages,notnull"                         json:"key_messages"`
+	ToneGuidelines string `bun:"tone_guidelines,notnull"                      json:"tone_guidelines"`
+	// Brand bindings (CON-245): the voice/audience this campaign writes in.
+	// Nullable — resolution falls back to the workspace default voice /
+	// tone_guidelines prose when unset. FK ON DELETE SET NULL.
+	BrandVoiceID       *string           `bun:"brand_voice_id"                               json:"brand_voice_id"`
+	BrandAudienceID    *string           `bun:"brand_audience_id"                            json:"brand_audience_id"`
 	UseAssets          bool              `bun:"use_assets,notnull"                           json:"use_assets"`
 	AssetIDs           StringSlice       `bun:"asset_ids,notnull,type:jsonb"                 json:"asset_ids"`
 	TargetPlatforms    CampaignPlatforms `bun:"target_platforms,notnull,type:jsonb"          json:"target_platforms"`
