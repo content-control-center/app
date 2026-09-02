@@ -34,6 +34,7 @@ import (
 	"github.com/ogen-app/ogen/src/jobs/queues"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/notes"
+	"github.com/ogen-app/ogen/src/notify"
 	"github.com/ogen-app/ogen/src/pdfclient"
 	"github.com/ogen-app/ogen/src/post_actions/clone"
 	"github.com/ogen-app/ogen/src/post_actions/restore"
@@ -161,6 +162,16 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// fans events out to authenticated clients.
 	hub := eventhub.New(eventhub.Config{})
 	handlers.NewEventsHandler(hub, sessionRepo, auth, 0).Register(app)
+
+	// CON-242: notification center. A persistent per-user inbox (REST + durable
+	// SSE), fed by the notify service that producers call. Distinct from the
+	// ephemeral events bus above (which loses everything on disconnect) and the
+	// email channel below. The notifier is threaded into the job Deps so
+	// background producers (e.g. the connection-expiry sweep) can emit; the repo
+	// also backs the cleanup_notifications retention sweep.
+	notificationRepo := repository.NewNotificationRepository(db)
+	notifier := notify.New(notificationRepo, hub)
+	handlers.NewNotificationsHandler(notificationRepo, hub, sessionRepo, auth, 0).Register(app)
 
 	handlers.NewHealthHandler(db, secretStore).Register(app)
 	usersHandler := handlers.NewUsersHandler(db, userRepo, accountRepo, settingRepo, auth)
@@ -397,6 +408,10 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		Users:          userRepo,
 		AppBaseURL:     cfg.AppBaseURL,
 		ExpiryLeadDays: cfg.ConnectionExpiryLeadDays,
+		// CON-242: notification center — producer service + cleanup sweep deps.
+		Notifier:              notifier,
+		NotificationRepo:      notificationRepo,
+		NotificationRetention: time.Duration(cfg.NotificationsRetentionDays) * 24 * time.Hour,
 	})
 
 	if err := jobs.MigrateRiver(ctx, db.DB); err != nil {
@@ -427,6 +442,8 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 			// unconfigured.
 			HealthCheckEvery:        cfg.ZernioHealthCheckInterval,
 			IncludeConnectionExpiry: true,
+			// CON-242: notification retention/expiry sweep.
+			NotificationCleanupEvery: cfg.NotificationsCleanupEvery,
 		}.PeriodicJobs(),
 	})
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/notify"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
 )
@@ -79,6 +80,14 @@ type Deps struct {
 	Users          repository.UserRepository
 	AppBaseURL     string
 	ExpiryLeadDays int
+
+	// CON-242: notification center. Notifier lets producers (e.g. the
+	// connection-expiry sweep) drop a persistent per-user notification;
+	// NotificationRepo + NotificationRetention back the cleanup_notifications
+	// sweep. A nil Notifier is a no-op; a nil repo makes cleanup a no-op.
+	Notifier              *notify.Service
+	NotificationRepo      repository.NotificationRepository
+	NotificationRetention time.Duration
 }
 
 // registrars is appended to by each worker file's init(). A job is registered
@@ -132,6 +141,9 @@ type PeriodicConfig struct {
 	// CON-219: connection-health / expiry-notification sweep.
 	HealthCheckEvery        time.Duration
 	IncludeConnectionExpiry bool // only when the Zernio integration is configured
+	// CON-242: notification retention/expiry sweep. Gated on a positive interval
+	// so a zero value (e.g. in tests) can't create an invalid periodic job.
+	NotificationCleanupEvery time.Duration
 }
 
 // PeriodicJobs builds the River periodic-job set. Every job runs once on
@@ -183,6 +195,13 @@ func (cfg PeriodicConfig) PeriodicJobs() []*river.PeriodicJob {
 	if cfg.IncludeConnectionExpiry && cfg.HealthCheckEvery > 0 {
 		jobs = append(jobs, river.NewPeriodicJob(river.PeriodicInterval(cfg.HealthCheckEvery), func() (river.JobArgs, *river.InsertOpts) {
 			return DetectExpiringConnectionsTask{}, nil
+		}, runOnStart))
+	}
+	// CON-242: notification retention/expiry sweep. Positive-interval guard like
+	// the EmailCleanup/ConnectSessionCleanup sweeps above.
+	if cfg.NotificationCleanupEvery > 0 {
+		jobs = append(jobs, river.NewPeriodicJob(river.PeriodicInterval(cfg.NotificationCleanupEvery), func() (river.JobArgs, *river.InsertOpts) {
+			return CleanupNotificationsTask{}, nil
 		}, runOnStart))
 	}
 	return jobs
