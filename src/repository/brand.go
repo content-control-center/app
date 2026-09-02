@@ -23,10 +23,12 @@ type BrandRepository interface {
 	// (empty, not null); singletons are nil when unset.
 	GetAll(ctx context.Context) (*models.BrandData, error)
 
+	GetVoice(ctx context.Context, id string) (*models.BrandVoice, error) // nil when not in tenant
 	CreateVoice(ctx context.Context, v *models.BrandVoice) error
 	UpdateVoice(ctx context.Context, v *models.BrandVoice) error // sql.ErrNoRows when unknown
 	DeleteVoice(ctx context.Context, id string) (bool, error)
 
+	GetAudience(ctx context.Context, id string) (*models.BrandAudience, error) // nil when not in tenant
 	CreateAudience(ctx context.Context, a *models.BrandAudience) error
 	UpdateAudience(ctx context.Context, a *models.BrandAudience) error // sql.ErrNoRows when unknown
 	DeleteAudience(ctx context.Context, id string) (bool, error)
@@ -87,6 +89,10 @@ func (r *brandRepository) GetAll(ctx context.Context) (*models.BrandData, error)
 	if templates == nil {
 		templates = []models.BrandTemplate{}
 	}
+	// CON-245: fill the derived draft/published usage counts from the post refs.
+	if err := r.fillUsage(ctx, voices, audiences); err != nil {
+		return nil, err
+	}
 	return &models.BrandData{
 		Voices:     voices,
 		Audiences:  audiences,
@@ -96,7 +102,82 @@ func (r *brandRepository) GetAll(ctx context.Context) (*models.BrandData, error)
 	}, nil
 }
 
+// fillUsage sets each voice's/audience's derived usage {drafts, published}
+// (CON-245, unblocks CON-228 FR7): a voice counts the posts stamped with it; an
+// audience counts posts whose effective audience — the post's own, else its
+// campaign's — is that audience. "published" is the terminal published status;
+// everything else counts as a still-ours draft. A missing tenant leaves the
+// zero counts in place rather than counting across tenants.
+func (r *brandRepository) fillUsage(ctx context.Context, voices []models.BrandVoice, audiences []models.BrandAudience) error {
+	tid, ok := tenantctx.From(ctx)
+	if !ok {
+		return nil
+	}
+	type usageRow struct {
+		Key       string `bun:"key"`
+		Published int    `bun:"published"`
+		Drafts    int    `bun:"drafts"`
+	}
+	pub := string(models.PostStatusPublished)
+
+	var vrows []usageRow
+	if err := r.db.NewSelect().
+		ColumnExpr("brand_voice_id AS key").
+		ColumnExpr("COUNT(*) FILTER (WHERE status = ?) AS published", pub).
+		ColumnExpr("COUNT(*) FILTER (WHERE status <> ?) AS drafts", pub).
+		TableExpr("posts").
+		Where("tenant_id = ?", tid).
+		Where("brand_voice_id IS NOT NULL").
+		GroupExpr("brand_voice_id").
+		Scan(ctx, &vrows); err != nil {
+		return err
+	}
+	vmap := make(map[string]models.BrandUsage, len(vrows))
+	for _, row := range vrows {
+		vmap[row.Key] = models.BrandUsage{Drafts: row.Drafts, Published: row.Published}
+	}
+	for i := range voices {
+		voices[i].Usage = vmap[voices[i].ID]
+	}
+
+	var arows []usageRow
+	if err := r.db.NewSelect().
+		ColumnExpr("COALESCE(p.brand_audience_id, c.brand_audience_id) AS key").
+		ColumnExpr("COUNT(*) FILTER (WHERE p.status = ?) AS published", pub).
+		ColumnExpr("COUNT(*) FILTER (WHERE p.status <> ?) AS drafts", pub).
+		TableExpr("posts AS p").
+		Join("JOIN campaigns AS c ON c.id = p.campaign_id").
+		Where("p.tenant_id = ?", tid).
+		Where("COALESCE(p.brand_audience_id, c.brand_audience_id) IS NOT NULL").
+		GroupExpr("COALESCE(p.brand_audience_id, c.brand_audience_id)").
+		Scan(ctx, &arows); err != nil {
+		return err
+	}
+	amap := make(map[string]models.BrandUsage, len(arows))
+	for _, row := range arows {
+		amap[row.Key] = models.BrandUsage{Drafts: row.Drafts, Published: row.Published}
+	}
+	for i := range audiences {
+		audiences[i].Usage = amap[audiences[i].ID]
+	}
+	return nil
+}
+
 // ── Voices ──────────────────────────────────────────────────────────────────
+
+// GetVoice returns the voice by id within the caller's tenant, or nil when
+// absent (unknown id, or a foreign-tenant id the scoping hook filters out).
+func (r *brandRepository) GetVoice(ctx context.Context, id string) (*models.BrandVoice, error) {
+	v := new(models.BrandVoice)
+	err := r.db.NewSelect().Model(v).Where("bv.id = ?", id).Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return v, nil
+}
 
 func (r *brandRepository) CreateVoice(ctx context.Context, v *models.BrandVoice) error {
 	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -182,6 +263,20 @@ func promoteEarliestVoice(ctx context.Context, tx bun.Tx) error {
 }
 
 // ── Audiences ───────────────────────────────────────────────────────────────
+
+// GetAudience returns the audience by id within the caller's tenant, or nil
+// when absent. See GetVoice.
+func (r *brandRepository) GetAudience(ctx context.Context, id string) (*models.BrandAudience, error) {
+	a := new(models.BrandAudience)
+	err := r.db.NewSelect().Model(a).Where("ba.id = ?", id).Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return a, nil
+}
 
 func (r *brandRepository) CreateAudience(ctx context.Context, a *models.BrandAudience) error {
 	_, err := r.db.NewInsert().Model(a).Exec(ctx)

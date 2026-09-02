@@ -101,6 +101,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	campaignTypeRepo := repository.NewCampaignTypeRepository(db)
 	campaignRepo := repository.NewCampaignRepository(db, tagRepo, platformRepo, campaignTypeRepo)
 	postRepo := repository.NewPostRepository(db)
+	brandRepo := repository.NewBrandRepository(db) // CON-228 store; CON-245 ref validation + flow resolution
 	postVersionRepo := repository.NewPostVersionRepository(db)
 	postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 	campaignMessageRepo := repository.NewCampaignAssistantMessageRepository(db)
@@ -564,6 +565,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 			Platforms: platformRepo,
 			Posts:     postRepo,
 			Notes:     postNoteRepo,
+			Brands:    brandRepo, // CON-245
 		},
 		postAssistRepos: post_assistant.PostAssistantRepos{
 			Posts:       postRepo,
@@ -577,6 +579,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 			Allowlist:   autoPublishAllowlistRepo,
 			Attachments: postAttachmentRepo,
 			Notes:       postNoteRepo,
+			Brands:      brandRepo, // CON-245
 		},
 		postQualityRepos: post_quality.PostQualityRepos{
 			Posts:       postRepo,
@@ -598,12 +601,14 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 			Posts:     postRepo,
 			Assets:    pieceRepo,
 			Chunks:    chunksRepo,
+			Brands:    brandRepo, // CON-245
 		},
 		draftPostRepos: draft_post.DraftPostRepos{
 			Campaigns: campaignRepo,
 			Platforms: platformRepo,
 			Posts:     postRepo,
 			Notes:     postNoteRepo,
+			Brands:    brandRepo, // CON-245
 		},
 		campaignOverviewSvc: campaignOverviewSvc,
 		cloneSvc:            cloneSvc,
@@ -625,16 +630,20 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	campaignsHandler.SetGeneratePosts(gkRuntime.GeneratePosts, cfg.GeneratePostsMax)
 	campaignsHandler.SetConsistency(gkRuntime.CheckBrief, gkRuntime.CheckPosts)
 	campaignsHandler.SetActivityRecorder(activityWiring.recorder)
+	// CON-245: validate campaign brand_voice_id/brand_audience_id against the tenant.
+	campaignsHandler.SetBrandRepo(brandRepo)
 	campaignsHandler.Register(app)
 	// CON-228: Brand materials — tenant-scoped voices/audiences/guardrails/look/
 	// templates behind /api/brand. The ui repo built its /brand screens against a
 	// stub whose shapes this endpoint answers verbatim (CON-227).
-	brandHandler := handlers.NewBrandHandler(repository.NewBrandRepository(db), store, auth)
+	brandHandler := handlers.NewBrandHandler(brandRepo, store, auth)
 	brandHandler.SetActivityRecorder(activityWiring.recorder)
 	brandHandler.Register(app)
 	handlers.NewPlatformsHandler(platformRepo, pubs, autoPublishAllowlistRepo, auth).Register(app)
 	handlers.NewTagsHandler(tagRepo, auth).Register(app)
 	postsHandler := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, platformRepo, postAttachmentRepo, auth, gkRuntime.RunPostAssistant, gkRuntime.IsAnthropicAvailable)
+	// CON-245: validate a post's brand_voice_id/brand_audience_id against the tenant.
+	postsHandler.SetBrandRepo(brandRepo)
 	// CON-69 §11: every transition (success/blocked) and validation
 	// outcome lands in the Post Log.
 	postsHandler.SetPostLogRepo(postLogRepo)

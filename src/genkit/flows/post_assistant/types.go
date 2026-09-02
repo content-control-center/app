@@ -105,6 +105,9 @@ type PostAssistantRepos struct {
 	// side notes) to the model as context (CON-188). nil omits the notes
 	// section. Writes go through the shared NoteService, not this repo.
 	Notes repository.PostNoteRepository
+	// Brands resolves the post's brand voice/audience/guardrails into the
+	// editing context (CON-245). nil falls back to the legacy tone prose.
+	Brands repository.BrandRepository
 }
 
 // PostAssistantFlowConfig holds settings for the post assistant flow.

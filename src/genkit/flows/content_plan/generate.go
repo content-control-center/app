@@ -14,6 +14,7 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
+	"github.com/ogen-app/ogen/src/brandresolve"
 	"github.com/ogen-app/ogen/src/campaigngoal"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
@@ -131,6 +132,27 @@ func generatePosts(
 
 	dayCount := int(endDate.Sub(startDate).Hours() / 24)
 
+	// CON-245: resolve the campaign's brand voice/audience/guardrails and inject
+	// them as one block; it supersedes the legacy tone/persona prose (and falls
+	// back to that prose when no brand material is set). Fails open on error.
+	resolved, rerr := brandresolve.Resolve(ctx, repos.Brands, campaign, nil)
+	if rerr != nil {
+		slog.WarnContext(ctx, "brand resolve failed; using legacy tone",
+			logging.AttrComponent, "genkit.content_plan", "error", rerr)
+	}
+	brandVoiceID := resolved.VoiceID()
+	// This batch spans every target platform, so append the voice's per-channel
+	// notes for all of them (PromptBlock's single-platform note can't cover a
+	// multi-platform run).
+	platformIDs := make([]string, len(platforms))
+	for i, p := range platforms {
+		platformIDs[i] = p.ID
+	}
+	brandBlock := resolved.PromptBlock("")
+	if notes := resolved.ChannelNotesBlock(platformIDs); notes != "" {
+		brandBlock += "\n\n" + notes
+	}
+
 	data := contentPlanTemplateData{
 		Name:                    campaign.Name,
 		Description:             campaign.Description,
@@ -140,6 +162,7 @@ func generatePosts(
 		TargetPersona:           campaign.TargetPersona,
 		KeyMessages:             campaign.KeyMessages,
 		ToneGuidelines:          campaign.ToneGuidelines,
+		BrandBlock:              brandBlock,
 		Language:                campaign.Language,
 		StartDate:               startDate.Format("2006-01-02"),
 		EndDate:                 endDate.Format("2006-01-02"),
@@ -200,6 +223,7 @@ func generatePosts(
 	// the CON-114 targeting window when tgt != nil. persistOne snaps each post's
 	// publishing day within these bounds so a targeted run stays inside its window.
 	persistFn := func(ctx context.Context, dp *DraftPost) (string, error) {
+		dp.BrandVoiceID = brandVoiceID // CON-245: stamp the resolved voice on the post
 		return persistOne(ctx, dp, campaign, &startDate, &endDate, repos.Posts, repos.Notes, groundedRefs(dp.AssetRefs, grounded))
 	}
 
@@ -603,6 +627,7 @@ func persistOne(ctx context.Context, dp *DraftPost, campaign *models.Campaign, w
 		UsedAssetIDs:        models.StringSlice(usedAssetIDs),
 		CampaignTypePhaseID: phaseID,
 		ScheduledAt:         scheduledAt,
+		BrandVoiceID:        dp.BrandVoiceID, // CON-245: provenance of the voice it was written in
 		CreatedBy:           campaign.CreatedBy,
 	}
 	if err := postRepo.Create(ctx, row); err != nil {

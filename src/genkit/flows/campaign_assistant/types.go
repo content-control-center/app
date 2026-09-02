@@ -122,6 +122,9 @@ type CampaignAssistantRepos struct {
 	// campaign's ready attached assets and search their embedded chunks.
 	Assets repository.AssetRepository
 	Chunks repository.AssetChunksRepository
+	// Brands resolves the campaign's brand voice/audience/guardrails into the
+	// context block (CON-245). nil falls back to the legacy tone prose.
+	Brands repository.BrandRepository
 }
 
 // CampaignAssistantFlowConfig holds static settings for the flow.

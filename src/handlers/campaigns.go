@@ -40,7 +40,10 @@ var validStatuses = map[models.CampaignStatus]bool{
 type CampaignsHandler struct {
 	repo             repository.CampaignRepository
 	campaignTypeRepo repository.CampaignTypeRepository
-	auth             fiber.Handler
+	// brandRepo validates campaign brand_voice_id/brand_audience_id belong to
+	// the tenant (CON-245). Optional (SetBrandRepo); nil skips validation.
+	brandRepo repository.BrandRepository
+	auth      fiber.Handler
 	generateDraft    func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)
 	// isContentPlanReady reports whether the underlying Anthropic key
 	// is currently configured. Decoupled from generateDraft so we can
@@ -83,6 +86,12 @@ type CampaignsHandler struct {
 	// content_generated, …). nil is a no-op (analytics disabled / fixtures).
 	// Wired via SetActivityRecorder.
 	activity *activity.Recorder
+}
+
+// SetBrandRepo wires the CON-245 brand repository so campaign brand refs can be
+// tenant-validated. Optional; nil skips validation.
+func (h *CampaignsHandler) SetBrandRepo(r repository.BrandRepository) {
+	h.brandRepo = r
 }
 
 // SetActivityRecorder wires the CON-125 activity recorder. nil (analytics
@@ -194,6 +203,8 @@ type campaignRequest struct {
 	TargetPersona      string                   `json:"target_persona"`
 	KeyMessages        string                   `json:"key_messages"`
 	ToneGuidelines     string                   `json:"tone_guidelines"`
+	BrandVoiceID       *string                  `json:"brand_voice_id"`
+	BrandAudienceID    *string                  `json:"brand_audience_id"`
 	UseAssets          bool                     `json:"use_assets"`
 	AssetIDs           models.StringSlice       `json:"asset_ids"`
 	TargetPlatforms    models.CampaignPlatforms `json:"target_platforms"`
@@ -330,6 +341,10 @@ func (h *CampaignsHandler) Create(c *fiber.Ctx) error {
 		return err
 	}
 
+	if err := validateBrandRefs(c.Context(), h.brandRepo, req.BrandVoiceID, req.BrandAudienceID); err != nil {
+		return err
+	}
+
 	campaign := &models.Campaign{
 		ID:                 id,
 		Name:               req.Name,
@@ -337,6 +352,8 @@ func (h *CampaignsHandler) Create(c *fiber.Ctx) error {
 		TargetPersona:      req.TargetPersona,
 		KeyMessages:        req.KeyMessages,
 		ToneGuidelines:     req.ToneGuidelines,
+		BrandVoiceID:       req.BrandVoiceID,
+		BrandAudienceID:    req.BrandAudienceID,
 		UseAssets:          req.UseAssets,
 		AssetIDs:           nullSlice(req.AssetIDs),
 		TargetPlatforms:    nullCampaignPlatforms(req.TargetPlatforms),
@@ -427,6 +444,10 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
 
+	if err := validateBrandRefs(c.Context(), h.brandRepo, req.BrandVoiceID, req.BrandAudienceID); err != nil {
+		return err
+	}
+
 	campaign, err := h.repo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -444,6 +465,8 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 	campaign.TargetPersona = req.TargetPersona
 	campaign.KeyMessages = req.KeyMessages
 	campaign.ToneGuidelines = req.ToneGuidelines
+	campaign.BrandVoiceID = req.BrandVoiceID
+	campaign.BrandAudienceID = req.BrandAudienceID
 	campaign.UseAssets = req.UseAssets
 	campaign.AssetIDs = nullSlice(req.AssetIDs)
 	campaign.TargetPlatforms = nullCampaignPlatforms(req.TargetPlatforms)
