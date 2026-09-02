@@ -1,26 +1,196 @@
-# Ogen Community Edition
+# Ogen
 
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/d5caed68fdc94fb49a1e52ea198d51b7)](https://app.codacy.com/gh/ogen-app/ogen/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 [![Semgrep](https://github.com/ogen-app/ogen/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/ogen-app/ogen/actions/workflows/docker-publish.yml)
 
-> [!WARNING]  
-> Use at your own risk. Ogen Community Edition is the open source community edition of Ogen and it is intended for users who want to self-host their own Ogen Community Edition instance. It is strictly recommended for personal, non-production use. Please review all installation and configuration steps carefully. Self-hosting requires advanced knowledge of server administration, database management, and securing sensitive data. Proceed only if you are comfortable with these responsibilities.
- 
-> [!TIP]
-> For any commercial and enterprise-ready scheduling infrastructure - Ogen Enterprise Edition will be available in Q3 2026 
-
-Ogen Community Edition is a single-tenant content
-operations app that helps a creator plan, draft, and publish social
-content end-to-end:
+Ogen is a multi-tenant content operations platform that helps a creator plan,
+draft, and publish social content end-to-end:
 
 - **Plan** campaigns and individual posts with AI assistance grounded in your own content bank.
-- **Draft** with a Markdown-first editor backed by an LLM assistant that can search assets, rewrite posts, and produce platform-specific variants.
+- **Draft** in a Markdown-first editor backed by an LLM assistant that can search assets, rewrite posts, and produce platform-specific variants.
 - **Publish** automatically to LinkedIn, X, Facebook, Instagram, Threads, and YouTube via the [Zernio](https://zernio.com) broker — durable background jobs handle submission, polling, cancellation, and reconciliation, with a per-post audit log capturing every state change.
 
-The backend is a Go 1.26 monolith (Fiber + Bun + Postgres). The
-React + Vite SPA lives in its own repository,
-[`ogen-app/ui`](https://github.com/ogen-app/ui), and deploys separately
-(CON-98) — this repository is the API only.
+This repository is the **API** — a Go 1.26 monolith (Fiber + Bun + PostgreSQL,
+with an in-process [River](https://riverqueue.com) job queue). The React + Vite
+SPA lives in its own repository,
+[`ogen-app/ui`](https://github.com/ogen-app/ui), and deploys separately.
+
+> [!NOTE]
+> Ogen is open source and self-hostable. Self-hosting is an ops responsibility:
+> you run PostgreSQL, an isolated analytics database, S3-compatible object
+> storage, and the sidecar services below, and you are responsible for securing
+> the envelope-encryption key (KEK) and the API keys held in the encrypted
+> secret store. Read the [infrastructure](#infrastructure--deployment) and
+> [backend development](#backend-development) sections before deploying.
+
+---
+
+## Architecture
+
+The architecture below is described with the [C4 model](https://c4model.com) at
+levels 1 (**System Context**) and 2 (**Containers**). The diagrams are rendered
+inline as Mermaid so they show up on GitHub; the canonical model is authored as
+a [Structurizr](https://docs.structurizr.com) workspace in
+[`docs/architecture/workspace.dsl`](docs/architecture/workspace.dsl) (open it in
+[Structurizr Lite](https://docs.structurizr.com/lite) for the full interactive
+rendering, including the deployment view).
+
+### System context (C4 level 1)
+
+Ogen is a single software system that a creator drives through the web app and
+that an operator administers through Harbor. It depends on a handful of hosted
+services for language models, publishing, scraping, and email.
+
+```mermaid
+C4Context
+    title System Context — Ogen
+
+    Person(creator, "Creator / Operator", "Plans campaigns, drafts posts with AI, schedules publishing")
+    Person(admin, "Platform Operator", "Manages tenants, secrets, and usage")
+
+    System(ogen, "Ogen", "Plans, drafts, and auto-publishes social content grounded in each tenant's content bank")
+
+    System_Ext(anthropic, "Anthropic Claude API", "Planning, assistants, quality scoring")
+    System_Ext(gemini, "Gemini Embedding API", "Vector embeddings for RAG")
+    System_Ext(zernio, "Zernio", "Social publishing broker")
+    System_Ext(social, "Social platforms", "LinkedIn · X · Facebook · Instagram · Threads · YouTube")
+    System_Ext(firecrawl, "Firecrawl", "URL → Markdown scraping")
+    System_Ext(resend, "Resend", "Transactional & marketing email")
+
+    Rel(creator, ogen, "Plans, drafts, schedules", "HTTPS")
+    Rel(admin, ogen, "Administers", "HTTPS / gRPC")
+    Rel(ogen, anthropic, "Generates content", "HTTPS")
+    Rel(ogen, gemini, "Embeds assets", "HTTPS")
+    Rel(ogen, zernio, "Submits & reconciles posts", "HTTPS")
+    Rel(zernio, social, "Publishes to", "HTTPS")
+    Rel(ogen, firecrawl, "Scrapes URLs", "HTTPS")
+    Rel(ogen, resend, "Sends email", "HTTPS")
+
+    UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
+```
+
+### Containers (C4 level 2)
+
+Inside the Ogen boundary, the **API** monolith is the hub: it serves the SPA over
+REST + SSE, owns the control-plane and analytics databases, drains its own
+in-process River worker pool, runs the Genkit AI flows, and exposes an
+internal-only gRPC surface that Harbor uses to manage secrets and tenants. PDF
+and video processing are split out into private-network sidecar services.
+
+```mermaid
+C4Container
+    title Container diagram — Ogen
+
+    Person(creator, "Creator / Operator", "Plans, drafts, schedules")
+    Person(admin, "Platform Operator", "Tenants, secrets, usage")
+
+    System_Boundary(ogen, "Ogen") {
+        Container(spa, "Web App", "React + Vite (ogen-app/ui)", "Planning & Markdown-first drafting UI; separate deploy")
+        Container(api, "API", "Go 1.26 · Fiber · Bun · Genkit · River", "REST + SSE, background workers, AI flows, operator gRPC surface")
+        ContainerDb(pg, "Control-plane DB", "PostgreSQL 17 + pgvector", "Domain data, sessions, encrypted secrets, embeddings, River job tables")
+        ContainerDb(ts, "Analytics DB", "TimescaleDB (PG17)", "Usage/cost, activity, follower snapshots — hypertables + continuous aggregates")
+        ContainerDb(obj, "Object Storage", "S3-compatible (R2 / MinIO)", "Images, PDFs, video, thumbnails, posters")
+        Container(pdf, "pdf-service", "Go + pdfium", "PDF text, page-aware chunks, thumbnail — private network")
+        Container(video, "video-service", "Go + ffmpeg", "Video probe + poster frame — private network")
+        Container(harbor, "Harbor", "Go + Next.js (ogen-app/harbor)", "Ops dashboard: tenants, secrets, usage")
+        Container(riverui, "River UI", "riverui image", "Background-job dashboard")
+    }
+
+    System_Ext(anthropic, "Anthropic Claude API", "LLM")
+    System_Ext(gemini, "Gemini Embedding API", "Embeddings")
+    System_Ext(zernio, "Zernio", "Publishing broker")
+    System_Ext(firecrawl, "Firecrawl", "Scraping")
+    System_Ext(resend, "Resend", "Email")
+
+    Rel(creator, spa, "Uses", "HTTPS")
+    Rel(admin, harbor, "Uses", "HTTPS")
+    Rel(spa, api, "REST + SSE", "HTTPS")
+
+    Rel(api, pg, "Reads/writes; migrates at boot", "SQL / pgx")
+    Rel(api, ts, "Records & reads", "SQL / pgx")
+    Rel(api, obj, "Stores & serves media", "S3")
+    Rel(api, pdf, "Parses PDFs", "gRPC")
+    Rel(api, video, "Probes video", "gRPC")
+
+    Rel(api, anthropic, "Generation / planning / quality", "HTTPS")
+    Rel(api, gemini, "Embeddings", "HTTPS")
+    Rel(api, zernio, "Submit / poll / cancel / reconcile", "HTTPS")
+    Rel(api, firecrawl, "Scrape URL", "HTTPS")
+    Rel(api, resend, "Send email", "HTTPS")
+
+    Rel(harbor, pg, "Reads", "SQL")
+    Rel(harbor, ts, "Reads", "SQL")
+    Rel(harbor, api, "Secret & tenant admin", "gRPC")
+    Rel(riverui, pg, "Reads job tables", "SQL")
+
+    UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
+```
+
+### The API monolith, up close
+
+The API is a layered Go monolith. A single boot sequence
+(`cmd/server/main.go`) loads config, connects and migrates both databases,
+initialises the envelope-encryption cipher + secret store, wires the server, and
+starts the HTTP listener alongside the internal gRPC listener.
+
+```
+cmd/server/        # main entrypoint: config → DB + migrations → secrets → server.New → listen
+
+src/
+  config/          # envconfig-loaded Config struct (single source of runtime knobs)
+  logging/         # slog setup (text local / JSON prod)
+  database/        # bun.DB factories (control-plane + analytics) and migrations
+  models/          # bun-tagged record structs (single source of truth for the schema)
+  repository/      # narrow per-aggregate persistence layer
+  handlers/        # Fiber HTTP handlers (REST + SSE) with swag annotations
+  server/          # server.New: wires repos → handlers → workers → routes; Genkit runtime
+  tenantctx/       # per-request tenant scoping
+  jobs/            # River runtime + metrics
+  jobs/queues/     # River workers (submit/poll/cancel/reconcile, analytics, PDF/URL, email, cleanups)
+  publishers/      # Publisher abstraction; publishers/zernio is the concrete impl
+  platforms/       # per-platform attachment + text validation rules
+  vendors/         # pluggable model/publisher vendor registry + per-kind pricing (metering)
+  usage/           # per-tenant usage metering & spend caps (analytics DB)
+  analytics/       # post-analytics read models (overview / performers / lessons / per-post)
+  activity/        # user-activity taxonomy + recording
+  genkit/          # Genkit AI flows (assistants, content plan, quality, embeddings)
+  brandresolve/    # brand voice/audience/guardrails resolution for the writing flows
+  embedding/       # asset chunking + Gemini embedding + vector search
+  pdfclient/       # gRPC client for pdf-service
+  videoclient/     # gRPC client for video-service
+  firecrawl/       # Firecrawl scrape client (URL assets)
+  email/           # Resend transactional/marketing email
+  storage/         # S3-compatible blob storage
+  secrets/         # envelope-encrypted secret store (per-secret DEK wrapped by KEK)
+  crypto/          # AES-GCM envelope-encryption primitives
+  grpcserver/      # internal operator gRPC surface (SecretsService + TenantAdminService)
+  netguard/        # SSRF / egress guards for outbound fetches
+  eventhub/        # in-process SSE event hub
+  notes/ scheduling/ campaigngoal/ settings/ post_actions/ campaign_actions/  # domain features
+  pgtest/ integration/  # test harness (real Postgres) + //go:build integration suite
+```
+
+**Persistence.** Domain data, sessions, the encrypted `secret` table, vector
+embeddings (`asset_chunks.embedding` as a pgvector `halfvec(3072)`), and River's
+own job tables all live in the **control-plane PostgreSQL 17 + pgvector**
+database. Bun is the ORM; migrations under `src/database/migrations/` run on
+every boot. Because River shares the same pool, background-job state, Post Log
+entries, and domain rows can co-commit in one transaction (used for the
+auto-publish schedule decision). A **separate TimescaleDB** database
+(`ANALYTICS_DSN`) holds the metering and analytics hypertables + continuous
+aggregates, kept isolated so the extension dependency stays quarantined and the
+control plane stays vanilla. Analytics is fail-open: a connect/migrate failure at
+boot disables it rather than taking down the API.
+
+**Background jobs.** [River](https://riverqueue.com) is Postgres-native — no
+external broker — and owns leasing, retry/backoff, periodic scheduling, and
+completed-job retention. Workers process `submit_post_to_zernio`,
+`poll_zernio_status`, `cancel_zernio_job`, `process_pdf`, `process_url`,
+`send_email`, plus periodic `reconcile_scheduled_posts`,
+`refresh_zernio_analytics`, `refresh_zernio_followers`,
+`detect_expiring_connections`, and the `cleanup_*` sweepers. The
+[River UI](https://riverqueue.com/ui) dashboard (a standalone container) reads
+those tables directly.
 
 ---
 
@@ -28,379 +198,292 @@ React + Vite SPA lives in its own repository,
 
 | Area | What's there |
 |------|--------------|
-| **Campaigns & posts** | Campaign types, campaigns, posts, post versions, post assistant (SSE-streamed Claude conversations), per-platform validation. |
-| **Content bank** | Markdown notes and PDF assets with chunking, embeddings (Gemini Embedding 2 via the Genkit `googlegenai` plugin), and similarity search used to ground the assistant. |
-| **Post attachments** | Image uploads (JPEG/PNG/WebP/GIF) and PDF uploads with first-page thumbnail rendering, all backed by S3-compatible object storage (MinIO locally, Cloudflare R2 in deployment). Per-platform constraints (size/format/animated/page-count) surface as soft validation warnings. |
-| **Zernio auto-publish** | `Publisher` abstraction with Zernio as the first concrete implementation. Submit / poll / cancel / retry queues are typed Backlite tasks; a reconciliation sweeper guards against stuck `Scheduled` posts. |
-| **Post Log** | An auditable history table that records every meaningful operation against a post — state transitions, validation outcomes, allowlist decisions, background-task lifecycle, Zernio API interactions, reconciliation timeouts, user actions. Sanitized of secrets, capped at 64 KB per entry, configurable retention. |
-| **Background jobs** | [Backlite](https://github.com/mikestefanello/backlite) on the same SQLite file — no external broker. Worker pool drains gracefully on shutdown; admin UI mounted at `/admin/backlite`. |
-| **Secrets** | Envelope-encrypted at rest (per-secret DEK wrapped by a KEK on disk). Rotatable through the secrets API without restart. |
-| **Observability** | `expvar` counters at `/debug/vars` for queue lifecycles, Zernio API latency, reconciliation timeouts, and Post Log retention activity. Backlite's UI shows running / upcoming / completed / failed tasks per queue. |
-
----
-
-## Architecture
-
-```
-┌────────────────────────────┐         ┌────────────────────────────────────┐
-│  React SPA (ogen-app/ui)   │◀───────▶│  Fiber HTTP API                    │
-│  • separate deploy         │  REST   │  • Handlers (src/...)              │
-│  • Markdown editor         │  + SSE  │  • Bun + SQLite (WAL)              │
-└────────────────────────────┘         │  • Backlite worker pool            │
-                                        │  ┌──────────────────────────────┐ │
-                                        │  │ Genkit runtime               │ │
-                                        │  │  Anthropic instance (rotat.) │ │
-                                        │  │  Gemini instance (stable)    │ │
-                                        │  └──────────────────────────────┘ │
-                                        └─┬─────────┬──────────┬──────────┬─┘
-                                          │         │          │          │
-                          ┌───────────────▼──┐ ┌────▼─────┐ ┌──▼──────┐ ┌─▼──────────────┐
-                          │ Anthropic Claude │ │ Gemini   │ │ MinIO   │ │ Zernio API     │
-                          │ API (LLM)        │ │ embed    │ │ / R2    │ │ (cross-network │
-                          │ • content plans  │ │ API      │ │ blob    │ │  publishing,   │
-                          │ • post assistant │ │ (vector  │ │ storage │ │  status,       │
-                          │                  │ │  embeds) │ │ (images,│ │  cancel,       │
-                          │                  │ │ • assets │ │  PDFs)  │ │  reconcile)    │
-                          │                  │ │ • PDFs   │ │         │ │                │
-                          └──────────────────┘ └──────────┘ └─────────┘ └────────────────┘
-                                  ▲                ▲
-                                  │                │
-                          consumed by         consumed by
-                       Genkit Anthropic    Genkit Gemini
-                          instance            instance
-```
-
-**Foundational models in use**
-
-| Model | Plugin | Used by | Hot-rotatable? |
-|-------|--------|---------|----------------|
-| **Anthropic Claude** (Sonnet 4.5 default; configurable via `MODEL_ID`) | `genkit/anthropic` | `generateContentPlan`, `postAssistant` | Yes — `PUT /api/secrets/anthropic_api_key` rebuilds the Anthropic Genkit instance without restart. |
-| **Gemini Embedding 2** (`gemini-embedding-2`, 3072-dim; configurable via `EMBED_MODEL`) | Genkit `googlegenai` | `embedAsset`, `processPDF` (chunk embedding for vector search) | Yes — `PUT /api/secrets/gemini_api_key` swaps the backing embedder in place without restart (CON-104). |
-
-### Layered Go layout
-
-```
-cmd/server/        # main entrypoint; loads config, opens DB, runs server.New
-
-src/
-  config/          # envconfig-loaded Config struct
-  database/        # bun.DB factory + migrations
-  models/          # bun-tagged record structs (single source of truth for the schema)
-  repository/      # narrow per-aggregate persistence layer
-  handlers/        # Fiber HTTP handlers + swag annotations
-  server/          # server.New: wires repos → handlers → background workers → routes
-  jobs/            # Backlite runtime + expvar metrics
-  jobs/queues/     # typed Backlite queues (submit/poll/cancel/reconcile/cleanup)
-  publishers/      # Publisher abstraction; publishers/zernio is the concrete impl
-  platforms/       # per-platform attachment validation rules
-  postlog/         # PostLog payload helpers (Capper + Sanitize)
-  secrets/         # envelope-encrypted secret store
-  storage/         # S3-compatible blob storage; subpackages probe images/PDFs
-  pdf/             # PDF text extraction + thumbnail rendering (poppler-utils)
-  embedding/       # Gemini embedding flows + chunk repo
-  genkit/          # Anthropic-backed Genkit flows (assistant, content plan)
-  eventhub/        # in-process SSE event hub
-  integration/     # `//go:build integration` suite running against MinIO + Postgres
-```
-
-### Persistence
-
-All data lives in a single SQLite file (WAL journal mode). Bun is
-the ORM; migrations live under `src/database/migrations/` and run on
-every boot. Backlite uses the same `*sql.DB`, so background-job
-state, Post Log entries, and domain rows can co-commit in one
-transaction (used for the auto-publish schedule decision).
+| **Multi-tenancy** | Public SaaS signup mints a tenant; all domain rows are tenant-scoped and resolved per request. Users, sessions, invitations, and password reset are first-class. |
+| **Campaigns & posts** | Campaign types, campaigns, posts, post versions, notes, per-platform validation, quality scoring, and streaming AI assistants. |
+| **Content bank** | Markdown notes, PDF assets, and URL assets (scraped via Firecrawl) with paragraph-aware chunking, Gemini embeddings, and pgvector similarity search used to ground the assistants. |
+| **Attachments** | Image, PDF, and video uploads on S3-compatible storage. PDFs and video are processed by the `pdf-service` / `video-service` sidecars (thumbnails, page counts, duration/codec/poster). Per-platform constraints surface as soft validation warnings. |
+| **Zernio auto-publish** | `Publisher` abstraction with Zernio as the concrete impl. Submit / poll / cancel / retry are River jobs; a reconciliation sweeper guards against stuck `Scheduled` posts. Headless account connect avoids Zernio's hosted picker. |
+| **Post Log** | Auditable per-post history — state transitions, validation outcomes, background-task lifecycle, Zernio interactions, reconciliation timeouts, user actions. Sanitized of secrets, size-capped, configurable retention. |
+| **Analytics** | Cumulative overview KPIs, best/worst performers with age-adjusted "against typical", all-time lessons (heatmap + lifespan curve), and per-post drill-down — backed by TimescaleDB continuous aggregates. |
+| **Usage metering** | Per-tenant model/publisher cost metering with optional daily/monthly spend caps (enforce or warn), recorded to the analytics DB via a pluggable vendor registry. |
+| **Brand materials** | Voices, audiences, and guardrails bound to campaigns/posts and injected into the writing flows (precedence: post → campaign → default). |
+| **Email** | Transactional + drip email via Resend, with embedded templates, one-click unsubscribe, and delivery webhooks. |
+| **Secrets** | Envelope-encrypted at rest (per-secret DEK wrapped by an on-disk KEK). Rotatable via the operator gRPC surface without restart. |
+| **Operator surface** | Internal gRPC `SecretsService` + `TenantAdminService`, consumed by the Harbor ops dashboard over the private network. |
 
 ---
 
 ## AI flows (Genkit)
 
-All AI-powered features are implemented as [Firebase Genkit](https://firebase.google.com/docs/genkit) flows under `src/genkit/flows/`. There are two long-lived Genkit instances at runtime:
+All AI-powered features are [Firebase Genkit](https://firebase.google.com/docs/genkit)
+flows under `src/genkit/flows/`. Two long-lived Genkit instances run at boot:
 
-- **Embedding instance** — built at boot with the Genkit `googlegenai` plugin (Gemini Embedding 2). The wrapper reference is stable for the process lifetime, but its backing embedder is rebuilt when `gemini_api_key` is set or rotated via the secrets API, so the key rotates without restart (CON-104).
-- **Anthropic instance** — owned by `gkRuntime` (see `src/server/genkit_runtime.go`). Hot-rebuildable so a `PUT /api/secrets/anthropic_api_key` rotation rebuilds the instance and re-registers all Anthropic flows without restarting the server. When no key is set, the runtime stays nil and the consuming handlers return 503 via the `IsAnthropicAvailable` predicate.
+- **Embedding instance** — the `googlegenai` plugin (Gemini Embedding 2). The wrapper is stable for the process lifetime; its backing embedder is rebuilt when `gemini_api_key` is set or rotated, so the key rotates without restart.
+- **Anthropic instance** — owned by `gkRuntime` (`src/server/genkit_runtime.go`). Hot-rebuildable, so rotating `anthropic_api_key` re-registers all Anthropic flows without a restart. With no key the runtime stays nil and consuming handlers return 503.
 
-| Flow | Plugin | Purpose | Triggered by |
-|------|--------|---------|--------------|
-| `embedAsset` | Gemini | Chunks an asset's Markdown content (paragraph-aware, with overlap) and writes embeddings into `asset_chunks`. | Asset save callback (`OnMarkdownSave`). |
-| `processPDF` | Gemini | End-to-end PDF asset ingestion: extracts text via `ledongthuc/pdf` (with `pdftotext` fallback), renders a thumbnail with `pdftoppm`, uploads both the PDF and thumbnail to S3, then chunks + embeds. Fire-and-forget background callback. | Asset upload of a PDF file (`OnPDFProcess`). |
-| `generateContentPlan` | Anthropic | Produces a per-phase, per-platform set of post drafts for a campaign. Splits the work into K-sized batches that run in parallel against Anthropic; surfaces SSE progress events (`batch_started`, `post_generated`, `complete`). See `src/genkit/flows/content_plan/PERFORMANCE.md` for the parallel-batching design. | `POST /api/campaigns/:id/generate-draft` (SSE). |
-| `postAssistant` | Anthropic | Interactive post editor. Streams `explanation_delta` and `content_delta` SSE events as the model writes its rationale and the updated post body. Supports tool use against the asset library: `listAssets`, `getAssetChunks`, `searchAssetChunks`, `getCurrentContent`. Per-turn token budget enforced via the `packChunks` helper. | `POST /api/posts/:id/assistant` (SSE). |
+Foundation models are addressed by **role** (`src/vendors/llm`) so flows never
+hardcode a model id:
 
-Shared helpers in the same package:
+| Role | Default model | Used by |
+|------|---------------|---------|
+| `generation` | Claude Sonnet 4.5 (`MODEL_ID`) | content plan, post/campaign assistant writing, brief enrichment, draft post |
+| `planning` | Claude Haiku 4.5 (`PLANNING_MODEL_ID`) | campaign/post assistant orchestration & intent routing (cheap/fast loop) |
+| `quality` | Claude Sonnet 4.5 (`QUALITY_MODEL_ID`) | post quality scoring |
+| embeddings | Gemini Embedding 2 (`EMBED_MODEL`, 3072-dim) | asset & PDF chunk embedding for vector search |
 
-- `chunker.go` — paragraph-aware chunking with configurable target size and overlap; estimates tokens via the standard 3.5-chars/token heuristic.
-- The `prompts/` subdirectories under each flow contain the Markdown templates the flows render at request time.
+| Flow | Purpose | Triggered by |
+|------|---------|--------------|
+| `embed_asset` | Chunks an asset's Markdown (paragraph-aware, with overlap) and writes embeddings into `asset_chunks`. | Asset save callback. |
+| `process_pdf` (River) | Calls `pdf-service` for text + page-aware chunks + thumbnail, uploads to S3, then chunks + embeds. | PDF upload. |
+| `process_url` (River) | Scrapes a URL to Markdown via Firecrawl, mirrors images to S3, stores it as a URL asset, then chunks + embeds. | URL asset creation. |
+| `content_plan` | Per-phase, per-platform post drafts for a campaign; parallel K-sized batches against Anthropic with SSE progress. | `POST /api/campaigns/:id/generate-draft` (SSE). |
+| `post_assistant` | Interactive post editor. Haiku planner loop + Sonnet `editPost` write-tool; streams `explanation_delta` / `content_delta`; tool use over the asset library. | `POST /api/posts/:id/assistant` (SSE). |
+| `campaign_assistant` | Campaign-level planning assistant; flows-as-tools (content plan, enrich brief, draft post, consistency check) under a Haiku orchestration loop. | Campaign assistant endpoint (SSE). |
+| `post_quality` | Scores a post version across weighted per-platform dimensions. | Quality assessment. |
 
-### Genkit dev UI
+---
 
-When the server is started via `make genkit`, the Genkit dev UI mounts on `http://localhost:4000`, letting you replay flows interactively, inspect inputs/outputs, and step through tool calls. Today the dev UI sees only the embedding instance (the Anthropic instance is intentionally separate so key rotations don't disturb the UI session).
+## Infrastructure & deployment
+
+Ogen runs as a small fleet of containers. In production they are deployed on
+[Railway](https://railway.app); the sidecar services are reached **only** over
+Railway's private network (`*.railway.internal`), never a public port.
+
+**Repository family**
+
+| Repo | Role |
+|------|------|
+| [`ogen-app/ogen`](https://github.com/ogen-app/ogen) | API monolith (this repo). |
+| [`ogen-app/ui`](https://github.com/ogen-app/ui) | React + Vite SPA; deploys independently. |
+| [`ogen-app/harbor`](https://github.com/ogen-app/harbor) | Operator dashboard (Go backend + Next.js UI). |
+| [`ogen-app/pdf-service`](https://github.com/ogen-app/pdf-service) | PDF parsing sidecar (CGO + pdfium). |
+| [`ogen-app/video-service`](https://github.com/ogen-app/video-service) | Video probing sidecar (ffmpeg/ffprobe). |
+| `buf.build/ogen-app/proto` | Shared gRPC contracts (tenants, secrets, pdf, video), published as a [BSR](https://buf.build) module and pinned via `make proto`. |
+
+**Runtime topology**
+
+- **API** — stateless Go binary (static, `CGO_ENABLED=0`, Alpine runtime). Serves HTTP (`ADDR`, `:3000` in the image) and the internal gRPC surface (`GRPC_ADDR`, bind `:9091` in a container so Harbor can reach it; loopback-only by default). Drops from root to an unprivileged user at entry after fixing KEK-volume permissions.
+- **Control-plane database** — PostgreSQL 17 + the `vector` extension (`pgvector/pgvector:pg17`).
+- **Analytics database** — `timescale/timescaledb:latest-pg17`, separate instance (`ANALYTICS_DSN`).
+- **Object storage** — Cloudflare R2 in production, MinIO locally (any S3-compatible endpoint via `STORAGE_*`).
+- **pdf-service / video-service** — gRPC on `:50051`, private network only.
+- **Harbor** — reads both databases and calls the API's operator gRPC surface; shares the control-plane Postgres server via its own `harbor` database.
+- **River UI** — job dashboard reading the control-plane database.
+
+**Secrets & keys.** API keys (Anthropic, Zernio, Gemini, Firecrawl, Resend,
+webhook + link-signing secrets) are **not** required as env vars. They are seeded
+from the environment on first boot into the envelope-encrypted `secret` table and
+thereafter read from — and rotated via — the operator gRPC surface, with no
+restart. The **KEK** (envelope-encryption master key) lives at
+`<OGEN_KEK_PATH>/kek.v1` on a persistent volume (`/var/lib/ogen/keys` in the
+image). **Back it up** — losing it bricks every encrypted secret. The gRPC
+transport is plaintext + bearer-token gated, so it must never cross an untrusted
+network.
+
+The Structurizr [deployment view](docs/architecture/workspace.dsl) renders this
+topology onto Railway (open the workspace in Structurizr Lite).
 
 ---
 
-## Development workflows
+## Development
 
-There are two supported workflows depending on what you're working on:
+Two workflows, depending on what you're changing:
 
-| You're working on | Use this workflow | What you need installed |
-|--------------------|-------------------|-------------------------|
-| Frontend only | In the **[`ogen-app/ui`](https://github.com/ogen-app/ui)** repo — run its Vite dev server, which proxies `/api` to a locally-running API. | See that repo (Node + pnpm). |
-| Backend (`src/`, `cmd/`) — including end-to-end testing of the SPA against an in-progress API | **[Backend development](#backend-development)** — build the API from source; point the UI at `http://localhost:9001`. | Go 1.26 + poppler-utils + Docker (for the integration suite). |
+| You're working on | Use this workflow | What you need |
+|-------------------|-------------------|---------------|
+| Frontend only | The **[`ogen-app/ui`](https://github.com/ogen-app/ui)** repo — its Vite dev server proxies `/api` to a locally-running API. | Node + pnpm (see that repo). |
+| Backend (`src/`, `cmd/`) | **[Backend development](#backend-development)** — build the API from source; point the UI at `http://localhost:9001`. | Go 1.26 + Docker. |
 
-The UI points at `http://localhost:9001` by default (via its Vite `/api` proxy), so a backend running locally from source is picked up automatically.
-
----
+The UI targets `http://localhost:9001` by default via its Vite `/api` proxy, so a
+locally-running API is picked up automatically.
 
 ## Backend development
 
 ### Prerequisites
 
-| Tool | Minimum version | Notes |
-|------|-----------------|-------|
+| Tool | Minimum | Notes |
+|------|---------|-------|
 | Go | 1.26 | The module sets `go 1.26.1`. |
-| `make` | any | Build / test / openapi targets. |
-| SQLite | bundled | The `ncruces/go-sqlite3` driver is pure Go; no system SQLite needed. |
-| `pdftoppm`, `pdftotext` (poppler-utils) | any | Required for PDF thumbnail and text extraction. Optional for tests. |
-| Docker Desktop | 4.x | For the integration suite (MinIO + Postgres) and for running the full app stack locally. |
+| Docker Desktop | 4.x | PostgreSQL, TimescaleDB, MinIO, the sidecars, and the unit/integration suites all run in containers. |
+| `make` | any | Build / test / openapi / proto targets. |
+| `buf` | any | Only needed to regenerate gRPC stubs (`make proto`); generated code is committed. |
 
-### Development setup
+There is **no** local PDF/video toolchain to install — parsing moved to the
+`pdf-service` / `video-service` sidecars (gRPC). The API degrades gracefully when
+they are absent (uploads accepted, parsing/probing skipped).
 
-#### 1. Install Go and poppler-utils
-
-```bash
-# macOS
-brew install go@1.26 poppler
-
-# Debian / Ubuntu
-sudo apt install -y golang-1.26 poppler-utils
-```
-
-`poppler-utils` provides `pdftoppm` (thumbnail rendering) and `pdftotext` (extraction fallback). The server still boots without them; PDF ingestion just degrades to text-only.
-
-#### 2. Clone and pull deps
+### 1. Clone and pull deps
 
 ```bash
 git clone https://github.com/ogen-app/ogen.git
-cd app
+cd ogen
 go mod download
 ```
 
-#### 3. Generate the KEK (envelope-encryption master key)
+### 2. Start the databases
 
-The first run generates one for you under `OGEN_KEK_PATH` (default `./kek/kek.v1`). **Back this file up** — losing it bricks every encrypted secret in the SQLite DB. For a production deployment, mount it from a separate volume.
+The default `DATABASE_DSN` points at `postgres://ogen:ogen@localhost:5432/ogen`.
+Bring up Postgres (and the analytics TimescaleDB) via Docker Compose:
 
-#### 4. (Optional) Configure the Gemini embedding key
+```bash
+docker compose up postgres timescaledb -d
+```
 
-Embeddings + semantic search use the hosted **Gemini Embedding 2** API — there is
-no local sidecar. Set `GEMINI_API_KEY` to enable them (it is a first-boot seed
-migrated into the encrypted secret store; thereafter set/rotate it via
-`PUT /api/secrets/gemini_api_key`). With no key the server still boots: asset
-saves succeed, but no vectors are written and semantic search returns nothing.
+Migrations for both databases run automatically on every boot.
+
+### 3. KEK (envelope-encryption master key)
+
+The first run generates one under `OGEN_KEK_PATH` (default `./kek/kek.v1`).
+**Back this file up** — losing it bricks every encrypted secret. In deployment,
+mount it from a persistent volume.
+
+### 4. (Optional) seed the Gemini embedding key
+
+Embeddings + semantic search use the hosted **Gemini Embedding 2** API. Set
+`GEMINI_API_KEY` to seed it on first boot (thereafter rotate it via the operator
+surface). With no key the server still boots: asset saves succeed, but no vectors
+are written and semantic search returns nothing.
 
 ```bash
 export GEMINI_API_KEY=AIza...   # optional; enables embedding + RAG
 ```
 
-#### 5. Frontend (separate repo)
-
-The API no longer embeds the SPA — `make build` produces just the API binary.
-The frontend lives in [`ogen-app/ui`](https://github.com/ogen-app/ui) and
-runs/deploys independently. To exercise the UI against this API, run the UI's
-Vite dev server; it proxies `/api` to `http://localhost:9001`.
-
-#### 6. Run with hot reload
+### 5. Run with hot reload
 
 ```bash
-make run    # uses `air` for live rebuilds on .go file changes
+make run    # uses `air` for live rebuilds on .go changes
 ```
 
-API listens on `http://localhost:9001`. Swagger UI: `http://localhost:9001/swagger/index.html`. Backlite UI (after login): `http://localhost:9001/admin/backlite`.
-
-Or build + run once:
+The API listens on `http://localhost:9001`. Or build + run once:
 
 ```bash
 make build && ./server
 ```
 
-#### 7. Configure secrets at runtime
+### 6. Configure secrets at runtime
 
-You don't have to set `ANTHROPIC_API_KEY` / `ZERNIO_API_KEY` as env vars — the server boots without them and surfaces an "integration disabled" state. To enable them after boot:
-
-```bash
-# Create a session cookie first via POST /api/sessions, then:
-curl -X PUT http://localhost:9001/api/secrets/anthropic_api_key \
-  -H "Content-Type: application/json" \
-  -b session=<your-session-cookie> \
-  -d '{"value":"sk-ant-..."}'
-
-curl -X PUT http://localhost:9001/api/secrets/zernio_api_key \
-  -H "Content-Type: application/json" \
-  -b session=<your-session-cookie> \
-  -d '{"value":"sk_..."}'
-```
-
-Both keys are encrypted at rest with a per-secret DEK wrapped by the KEK. The Anthropic Genkit instance auto-rebuilds on the first call after the key is set; the Zernio client resolves the key per outbound request, so rotations land without restart.
+You don't have to set `ANTHROPIC_API_KEY` / `ZERNIO_API_KEY` / etc. as env vars —
+the server boots without them and surfaces an "integration disabled" state. Seed
+them via env on first boot, or manage them through Harbor's Settings → Secrets tab
+(which talks to the API's operator gRPC surface). Both are encrypted at rest with
+a per-secret DEK wrapped by the KEK, and rotate without restart.
 
 ### Common Make targets
 
 ```bash
-make build           # build the server binary into ./server
-make run             # air-powered hot reload for the API
-make genkit          # boot the API with Genkit dev UI on :4000
-make test            # ginkgo handler/unit suites with coverage
-make test-integration # spins up MinIO + Postgres, runs `//go:build integration` specs
-make openapi         # regenerates docs/swagger.json from swag annotations
-make tidy            # go mod tidy
-make docker          # build the API Docker image
+make build            # build the server binary into ./server
+make run              # air-powered hot reload for the API
+make genkit           # boot the API under the Genkit dev UI (:4000)
+make test             # ginkgo unit/handler suites against a throwaway Postgres (race, coverage)
+make test-integration # spins up MinIO + Postgres, runs //go:build integration specs
+make openapi          # regenerate docs/swagger.json from swag annotations
+make proto            # regenerate gen/ gRPC stubs from buf.build/ogen-app/proto
+make tidy             # go mod tidy
+make docker           # build the API Docker image
 ```
 
 ### Configuration
 
-All runtime knobs are env-vars, loaded by [`envconfig`](https://github.com/kelseyhightower/envconfig). See `src/config/config.go` for the full list with documented defaults. Highlights:
+All runtime knobs are env vars, loaded by
+[`envconfig`](https://github.com/kelseyhightower/envconfig). See
+`src/config/config.go` for the full, documented list. Highlights:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `ADDR` | `:9001` | HTTP listen address |
-| `DATABASE_DSN` | `file:data/app.db?cache=shared&_pragma=journal_mode(WAL)` | SQLite file location |
-| `GEMINI_API_KEY` | empty | Gemini Embedding 2 key — first-boot seed; also settable via `PUT /api/secrets/gemini_api_key` for hot rotation. Empty disables embedding/RAG |
-| `EMBED_MODEL` / `EMBED_DIMENSIONS` | `gemini-embedding-2` / `3072` | Embedding model and vector width (must match the `assets_chunks.embedding` column) |
-| `OGEN_KEK_PATH` | `./kek` | Directory holding `kek.v1` for envelope encryption — losing it bricks every encrypted secret |
-| `STORAGE_*` | empty | S3-compatible storage (R2/MinIO/AWS); empty disables uploads |
-| `ANTHROPIC_API_KEY` | empty | Claude key — also settable via `PUT /api/secrets/anthropic_api_key` for hot rotation |
-| `ZERNIO_API_KEY` / `ZERNIO_BASE_URL` | empty / `https://zernio.com/api/v1` | Zernio integration; key resolved per outbound call so rotations land without restart |
-| `BACKLITE_WORKERS` / `BACKLITE_RELEASE_AFTER` / `BACKLITE_SHUTDOWN_TIMEOUT` | 4 / 5m / 30s | Background job runtime |
-| `RECONCILE_GRACE` | `1h` | Reconciliation timeout for stuck Scheduled posts |
-| `POSTLOG_RETENTION_DAYS` | `90` | Post Log retention window |
+| `ADDR` | `:9001` | HTTP listen address (the Docker image sets `:3000`). |
+| `DATABASE_DSN` | `postgres://ogen:ogen@localhost:5432/ogen?sslmode=disable` | Control-plane Postgres (pgvector). |
+| `ANALYTICS_DSN` | empty | Isolated analytics TimescaleDB. Empty disables usage metering + analytics (fail-open). |
+| `DB_MAX_OPEN_CONNS` / `DB_MAX_IDLE_CONNS` | 25 / 5 | Shared pool sizing for HTTP + River workers. |
+| `GEMINI_API_KEY` | empty | Gemini Embedding 2 key — first-boot seed; rotate via the operator surface. Empty disables embedding/RAG. |
+| `EMBED_MODEL` / `EMBED_DIMENSIONS` | `gemini-embedding-2` / `3072` | Embedding model + vector width (must match `asset_chunks.embedding`). |
+| `ANTHROPIC_API_KEY` / `MODEL_ID` | empty / `claude-sonnet-4-5-20250929` | Claude key (first-boot seed) + generation model. |
+| `PLANNING_MODEL_ID` / `QUALITY_MODEL_ID` | Haiku 4.5 / Sonnet 4.5 | Cheap routing model + quality-scoring model. |
+| `STORAGE_*` | empty | S3-compatible storage (R2/MinIO/AWS); empty disables uploads. |
+| `PDF_SERVICE_ADDR` / `VIDEO_SERVICE_ADDR` | empty | gRPC sidecar addresses (`*.railway.internal:50051` in prod). Empty disables that pipeline. |
+| `ZERNIO_API_KEY` / `ZERNIO_BASE_URL` | empty / `https://zernio.com/api/v1` | Zernio integration; key resolved per call, so rotations land without restart. |
+| `FIRECRAWL_API_KEY` | empty | URL-asset scraping; empty disables URL ingestion. |
+| `RESEND_API_KEY` / `EMAIL_FROM` | empty / `Ogen <hello@getogen.com>` | Email delivery; empty disables sending. |
+| `OGEN_KEK_PATH` | `./kek` | Directory holding `kek.v1` — losing it bricks every encrypted secret. |
+| `GRPC_ADDR` / `GRPC_AUTH_TOKEN` | `127.0.0.1:9091` / empty | Internal operator gRPC surface; starts only when both are set. |
+| `JOB_WORKERS` / `JOB_SHUTDOWN_TIMEOUT` | 4 / 30s | River worker pool + graceful-shutdown wait. |
+| `RECONCILE_GRACE` | `1h` | Reconciliation timeout for stuck Scheduled posts. |
+| `POSTLOG_RETENTION_DAYS` | `90` | Post Log retention window. |
 
 ### Testing
 
-The handler suite uses real in-memory SQLite (no mocks) — every
-test boots through the migration chain. The integration suite
-(`//go:build integration`) brings up MinIO and Postgres via
-`docker-compose.integration.yml` and runs end-to-end flows
-including the post-attachment round-trip. The embedding + chunking
-suites additionally hit the live Gemini Embedding API and skip unless
-`GEMINI_API_KEY` is set.
+The unit/handler suite runs against a **real, throwaway Postgres** (no mocks) —
+`make test` boots a disposable `pgvector` container and every test provisions its
+own database through the migration chain. The integration suite
+(`//go:build integration`) brings up MinIO + Postgres via
+`docker-compose.integration.yml`; the embedding + chunking specs additionally hit
+the live Gemini API and skip unless `GEMINI_API_KEY` is set.
 
 ```bash
-make test                  # handler/unit (fast, in-process)
+make test                  # unit/handler (throwaway Postgres, race + coverage)
 make test-integration      # MinIO + Postgres (slow, docker compose)
 ```
 
-### Admin surfaces
-
-When the server is running, the following routes are mounted behind
-the standard session-cookie auth (`RequireAuth`):
+### Observability
 
 | Route | Purpose |
 |-------|---------|
-| `/admin/backlite` | Backlite UI — running / upcoming / completed / failed tasks per queue |
-| `/debug/vars` | `expvar` JSON — `ogen_jobs_*` counters and Zernio API latency average |
-| `/api/posts/:id/log` | Per-post audit history |
-| `/api/post-logs?event_type=…&since=…` | Cross-post audit search |
+| `/api/health` | Liveness/readiness. |
+| `/debug/vars` | `expvar` JSON — `ogen_jobs_*` counters and Zernio API latency (behind session auth). |
+| `/api/posts/:id/log` · `/api/post-logs` | Per-post and cross-post audit history. |
+| River UI (`:9004` in compose) | Running / upcoming / completed / failed jobs per queue. |
+
+The full REST reference (OpenAPI) is generated from swag annotations via
+`make openapi` and published from `docs/swagger.json` on every merge to `main`.
 
 ---
 
-## Frontend development
+## Running the full stack with Docker Compose
 
-The web UI lives in its own repository — **[`ogen-app/ui`](https://github.com/ogen-app/ui)** (CON-98).
-Clone it and follow its README to run the Vite dev server, which proxies `/api`
-to a locally-running API (`http://localhost:9001` by default) or any deployed API.
-
-To run the API the UI talks to, see **[Backend development](#backend-development)**
-above, or start the published image plus its dependencies:
+`docker-compose.yml` runs the API plus its dependencies; optional services are
+gated behind [profiles](https://docs.docker.com/compose/profiles/) so the default
+`docker compose up` stays backend-only.
 
 ```bash
-docker compose pull && docker compose up   # API + Postgres
+docker compose up                      # API + Postgres + TimescaleDB (+ River UI on :9004)
+docker compose --profile ui up         # + the ogen-app/ui Vite dev server on :9002
+docker compose --profile pdf up        # + pdf-service
+docker compose --profile video up      # + video-service
+docker compose --profile harbor up     # + Harbor backend (:9003) & UI (:9005)
 ```
 
-### Full stack via Docker Compose (API + UI hot-reload)
+| Service | URL | Notes |
+|---------|-----|-------|
+| API | http://localhost:9001 | Set `CORS_ALLOWED_ORIGINS` when the UI is on a different origin. |
+| UI dev server (`ui` profile) | http://localhost:9002 | Mounts a sibling `../ui` checkout; override with `UI_PATH`. |
+| River UI | http://localhost:9004 | Reads River's job tables. |
+| Harbor backend (`harbor` profile) | http://localhost:9003 | Shares this stack's Postgres (its own `harbor` DB) + the operator gRPC surface at `api:9091`. |
+| Harbor UI (`harbor` profile) | http://localhost:9005 | Next.js dev server; override the checkout with `HARBOR_PATH`. |
 
-The `ui` service in `docker-compose.yml` mounts a sibling `ogen-app/ui` checkout
-and runs the Vite dev server with hot-reload, proxying `/api` to the API. It's
-gated behind the `ui` profile so the default `docker compose up` stays
-backend-only:
-
-```bash
-docker compose --profile ui up         # API + deps + UI dev server
-```
-
-Then open **http://localhost:9002**. Edits under the local `ui` repo hot-reload
-in the browser. If your UI checkout isn't at `../ui`, point `UI_PATH` at it:
-
-```bash
-UI_PATH=/path/to/ui docker compose --profile ui up
-```
-
-When the UI and API are served from different origins, set `CORS_ALLOWED_ORIGINS`
-on the API to the UI origin(s); for local dev the Vite `/api` proxy keeps things
-same-origin, so it can stay empty.
-
-### Harbor ops dashboard (gRPC-linked)
-
-[`ogen-app/harbor`](https://github.com/ogen-app/harbor) — Ogen's operations
-dashboard — is wired into `docker-compose.yml` behind the `harbor` profile so it
-comes up **alongside** this stack and links to it over gRPC:
-
-```bash
-docker compose --profile harbor up     # Ogen (live-reload) + Harbor (live-reload)
-```
-
-This brings up **two** live-reloading Harbor services alongside Ogen:
-
-| Service | What | Reload | URL |
-| --- | --- | --- | --- |
-| `harbor` | Go backend (API + embedded UI) | `air` rebuilds on `.go`/`.sql` edits | http://localhost:9003 |
-| `harbor-ui` | Next.js UI dev server | Turbopack HMR on UI edits | **http://localhost:9005** |
-
-Open **http://localhost:9005** for the hot-reloading UI (`next dev` proxies
-`/api` to the backend, so the browser stays same-origin); the backend on `:9003`
-serves the API and its embedded (placeholder) UI directly. Harbor shares this
-stack's Postgres — its own `harbor` database, which it **auto-creates on first
-boot** (a separate DB on the same server) — reads Ogen's control-plane and
-analytics DBs, and reaches Ogen's internal operator gRPC surface at `api:9091`
-for the Settings → Secrets tab. The gRPC link authenticates with
-`GRPC_AUTH_TOKEN`, which the compose file defaults to a dev token
-(`ogen-harbor-dev`) shared by both services so it works out of the box; set a
-real value in `.env` to override.
-
-Harbor's own `${HARBOR_PATH:-../harbor}/.env` is loaded for its remaining config
-(Google OAuth creds, `AUTH_ALLOWED_EMAILS`, log level, cookie name); it's
-optional, and the compose `environment:` block overrides its DB/analytics/gRPC
-endpoints so the host `localhost` DSNs a dev `.env` carries don't leak into the
-container network.
-
-If your harbor checkout isn't at `../harbor`, point `HARBOR_PATH` at it:
-
-```bash
-HARBOR_PATH=/path/to/harbor docker compose --profile harbor up
-```
-
-Ports use the `900x` family (`9003` backend, `9005` UI) to avoid Ogen's `9001`
-API and the `ui` profile's `9002`. Combine with `--profile ui` to run Ogen's
-API, its UI, and Harbor all together. (Google login through the hot-reload UI
-would need `http://localhost:9005` added as an authorized JS origin; it's
-disabled without OAuth creds, which dev doesn't require.)
-
-### API documentation
-
-The full REST API reference (OpenAPI) is generated from swag annotations via
-`make openapi` and published from `docs/swagger.json` on every merge to `main`.
+Copy `.env.example` → `.env` and fill it in before `docker compose up`; all
+configuration (including seed secrets) is read from there.
 
 ---
 
 ## Repository skills (`.agents/skills/`)
 
-The `.agents/skills/` directory ships with two **scaffolding skills** for [Claude Code](https://claude.ai/code) (and other agent harnesses that honour the same `SKILL.md` convention). Each skill encodes the project's existing patterns so a new feature lands looking like the rest of the codebase — not like an LLM guessed.
+The `.agents/skills/` directory ships **scaffolding skills** for
+[Claude Code](https://claude.ai/code) (and any agent harness honouring the
+`SKILL.md` convention). Each encodes the project's existing patterns so a new
+feature lands looking like the rest of the codebase.
 
 | Skill | When to invoke | What it scaffolds |
-|-------|---------------|-------------------|
-| **`add-entity`** | "Add a new resource / table / domain entity" — anything that needs a full vertical slice (migration → handler). | Migration up/down, `bun`-tagged model, narrow `Repository` interface + impl, Fiber handler with swag annotations, `server.New` wiring, ginkgo handler tests against in-memory SQLite, `http-client/<entity>/<entity>.http` example file. Asks up-front about entity name, fields/types/nullability, enums, relationships, and owner-scoping (`created_by` + `ON DELETE CASCADE`). |
-| **`add-genkit-flow`** | "Add an AI assistant / generator / classifier" — anything LLM-driven that needs prompt templates, structured output, tool use, or progress streaming. | Genkit flow package mirroring `post_assistant` / `content_plan`: types, Markdown prompt template, `run.go` with the direct closure used for SSE streaming, optional tool definitions, context cache with `assembleContext` + `postFingerprint`-style invalidation, init function on `gkRuntime`, Fiber handler that streams `*_delta` events, ginkgo tests. |
+|-------|----------------|-------------------|
+| **`add-entity`** | Adding a new resource / table / domain entity — a full vertical slice. | Migration up/down, `bun`-tagged model, narrow `Repository` + impl, Fiber handler with swag annotations, `server.New` wiring, ginkgo tests against real Postgres, and an `http-client/` example. |
+| **`add-genkit-flow`** | Adding an AI assistant / generator / classifier — anything LLM-driven. | A flow package mirroring `post_assistant` / `content_plan`: types, prompt template, `run.go` with the SSE-streaming closure, optional tools, context cache, runtime init, streaming handler, and tests. |
+| **`add-river-job`** | Adding a background/async task, queue worker, or recurring sweep. | River args type, worker/processor, self-registration, transactional enqueue, periodic scheduling, and tests. |
+| **`add-grpc-service`** | Adding a gRPC service/client or a private-network sidecar. | buf-managed proto codegen, (client-)streaming RPCs, health service, graceful shutdown, status-error mapping, and a nil-disabled thin client — the `pdf-service` pattern. |
+| **`email-templates`** | Adding/editing an email, its copy/design, or the drip schedule. | The Maizzle authoring project + DB seeds + embedded-default → seed-on-boot → DB-wins lifecycle, the `[[ ]]` Go delimiters, and the brand tokens (CON-154). |
 
-Both skills follow the project's [feedback rules](../../.claude/projects/-Users-serhii-go-src-github-com-ogen-app-ogen/memory/) — real in-memory SQLite tests at the handler layer (no mocks), authz-before-lookup with 403-over-404, `feature/` branch naming — and refuse to invent new patterns where canonical references (`post_assistant`, `content_plan`, the existing repos and handlers) already exist to diff against.
-
-To use them:
+All follow the project's conventions — real Postgres tests at the handler layer
+(no mocks), authz-before-lookup with 403-over-404, `feature/` branch naming — and
+refuse to invent new patterns where canonical references already exist. The
+`SKILL.md` files are themselves the spec; read them to audit the patterns the
+project considers canonical.
 
 ```bash
 # Inside Claude Code, or any agent harness that loads .agents/skills:
@@ -408,6 +491,8 @@ To use them:
 /skill add-genkit-flow    # then describe the flow
 ```
 
-The `SKILL.md` files are themselves the spec — frontmatter declares the skill name + description + allowed tools; the body is the step-by-step playbook the agent follows. Read them directly if you want to understand or audit the patterns the project considers canonical.
-
 ---
+
+## License
+
+[MIT](LICENSE) © ogen-app
