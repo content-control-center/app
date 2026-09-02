@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"text/template"
+	"time"
 
 	"github.com/firebase/genkit/go/core"
 	"github.com/firebase/genkit/go/genkit"
@@ -141,7 +142,11 @@ func notifyContentPlanReady(n *notify.Service, tenantID, ownerID, campaignID str
 	if resp.Action != "content_plan_generated" || resp.ContentPlan == nil {
 		return
 	}
-	ctx := tenantctx.With(context.Background(), tenantID)
+	// Bound this best-effort persistence: it runs in a deferred call on the
+	// request path, so an unbounded background insert could stall the response
+	// if the DB is slow. Keep the tenant scope; just add a deadline + cancel.
+	ctx, cancel := context.WithTimeout(tenantctx.With(context.Background(), tenantID), 5*time.Second)
+	defer cancel()
 	postCount := resp.ContentPlan.PostCount
 	_ = n.Emit(ctx, ownerID, notify.Spec{
 		Level:      models.NotificationLevelSuccess,

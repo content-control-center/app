@@ -288,6 +288,45 @@ func TestNotifications_DeleteExpiredAndRetention(t *testing.T) {
 	}
 }
 
+func TestNotifications_ExpiredExcludedFromReads(t *testing.T) {
+	db := openNotifDB(t)
+	repo := repository.NewNotificationRepository(db)
+	ctx := tctx("t1")
+
+	fresh := newNotif("fresh", "u1", "x")
+	if _, err := repo.Insert(ctx, fresh); err != nil {
+		t.Fatalf("insert fresh: %v", err)
+	}
+	// Expired at insert time — NOT cleaned up yet. It must still be excluded from
+	// every live-inbox read (read-time fading), not just after the cleanup sweep.
+	past := time.Now().UTC().Add(-time.Hour)
+	expired := newNotif("expired", "u1", "x")
+	expired.ExpiresAt = &past
+	if _, err := repo.Insert(ctx, expired); err != nil {
+		t.Fatalf("insert expired: %v", err)
+	}
+
+	list, err := repo.List(ctx, "u1", repository.NotificationListOpts{})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list) != 1 || list[0].ID != "fresh" {
+		t.Fatalf("list = %+v, want [fresh] (expired excluded)", ids(list))
+	}
+
+	if n, _ := repo.UnreadCount(ctx, "u1"); n != 1 {
+		t.Fatalf("unread count = %d, want 1 (expired excluded)", n)
+	}
+
+	replay, err := repo.ReplaySince(ctx, "u1", 0, 100)
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if len(replay) != 1 || replay[0].ID != "fresh" {
+		t.Fatalf("replay = %+v, want [fresh] (expired excluded)", ids(replay))
+	}
+}
+
 func ids(list []models.Notification) []string {
 	out := make([]string, len(list))
 	for i := range list {

@@ -88,7 +88,10 @@ func (r *notificationRepository) List(ctx context.Context, userID string, opts N
 	var out []models.Notification
 	q := r.db.NewSelect().Model(&out).
 		Where("n.user_id = ?", userID).
-		Where("n.dismissed_at IS NULL")
+		Where("n.dismissed_at IS NULL").
+		// Expired notifications fade from the inbox at expires_at, independently
+		// of the (slower) cleanup sweep (CON-242 FR10).
+		Where("(n.expires_at IS NULL OR n.expires_at > now())")
 	if opts.UnreadOnly {
 		q = q.Where("n.read_at IS NULL")
 	}
@@ -114,7 +117,8 @@ func (r *notificationRepository) ReplaySince(ctx context.Context, userID string,
 	var out []models.Notification
 	q := r.db.NewSelect().Model(&out).
 		Where("n.user_id = ?", userID).
-		Where("n.dismissed_at IS NULL")
+		Where("n.dismissed_at IS NULL").
+		Where("(n.expires_at IS NULL OR n.expires_at > now())")
 	if sinceSeq > 0 {
 		q = q.Where("n.seq > ?", sinceSeq)
 	}
@@ -132,6 +136,7 @@ func (r *notificationRepository) UnreadCount(ctx context.Context, userID string)
 		Where("n.user_id = ?", userID).
 		Where("n.read_at IS NULL").
 		Where("n.dismissed_at IS NULL").
+		Where("(n.expires_at IS NULL OR n.expires_at > now())").
 		Count(ctx)
 }
 
