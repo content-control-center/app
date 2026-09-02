@@ -16,6 +16,7 @@ import (
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/notify"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/tenantctx"
@@ -60,6 +61,9 @@ type DetectExpiringConnectionsProcessor struct {
 	EmailLogs  repository.EmailLogRepository
 	AppBaseURL string
 	LeadDays   int
+	// Notifier drops an in-app notification alongside the email (CON-242). Nil
+	// (notification center unwired) is a no-op.
+	Notifier *notify.Service
 }
 
 func (p *DetectExpiringConnectionsProcessor) Work(ctx context.Context, job *river.Job[DetectExpiringConnectionsTask]) error {
@@ -81,6 +85,7 @@ func init() {
 			EmailLogs:  d.Email.Logs,
 			AppBaseURL: d.Email.AppBaseURL,
 			LeadDays:   d.ExpiryLeadDays,
+			Notifier:   d.Notifier,
 		})
 	})
 }
@@ -263,6 +268,10 @@ func (p *DetectExpiringConnectionsProcessor) notifyOwners(ctx context.Context, t
 				continue // already notified this owner for this (account, stage, expiry)
 			}
 		}
+		// CON-242: drop an in-app notification alongside the email, gated by the
+		// same once-per-(account,stage,expiry,owner) email dedupe above. Best-
+		// effort — a notify failure never blocks the email or the sweep.
+		p.emitNotification(ctx, owner.ID, h, local, stage)
 		if eerr := p.enqueueEmail(ctx, owner, tenantID, h, local, stage, key, now); eerr != nil {
 			if firstErr == nil {
 				firstErr = eerr
@@ -272,6 +281,35 @@ func (p *DetectExpiringConnectionsProcessor) notifyOwners(ctx context.Context, t
 		notified++
 	}
 	return notified, firstErr
+}
+
+// emitNotification drops one in-app notification for an owner whose account is
+// entering a notify stage (CON-242). It rides the same tenant-scoped ctx as the
+// email enqueue, so the row lands in the right tenant; a nil Notifier is a
+// no-op. The dedupe_key collapses repeats while the prior one is still unread,
+// backing up the email-log dedupe the caller already applied.
+func (p *DetectExpiringConnectionsProcessor) emitNotification(ctx context.Context, ownerID string, h zernio.AccountHealth, local models.SocialAccount, stage string) {
+	level := models.NotificationLevelWarning
+	title := "Reconnect needed soon"
+	if stage == templates.StageActionRequired {
+		level = models.NotificationLevelError
+		title = "Reconnect required"
+	}
+	name := accountLabel(h, local)
+	_ = p.Notifier.Emit(ctx, ownerID, notify.Spec{
+		Level:      level,
+		Type:       "connection." + stage,
+		Title:      title,
+		Body:       fmt.Sprintf("Your %s connection for %s needs attention.", platformLabel(h.Platform), name),
+		EntityType: "social_account",
+		EntityID:   h.AccountID,
+		ActionURL:  p.reconnectURL(h.AccountID),
+		DedupeKey:  "conn:" + h.AccountID + ":" + stage,
+		Data: map[string]any{
+			"platform": h.Platform,
+			"stage":    stage,
+		},
+	})
 }
 
 // enqueueEmail inserts a send_email job for one owner. The River client is

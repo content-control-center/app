@@ -15,6 +15,7 @@ import (
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/draft_post"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
+	"github.com/ogen-app/ogen/src/notify"
 	"github.com/ogen-app/ogen/src/usage"
 	"github.com/ogen-app/ogen/src/vendors/llm"
 )
@@ -31,6 +32,7 @@ func initCampaignAssistant(
 	checker *usage.Checker,
 	embedder ai.Embedder,
 	hub eventhub.Hub,
+	notifier *notify.Service,
 	repos campaign_assistant.CampaignAssistantRepos,
 	contentPlanFn func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error),
 	enrichBriefFn func(ctx context.Context, req enrich_brief.EnrichBriefRequest, onEvent enrich_brief.OnEventFunc) (*enrich_brief.EnrichBriefResponse, error),
@@ -61,6 +63,7 @@ func initCampaignAssistant(
 		MaxOutputTokens: 2048,
 		MaxTurns:        4,
 		Hub:             hub,
+		Notifier:        notifier,
 		// CON-112: pre-warm the strict-tool grammar cache at boot when we're also
 		// stabilizing tool order (otherwise the warmed key wouldn't match).
 		PrewarmTools:     cfg.AnthropicStableToolOrder,

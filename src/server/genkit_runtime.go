@@ -23,6 +23,7 @@ import (
 	"github.com/ogen-app/ogen/src/genkit/flows/post_quality"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/notes"
+	"github.com/ogen-app/ogen/src/notify"
 	"github.com/ogen-app/ogen/src/post_actions/clone"
 	"github.com/ogen-app/ogen/src/post_actions/restore"
 	"github.com/ogen-app/ogen/src/post_actions/schedule"
@@ -78,6 +79,7 @@ type genkitRuntime struct {
 	noteSvc             *notes.Service
 	recorder            *usage.Recorder
 	checker             *usage.Checker
+	notifier            *notify.Service
 }
 
 // genkitDeps groups the runtime's static inputs: things captured at
@@ -99,6 +101,7 @@ type genkitDeps struct {
 	noteSvc             *notes.Service
 	recorder            *usage.Recorder
 	checker             *usage.Checker
+	notifier            *notify.Service
 }
 
 // newGenkitRuntime builds the runtime and runs the initial rebuild.
@@ -125,6 +128,7 @@ func newGenkitRuntime(ctx context.Context, deps genkitDeps, store secrets.Store)
 		noteSvc:             deps.noteSvc,
 		recorder:            deps.recorder,
 		checker:             deps.checker,
+		notifier:            deps.notifier,
 	}
 
 	// CON-112 fix: stabilize the outgoing tool order so Anthropic's strict-tool
@@ -331,7 +335,7 @@ func (r *genkitRuntime) rebuild(ctx context.Context, store secrets.Store) error 
 	// CON-112: the campaign assistant reuses the content_plan + enrich_brief
 	// callbacks (plus the CON-114 generatePosts, CON-207 draftPost, and CON-116
 	// consistency callbacks) as tools, so it is initialised after them.
-	campaignAssistantFn, err := initCampaignAssistant(g, r.cfg, provider, r.recorder, r.checker, r.embedder, r.hub, r.campaignAssistRepos, contentPlanFn, enrichBriefFn, r.campaignOverviewSvc, generatePostsFn, draftPostFn, checkBriefFn, checkPostsFn)
+	campaignAssistantFn, err := initCampaignAssistant(g, r.cfg, provider, r.recorder, r.checker, r.embedder, r.hub, r.notifier, r.campaignAssistRepos, contentPlanFn, enrichBriefFn, r.campaignOverviewSvc, generatePostsFn, draftPostFn, checkBriefFn, checkPostsFn)
 	if err != nil {
 		return fmt.Errorf("init campaign assistant: %w", err)
 	}

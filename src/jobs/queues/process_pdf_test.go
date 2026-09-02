@@ -87,6 +87,7 @@ func (f *fakeStatus) UpdateStatus(_ context.Context, _, status string) error {
 	}
 	return nil
 }
+func (f *fakeStatus) CreatorOf(context.Context, string) (string, error) { return "", nil }
 func (f *fakeStatus) last() string {
 	if len(f.all) == 0 {
 		return ""

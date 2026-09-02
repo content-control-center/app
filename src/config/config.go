@@ -357,6 +357,15 @@ type Config struct {
 	// migration installs a fixed 90-day policy; operators adjust it out of band.
 	// Starts at 90 days, expandable later.
 	ActivityRetentionDays int `envconfig:"ACTIVITY_RETENTION_DAYS" default:"90"`
+
+	// Notification center (CON-242). The cleanup_notifications periodic task
+	// reaps faded notifications so the inbox and table stay lean:
+	// NotificationsCleanupEvery is the sweep cadence (0 disables the task);
+	// NotificationsRetentionDays drops read/dismissed rows older than this (0
+	// keeps them — only an explicit expires_at then fades a row). Mirrors
+	// PostLogRetentionDays.
+	NotificationsCleanupEvery  time.Duration `envconfig:"NOTIFICATIONS_CLEANUP_EVERY"  default:"24h"`
+	NotificationsRetentionDays int           `envconfig:"NOTIFICATIONS_RETENTION_DAYS" default:"90"`
 }
 
 func Load() (*Config, error) {
