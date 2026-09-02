@@ -15,13 +15,19 @@ with an in-process [River](https://riverqueue.com) job queue). The React + Vite
 SPA lives in its own repository,
 [`ogen-app/ui`](https://github.com/ogen-app/ui), and deploys separately.
 
-> [!NOTE]
-> Ogen is open source and self-hostable. Self-hosting is an ops responsibility:
-> you run PostgreSQL, an isolated analytics database, S3-compatible object
-> storage, and the sidecar services below, and you are responsible for securing
-> the envelope-encryption key (KEK) and the API keys held in the encrypted
-> secret store. Read the [infrastructure](#infrastructure--deployment) and
-> [backend development](#backend-development) sections before deploying.
+## Contents
+
+- [Architecture](#architecture)
+  - [System context (C4 level 1)](#system-context-c4-level-1)
+  - [Containers (C4 level 2)](#containers-c4-level-2)
+  - [The API monolith, up close](#the-api-monolith-up-close)
+- [Capabilities](#capabilities)
+- [AI flows (Genkit)](#ai-flows-genkit)
+- [Infrastructure & deployment](#infrastructure--deployment)
+- [Development](#development)
+- [Backend development](#backend-development)
+- [Running the full stack with Docker Compose](#running-the-full-stack-with-docker-compose)
+- [Repository skills](#repository-skills-agentsskills)
 
 ---
 
@@ -519,9 +525,3 @@ project considers canonical.
 /skill add-entity         # then describe the entity
 /skill add-genkit-flow    # then describe the flow
 ```
-
----
-
-## License
-
-[MIT](LICENSE) © ogen-app
