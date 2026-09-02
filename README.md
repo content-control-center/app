@@ -66,6 +66,18 @@ C4Context
     Rel(ogen, firecrawl, "Scrapes URLs", "HTTPS")
     Rel(ogen, resend, "Sends email", "HTTPS")
 
+    UpdateElementStyle(creator, $bgColor="#08427b", $fontColor="#ffffff", $borderColor="#052e56")
+    UpdateElementStyle(admin, $bgColor="#08427b", $fontColor="#ffffff", $borderColor="#052e56")
+    UpdateElementStyle(ogen, $bgColor="#1168bd", $fontColor="#ffffff", $borderColor="#0b4884")
+    UpdateElementStyle(anthropic, $bgColor="#999999", $fontColor="#ffffff", $borderColor="#6b6b6b")
+    UpdateElementStyle(gemini, $bgColor="#999999", $fontColor="#ffffff", $borderColor="#6b6b6b")
+    UpdateElementStyle(zernio, $bgColor="#999999", $fontColor="#ffffff", $borderColor="#6b6b6b")
+    UpdateElementStyle(social, $bgColor="#999999", $fontColor="#ffffff", $borderColor="#6b6b6b")
+    UpdateElementStyle(firecrawl, $bgColor="#999999", $fontColor="#ffffff", $borderColor="#6b6b6b")
+    UpdateElementStyle(resend, $bgColor="#999999", $fontColor="#ffffff", $borderColor="#6b6b6b")
+    UpdateRelStyle(creator, ogen, $textColor="#444444", $lineColor="#707070")
+    UpdateRelStyle(admin, ogen, $textColor="#444444", $lineColor="#707070")
+
     UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
 ```
 
@@ -122,6 +134,23 @@ C4Container
     Rel(harbor, ts, "Reads", "SQL")
     Rel(harbor, api, "Secret & tenant admin", "gRPC")
     Rel(riverui, pg, "Reads job tables", "SQL")
+
+    UpdateElementStyle(creator, $bgColor="#08427b", $fontColor="#ffffff", $borderColor="#052e56")
+    UpdateElementStyle(admin, $bgColor="#08427b", $fontColor="#ffffff", $borderColor="#052e56")
+    UpdateElementStyle(spa, $bgColor="#438dd5", $fontColor="#ffffff", $borderColor="#2e6295")
+    UpdateElementStyle(api, $bgColor="#438dd5", $fontColor="#ffffff", $borderColor="#2e6295")
+    UpdateElementStyle(pg, $bgColor="#438dd5", $fontColor="#ffffff", $borderColor="#2e6295")
+    UpdateElementStyle(ts, $bgColor="#438dd5", $fontColor="#ffffff", $borderColor="#2e6295")
+    UpdateElementStyle(obj, $bgColor="#438dd5", $fontColor="#ffffff", $borderColor="#2e6295")
+    UpdateElementStyle(pdf, $bgColor="#438dd5", $fontColor="#ffffff", $borderColor="#2e6295")
+    UpdateElementStyle(video, $bgColor="#438dd5", $fontColor="#ffffff", $borderColor="#2e6295")
+    UpdateElementStyle(harbor, $bgColor="#438dd5", $fontColor="#ffffff", $borderColor="#2e6295")
+    UpdateElementStyle(riverui, $bgColor="#438dd5", $fontColor="#ffffff", $borderColor="#2e6295")
+    UpdateElementStyle(anthropic, $bgColor="#999999", $fontColor="#ffffff", $borderColor="#6b6b6b")
+    UpdateElementStyle(gemini, $bgColor="#999999", $fontColor="#ffffff", $borderColor="#6b6b6b")
+    UpdateElementStyle(zernio, $bgColor="#999999", $fontColor="#ffffff", $borderColor="#6b6b6b")
+    UpdateElementStyle(firecrawl, $bgColor="#999999", $fontColor="#ffffff", $borderColor="#6b6b6b")
+    UpdateElementStyle(resend, $bgColor="#999999", $fontColor="#ffffff", $borderColor="#6b6b6b")
 
     UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
 ```
