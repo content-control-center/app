@@ -299,6 +299,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		Files:      assetFileRepo,
 		Recorder:   usageWiring.recorder,
 		EmbedModel: cfg.EmbedModel,
+		Notifier:   notifier, // CON-242: asset-ingest-done producer
 	}
 	if pdfIngestEnabled {
 		pdfDeps.Client = pdfClient
@@ -323,6 +324,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		Hub:        hub,
 		Recorder:   usageWiring.recorder,
 		EmbedModel: cfg.EmbedModel,
+		Notifier:   notifier, // CON-242: asset-ingest-done producer
 	}
 
 	// CON-87 WS3: River background-job queue. Runs on the same
@@ -634,6 +636,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		noteSvc:             noteSvc,
 		recorder:            usageWiring.recorder,
 		checker:             usageWiring.checker,
+		notifier:            notifier, // CON-242: campaign content-plan-ready producer
 	}, secretStore)
 	if err != nil {
 		return nil, err

@@ -11,6 +11,7 @@ import (
 	"github.com/ogen-app/ogen/src/activity"
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/notify"
 	"github.com/ogen-app/ogen/src/post_actions/logs"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/tenantctx"
@@ -41,7 +42,10 @@ func (PollZernioStatusTask) InsertOpts() river.InsertOpts {
 // scheduled_at, then every 60s.
 type PollZernioStatusProcessor struct {
 	river.WorkerDefaults[PollZernioStatusTask]
-	Deps         ZernioDeps
+	Deps ZernioDeps
+	// Notifier drops a publish-outcome notification to the post's creator when
+	// Zernio reports a terminal status (CON-242). Nil is a no-op.
+	Notifier     *notify.Service
 	FastInterval time.Duration // default 30s
 	SlowInterval time.Duration // default 60s
 	FastWindow   time.Duration // default 5m after scheduled_at
@@ -62,7 +66,7 @@ func (p *PollZernioStatusProcessor) Timeout(*river.Job[PollZernioStatusTask]) ti
 
 func init() {
 	register(func(w *river.Workers, d Deps) {
-		river.AddWorker(w, &PollZernioStatusProcessor{Deps: d.Zernio})
+		river.AddWorker(w, &PollZernioStatusProcessor{Deps: d.Zernio, Notifier: d.Notifier})
 	})
 }
 
@@ -141,6 +145,8 @@ func (p *PollZernioStatusProcessor) Process(ctx context.Context, task PollZernio
 			activity.WithSource(activity.SourceJob),
 			activity.WithStatus(string(from)+"->"+string(post.Status)),
 		)
+		// CON-242: tell the post's creator it's live.
+		emitPublishNotification(ctx, p.Notifier, post, true)
 	case zernio.JobStatusFailed, zernio.JobStatusPartial:
 		// `partial` = some platforms succeeded, others failed. Per
 		// CON-69 we treat this as Failed for the MVP; per-platform
@@ -164,6 +170,8 @@ func (p *PollZernioStatusProcessor) Process(ctx context.Context, task PollZernio
 			activity.WithStatus(string(from)+"->"+string(post.Status)),
 			activity.WithPayload(map[string]any{"zernio_status": string(job.Status)}),
 		)
+		// CON-242: tell the post's creator it failed to publish.
+		emitPublishNotification(ctx, p.Notifier, post, false)
 	default:
 		// Defensive: unknown terminal state.
 		appendLog(ctx, p.Deps, post.ID, models.PostLogEventZernioPoll, post.Status, post.Status,

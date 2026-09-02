@@ -16,6 +16,7 @@ import (
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/notify"
 	"github.com/ogen-app/ogen/src/post_actions/logs"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/settings"
@@ -51,6 +52,9 @@ type SubmitPostProcessor struct {
 	// Tenants gates publishing on the owning tenant's lifecycle status (CON-190):
 	// a suspended/deleted tenant's scheduled posts are not published. Nil = no gate.
 	Tenants TenantStatusReader
+	// Notifier drops a "post failed to publish" notification to the post's
+	// creator on a terminal submit failure (CON-242). Nil is a no-op.
+	Notifier *notify.Service
 	// PollLeadTime is how far in advance of scheduled_at we begin
 	// polling. Defaults to 30s when zero.
 	PollLeadTime time.Duration
@@ -71,7 +75,7 @@ func (p *SubmitPostProcessor) Timeout(*river.Job[SubmitPostTask]) time.Duration 
 
 func init() {
 	register(func(w *river.Workers, d Deps) {
-		river.AddWorker(w, &SubmitPostProcessor{Deps: d.Zernio, Tenants: d.Tenants})
+		river.AddWorker(w, &SubmitPostProcessor{Deps: d.Zernio, Tenants: d.Tenants, Notifier: d.Notifier})
 	})
 }
 
@@ -432,7 +436,47 @@ func (p *SubmitPostProcessor) terminal(ctx context.Context, post *models.Post, r
 			"reason":  reason,
 			"message": msg,
 		}))
+	// CON-242: tell the post's creator it failed to publish.
+	emitPublishNotification(ctx, p.Notifier, post, false)
 	return nil
+}
+
+// emitPublishNotification drops a publish-outcome notification to the post's
+// creator (CON-242). Shared by the submit (terminal failure) and poll
+// (published / failed) workers. Best-effort — a nil notifier is a no-op and an
+// emit failure never affects the job. The dedupe_key collapses repeats for the
+// same post+outcome while still unread (e.g. a manual retry that fails again).
+func emitPublishNotification(ctx context.Context, n *notify.Service, post *models.Post, success bool) {
+	if n == nil || post == nil {
+		return
+	}
+	platform := "social"
+	if post.Platform != nil && post.Platform.Name != "" {
+		platform = post.Platform.Name
+	}
+	spec := notify.Spec{
+		EntityType: "post",
+		EntityID:   post.ID,
+		ActionURL:  "/posts/" + post.ID,
+		Data:       map[string]any{"platform": platform},
+	}
+	if success {
+		spec.Level = models.NotificationLevelSuccess
+		spec.Type = "post.published"
+		spec.Title = "Post published"
+		spec.Body = fmt.Sprintf("Your %s post is live.", platform)
+		spec.DedupeKey = "post.published:" + post.ID
+	} else {
+		spec.Level = models.NotificationLevelError
+		spec.Type = "post.publish_failed"
+		spec.Title = "Post failed to publish"
+		spec.Body = fmt.Sprintf("Your %s post couldn't be published.", platform)
+		spec.DedupeKey = "post.publish_failed:" + post.ID
+		if post.FailureReason != "" {
+			spec.Data["failure_reason"] = post.FailureReason
+		}
+	}
+	_ = n.Emit(ctx, post.CreatedBy, spec)
 }
 
 // appendLog is a tiny helper that keeps the writes uniform across all

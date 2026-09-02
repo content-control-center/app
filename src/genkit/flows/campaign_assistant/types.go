@@ -11,6 +11,7 @@ import (
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/draft_post"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
+	"github.com/ogen-app/ogen/src/notify"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/usage"
 	"github.com/ogen-app/ogen/src/vendors/llm"
@@ -149,6 +150,10 @@ type CampaignAssistantFlowConfig struct {
 	MaxTurns int
 	// Hub publishes "operation finalised" events on success/failure. nil = silent.
 	Hub eventhub.Hub
+	// Notifier drops a persistent "content plan ready" notification to the
+	// campaign owner when a run generates a content plan — only that action, not
+	// every assistant turn (CON-242). nil = silent.
+	Notifier *notify.Service
 
 	// PrewarmTools, when true, fires one throwaway generation carrying the full
 	// tool set at init so Anthropic compiles + caches the strict-tool grammar

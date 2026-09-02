@@ -23,6 +23,10 @@ type AssetRepository interface {
 	GetBySourceURL(ctx context.Context, sourceURL string) (*models.Asset, error)
 	Update(ctx context.Context, asset *models.Asset) error
 	UpdateStatus(ctx context.Context, id, status string) error
+	// CreatorOf returns an asset's created_by (its owner), tenant-scoped — used
+	// to address ingest-completion notifications (CON-242). sql.ErrNoRows when
+	// the asset is gone.
+	CreatorOf(ctx context.Context, id string) (string, error)
 	// UpdateContent sets title + content (and bumps updated_at) without touching
 	// status/source_url — the process_url worker's write after a scrape (CON-222).
 	UpdateContent(ctx context.Context, id, title, content string) error
@@ -114,6 +118,19 @@ func (r *assetRepository) UpdateStatus(ctx context.Context, id, status string) e
 		Where("id = ?", id).
 		Exec(ctx)
 	return err
+}
+
+func (r *assetRepository) CreatorOf(ctx context.Context, id string) (string, error) {
+	var createdBy string
+	err := r.db.NewSelect().
+		Model((*models.Asset)(nil)).
+		Column("created_by").
+		Where("a.id = ?", id).
+		Scan(ctx, &createdBy)
+	if err != nil {
+		return "", err
+	}
+	return createdBy, nil
 }
 
 func (r *assetRepository) UpdateContent(ctx context.Context, id, title, content string) error {

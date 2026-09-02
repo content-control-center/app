@@ -42,6 +42,8 @@ func (f *fakeURLAssets) UpdateStatus(_ context.Context, _, status string) error 
 	return nil
 }
 
+func (f *fakeURLAssets) CreatorOf(context.Context, string) (string, error) { return "", nil }
+
 func (f *fakeURLAssets) last() string {
 	if len(f.statuses) == 0 {
 		return ""

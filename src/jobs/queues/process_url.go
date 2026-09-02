@@ -25,6 +25,7 @@ import (
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/netguard"
+	"github.com/ogen-app/ogen/src/notify"
 	"github.com/ogen-app/ogen/src/storage"
 	"github.com/ogen-app/ogen/src/tenantctx"
 	"github.com/ogen-app/ogen/src/usage"
@@ -61,6 +62,7 @@ type urlScraper interface {
 type assetContentWriter interface {
 	UpdateContent(ctx context.Context, id, title, content string) error
 	UpdateStatus(ctx context.Context, id, status string) error
+	CreatorOf(ctx context.Context, id string) (string, error)
 }
 
 type imageReplacer interface {
@@ -95,6 +97,9 @@ type URLDeps struct {
 	// nil Recorder is a no-op. EmbedModel is the embed price-map key.
 	Recorder   *usage.Recorder
 	EmbedModel string
+	// Notifier drops an in-app notification to the asset's creator when ingest
+	// reaches a terminal status (CON-242). Nil is a no-op.
+	Notifier *notify.Service
 }
 
 // ProcessURLTask carries the asset to ingest. The scraped bytes are NOT in the
@@ -278,6 +283,9 @@ func (p *ProcessURLProcessor) setStatus(ctx context.Context, assetID, status str
 	if err := p.Deps.Assets.UpdateStatus(ctx, assetID, status); err != nil {
 		return fmt.Errorf("process_url %s: set status %s: %w", assetID, status, err)
 	}
+	// CON-242: announce terminal outcomes to the asset's creator (no-op for the
+	// intermediate "processing" write).
+	notifyAssetStatus(ctx, p.Deps.Notifier, p.Deps.Assets, assetID, status, "link")
 	return nil
 }
 

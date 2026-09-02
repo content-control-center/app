@@ -13,6 +13,8 @@ import (
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/notify"
+	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 //go:embed prompts/campaign_assistant.tmpl
@@ -124,4 +126,31 @@ func publishAssistantFinalised(
 	if pubErr := hub.Publish(context.Background(), ev); pubErr != nil {
 		slog.Error("hub publish failed", logging.AttrComponent, "genkit.campaign_assistant", "campaign_id", campaignID, logging.AttrError, pubErr)
 	}
+}
+
+// notifyContentPlanReady drops a persistent "content plan ready" notification to
+// the campaign owner (CON-242) — but ONLY when this run generated a content plan
+// (resp.Action == "content_plan_generated"), so an ordinary chat turn never
+// spams the inbox. Best-effort: a nil notifier, a run error, or a non-plan turn
+// is a silent no-op. Uses a fresh tenant-scoped background context because the
+// request ctx may already be cancelled by the time this deferred call runs.
+func notifyContentPlanReady(n *notify.Service, tenantID, ownerID, campaignID string, resp *CampaignAssistantResponse, runErr error) {
+	if n == nil || runErr != nil || resp == nil || ownerID == "" || tenantID == "" {
+		return
+	}
+	if resp.Action != "content_plan_generated" || resp.ContentPlan == nil {
+		return
+	}
+	ctx := tenantctx.With(context.Background(), tenantID)
+	postCount := resp.ContentPlan.PostCount
+	_ = n.Emit(ctx, ownerID, notify.Spec{
+		Level:      models.NotificationLevelSuccess,
+		Type:       "campaign.content_plan_ready",
+		Title:      "Content plan ready",
+		Body:       fmt.Sprintf("Your content plan is ready — %d post(s) drafted.", postCount),
+		EntityType: "campaign",
+		EntityID:   campaignID,
+		ActionURL:  "/campaigns/" + campaignID,
+		Data:       map[string]any{"post_count": postCount},
+	})
 }

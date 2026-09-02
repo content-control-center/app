@@ -44,15 +44,19 @@ func runCampaignAssistant(
 	// execution, or persist. Logged once as "phase timings" at the end.
 	tAfterEnforce := time.Now()
 
-	// finaliseOwnerID is captured once the campaign is loaded so the deferred
-	// finalisation event is scoped to the campaign owner. Empty before load →
-	// finalisation events for very-early failures are skipped.
-	var finaliseOwnerID string
+	// finaliseOwnerID / finaliseTenantID are captured once the campaign is loaded
+	// so the deferred finalisation event + notification are scoped to the campaign
+	// owner and tenant. Empty before load → finalisation for very-early failures
+	// is skipped.
+	var finaliseOwnerID, finaliseTenantID string
 	defer func() {
-		if cfg.Hub == nil || finaliseOwnerID == "" {
+		if finaliseOwnerID == "" {
 			return
 		}
 		publishAssistantFinalised(cfg.Hub, req.CampaignID, finaliseOwnerID, out, retErr)
+		// CON-242: a persistent "content plan ready" notification — fired only
+		// when this run actually generated a plan, not on every assistant turn.
+		notifyContentPlanReady(cfg.Notifier, finaliseTenantID, finaliseOwnerID, req.CampaignID, out, retErr)
 	}()
 
 	if strings.TrimSpace(req.Instruction) == "" {
@@ -70,6 +74,7 @@ func runCampaignAssistant(
 		return nil, fmt.Errorf("load campaign: %w", err)
 	}
 	finaliseOwnerID = campaign.CreatedBy
+	finaliseTenantID = campaign.TenantID
 	tAfterLoad := time.Now()
 
 	// ── Assemble context + load history ──────────────────────────────────────
