@@ -118,6 +118,13 @@ type Post struct {
 	PublisherPostID     string      `bun:"publisher_post_id,nullzero"                  json:"publisher_post_id,omitempty"`
 	PublisherStatus     string      `bun:"publisher_status,notnull,default:''"         json:"publisher_status,omitempty"`
 	PublishedResults    string      `bun:"published_results,notnull,default:''"        json:"published_results,omitempty"`
+	// PublishedURL is the platform permalink for the live post (CON-165), kept
+	// as a first-class field so the front-end can render "View post" off the
+	// post it already has, without an analytics round-trip (CON-149). Set from
+	// the publisher's canonical URL on publish/verify, or accepted on PUT for
+	// the Zernio skip path. `nullzero` sends NULL (not "") when unset; a URL
+	// with an empty PublisherPostID is a user-supplied (unverified) link.
+	PublishedURL        string      `bun:"published_url,nullzero"                       json:"published_url,omitempty"`
 	FailureReason       string      `bun:"failure_reason,notnull,default:''"           json:"failure_reason,omitempty"`
 	CTAType             PostCTAType `bun:"cta_type,notnull"                             json:"cta_type"`
 	CTAUrl              string      `bun:"cta_url,notnull"                              json:"cta_url"`

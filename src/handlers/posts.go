@@ -795,6 +795,11 @@ type postRequest struct {
 	CampaignTypePhaseID *string            `json:"campaign_type_phase_id"`
 	BrandVoiceID        *string            `json:"brand_voice_id"`
 	BrandAudienceID     *string            `json:"brand_audience_id"`
+	// PublishedURL (CON-165) lets the front-end record a permalink for posts
+	// Zernio cannot verify (the CON-149 skip path — e.g. LinkedIn personal
+	// accounts) or correct a wrong one. Like every field on this whole-resource
+	// PUT, the FE round-trips the current value; an empty string clears it.
+	PublishedURL string `json:"published_url"`
 }
 
 func (r *postRequest) toStatus() models.PostStatus {
@@ -830,6 +835,10 @@ func (r *postRequest) apply(post *models.Post, status models.PostStatus, ctaType
 	post.CTAUrl = r.CTAUrl
 	post.CampaignTypePhaseID = r.CampaignTypePhaseID
 	post.TargetAudienceNotes = r.TargetAudienceNotes
+	// CON-165: published_url stays writable after publish on purpose — recording
+	// a permalink is a post-publish affordance. When CON-251's content-lock
+	// lands, keep this field on the allowed-after-submit list.
+	post.PublishedURL = r.PublishedURL
 	post.BrandVoiceID = r.BrandVoiceID
 	post.BrandAudienceID = r.BrandAudienceID
 	post.UsedAssetIDs = nullSlice(r.UsedAssetIDs)
@@ -1606,6 +1615,11 @@ func (h *PostsHandler) VerifyExternal(c *fiber.Ctx) error {
 			post.PublishedAt = pa
 		}
 	}
+	// CON-165: persist the canonical, platform-normalised permalink. Verification
+	// is authoritative, so a confirmed URL overwrites any user-pasted one.
+	if ext.PlatformPostURL != "" {
+		post.PublishedURL = ext.PlatformPostURL
+	}
 	post.Status = models.PostStatusPublished
 	post.UpdatedAt = time.Now().UTC()
 	if err := h.repo.Update(c.Context(), post); err != nil {
@@ -1656,7 +1670,10 @@ func (h *PostsHandler) VerifyExternal(c *fiber.Ctx) error {
 			// The confirmed external post's own id — the one ext.Analytics
 			// belong to (post.PublisherPostID is left as-is when already set).
 			"publisher_post_id": ext.PlatformPostID,
-			"sync_status":       "synced",
+			// CON-165: echo the persisted permalink so the FE can render
+			// "View post" straight after verify, without a re-fetch.
+			"published_url": post.PublishedURL,
+			"sync_status":   "synced",
 		},
 		"analytics": metrics,
 	})

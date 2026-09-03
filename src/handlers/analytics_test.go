@@ -315,6 +315,15 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 			Expect(out["found"]).To(Equal(true))
 			p := out["post"].(map[string]any)
 			Expect(p["publisher_post_id"]).To(Equal("LI-999"))
+			Expect(p["published_url"]).To(Equal("https://li/999"))
+
+			// CON-165: the canonical permalink is persisted as a first-class
+			// field on the post, readable without an analytics round-trip.
+			pResp := get("/api/posts/p-manual")
+			Expect(pResp.StatusCode).To(Equal(200))
+			var pj map[string]any
+			Expect(json.NewDecoder(pResp.Body).Decode(&pj)).To(Succeed())
+			Expect(pj["published_url"]).To(Equal("https://li/999"))
 
 			// The per-post analytics endpoint now returns the back-filled snapshot.
 			aResp := get("/api/posts/p-manual/analytics")
