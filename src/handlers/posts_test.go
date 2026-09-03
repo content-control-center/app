@@ -552,6 +552,27 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				Expect(got.Platform).NotTo(BeNil())
 			})
 
+			It("persists published_url on update (CON-165 manual/skip path)", func() {
+				p := createPost("Manual Post", nil)
+
+				body, _ := json.Marshal(fiber.Map{
+					"campaign_id":   campaignID,
+					"title":         "Manual Post",
+					"status":        "draft",
+					"published_url": "https://linkedin.com/feed/update/123",
+				})
+				req := httptest.NewRequest("PUT", "/api/posts/"+p.ID, bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+
+				var got models.Post
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect(got.PublishedURL).To(Equal("https://linkedin.com/feed/update/123"))
+			})
+
 			It("returns 404 for an unknown id", func() {
 				body, _ := json.Marshal(fiber.Map{
 					"campaign_id": campaignID, "platform_id": "AXqWG7U2qnpt",
