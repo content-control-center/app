@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	"github.com/uptrace/bun"
 
@@ -11,12 +12,20 @@ import (
 )
 
 // CampaignRepository defines all persistence operations for the Campaign domain.
+//
+// Lifecycle (CON-156 BE 6): List and GetByID exclude soft-deleted campaigns;
+// List additionally excludes archived ones (reachable via ListArchived). Delete
+// soft-deletes; Archive/Unarchive toggle archived_at. All are tenant-scoped by
+// the model's Before* hooks.
 type CampaignRepository interface {
 	List(ctx context.Context) ([]models.Campaign, error)
+	ListArchived(ctx context.Context) ([]models.Campaign, error)
 	Create(ctx context.Context, campaign *models.Campaign) error
 	GetByID(ctx context.Context, id string) (*models.Campaign, error)
 	Update(ctx context.Context, campaign *models.Campaign) error
 	Delete(ctx context.Context, id string) (bool, error)
+	Archive(ctx context.Context, id string) (bool, error)
+	Unarchive(ctx context.Context, id string) (bool, error)
 }
 
 type campaignRepository struct {
@@ -41,9 +50,27 @@ func NewCampaignRepository(
 	}
 }
 
+// List returns the active set: campaigns that are neither soft-deleted nor
+// archived, oldest first.
 func (r *campaignRepository) List(ctx context.Context) ([]models.Campaign, error) {
+	return r.listFiltered(ctx, func(q *bun.SelectQuery) *bun.SelectQuery {
+		return q.Where("c.archived_at IS NULL")
+	})
+}
+
+// ListArchived returns archived (but not soft-deleted) campaigns, oldest first.
+func (r *campaignRepository) ListArchived(ctx context.Context) ([]models.Campaign, error) {
+	return r.listFiltered(ctx, func(q *bun.SelectQuery) *bun.SelectQuery {
+		return q.Where("c.archived_at IS NOT NULL")
+	})
+}
+
+// listFiltered runs the shared list query + hydration, always excluding
+// soft-deleted rows and applying the caller's archived-state predicate.
+func (r *campaignRepository) listFiltered(ctx context.Context, extra func(*bun.SelectQuery) *bun.SelectQuery) ([]models.Campaign, error) {
 	var campaigns []models.Campaign
-	if err := r.db.NewSelect().Model(&campaigns).OrderExpr("created_at ASC").Scan(ctx); err != nil {
+	q := extra(r.db.NewSelect().Model(&campaigns).Where("c.deleted_at IS NULL"))
+	if err := q.OrderExpr("created_at ASC").Scan(ctx); err != nil {
 		return nil, err
 	}
 	if err := r.hydrateTags(ctx, campaigns); err != nil {
@@ -63,9 +90,12 @@ func (r *campaignRepository) Create(ctx context.Context, campaign *models.Campai
 	return err
 }
 
+// GetByID returns a single campaign by id. Soft-deleted campaigns are treated
+// as gone (sql.ErrNoRows); archived campaigns are still returned so they can be
+// viewed and unarchived.
 func (r *campaignRepository) GetByID(ctx context.Context, id string) (*models.Campaign, error) {
 	campaign := new(models.Campaign)
-	err := r.db.NewSelect().Model(campaign).Where("c.id = ?", id).Scan(ctx)
+	err := r.db.NewSelect().Model(campaign).Where("c.id = ?", id).Where("c.deleted_at IS NULL").Scan(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, sql.ErrNoRows
@@ -90,8 +120,52 @@ func (r *campaignRepository) Update(ctx context.Context, campaign *models.Campai
 	return err
 }
 
+// Delete soft-deletes a campaign by stamping deleted_at. Returns false when the
+// campaign does not exist (in this tenant) or was already deleted. The row is
+// retained as an operational safety net; there is no self-serve restore.
 func (r *campaignRepository) Delete(ctx context.Context, id string) (bool, error) {
-	res, err := r.db.NewDelete().Model((*models.Campaign)(nil)).Where("id = ?", id).Exec(ctx)
+	res, err := r.db.NewUpdate().Model((*models.Campaign)(nil)).
+		Set("deleted_at = ?", time.Now().UTC()).
+		Where("id = ?", id).
+		Where("deleted_at IS NULL").
+		Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// Archive stamps archived_at, removing the campaign from the default active
+// list. Idempotent: re-archiving an already archived campaign preserves the
+// original timestamp. Returns false only when the campaign is missing or
+// soft-deleted.
+func (r *campaignRepository) Archive(ctx context.Context, id string) (bool, error) {
+	now := time.Now().UTC()
+	return r.setArchivedAt(ctx, id, &now)
+}
+
+// Unarchive clears archived_at, returning the campaign to the active list.
+// Idempotent. Returns false only when the campaign is missing or soft-deleted.
+func (r *campaignRepository) Unarchive(ctx context.Context, id string) (bool, error) {
+	return r.setArchivedAt(ctx, id, nil)
+}
+
+// setArchivedAt sets archived_at on a live (not deleted) campaign, returning
+// whether a row matched. A non-nil at archives while preserving any existing
+// timestamp (re-archiving must not move it); a nil at clears the field.
+func (r *campaignRepository) setArchivedAt(ctx context.Context, id string, at *time.Time) (bool, error) {
+	q := r.db.NewUpdate().Model((*models.Campaign)(nil)).
+		Where("id = ?", id).
+		Where("deleted_at IS NULL")
+	if at != nil {
+		// COALESCE keeps the first archive time on a re-archive while still
+		// stamping it when archived_at is currently NULL.
+		q = q.Set("archived_at = COALESCE(archived_at, ?)", at)
+	} else {
+		q = q.Set("archived_at = NULL")
+	}
+	res, err := q.Exec(ctx)
 	if err != nil {
 		return false, err
 	}
