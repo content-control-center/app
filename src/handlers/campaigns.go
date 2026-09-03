@@ -180,6 +180,10 @@ func (h *CampaignsHandler) Register(app *fiber.App) {
 	g.Get("/:id", h.auth, h.Get)
 	g.Put("/:id", h.auth, h.Update)
 	g.Delete("/:id", h.auth, h.Delete)
+	// CON-156 (BE 6): campaign lifecycle. Archive removes a campaign from the
+	// active list (reversible); unarchive returns it. Both tenant-scoped.
+	g.Post("/:id/archive", h.auth, h.Archive)
+	g.Post("/:id/unarchive", h.auth, h.Unarchive)
 	g.Post("/:id/generate-draft", h.auth, h.GenerateDraft)
 	g.Post("/:id/enrich-brief", h.auth, h.EnrichBrief)
 	// CON-114: targeted generation — add a few posts for a platform subset,
@@ -276,24 +280,33 @@ func (r *campaignRequest) normalizeScheduling() (publishingTime string, timezone
 	return publishingTime, timezone, days, spread, nil
 }
 
+// toStatus resolves the campaign's status, defaulting to active. CON-156 BE 6:
+// draft is not a user-facing distinction (nothing behaves differently), so a
+// campaign with no explicit status is created active rather than draft. Existing
+// draft campaigns keep working — nothing in the backend branches on the value.
 func (r *campaignRequest) toStatus() models.CampaignStatus {
 	if r.Status == "" {
-		return models.StatusDraft
+		return models.StatusActive
 	}
 	return r.Status
 }
 
 // List godoc
 // @Summary      List campaigns
-// @Description  Returns all campaigns ordered by creation date.
+// @Description  Returns the active set (neither archived nor deleted) ordered by creation date. Pass ?archived=true to list archived campaigns instead.
 // @Tags         campaigns
 // @Produce      json
 // @Security     CookieAuth
+// @Param        archived  query     bool  false  "List archived campaigns instead of the active set"
 // @Success      200  {array}   models.Campaign
 // @Failure      401  {object}  map[string]string
 // @Router       /api/campaigns [get]
 func (h *CampaignsHandler) List(c *fiber.Ctx) error {
-	campaigns, err := h.repo.List(c.Context())
+	list := h.repo.List
+	if c.QueryBool("archived", false) {
+		list = h.repo.ListArchived
+	}
+	campaigns, err := list(c.Context())
 	if err != nil {
 		return err
 	}
@@ -512,7 +525,7 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 
 // Delete godoc
 // @Summary      Delete campaign
-// @Description  Deletes a campaign by Sqid.
+// @Description  Soft-deletes a campaign by Sqid. The row is retained as a safety net (no self-serve restore); it disappears from lists and reads.
 // @Tags         campaigns
 // @Security     CookieAuth
 // @Param        id   path  string  true  "Campaign Sqid"
@@ -529,6 +542,54 @@ func (h *CampaignsHandler) Delete(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "campaign not found")
 	}
 	h.recordActivity(c, activity.CategoryCampaign, "campaign_deleted",
+		activity.WithEntity("campaign", c.Params("id")),
+	)
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// Archive godoc
+// @Summary      Archive campaign
+// @Description  Removes a campaign from the active list. Reversible via unarchive.
+// @Tags         campaigns
+// @Security     CookieAuth
+// @Param        id   path  string  true  "Campaign Sqid"
+// @Success      204
+// @Failure      401  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Router       /api/campaigns/{id}/archive [post]
+func (h *CampaignsHandler) Archive(c *fiber.Ctx) error {
+	ok, err := h.repo.Archive(c.Context(), c.Params("id"))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fiber.NewError(fiber.StatusNotFound, "campaign not found")
+	}
+	h.recordActivity(c, activity.CategoryCampaign, "campaign_archived",
+		activity.WithEntity("campaign", c.Params("id")),
+	)
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// Unarchive godoc
+// @Summary      Unarchive campaign
+// @Description  Returns an archived campaign to the active list.
+// @Tags         campaigns
+// @Security     CookieAuth
+// @Param        id   path  string  true  "Campaign Sqid"
+// @Success      204
+// @Failure      401  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Router       /api/campaigns/{id}/unarchive [post]
+func (h *CampaignsHandler) Unarchive(c *fiber.Ctx) error {
+	ok, err := h.repo.Unarchive(c.Context(), c.Params("id"))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fiber.NewError(fiber.StatusNotFound, "campaign not found")
+	}
+	h.recordActivity(c, activity.CategoryCampaign, "campaign_unarchived",
 		activity.WithEntity("campaign", c.Params("id")),
 	)
 	return c.SendStatus(fiber.StatusNoContent)

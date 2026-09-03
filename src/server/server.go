@@ -569,6 +569,9 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		id, _, err := zernioRT.Settings.Get(ctx, pubzernio.SettingProfileID)
 		return id, err
 	})
+	// CON-251: snapshot the content submitted to Zernio at schedule time so a
+	// published post keeps a durable record of "what actually went out".
+	scheduleSvc.SetVersionSnapshot(postVersionRepo)
 	// CON-188: one note service, shared by the REST CRUD and the assistant's
 	// createNote tool, so validation + origin stamping never drift.
 	noteSvc := notes.New(postNoteRepo)
