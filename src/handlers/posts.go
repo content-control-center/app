@@ -58,7 +58,7 @@ type PostsHandler struct {
 	// the tenant (CON-245). Optional (SetBrandRepo); nil skips validation.
 	brandRepo repository.BrandRepository
 	auth      fiber.Handler
-	assistant      func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error)
+	assistant func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error)
 	// assessQuality runs the Post quality assessment agent (CON-85). nil
 	// makes the /assess endpoint return 503. Wired via SetQualityAssessor.
 	assessQuality func(ctx context.Context, postID string, onEvent post_quality.OnEventFunc) (*post_quality.PostQualityResponse, error)
@@ -712,8 +712,8 @@ func NewPostsHandler(
 // just the post's voice + audience (CON-245), so the editor's picker need not
 // round-trip the whole resource.
 type postBrandRequest struct {
-	BrandVoiceID    *string `json:"brand_voice_id"`
-	BrandAudienceID *string `json:"brand_audience_id"`
+	BrandVoiceID    Optional[string] `json:"brand_voice_id"`
+	BrandAudienceID Optional[string] `json:"brand_audience_id"`
 }
 
 // SetBrand sets a post's own brand voice + audience. Both are tenant-checked and
@@ -731,11 +731,14 @@ func (h *PostsHandler) SetBrand(c *fiber.Ctx) error {
 		}
 		return err
 	}
-	if err := validateBrandRefs(c.Context(), h.brandRepo, req.BrandVoiceID, req.BrandAudienceID); err != nil {
+	if err := validateBrandRefs(c.Context(), h.brandRepo, req.BrandVoiceID.Value, req.BrandAudienceID.Value); err != nil {
 		return err
 	}
-	post.BrandVoiceID = req.BrandVoiceID
-	post.BrandAudienceID = req.BrandAudienceID
+	// Presence-aware (CON-245): an omitted field leaves the post's existing ref
+	// alone; an explicit null clears it. The two are independent, so sending only
+	// brand_voice_id no longer wipes the audience.
+	req.BrandVoiceID.applyTo(&post.BrandVoiceID)
+	req.BrandAudienceID.applyTo(&post.BrandAudienceID)
 	post.UpdatedAt = time.Now().UTC()
 	if err := h.repo.Update(c.Context(), post); err != nil {
 		return err
@@ -793,8 +796,12 @@ type postRequest struct {
 	TargetAudienceNotes string             `json:"target_audience_notes"`
 	UsedAssetIDs        models.StringSlice `json:"used_asset_ids"`
 	CampaignTypePhaseID *string            `json:"campaign_type_phase_id"`
-	BrandVoiceID        *string            `json:"brand_voice_id"`
-	BrandAudienceID     *string            `json:"brand_audience_id"`
+	// BrandVoiceID / BrandAudienceID are presence-aware (CON-245): unlike the
+	// other client-authored fields on this full-replace body, these are stamped
+	// server-side by content_plan / draft_post, so an omitted key must leave the
+	// stored ref untouched rather than null it. See Optional and apply.
+	BrandVoiceID    Optional[string] `json:"brand_voice_id"`
+	BrandAudienceID Optional[string] `json:"brand_audience_id"`
 }
 
 func (r *postRequest) toStatus() models.PostStatus {
@@ -830,8 +837,10 @@ func (r *postRequest) apply(post *models.Post, status models.PostStatus, ctaType
 	post.CTAUrl = r.CTAUrl
 	post.CampaignTypePhaseID = r.CampaignTypePhaseID
 	post.TargetAudienceNotes = r.TargetAudienceNotes
-	post.BrandVoiceID = r.BrandVoiceID
-	post.BrandAudienceID = r.BrandAudienceID
+	// Presence-aware (CON-245): omitting these leaves the server-stamped refs in
+	// place; an explicit null clears them.
+	r.BrandVoiceID.applyTo(&post.BrandVoiceID)
+	r.BrandAudienceID.applyTo(&post.BrandAudienceID)
 	post.UsedAssetIDs = nullSlice(r.UsedAssetIDs)
 	post.UpdatedAt = time.Now().UTC()
 }
@@ -1125,7 +1134,7 @@ func (h *PostsHandler) Update(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid cta_type")
 	}
 
-	if err := validateBrandRefs(c.Context(), h.brandRepo, req.BrandVoiceID, req.BrandAudienceID); err != nil {
+	if err := validateBrandRefs(c.Context(), h.brandRepo, req.BrandVoiceID.Value, req.BrandAudienceID.Value); err != nil {
 		return err
 	}
 

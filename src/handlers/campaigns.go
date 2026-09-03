@@ -42,9 +42,9 @@ type CampaignsHandler struct {
 	campaignTypeRepo repository.CampaignTypeRepository
 	// brandRepo validates campaign brand_voice_id/brand_audience_id belong to
 	// the tenant (CON-245). Optional (SetBrandRepo); nil skips validation.
-	brandRepo repository.BrandRepository
-	auth      fiber.Handler
-	generateDraft    func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)
+	brandRepo     repository.BrandRepository
+	auth          fiber.Handler
+	generateDraft func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)
 	// isContentPlanReady reports whether the underlying Anthropic key
 	// is currently configured. Decoupled from generateDraft so we can
 	// return 503 before opening the SSE stream rather than emitting
@@ -198,13 +198,15 @@ func (h *CampaignsHandler) Register(app *fiber.App) {
 }
 
 type campaignRequest struct {
-	Name               string                   `json:"name"                validate:"required"`
-	Description        string                   `json:"description"`
-	TargetPersona      string                   `json:"target_persona"`
-	KeyMessages        string                   `json:"key_messages"`
-	ToneGuidelines     string                   `json:"tone_guidelines"`
-	BrandVoiceID       *string                  `json:"brand_voice_id"`
-	BrandAudienceID    *string                  `json:"brand_audience_id"`
+	Name           string `json:"name"                validate:"required"`
+	Description    string `json:"description"`
+	TargetPersona  string `json:"target_persona"`
+	KeyMessages    string `json:"key_messages"`
+	ToneGuidelines string `json:"tone_guidelines"`
+	// Presence-aware (CON-245): omitting a brand ref on a full-replace save
+	// leaves the stored value alone; an explicit null clears it. See Optional.
+	BrandVoiceID       Optional[string]         `json:"brand_voice_id"`
+	BrandAudienceID    Optional[string]         `json:"brand_audience_id"`
 	UseAssets          bool                     `json:"use_assets"`
 	AssetIDs           models.StringSlice       `json:"asset_ids"`
 	TargetPlatforms    models.CampaignPlatforms `json:"target_platforms"`
@@ -341,7 +343,7 @@ func (h *CampaignsHandler) Create(c *fiber.Ctx) error {
 		return err
 	}
 
-	if err := validateBrandRefs(c.Context(), h.brandRepo, req.BrandVoiceID, req.BrandAudienceID); err != nil {
+	if err := validateBrandRefs(c.Context(), h.brandRepo, req.BrandVoiceID.Value, req.BrandAudienceID.Value); err != nil {
 		return err
 	}
 
@@ -352,8 +354,8 @@ func (h *CampaignsHandler) Create(c *fiber.Ctx) error {
 		TargetPersona:      req.TargetPersona,
 		KeyMessages:        req.KeyMessages,
 		ToneGuidelines:     req.ToneGuidelines,
-		BrandVoiceID:       req.BrandVoiceID,
-		BrandAudienceID:    req.BrandAudienceID,
+		BrandVoiceID:       req.BrandVoiceID.Value,
+		BrandAudienceID:    req.BrandAudienceID.Value,
 		UseAssets:          req.UseAssets,
 		AssetIDs:           nullSlice(req.AssetIDs),
 		TargetPlatforms:    nullCampaignPlatforms(req.TargetPlatforms),
@@ -444,7 +446,7 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
 
-	if err := validateBrandRefs(c.Context(), h.brandRepo, req.BrandVoiceID, req.BrandAudienceID); err != nil {
+	if err := validateBrandRefs(c.Context(), h.brandRepo, req.BrandVoiceID.Value, req.BrandAudienceID.Value); err != nil {
 		return err
 	}
 
@@ -465,8 +467,9 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 	campaign.TargetPersona = req.TargetPersona
 	campaign.KeyMessages = req.KeyMessages
 	campaign.ToneGuidelines = req.ToneGuidelines
-	campaign.BrandVoiceID = req.BrandVoiceID
-	campaign.BrandAudienceID = req.BrandAudienceID
+	// Presence-aware (CON-245): omit to leave alone, explicit null to clear.
+	req.BrandVoiceID.applyTo(&campaign.BrandVoiceID)
+	req.BrandAudienceID.applyTo(&campaign.BrandAudienceID)
 	campaign.UseAssets = req.UseAssets
 	campaign.AssetIDs = nullSlice(req.AssetIDs)
 	campaign.TargetPlatforms = nullCampaignPlatforms(req.TargetPlatforms)
