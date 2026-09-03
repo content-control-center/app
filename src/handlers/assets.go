@@ -964,6 +964,9 @@ func (h *AssetsHandler) BulkTag(c *fiber.Ctx) error {
 
 	updated, err := h.repo.ApplyTags(c.Context(), req.AssetIDs, req.Add, req.Remove)
 	if err != nil {
+		if errors.Is(err, repository.ErrUnknownTag) {
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
 		return err
 	}
 	for i := range updated {

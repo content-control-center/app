@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -33,9 +34,11 @@ type AssetRepository interface {
 	// ApplyTags adds and removes tag IDs across many assets in one transaction —
 	// the Content Bank's bulk-filing operation (CON-279). Each asset keeps its
 	// existing tags minus `remove` plus `add`, deduped and order-preserving. The
-	// load and the writes are tenant-scoped by the TenantScoped hooks, so IDs
-	// outside the caller's tenant are silently skipped. Returns the updated
-	// assets with tags and files hydrated.
+	// load and the writes are tenant-scoped by the TenantScoped hooks, so asset
+	// IDs outside the caller's tenant are silently skipped. Every `add` id must
+	// resolve to a tag in the caller's tenant or the call fails with
+	// ErrUnknownTag; `remove` ids are applied as-is. Returns the updated assets
+	// (never nil) with tags and files hydrated.
 	ApplyTags(ctx context.Context, assetIDs, add, remove []string) ([]models.Asset, error)
 	Delete(ctx context.Context, id string) (bool, error)
 }
@@ -151,19 +154,44 @@ func (r *assetRepository) UpdateContent(ctx context.Context, id, title, content 
 	return err
 }
 
+// ErrUnknownTag is returned by ApplyTags when an `add` id doesn't resolve to a
+// tag in the caller's tenant — the request references a tag that doesn't exist
+// or belongs to another tenant. Handlers map it to a 400. `remove` ids are not
+// validated: dropping an unknown id is a harmless no-op, and rejecting it would
+// block cleaning up references to an already-deleted tag.
+var ErrUnknownTag = errors.New("unknown tag id")
+
 func (r *assetRepository) ApplyTags(ctx context.Context, assetIDs, add, remove []string) ([]models.Asset, error) {
 	if len(assetIDs) == 0 {
 		return []models.Asset{}, nil
+	}
+	// Validate the tags being added before persisting anything: GetByIDs is
+	// tenant-scoped by the TenantScoped hooks, so an id that's missing from the
+	// result is either nonexistent or another tenant's — reject rather than
+	// silently write a dangling id into the asset's tag_ids.
+	if len(add) > 0 {
+		tags, err := r.tagRepo.GetByIDs(ctx, add)
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range add {
+			if _, ok := tags[id]; !ok {
+				return nil, fmt.Errorf("%w: %s", ErrUnknownTag, id)
+			}
+		}
 	}
 	var updated []models.Asset
 	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		// The TenantScoped hooks scope this to the caller's tenant, so a request
 		// naming another tenant's asset id simply doesn't load it — and therefore
-		// can't be written below.
+		// can't be written below. FOR UPDATE locks the loaded rows so concurrent
+		// bulk-tag calls on the same assets serialise their read-merge-write and
+		// don't clobber each other's tag_ids (lost update).
 		var assets []models.Asset
 		if err := tx.NewSelect().
 			Model(&assets).
 			Where("a.id IN (?)", bun.In(assetIDs)).
+			For("UPDATE").
 			Scan(ctx); err != nil {
 			return err
 		}
@@ -192,6 +220,11 @@ func (r *assetRepository) ApplyTags(ctx context.Context, assetIDs, add, remove [
 	}
 	if err := r.hydrateFiles(ctx, updated); err != nil {
 		return nil, err
+	}
+	// Never return nil: when assetIDs are all outside the tenant nothing loads,
+	// and the handler's c.JSON(updated) must emit [] rather than null.
+	if updated == nil {
+		updated = []models.Asset{}
 	}
 	return updated, nil
 }
