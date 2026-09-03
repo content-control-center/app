@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -108,6 +109,7 @@ func (h *AssetsHandler) Register(app *fiber.App) {
 	g.Post("/", h.auth, h.Create)
 	g.Post("/upload", h.auth, h.Upload)
 	g.Post("/url", h.auth, h.CreateURL)
+	g.Post("/tags", h.auth, h.BulkTag)
 	g.Get("/:id", h.auth, h.Get)
 	g.Put("/:id", h.auth, h.Update)
 	g.Delete("/:id", h.auth, h.Delete)
@@ -124,11 +126,17 @@ type createAssetRequest struct {
 // `validate:"required"` because an image asset's description may legitimately be
 // empty (CON-246 R9); Update enforces it for the document types that still need
 // it once the asset's type is known.
+//
+// AltText and TagIDs are pointers so the handler can tell an omitted field from
+// one sent empty: a nil pointer leaves the stored value alone, a present one
+// (including "" or []) replaces it. Before CON-279 both were assigned
+// unconditionally, so a title/content-only PUT — all the document editor sends —
+// silently wiped an asset's tags and alt text.
 type updateAssetRequest struct {
-	Title   string             `json:"title"   validate:"required"`
-	Content string             `json:"content"`
-	AltText string             `json:"alt_text"`
-	TagIDs  models.StringSlice `json:"tag_ids"`
+	Title   string              `json:"title"   validate:"required"`
+	Content string              `json:"content"`
+	AltText *string             `json:"alt_text"`
+	TagIDs  *models.StringSlice `json:"tag_ids"`
 }
 
 // List godoc
@@ -871,9 +879,16 @@ func (h *AssetsHandler) Update(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "content is required")
 	}
 
-	altText, err := normalizeAltText(req.AltText)
-	if err != nil {
-		return err
+	// alt_text and tag_ids are optional on the PUT (CON-279): a nil pointer means
+	// the caller didn't send the field, so its stored value is kept; a present
+	// value — including "" or [] — replaces it. This is what stops a
+	// title/content-only save from clearing tags or alt text.
+	altText := asset.AltText
+	if req.AltText != nil {
+		altText, err = normalizeAltText(*req.AltText)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Detect whether the embedding inputs (title or content) actually changed,
@@ -883,7 +898,9 @@ func (h *AssetsHandler) Update(c *fiber.Ctx) error {
 	asset.Title = req.Title
 	asset.Content = req.Content
 	asset.AltText = altText
-	asset.TagIDs = nullSlice(req.TagIDs)
+	if req.TagIDs != nil {
+		asset.TagIDs = nullSlice(*req.TagIDs)
+	}
 	asset.UpdatedAt = time.Now().UTC()
 
 	if err := h.repo.Update(c.Context(), asset); err != nil {
@@ -897,6 +914,62 @@ func (h *AssetsHandler) Update(c *fiber.Ctx) error {
 
 	h.decorateFile(asset)
 	return c.JSON(asset)
+}
+
+// bulkTagRequest is the payload for the bulk tag operation: the assets to touch
+// and the tag IDs to add and/or remove on each. At least one of add/remove must
+// be non-empty (enforced in the handler, not by a struct tag, so the message can
+// name the actual rule).
+type bulkTagRequest struct {
+	AssetIDs []string `json:"asset_ids" validate:"required,min=1"`
+	Add      []string `json:"add"`
+	Remove   []string `json:"remove"`
+}
+
+// BulkTag godoc
+// @Summary      Bulk add/remove tags across assets
+// @Description  Adds and/or removes tag IDs on many assets in one call — the
+// @Description  filing operation the Content Bank's multi-select needs (CON-279),
+// @Description  where you tag many documents at once. Each listed asset keeps the
+// @Description  tags it already has, minus `remove`, plus `add`; the result is
+// @Description  deduped and preserves order. Assets outside the caller's tenant
+// @Description  are skipped. Returns the updated assets with tags hydrated.
+// @Tags         content-bank
+// @Accept       json
+// @Produce      json
+// @Security     CookieAuth
+// @Param        body  body      bulkTagRequest  true  "Bulk tag payload"
+// @Success      200   {array}   models.Asset
+// @Failure      400   {object}  map[string]string
+// @Failure      401   {object}  map[string]string
+// @Router       /api/content-bank/assets/tags [post]
+func (h *AssetsHandler) BulkTag(c *fiber.Ctx) error {
+	var req bulkTagRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	if err := validate.Struct(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	}
+	if len(req.Add) == 0 && len(req.Remove) == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "add or remove must name at least one tag")
+	}
+	// A tag named in both lists is contradictory — reject it rather than let the
+	// merge pick a silent winner.
+	for _, id := range req.Add {
+		if slices.Contains(req.Remove, id) {
+			return fiber.NewError(fiber.StatusBadRequest, "a tag cannot be both added and removed")
+		}
+	}
+
+	updated, err := h.repo.ApplyTags(c.Context(), req.AssetIDs, req.Add, req.Remove)
+	if err != nil {
+		return err
+	}
+	for i := range updated {
+		h.decorateFile(&updated[i])
+	}
+	return c.JSON(updated)
 }
 
 // Delete godoc

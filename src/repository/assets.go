@@ -30,6 +30,13 @@ type AssetRepository interface {
 	// UpdateContent sets title + content (and bumps updated_at) without touching
 	// status/source_url — the process_url worker's write after a scrape (CON-222).
 	UpdateContent(ctx context.Context, id, title, content string) error
+	// ApplyTags adds and removes tag IDs across many assets in one transaction —
+	// the Content Bank's bulk-filing operation (CON-279). Each asset keeps its
+	// existing tags minus `remove` plus `add`, deduped and order-preserving. The
+	// load and the writes are tenant-scoped by the TenantScoped hooks, so IDs
+	// outside the caller's tenant are silently skipped. Returns the updated
+	// assets with tags and files hydrated.
+	ApplyTags(ctx context.Context, assetIDs, add, remove []string) ([]models.Asset, error)
 	Delete(ctx context.Context, id string) (bool, error)
 }
 
@@ -142,6 +149,80 @@ func (r *assetRepository) UpdateContent(ctx context.Context, id, title, content 
 		Where("id = ?", id).
 		Exec(ctx)
 	return err
+}
+
+func (r *assetRepository) ApplyTags(ctx context.Context, assetIDs, add, remove []string) ([]models.Asset, error) {
+	if len(assetIDs) == 0 {
+		return []models.Asset{}, nil
+	}
+	var updated []models.Asset
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// The TenantScoped hooks scope this to the caller's tenant, so a request
+		// naming another tenant's asset id simply doesn't load it — and therefore
+		// can't be written below.
+		var assets []models.Asset
+		if err := tx.NewSelect().
+			Model(&assets).
+			Where("a.id IN (?)", bun.In(assetIDs)).
+			Scan(ctx); err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		for i := range assets {
+			assets[i].TagIDs = mergeTagIDs(assets[i].TagIDs, add, remove)
+			assets[i].UpdatedAt = now
+			// Only the tag set and its timestamp — never title/content, so this
+			// can't disturb an in-flight document edit or trigger a re-embed.
+			if _, err := tx.NewUpdate().
+				Model(&assets[i]).
+				Column("tag_ids", "updated_at").
+				WherePK().
+				Exec(ctx); err != nil {
+				return err
+			}
+		}
+		updated = assets
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := r.hydrateTags(ctx, updated); err != nil {
+		return nil, err
+	}
+	if err := r.hydrateFiles(ctx, updated); err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
+// mergeTagIDs returns existing minus remove, then add appended for any id not
+// already present — deduped, preserving existing order with adds last. It never
+// returns nil, so the notnull jsonb column always receives an array.
+func mergeTagIDs(existing models.StringSlice, add, remove []string) models.StringSlice {
+	drop := make(map[string]struct{}, len(remove))
+	for _, id := range remove {
+		drop[id] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(existing)+len(add))
+	out := make(models.StringSlice, 0, len(existing)+len(add))
+	keep := func(id string) {
+		if _, dropped := drop[id]; dropped {
+			return
+		}
+		if _, dup := seen[id]; dup {
+			return
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	for _, id := range existing {
+		keep(id)
+	}
+	for _, id := range add {
+		keep(id)
+	}
+	return out
 }
 
 // Delete removes the asset and, in the same transaction, scrubs its id from
