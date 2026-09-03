@@ -59,6 +59,15 @@ type Campaign struct {
 	// and the campaign overview reports per-period progress against it.
 	GoalCadence string `bun:"goal_cadence,notnull,default:'month'"          json:"goal_cadence"`
 
+	// Lifecycle (CON-156 BE 6). A campaign leaves the active set by being
+	// archived (reversible) or soft-deleted (an operational safety net, not an
+	// undo — no self-serve restore). Both are nullable timestamps filtered
+	// explicitly in the repository rather than via bun's soft_delete tag, so
+	// archive and delete stay independent: GetByID still returns an archived
+	// campaign (to unarchive it) while hiding a deleted one.
+	ArchivedAt *time.Time `bun:"archived_at"                                  json:"archived_at"`
+	DeletedAt  *time.Time `bun:"deleted_at"                                   json:"deleted_at"`
+
 	// system
 	Status       CampaignStatus `bun:"status,notnull"                               json:"status"`
 	Budget       *float64       `bun:"budget"                                       json:"budget"`
