@@ -137,8 +137,9 @@ func (r *campaignRepository) Delete(ctx context.Context, id string) (bool, error
 }
 
 // Archive stamps archived_at, removing the campaign from the default active
-// list. Idempotent: re-archiving a live campaign re-stamps the time. Returns
-// false only when the campaign is missing or soft-deleted.
+// list. Idempotent: re-archiving an already archived campaign preserves the
+// original timestamp. Returns false only when the campaign is missing or
+// soft-deleted.
 func (r *campaignRepository) Archive(ctx context.Context, id string) (bool, error) {
 	now := time.Now().UTC()
 	return r.setArchivedAt(ctx, id, &now)
@@ -150,14 +151,21 @@ func (r *campaignRepository) Unarchive(ctx context.Context, id string) (bool, er
 	return r.setArchivedAt(ctx, id, nil)
 }
 
-// setArchivedAt sets archived_at to at (nil clears it) on a live (not deleted)
-// campaign, returning whether a row matched.
+// setArchivedAt sets archived_at on a live (not deleted) campaign, returning
+// whether a row matched. A non-nil at archives while preserving any existing
+// timestamp (re-archiving must not move it); a nil at clears the field.
 func (r *campaignRepository) setArchivedAt(ctx context.Context, id string, at *time.Time) (bool, error) {
-	res, err := r.db.NewUpdate().Model((*models.Campaign)(nil)).
-		Set("archived_at = ?", at).
+	q := r.db.NewUpdate().Model((*models.Campaign)(nil)).
 		Where("id = ?", id).
-		Where("deleted_at IS NULL").
-		Exec(ctx)
+		Where("deleted_at IS NULL")
+	if at != nil {
+		// COALESCE keeps the first archive time on a re-archive while still
+		// stamping it when archived_at is currently NULL.
+		q = q.Set("archived_at = COALESCE(archived_at, ?)", at)
+	} else {
+		q = q.Set("archived_at = NULL")
+	}
+	res, err := q.Exec(ctx)
 	if err != nil {
 		return false, err
 	}
