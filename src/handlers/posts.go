@@ -744,6 +744,122 @@ func (h *PostsHandler) SetBrand(c *fiber.Ctx) error {
 	return c.JSON(post)
 }
 
+// AddAssets godoc
+// @Summary      Attach source assets to a post
+// @Description  Unions the given asset ids into the post's sources
+// @Description  (posts.used_asset_ids), touching no other field. The write is a
+// @Description  single atomic UPDATE, so concurrent attaches of different sources
+// @Description  both survive and omitted fields are never reset (CON-233).
+// @Description  Adding an already-present id is a no-op. A source change to a
+// @Description  submitted post (scheduled/published) is content-locked (409),
+// @Description  mirroring PUT (CON-251). Returns the updated post.
+// @Tags         posts
+// @Accept       json
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id    path      string                 true  "Post Sqid"
+// @Param        body  body      assetMembershipRequest true  "Asset ids to attach"
+// @Success      200   {object}  models.Post
+// @Failure      400   {object}  map[string]string
+// @Failure      401   {object}  map[string]string
+// @Failure      404   {object}  map[string]string
+// @Failure      409   {object}  map[string]string
+// @Router       /api/posts/{id}/assets [post]
+func (h *PostsHandler) AddAssets(c *fiber.Ctx) error {
+	var req assetMembershipRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	post, err := h.repo.GetByID(c.Context(), c.Params("id"))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "post not found")
+		}
+		return err
+	}
+	// CON-251: a submitted post's sources are frozen — but only a real change is
+	// rejected; re-adding ids it already has is a harmless no-op (matches PUT's
+	// mutatesLockedContent / no-op-save rule).
+	if post.Status.IsSubmitted() && addsNewID(post.UsedAssetIDs, req.AssetIDs) {
+		return submittedLockError(post.Status)
+	}
+	updated, err := h.repo.AddUsedAssetIDs(c.Context(), c.Params("id"), req.AssetIDs)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "post not found")
+		}
+		return err
+	}
+	h.recordActivity(c, "post_updated",
+		activity.WithEntity("post", updated.ID),
+		activity.WithStatus(string(updated.Status)),
+	)
+	return c.JSON(updated)
+}
+
+// RemoveAsset godoc
+// @Summary      Detach a source asset from a post
+// @Description  Removes one asset id from the post's sources
+// @Description  (posts.used_asset_ids), touching no other field (CON-233).
+// @Description  Removing an id that is not present is a no-op. Detaching a source
+// @Description  from a submitted post (scheduled/published) is content-locked
+// @Description  (409), mirroring PUT (CON-251). Returns the updated post.
+// @Tags         posts
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id       path      string  true  "Post Sqid"
+// @Param        assetId  path      string  true  "Asset Sqid to detach"
+// @Success      200      {object}  models.Post
+// @Failure      401      {object}  map[string]string
+// @Failure      404      {object}  map[string]string
+// @Failure      409      {object}  map[string]string
+// @Router       /api/posts/{id}/assets/{assetId} [delete]
+func (h *PostsHandler) RemoveAsset(c *fiber.Ctx) error {
+	assetID := c.Params("assetId")
+	post, err := h.repo.GetByID(c.Context(), c.Params("id"))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "post not found")
+		}
+		return err
+	}
+	if post.Status.IsSubmitted() && slices.Contains(post.UsedAssetIDs, assetID) {
+		return submittedLockError(post.Status)
+	}
+	updated, err := h.repo.RemoveUsedAssetID(c.Context(), c.Params("id"), assetID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "post not found")
+		}
+		return err
+	}
+	h.recordActivity(c, "post_updated",
+		activity.WithEntity("post", updated.ID),
+		activity.WithStatus(string(updated.Status)),
+	)
+	return c.JSON(updated)
+}
+
+// addsNewID reports whether any incoming id is absent from existing — i.e.
+// whether an add would actually change the set. Used to let a no-op add through
+// the CON-251 submitted-post lock while still rejecting a real source change.
+func addsNewID(existing, incoming models.StringSlice) bool {
+	for _, id := range incoming {
+		if !slices.Contains(existing, id) {
+			return true
+		}
+	}
+	return false
+}
+
+// submittedLockError is the shared CON-251 409 for editing a locked (submitted)
+// post's content, reused by the membership endpoints so the message can't drift
+// from PUT's.
+func submittedLockError(status models.PostStatus) error {
+	return fiber.NewError(fiber.StatusConflict,
+		"post has been submitted ("+string(status)+") and its content is locked; unschedule to edit")
+}
+
 func (h *PostsHandler) Register(app *fiber.App) {
 	g := app.Group("/api/posts")
 	g.Get("/", h.auth, h.List)
@@ -755,6 +871,11 @@ func (h *PostsHandler) Register(app *fiber.App) {
 	g.Put("/:id", h.auth, h.Update)
 	// CON-245: targeted set of a post's own brand voice + audience.
 	g.Put("/:id/brand", h.auth, h.SetBrand)
+	// CON-233: targeted membership writes for a post's sources, so attaching or
+	// detaching one source touches only used_asset_ids. Respects the CON-251
+	// content-lock: a real change to a submitted post's sources is a 409.
+	g.Post("/:id/assets", h.auth, h.AddAssets)
+	g.Delete("/:id/assets/:assetId", h.auth, h.RemoveAsset)
 	g.Delete("/:id", h.auth, h.Delete)
 	g.Post("/:id/assistant", h.auth, h.Assistant)
 	g.Post("/:id/assess", h.auth, h.Assess)
@@ -1180,8 +1301,7 @@ func (h *PostsHandler) Update(c *fiber.Ctx) error {
 	// attachment freeze. A status-only transition (unschedule to edit) still
 	// passes, as does a no-op save; only a real content change is rejected.
 	if post.Status.IsSubmitted() && req.mutatesLockedContent(post) {
-		return fiber.NewError(fiber.StatusConflict,
-			"post has been submitted ("+string(post.Status)+") and its content is locked; unschedule to edit")
+		return submittedLockError(post.Status)
 	}
 	if err := requirePlatformIfNotDraft(status, req.PlatformID, req.PlatformPostType); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())

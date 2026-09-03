@@ -815,6 +815,150 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		})
 	})
 
+	// ── Asset membership (CON-233) ───────────────────────────────────────────
+
+	Describe("source membership on /api/posts/:id/assets", func() {
+		addAssets := func(id string, assetIDs []string) *http.Response {
+			body, _ := json.Marshal(fiber.Map{"asset_ids": assetIDs})
+			req := httptest.NewRequest("POST", "/api/posts/"+id+"/assets", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			return resp
+		}
+		removeAsset := func(id, assetID string) *http.Response {
+			req := httptest.NewRequest("DELETE", "/api/posts/"+id+"/assets/"+assetID, nil)
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			return resp
+		}
+		// setStatus forces a post into a submitted state directly (bypassing PUT,
+		// which would wipe used_asset_ids), mirroring the cancel-endpoint tests.
+		setStatus := func(id string, status models.PostStatus) {
+			_, err := db.NewUpdate().Model((*models.Post)(nil)).
+				Set("status = ?", status).
+				Where("id = ?", id).Exec(tenantCtx())
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		Context("when not authenticated", func() {
+			It("returns 401 for add", func() {
+				body, _ := json.Marshal(fiber.Map{"asset_ids": []string{"a"}})
+				req := httptest.NewRequest("POST", "/api/posts/x/assets", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+			It("returns 401 for remove", func() {
+				req := httptest.NewRequest("DELETE", "/api/posts/x/assets/a", nil)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+		})
+
+		Context("when authenticated", func() {
+			It("adds ids to a draft post's sources and returns the updated post", func() {
+				p := createPost("Sourced Post", nil)
+				resp := addAssets(p.ID, []string{"a", "b"})
+				Expect(resp.StatusCode).To(Equal(200))
+				var got models.Post
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect([]string(got.UsedAssetIDs)).To(Equal([]string{"a", "b"}))
+			})
+
+			It("unions without duplicating and preserves order", func() {
+				p := createPost("Union Sources", nil)
+				Expect(addAssets(p.ID, []string{"a", "b"}).StatusCode).To(Equal(200))
+				resp := addAssets(p.ID, []string{"b", "c"})
+				Expect(resp.StatusCode).To(Equal(200))
+				var got models.Post
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect([]string(got.UsedAssetIDs)).To(Equal([]string{"a", "b", "c"}))
+			})
+
+			It("leaves other fields untouched", func() {
+				p := createPost("Keep Content", fiber.Map{"title": "Keep Content", "content": "body text"})
+				Expect(addAssets(p.ID, []string{"a"}).StatusCode).To(Equal(200))
+				resp := removeAsset(p.ID, "zzz") // no-op; just re-read
+				var got models.Post
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect(got.Title).To(Equal("Keep Content"))
+				Expect(got.Content).To(Equal("body text"))
+				Expect([]string(got.UsedAssetIDs)).To(Equal([]string{"a"}))
+			})
+
+			It("removes an id and is idempotent for an absent id", func() {
+				p := createPost("Remove Sources", nil)
+				Expect(addAssets(p.ID, []string{"a", "b", "c"}).StatusCode).To(Equal(200))
+				resp := removeAsset(p.ID, "b")
+				Expect(resp.StatusCode).To(Equal(200))
+				var got models.Post
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect([]string(got.UsedAssetIDs)).To(Equal([]string{"a", "c"}))
+				// Removing an absent id changes nothing.
+				resp2 := removeAsset(p.ID, "nope")
+				Expect(resp2.StatusCode).To(Equal(200))
+				var got2 models.Post
+				Expect(json.NewDecoder(resp2.Body).Decode(&got2)).To(Succeed())
+				Expect([]string(got2.UsedAssetIDs)).To(Equal([]string{"a", "c"}))
+			})
+
+			It("returns 404 for an unknown post", func() {
+				Expect(addAssets("nonexistent", []string{"a"}).StatusCode).To(Equal(404))
+				Expect(removeAsset("nonexistent", "a").StatusCode).To(Equal(404))
+			})
+
+			It("survives two concurrent adds of different ids", func() {
+				p := createPost("Concurrent Sources", nil)
+				var wg sync.WaitGroup
+				for _, id := range []string{"c1", "c2"} {
+					wg.Add(1)
+					go func(assetID string) {
+						defer GinkgoRecover()
+						defer wg.Done()
+						Expect(addAssets(p.ID, []string{assetID}).StatusCode).To(Equal(200))
+					}(id)
+				}
+				wg.Wait()
+
+				req := httptest.NewRequest("GET", "/api/posts/"+p.ID, nil)
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				var got models.Post
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect([]string(got.UsedAssetIDs)).To(ConsistOf("c1", "c2"))
+			})
+
+			// ── CON-251 content-lock ─────────────────────────────────────────
+			Context("when the post is submitted (scheduled/published)", func() {
+				It("rejects a real add with 409 but allows a no-op add", func() {
+					p := createPost("Locked Add", fiber.Map{"used_asset_ids": []string{"a"}})
+					setStatus(p.ID, models.PostStatusScheduled)
+
+					// Adding a genuinely new id is a locked content change.
+					Expect(addAssets(p.ID, []string{"b"}).StatusCode).To(Equal(409))
+					// Re-adding an id it already has changes nothing → allowed.
+					Expect(addAssets(p.ID, []string{"a"}).StatusCode).To(Equal(200))
+				})
+
+				It("rejects removing a present source with 409 but allows a no-op remove", func() {
+					p := createPost("Locked Remove", fiber.Map{"used_asset_ids": []string{"a"}})
+					setStatus(p.ID, models.PostStatusPublished)
+
+					// Detaching a source it actually has is a locked change.
+					Expect(removeAsset(p.ID, "a").StatusCode).To(Equal(409))
+					// Removing an id it doesn't have changes nothing → allowed.
+					Expect(removeAsset(p.ID, "absent").StatusCode).To(Equal(200))
+				})
+			})
+		})
+	})
+
 	// ── Publish gate (CON-74) ────────────────────────────────────────────────
 
 	Describe("Draft → ready_for_publish gate", func() {

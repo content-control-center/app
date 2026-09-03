@@ -180,6 +180,11 @@ func (h *CampaignsHandler) Register(app *fiber.App) {
 	g.Get("/:id", h.auth, h.Get)
 	g.Put("/:id", h.auth, h.Update)
 	g.Delete("/:id", h.auth, h.Delete)
+	// CON-233: targeted membership writes for the content-bank set, so attaching
+	// or detaching one document touches only asset_ids (no full-record PUT, no
+	// omitted-field reset, atomic under concurrent adds).
+	g.Post("/:id/assets", h.auth, h.AddAssets)
+	g.Delete("/:id/assets/:assetId", h.auth, h.RemoveAsset)
 	g.Post("/:id/generate-draft", h.auth, h.GenerateDraft)
 	g.Post("/:id/enrich-brief", h.auth, h.EnrichBrief)
 	// CON-114: targeted generation — add a few posts for a platform subset,
@@ -504,6 +509,81 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 			activity.WithEntity("campaign", campaign.ID),
 		)
 	}
+	return c.JSON(campaign)
+}
+
+// assetMembershipRequest is the body of the CON-233 membership-add endpoints on
+// both campaigns and posts: only the ids to attach, so the client never restates
+// the whole record.
+type assetMembershipRequest struct {
+	AssetIDs models.StringSlice `json:"asset_ids"`
+}
+
+// AddAssets godoc
+// @Summary      Attach content-bank assets to a campaign
+// @Description  Unions the given asset ids into the campaign's content-bank set
+// @Description  (campaigns.asset_ids), touching no other field. The write is a
+// @Description  single atomic UPDATE, so concurrent attaches of different
+// @Description  documents both survive and omitted fields are never reset
+// @Description  (CON-233). Adding an already-present id is a no-op. Returns the
+// @Description  updated campaign.
+// @Tags         campaigns
+// @Accept       json
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id    path      string                 true  "Campaign Sqid"
+// @Param        body  body      assetMembershipRequest true  "Asset ids to attach"
+// @Success      200   {object}  models.Campaign
+// @Failure      400   {object}  map[string]string
+// @Failure      401   {object}  map[string]string
+// @Failure      404   {object}  map[string]string
+// @Router       /api/campaigns/{id}/assets [post]
+func (h *CampaignsHandler) AddAssets(c *fiber.Ctx) error {
+	var req assetMembershipRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	campaign, err := h.repo.AddAssetIDs(c.Context(), c.Params("id"), req.AssetIDs)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "campaign not found")
+		}
+		return err
+	}
+	h.recordActivity(c, activity.CategoryCampaign, "campaign_updated",
+		activity.WithEntity("campaign", campaign.ID),
+		activity.WithStatus(string(campaign.Status)),
+	)
+	return c.JSON(campaign)
+}
+
+// RemoveAsset godoc
+// @Summary      Detach a content-bank asset from a campaign
+// @Description  Removes one asset id from the campaign's content-bank set
+// @Description  (campaigns.asset_ids), touching no other field (CON-233).
+// @Description  Removing an id that is not present is a no-op. Returns the
+// @Description  updated campaign.
+// @Tags         campaigns
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id       path      string  true  "Campaign Sqid"
+// @Param        assetId  path      string  true  "Asset Sqid to detach"
+// @Success      200      {object}  models.Campaign
+// @Failure      401      {object}  map[string]string
+// @Failure      404      {object}  map[string]string
+// @Router       /api/campaigns/{id}/assets/{assetId} [delete]
+func (h *CampaignsHandler) RemoveAsset(c *fiber.Ctx) error {
+	campaign, err := h.repo.RemoveAssetID(c.Context(), c.Params("id"), c.Params("assetId"))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "campaign not found")
+		}
+		return err
+	}
+	h.recordActivity(c, activity.CategoryCampaign, "campaign_updated",
+		activity.WithEntity("campaign", campaign.ID),
+		activity.WithStatus(string(campaign.Status)),
+	)
 	return c.JSON(campaign)
 }
 

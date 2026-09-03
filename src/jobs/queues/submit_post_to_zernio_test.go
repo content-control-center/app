@@ -65,6 +65,12 @@ func (r *fakePostRepo) ListSummaryProjections(context.Context) ([]models.Post, e
 	return nil, nil
 }
 func (r *fakePostRepo) UpdateScheduledAtBatch(context.Context, []*models.Post) error { return nil }
+func (r *fakePostRepo) AddUsedAssetIDs(context.Context, string, []string) (*models.Post, error) {
+	return nil, nil
+}
+func (r *fakePostRepo) RemoveUsedAssetID(context.Context, string, string) (*models.Post, error) {
+	return nil, nil
+}
 func (r *fakePostRepo) ListWithPublisherPostID(context.Context) ([]models.Post, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

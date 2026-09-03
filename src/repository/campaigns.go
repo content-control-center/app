@@ -3,7 +3,9 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/uptrace/bun"
 
@@ -17,6 +19,13 @@ type CampaignRepository interface {
 	GetByID(ctx context.Context, id string) (*models.Campaign, error)
 	Update(ctx context.Context, campaign *models.Campaign) error
 	Delete(ctx context.Context, id string) (bool, error)
+	// AddAssetIDs / RemoveAssetID are the CON-233 membership write path: they
+	// mutate only campaigns.asset_ids, in one atomic UPDATE, so attaching or
+	// detaching one document no longer round-trips the whole record and
+	// concurrent adds of different ids don't clobber each other. Both return the
+	// hydrated campaign, or sql.ErrNoRows if it doesn't exist (in this tenant).
+	AddAssetIDs(ctx context.Context, id string, assetIDs []string) (*models.Campaign, error)
+	RemoveAssetID(ctx context.Context, id, assetID string) (*models.Campaign, error)
 }
 
 type campaignRepository struct {
@@ -88,6 +97,54 @@ func (r *campaignRepository) GetByID(ctx context.Context, id string) (*models.Ca
 func (r *campaignRepository) Update(ctx context.Context, campaign *models.Campaign) error {
 	_, err := r.db.NewUpdate().Model(campaign).WherePK().Exec(ctx)
 	return err
+}
+
+// AddAssetIDs unions assetIDs into campaigns.asset_ids atomically (CON-233).
+// An empty input is a no-op read: it still validates existence and returns the
+// current campaign, so the caller gets a 404 for a missing id without a
+// pointless write. The TenantScoped hook scopes the UPDATE to the caller's
+// tenant, so a foreign or unknown id matches zero rows and surfaces as
+// sql.ErrNoRows.
+func (r *campaignRepository) AddAssetIDs(ctx context.Context, id string, assetIDs []string) (*models.Campaign, error) {
+	if len(assetIDs) == 0 {
+		return r.GetByID(ctx, id)
+	}
+	payload, err := json.Marshal(assetIDs)
+	if err != nil {
+		return nil, err
+	}
+	res, err := r.db.NewUpdate().
+		Model((*models.Campaign)(nil)).
+		Set(jsonbIDUnionSet("asset_ids"), string(payload)).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", id).
+		Exec(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return r.GetByID(ctx, id)
+}
+
+// RemoveAssetID drops assetID from campaigns.asset_ids atomically (CON-233).
+// Removal is idempotent — an absent id still matches the row (so it is not a
+// 404) and leaves the set unchanged.
+func (r *campaignRepository) RemoveAssetID(ctx context.Context, id, assetID string) (*models.Campaign, error) {
+	res, err := r.db.NewUpdate().
+		Model((*models.Campaign)(nil)).
+		Set(jsonbIDRemoveSet("asset_ids"), assetID).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", id).
+		Exec(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return r.GetByID(ctx, id)
 }
 
 func (r *campaignRepository) Delete(ctx context.Context, id string) (bool, error) {

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -20,6 +21,15 @@ type PostRepository interface {
 	CreateBatch(ctx context.Context, posts []*models.Post) error
 	GetByID(ctx context.Context, id string) (*models.Post, error)
 	Update(ctx context.Context, post *models.Post) error
+	// AddUsedAssetIDs / RemoveUsedAssetID are the CON-233 membership write path
+	// for a post's sources: they mutate only posts.used_asset_ids, in one atomic
+	// UPDATE, so attaching or detaching one source no longer round-trips the whole
+	// record and concurrent adds of different ids don't clobber each other. Both
+	// return the hydrated post, or sql.ErrNoRows if it doesn't exist (in this
+	// tenant). The CON-251 submitted-post content-lock is enforced in the handler,
+	// not here.
+	AddUsedAssetIDs(ctx context.Context, id string, assetIDs []string) (*models.Post, error)
+	RemoveUsedAssetID(ctx context.Context, id, assetID string) (*models.Post, error)
 	// UpdateScheduledAtBatch updates only the scheduled_at (+ updated_at)
 	// column of several posts atomically (CON-115 redistribution).
 	UpdateScheduledAtBatch(ctx context.Context, posts []*models.Post) error
@@ -161,6 +171,51 @@ func (r *postRepository) GetByID(ctx context.Context, id string) (*models.Post, 
 func (r *postRepository) Update(ctx context.Context, post *models.Post) error {
 	_, err := r.db.NewUpdate().Model(post).WherePK().Exec(ctx)
 	return err
+}
+
+// AddUsedAssetIDs unions assetIDs into posts.used_asset_ids atomically (CON-233),
+// mirroring campaignRepository.AddAssetIDs. An empty input is a no-op read that
+// still validates existence. The TenantScoped hook scopes the UPDATE, so an
+// unknown or foreign id surfaces as sql.ErrNoRows.
+func (r *postRepository) AddUsedAssetIDs(ctx context.Context, id string, assetIDs []string) (*models.Post, error) {
+	if len(assetIDs) == 0 {
+		return r.GetByID(ctx, id)
+	}
+	payload, err := json.Marshal(assetIDs)
+	if err != nil {
+		return nil, err
+	}
+	res, err := r.db.NewUpdate().
+		Model((*models.Post)(nil)).
+		Set(jsonbIDUnionSet("used_asset_ids"), string(payload)).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("po.id = ?", id).
+		Exec(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return r.GetByID(ctx, id)
+}
+
+// RemoveUsedAssetID drops assetID from posts.used_asset_ids atomically (CON-233).
+// Removal is idempotent — an absent id still matches the row and changes nothing.
+func (r *postRepository) RemoveUsedAssetID(ctx context.Context, id, assetID string) (*models.Post, error) {
+	res, err := r.db.NewUpdate().
+		Model((*models.Post)(nil)).
+		Set(jsonbIDRemoveSet("used_asset_ids"), assetID).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("po.id = ?", id).
+		Exec(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return r.GetByID(ctx, id)
 }
 
 func (r *postRepository) CountPendingByAccount(ctx context.Context, socialAccountID string) (int, error) {
