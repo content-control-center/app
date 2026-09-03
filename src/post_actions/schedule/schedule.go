@@ -18,11 +18,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/uptrace/bun"
 
 	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/platforms"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
@@ -146,6 +148,12 @@ type Service struct {
 	accounts  repository.SocialAccountRepository
 	profileID func(ctx context.Context) (string, error)
 
+	// versions snapshots the content Ogen submits to Zernio at schedule time,
+	// so a published post keeps a durable record of "what actually went out"
+	// instead of an assumption (CON-251). nil disables it; wired via
+	// SetVersionSnapshot.
+	versions repository.PostVersionRepository
+
 	// now is injectable so tests can pin "current time" for future-time
 	// validation. nil → time.Now().UTC().
 	now func() time.Time
@@ -185,6 +193,14 @@ func New(
 func (s *Service) SetAccountGate(accounts repository.SocialAccountRepository, profileID func(ctx context.Context) (string, error)) {
 	s.accounts = accounts
 	s.profileID = profileID
+}
+
+// SetVersionSnapshot wires the CON-251 "what went out" recorder: when a post
+// routes to auto-publish (Scheduled), the exact content submitted to Zernio
+// is captured as a system-authored version. Leaving it nil disables the
+// snapshot; it is best-effort and never fails a schedule.
+func (s *Service) SetVersionSnapshot(versions repository.PostVersionRepository) {
+	s.versions = versions
 }
 
 // SetClock overrides the time source (tests only).
@@ -327,6 +343,48 @@ func (s *Service) RouteAndPersist(ctx context.Context, post *models.Post, prevSt
 	return string(target), nil
 }
 
+// snapshotSubmitted records a system-authored version of the content just
+// submitted to Zernio (CON-251), so a published post keeps a durable record
+// of what actually went out rather than an assumption. Deduped only against a
+// prior submit snapshot of identical content, so re-scheduling unchanged
+// content adds no noise — but a matching-content user/assistant edit at the
+// head does NOT suppress it (that edit isn't the record of what was submitted).
+// Best-effort: a nil repo or any error is swallowed after a warn.
+func (s *Service) snapshotSubmitted(ctx context.Context, post *models.Post) {
+	if s.versions == nil {
+		return
+	}
+	latest, err := s.versions.GetLatestByPostID(ctx, post.ID)
+	if err != nil {
+		slog.WarnContext(ctx, "schedule: load latest version for submit snapshot",
+			logging.AttrComponent, "schedule", "post_id", post.ID, logging.AttrError, err)
+		return
+	}
+	if latest != nil && latest.IsSystemSnapshot() &&
+		latest.Note == models.PostVersionNoteSubmitted && latest.Content == post.Content {
+		return // already snapshotted this exact submission — nothing new went out
+	}
+	nextNum := 1
+	if latest != nil {
+		nextNum = latest.VersionNumber + 1
+	}
+	id, err := models.NewID()
+	if err != nil {
+		return
+	}
+	if err := s.versions.Create(ctx, &models.PostVersion{
+		ID:            id,
+		PostID:        post.ID,
+		VersionNumber: nextNum,
+		Content:       post.Content,
+		Note:          models.PostVersionNoteSubmitted,
+		Creator:       models.PostVersionCreatorSystem,
+	}); err != nil {
+		slog.WarnContext(ctx, "schedule: create submit snapshot",
+			logging.AttrComponent, "schedule", "post_id", post.ID, logging.AttrError, err)
+	}
+}
+
 // route reads the auto-publish allowlist for the post's platform and
 // returns the resulting decision: autoPublish + the routed target status
 // (Scheduled vs ScheduledForManualPublish) + the matched Zernio platform
@@ -400,7 +458,7 @@ func (s *Service) checkAccountSelection(ctx context.Context, post *models.Post, 
 // in any of them rolls the whole schedule back — no half-scheduled post,
 // no enqueue without a status change (CON-78 §9).
 func (s *Service) persist(ctx context.Context, post *models.Post, autoPublish bool, logs []*models.PostLog) error {
-	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+	if err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if _, err := tx.NewUpdate().Model(post).WherePK().Exec(ctx); err != nil {
 			return err
 		}
@@ -420,7 +478,20 @@ func (s *Service) persist(ctx context.Context, post *models.Post, autoPublish bo
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	// CON-251: an auto-publish post's content is now committed for submission to
+	// Zernio (which snapshots it at schedule time) and locked in Ogen — record
+	// what goes out so the published post carries a durable version rather than
+	// an assumption. Runs for every scheduling entry point (POST /schedule, the
+	// assistant, PUT) because all three funnel through here. Manual-publish
+	// posts hold no external copy yet, so they get none. Best-effort, outside
+	// the tx — the schedule has already committed.
+	if autoPublish {
+		s.snapshotSubmitted(ctx, post)
+	}
+	return nil
 }
 
 // loadForValidation fetches the post's platform and attachments for the

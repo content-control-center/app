@@ -41,13 +41,36 @@ const (
 // reach manual publishing. The second lets a manually-scheduled post be
 // moved straight to drafts (channel removal / post-type switch-off)
 // without writing a misleading → not_published row to the audit log.
+//
+// Failed → Draft and NotPublished → Draft were added for CON-251. Neither
+// status holds a live copy outside Ogen anymore (the submission failed, or
+// never left), so both reopen for editing — and going back to draft, not
+// just ready_for_publish, is the point: these are precisely the states a
+// post reaches because its content needed changing.
 var ValidPostTransitions = map[PostStatus][]PostStatus{
 	PostStatusDraft:                     {PostStatusReadyForPublish},
 	PostStatusReadyForPublish:           {PostStatusScheduled, PostStatusScheduledForManualPublish, PostStatusDraft},
 	PostStatusScheduled:                 {PostStatusFailed, PostStatusPublished, PostStatusReadyForPublish, PostStatusDraft, PostStatusScheduledForManualPublish},
 	PostStatusScheduledForManualPublish: {PostStatusPublished, PostStatusNotPublished, PostStatusDraft},
-	PostStatusFailed:                    {PostStatusReadyForPublish},
-	PostStatusNotPublished:              {PostStatusReadyForPublish, PostStatusScheduledForManualPublish},
+	PostStatusFailed:                    {PostStatusReadyForPublish, PostStatusDraft},
+	PostStatusNotPublished:              {PostStatusReadyForPublish, PostStatusScheduledForManualPublish, PostStatusDraft},
+}
+
+// IsSubmitted reports whether a copy of the post already exists outside
+// Ogen — Zernio holds the submission (scheduled) or the social network
+// holds the post (published). It is the one named seam CON-251 introduces
+// for "the record is locked": the body/title/media/platform/sources freeze
+// (editing them would silently diverge Ogen's record from what actually
+// goes, or went, out) and the assistant drops to read-only.
+//
+// It is deliberately NOT isPublished (scheduled locks too, because Zernio
+// snapshots the content at schedule time) and NOT isTerminalStatus (which
+// would silently mislock the next status anyone adds). A future approval
+// flow, channel freeze or client sign-off plugs in here without touching a
+// dozen call sites. scheduled_for_manual_publishing is excluded on purpose:
+// nobody holds a copy yet, so nothing is locked.
+func (s PostStatus) IsSubmitted() bool {
+	return s == PostStatusScheduled || s == PostStatusPublished
 }
 
 // CanTransition reports whether moving from the current status to next is allowed.
@@ -118,6 +141,13 @@ type Post struct {
 	PublisherPostID     string      `bun:"publisher_post_id,nullzero"                  json:"publisher_post_id,omitempty"`
 	PublisherStatus     string      `bun:"publisher_status,notnull,default:''"         json:"publisher_status,omitempty"`
 	PublishedResults    string      `bun:"published_results,notnull,default:''"        json:"published_results,omitempty"`
+	// PublishedURL is the platform permalink for the live post (CON-165), kept
+	// as a first-class field so the front-end can render "View post" off the
+	// post it already has, without an analytics round-trip (CON-149). Set from
+	// the publisher's canonical URL on publish/verify, or accepted on PUT for
+	// the Zernio skip path. `nullzero` sends NULL (not "") when unset; a URL
+	// with an empty PublisherPostID is a user-supplied (unverified) link.
+	PublishedURL        string      `bun:"published_url,nullzero"                       json:"published_url,omitempty"`
 	FailureReason       string      `bun:"failure_reason,notnull,default:''"           json:"failure_reason,omitempty"`
 	CTAType             PostCTAType `bun:"cta_type,notnull"                             json:"cta_type"`
 	CTAUrl              string      `bun:"cta_url,notnull"                              json:"cta_url"`

@@ -132,6 +132,16 @@ func (p *PollZernioStatusProcessor) Process(ctx context.Context, task PollZernio
 		post.Status = models.PostStatusPublished
 		results, _ := json.Marshal(job.Platforms)
 		post.PublishedResults = string(results)
+		// CON-165: lift the platform permalink out of the per-platform blob
+		// into a first-class field so the front-end can render "View post"
+		// without parsing published_results. A post targets a single platform,
+		// so the first outcome carrying a URL is the one.
+		for _, pl := range job.Platforms {
+			if pl.PlatformPostURL != "" {
+				post.PublishedURL = pl.PlatformPostURL
+				break
+			}
+		}
 		if err := p.Deps.PostRepo.Update(ctx, post); err != nil {
 			return fmt.Errorf("poll: persist Published: %w", err)
 		}

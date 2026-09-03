@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -58,7 +59,7 @@ type PostsHandler struct {
 	// the tenant (CON-245). Optional (SetBrandRepo); nil skips validation.
 	brandRepo repository.BrandRepository
 	auth      fiber.Handler
-	assistant      func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error)
+	assistant func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error)
 	// assessQuality runs the Post quality assessment agent (CON-85). nil
 	// makes the /assess endpoint return 503. Wired via SetQualityAssessor.
 	assessQuality func(ctx context.Context, postID string, onEvent post_quality.OnEventFunc) (*post_quality.PostQualityResponse, error)
@@ -795,6 +796,11 @@ type postRequest struct {
 	CampaignTypePhaseID *string            `json:"campaign_type_phase_id"`
 	BrandVoiceID        *string            `json:"brand_voice_id"`
 	BrandAudienceID     *string            `json:"brand_audience_id"`
+	// PublishedURL (CON-165) lets the front-end record a permalink for posts
+	// Zernio cannot verify (the CON-149 skip path — e.g. LinkedIn personal
+	// accounts) or correct a wrong one. Like every field on this whole-resource
+	// PUT, the FE round-trips the current value; an empty string clears it.
+	PublishedURL string `json:"published_url"`
 }
 
 func (r *postRequest) toStatus() models.PostStatus {
@@ -830,10 +836,30 @@ func (r *postRequest) apply(post *models.Post, status models.PostStatus, ctaType
 	post.CTAUrl = r.CTAUrl
 	post.CampaignTypePhaseID = r.CampaignTypePhaseID
 	post.TargetAudienceNotes = r.TargetAudienceNotes
+	// CON-165: published_url stays writable after publish on purpose — recording
+	// a permalink is a post-publish affordance. When CON-251's content-lock
+	// lands, keep this field on the allowed-after-submit list.
+	post.PublishedURL = r.PublishedURL
 	post.BrandVoiceID = r.BrandVoiceID
 	post.BrandAudienceID = r.BrandAudienceID
 	post.UsedAssetIDs = nullSlice(r.UsedAssetIDs)
 	post.UpdatedAt = time.Now().UTC()
+}
+
+// mutatesLockedContent reports whether the request would change any of the
+// content-identity fields CON-251 freezes once a post is submitted: the
+// body, title, media, platform, post type, or the sources it was built
+// from. The date and account are locked by the schedule/cancel flows that
+// own them, and a status-only transition (e.g. unschedule to edit) leaves
+// every field below equal, so neither is compared here — this gates the
+// silent-divergence edit, not the legitimate move off a submitted state.
+func (r *postRequest) mutatesLockedContent(post *models.Post) bool {
+	return r.Content != post.Content ||
+		r.Title != post.Title ||
+		r.PlatformID != post.PlatformID ||
+		r.PlatformPostType != post.PlatformPostType ||
+		!slices.Equal(nullSlice(r.MediaURLs), post.MediaURLs) ||
+		!slices.Equal(nullSlice(r.UsedAssetIDs), post.UsedAssetIDs)
 }
 
 // requirePlatformIfNotDraft enforces that platform fields are populated
@@ -1144,6 +1170,18 @@ func (h *PostsHandler) Update(c *fiber.Ctx) error {
 			logs.MarshalCapped(map[string]any{"reason": "invalid_transition"}),
 		)
 		return fiber.NewError(fiber.StatusBadRequest, "invalid status transition from "+string(post.Status)+" to "+string(status))
+	}
+	// CON-251: once a post is submitted (scheduled or published) a copy of it
+	// exists outside Ogen — Zernio holds the scheduled submission (content
+	// snapshotted at schedule time), the network holds the published post.
+	// Editing the body/title/media/platform/post-type/sources here would
+	// silently rewrite Ogen's record of what goes, or went, out, so those
+	// fields are frozen — the server backstop to the FE lock, mirroring the
+	// attachment freeze. A status-only transition (unschedule to edit) still
+	// passes, as does a no-op save; only a real content change is rejected.
+	if post.Status.IsSubmitted() && req.mutatesLockedContent(post) {
+		return fiber.NewError(fiber.StatusConflict,
+			"post has been submitted ("+string(post.Status)+") and its content is locked; unschedule to edit")
 	}
 	if err := requirePlatformIfNotDraft(status, req.PlatformID, req.PlatformPostType); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
@@ -1606,12 +1644,20 @@ func (h *PostsHandler) VerifyExternal(c *fiber.Ctx) error {
 			post.PublishedAt = pa
 		}
 	}
+	// CON-165: persist the canonical, platform-normalised permalink. Verification
+	// is authoritative, so a confirmed URL overwrites any user-pasted one.
+	if ext.PlatformPostURL != "" {
+		post.PublishedURL = ext.PlatformPostURL
+	}
 	post.Status = models.PostStatusPublished
 	post.UpdatedAt = time.Now().UTC()
 	if err := h.repo.Update(c.Context(), post); err != nil {
 		jobs.ZernioExternalVerifyFailed.Add(1)
 		return err
 	}
+	// CON-251: the post is now confirmed published — snapshot the content as a
+	// durable record of what went out (best-effort, deduped against the head).
+	h.snapshotPublished(c.Context(), post)
 
 	// Refresh the current-state analytics row (best-effort) and emit the update
 	// event so open analytics streams refresh. The response carries the fetched
@@ -1656,7 +1702,10 @@ func (h *PostsHandler) VerifyExternal(c *fiber.Ctx) error {
 			// The confirmed external post's own id — the one ext.Analytics
 			// belong to (post.PublisherPostID is left as-is when already set).
 			"publisher_post_id": ext.PlatformPostID,
-			"sync_status":       "synced",
+			// CON-165: echo the persisted permalink so the FE can render
+			// "View post" straight after verify, without a re-fetch.
+			"published_url": post.PublishedURL,
+			"sync_status":   "synced",
 		},
 		"analytics": metrics,
 	})
@@ -1845,6 +1894,45 @@ type createVersionRequest struct {
 // @Failure      401   {object}  map[string]string
 // @Failure      404   {object}  map[string]string
 // @Router       /api/posts/{id}/versions [post]
+// snapshotPublished records a system-authored version of a post's content at
+// the moment it is confirmed published (CON-251), so "what actually went out"
+// becomes a durable record rather than an assumption. Deduped only against a
+// prior "Published" system snapshot of identical content, so re-verifying an
+// already-published post adds nothing — but a matching-content user/assistant
+// edit (or the schedule-time "Submitted" snapshot) at the head does NOT
+// suppress it, so the publish is always recorded once. Best-effort: a nil repo
+// or any error is swallowed — the publish has already committed, mirroring the
+// surrounding analytics writes.
+func (h *PostsHandler) snapshotPublished(ctx context.Context, post *models.Post) {
+	if h.versionRepo == nil {
+		return
+	}
+	latest, err := h.versionRepo.GetLatestByPostID(ctx, post.ID)
+	if err != nil {
+		return
+	}
+	if latest != nil && latest.IsSystemSnapshot() &&
+		latest.Note == models.PostVersionNotePublished && latest.Content == post.Content {
+		return
+	}
+	nextNum := 1
+	if latest != nil {
+		nextNum = latest.VersionNumber + 1
+	}
+	id, err := models.NewID()
+	if err != nil {
+		return
+	}
+	_ = h.versionRepo.Create(ctx, &models.PostVersion{
+		ID:            id,
+		PostID:        post.ID,
+		VersionNumber: nextNum,
+		Content:       post.Content,
+		Note:          models.PostVersionNotePublished,
+		Creator:       models.PostVersionCreatorSystem,
+	})
+}
+
 func (h *PostsHandler) CreateVersion(c *fiber.Ctx) error {
 	var req createVersionRequest
 	if err := c.BodyParser(&req); err != nil {
