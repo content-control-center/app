@@ -83,7 +83,8 @@ var PresignedURLTTL = 15 * time.Minute
 
 // PostAttachmentsHandler exposes the upload/list/reorder/delete API
 // for post attachments — images (CON-73) and PDFs (CON-75). All
-// mutations are blocked once the parent post is `published`.
+// mutations are blocked once the parent post is submitted — scheduled or
+// published (CON-251); see lockedForMutations.
 type PostAttachmentsHandler struct {
 	repo     repository.PostAttachmentRepository
 	postRepo repository.PostRepository
@@ -138,7 +139,7 @@ type listResponse struct {
 }
 
 // loadPostOrErr fetches the post and returns 404 if missing. Mutating
-// callers should additionally check terminalForMutations.
+// callers should additionally check lockedForMutations.
 func (h *PostAttachmentsHandler) loadPostOrErr(c *fiber.Ctx) (*models.Post, error) {
 	postID := c.Params("post_id")
 	post, err := h.postRepo.GetByID(c.Context(), postID)
@@ -151,11 +152,13 @@ func (h *PostAttachmentsHandler) loadPostOrErr(c *fiber.Ctx) (*models.Post, erro
 	return post, nil
 }
 
-// terminalForMutations reports whether the post is in a state that
-// freezes its attachments. Per CON-73 §2.1 / §2.7, mutations are
-// blocked once the post is published.
-func terminalForMutations(s models.PostStatus) bool {
-	return s == models.PostStatusPublished
+// lockedForMutations reports whether the post is in a state that freezes
+// its attachments. Originally published-only (CON-73 §2.1 / §2.7); CON-251
+// generalises it to every submitted state via IsSubmitted, so a scheduled
+// post's media freezes too — Zernio snapshots the attachments at schedule
+// time, so a later change here would silently diverge from what publishes.
+func lockedForMutations(s models.PostStatus) bool {
+	return s.IsSubmitted()
 }
 
 // hydratePresigned fills att.PresignedURL (and ThumbnailURL when a
@@ -286,8 +289,8 @@ func (h *PostAttachmentsHandler) Upload(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	if terminalForMutations(post.Status) {
-		return fiber.NewError(fiber.StatusConflict, "post is in a terminal publishing state and its attachments are immutable")
+	if lockedForMutations(post.Status) {
+		return fiber.NewError(fiber.StatusConflict, "post has been submitted (scheduled or published) and its attachments are locked")
 	}
 
 	fh, err := c.FormFile("file")
@@ -492,8 +495,8 @@ func (h *PostAttachmentsHandler) Update(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	if terminalForMutations(post.Status) {
-		return fiber.NewError(fiber.StatusConflict, "post is in a terminal publishing state and its attachments are immutable")
+	if lockedForMutations(post.Status) {
+		return fiber.NewError(fiber.StatusConflict, "post has been submitted (scheduled or published) and its attachments are locked")
 	}
 
 	att, err := h.repo.GetByID(c.Context(), c.Params("id"))
@@ -589,8 +592,8 @@ func (h *PostAttachmentsHandler) ReorderAll(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	if terminalForMutations(post.Status) {
-		return fiber.NewError(fiber.StatusConflict, "post is in a terminal publishing state and its attachments are immutable")
+	if lockedForMutations(post.Status) {
+		return fiber.NewError(fiber.StatusConflict, "post has been submitted (scheduled or published) and its attachments are locked")
 	}
 
 	var req reorderAllRequest
@@ -666,8 +669,8 @@ func (h *PostAttachmentsHandler) Delete(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	if terminalForMutations(post.Status) {
-		return fiber.NewError(fiber.StatusConflict, "post is in a terminal publishing state and its attachments are immutable")
+	if lockedForMutations(post.Status) {
+		return fiber.NewError(fiber.StatusConflict, "post has been submitted (scheduled or published) and its attachments are locked")
 	}
 
 	att, err := h.repo.GetByID(c.Context(), c.Params("id"))

@@ -37,10 +37,15 @@ type ctxKey int
 const requestStateKey ctxKey = iota
 
 type requestState struct {
-	postID   string
-	assetIDs []string
-	repos    PostAssistantRepos
-	embedder ai.Embedder
+	postID string
+	// postStatus is the post's status at the start of the turn, captured so
+	// the editPost write-tool can refuse on a submitted post (CON-251): the
+	// assistant stays present and readable there but must not rewrite content
+	// that already lives outside Ogen. Read-only within a turn.
+	postStatus models.PostStatus
+	assetIDs   []string
+	repos      PostAssistantRepos
+	embedder   ai.Embedder
 
 	// Clone support (CON-59). cloneSvc/actor drive the clonePost tool;
 	// platforms lets it resolve a platform name → ID; onEvent lets it
@@ -197,6 +202,10 @@ type EditPostInput struct {
 type EditPostOutput struct {
 	OK    bool `json:"ok"`
 	Chars int  `json:"chars"`
+	// Reason is set (with OK=false) when the edit was refused rather than
+	// failed — e.g. the post is submitted and its content is locked (CON-251).
+	// The planner relays it to the user instead of retrying.
+	Reason string `json:"reason,omitempty"`
 }
 
 // ClonePostOutput is returned to the model after a clone is created.
@@ -629,6 +638,18 @@ func toolCreateNote(ctx context.Context, in CreateNoteInput) (*CreateNoteOutput,
 // compact receipt goes back to the planner.
 func toolEditPost(ctx context.Context, in EditPostInput) (*EditPostOutput, error) {
 	st := getRequestState(ctx)
+	// CON-251: a submitted post (scheduled or published) holds a copy outside
+	// Ogen, so its content is locked — the assistant can read and advise but
+	// must not write. Refuse via the return value, not a Go error, so the
+	// planner loop continues and relays the reason (a tool error would abort
+	// Generate). editResult stays nil, so the runner finalises this as a
+	// non-edit turn.
+	if st.postStatus.IsSubmitted() {
+		return &EditPostOutput{
+			OK:     false,
+			Reason: "This post is " + string(st.postStatus) + "; a copy already lives outside Ogen, so its content is locked and can't be edited. Unschedule it first (or duplicate it into a new draft) to make changes.",
+		}, nil
+	}
 	instruction := strings.TrimSpace(in.Instruction)
 	if instruction == "" {
 		return nil, fmt.Errorf("instruction is required to edit the post")
