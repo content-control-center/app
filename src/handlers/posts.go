@@ -1879,10 +1879,13 @@ type createVersionRequest struct {
 // @Router       /api/posts/{id}/versions [post]
 // snapshotPublished records a system-authored version of a post's content at
 // the moment it is confirmed published (CON-251), so "what actually went out"
-// becomes a durable record rather than an assumption. Deduped against the
-// current head so re-verifying an already-snapshotted post adds nothing. Best-
-// effort: a nil repo or any error is swallowed — the publish has already
-// committed, mirroring the surrounding analytics writes.
+// becomes a durable record rather than an assumption. Deduped only against a
+// prior "Published" system snapshot of identical content, so re-verifying an
+// already-published post adds nothing — but a matching-content user/assistant
+// edit (or the schedule-time "Submitted" snapshot) at the head does NOT
+// suppress it, so the publish is always recorded once. Best-effort: a nil repo
+// or any error is swallowed — the publish has already committed, mirroring the
+// surrounding analytics writes.
 func (h *PostsHandler) snapshotPublished(ctx context.Context, post *models.Post) {
 	if h.versionRepo == nil {
 		return
@@ -1891,7 +1894,8 @@ func (h *PostsHandler) snapshotPublished(ctx context.Context, post *models.Post)
 	if err != nil {
 		return
 	}
-	if latest != nil && latest.Content == post.Content {
+	if latest != nil && latest.IsSystemSnapshot() &&
+		latest.Note == models.PostVersionNotePublished && latest.Content == post.Content {
 		return
 	}
 	nextNum := 1
@@ -1907,8 +1911,8 @@ func (h *PostsHandler) snapshotPublished(ctx context.Context, post *models.Post)
 		PostID:        post.ID,
 		VersionNumber: nextNum,
 		Content:       post.Content,
-		Note:          "Published",
-		Creator:       "system",
+		Note:          models.PostVersionNotePublished,
+		Creator:       models.PostVersionCreatorSystem,
 	})
 }
 

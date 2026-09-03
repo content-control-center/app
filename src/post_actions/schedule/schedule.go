@@ -345,9 +345,11 @@ func (s *Service) RouteAndPersist(ctx context.Context, post *models.Post, prevSt
 
 // snapshotSubmitted records a system-authored version of the content just
 // submitted to Zernio (CON-251), so a published post keeps a durable record
-// of what actually went out rather than an assumption. Deduped against the
-// current head so a schedule that didn't change the content adds no version
-// noise. Best-effort: a nil repo or any error is swallowed after a warn.
+// of what actually went out rather than an assumption. Deduped only against a
+// prior submit snapshot of identical content, so re-scheduling unchanged
+// content adds no noise — but a matching-content user/assistant edit at the
+// head does NOT suppress it (that edit isn't the record of what was submitted).
+// Best-effort: a nil repo or any error is swallowed after a warn.
 func (s *Service) snapshotSubmitted(ctx context.Context, post *models.Post) {
 	if s.versions == nil {
 		return
@@ -358,8 +360,9 @@ func (s *Service) snapshotSubmitted(ctx context.Context, post *models.Post) {
 			logging.AttrComponent, "schedule", "post_id", post.ID, logging.AttrError, err)
 		return
 	}
-	if latest != nil && latest.Content == post.Content {
-		return // content unchanged since the head snapshot — nothing new went out
+	if latest != nil && latest.IsSystemSnapshot() &&
+		latest.Note == models.PostVersionNoteSubmitted && latest.Content == post.Content {
+		return // already snapshotted this exact submission — nothing new went out
 	}
 	nextNum := 1
 	if latest != nil {
@@ -374,8 +377,8 @@ func (s *Service) snapshotSubmitted(ctx context.Context, post *models.Post) {
 		PostID:        post.ID,
 		VersionNumber: nextNum,
 		Content:       post.Content,
-		Note:          "Submitted for scheduled publishing",
-		Creator:       "system",
+		Note:          models.PostVersionNoteSubmitted,
+		Creator:       models.PostVersionCreatorSystem,
 	}); err != nil {
 		slog.WarnContext(ctx, "schedule: create submit snapshot",
 			logging.AttrComponent, "schedule", "post_id", post.ID, logging.AttrError, err)

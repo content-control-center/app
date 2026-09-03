@@ -135,6 +135,21 @@ func (st *requestState) captureExcerpts(assetID string, out *ChunksOutput) {
 	}
 }
 
+// recordScheduled reflects a schedule committed this turn into the per-turn
+// state (CON-251): it stashes the result for the runner to finalise AND
+// advances postStatus to the routed status. The status bump is load-bearing —
+// without it a schedulePost-then-editPost sequence in a single generation would
+// still see the start-of-turn status and rewrite content that just locked at
+// schedule time. editPost re-reads postStatus (via IsSubmitted), so the auto-
+// publish case now refuses; a manual-publish schedule stays editable, which is
+// correct (nothing is submitted yet).
+func (st *requestState) recordScheduled(res *schedule.Result) {
+	st.scheduleResult = res
+	if res != nil {
+		st.postStatus = res.Status
+	}
+}
+
 func withRequestState(ctx context.Context, s *requestState) context.Context {
 	return context.WithValue(ctx, requestStateKey, s)
 }
@@ -581,7 +596,7 @@ func toolSchedulePost(ctx context.Context, in SchedulePostInput) (*SchedulePostO
 	if err != nil {
 		return nil, scheduleToolError(err)
 	}
-	st.scheduleResult = res
+	st.recordScheduled(res)
 
 	return &SchedulePostOutput{
 		ScheduledAt: res.ScheduledAt.Format(time.RFC3339),
