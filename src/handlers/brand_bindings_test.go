@@ -170,6 +170,57 @@ var _ = Describe("Brand bindings (CON-245)", Ordered, func() {
 			Expect(p.BrandAudienceID).To(BeNil())
 		})
 
+		// CON-245 fix: the two fields are independent. An omitted field must leave
+		// the stored ref alone; only an explicit null clears it. Before the
+		// presence-aware change, sending only brand_voice_id wiped the audience.
+		It("leaves the other ref untouched when only one field is sent", func() {
+			Expect(do("PUT", "/api/posts/"+postID+"/brand", fiber.Map{"brand_voice_id": "v-1", "brand_audience_id": "a-1"}).StatusCode).To(Equal(200))
+
+			// Send only the voice — the audience must survive.
+			resp := do("PUT", "/api/posts/"+postID+"/brand", fiber.Map{"brand_voice_id": "v-1"})
+			Expect(resp.StatusCode).To(Equal(200))
+			var p models.Post
+			Expect(json.NewDecoder(resp.Body).Decode(&p)).To(Succeed())
+			Expect(p.BrandVoiceID).To(Equal(strptr("v-1")))
+			Expect(p.BrandAudienceID).To(Equal(strptr("a-1")))
+
+			// An explicit null on just the audience clears it, keeping the voice.
+			resp = do("PUT", "/api/posts/"+postID+"/brand", fiber.Map{"brand_audience_id": nil})
+			Expect(resp.StatusCode).To(Equal(200))
+			var p2 models.Post
+			Expect(json.NewDecoder(resp.Body).Decode(&p2)).To(Succeed())
+			Expect(p2.BrandVoiceID).To(Equal(strptr("v-1")))
+			Expect(p2.BrandAudienceID).To(BeNil())
+		})
+	})
+
+	// CON-245 fix: the whole-resource PUT is a full replace for its
+	// client-authored fields, but the brand refs are server-stamped by
+	// content_plan / draft_post — so an ordinary save that omits them (what the
+	// UI sends today) must not null them.
+	Describe("whole-resource PUT /api/posts/:id preserves brand refs", func() {
+		It("keeps server-stamped refs when the body omits them", func() {
+			Expect(do("PUT", "/api/posts/"+postID+"/brand", fiber.Map{"brand_voice_id": "v-1", "brand_audience_id": "a-1"}).StatusCode).To(Equal(200))
+
+			resp := do("PUT", "/api/posts/"+postID, fiber.Map{"campaign_id": campaignID, "content": "edited"})
+			Expect(resp.StatusCode).To(Equal(200))
+			var p models.Post
+			Expect(json.NewDecoder(resp.Body).Decode(&p)).To(Succeed())
+			Expect(p.BrandVoiceID).To(Equal(strptr("v-1")))
+			Expect(p.BrandAudienceID).To(Equal(strptr("a-1")))
+		})
+
+		It("clears a ref on an explicit null, leaving an omitted one alone", func() {
+			Expect(do("PUT", "/api/posts/"+postID+"/brand", fiber.Map{"brand_voice_id": "v-1", "brand_audience_id": "a-1"}).StatusCode).To(Equal(200))
+
+			resp := do("PUT", "/api/posts/"+postID, fiber.Map{"campaign_id": campaignID, "brand_voice_id": nil})
+			Expect(resp.StatusCode).To(Equal(200))
+			var p models.Post
+			Expect(json.NewDecoder(resp.Body).Decode(&p)).To(Succeed())
+			Expect(p.BrandVoiceID).To(BeNil())
+			Expect(p.BrandAudienceID).To(Equal(strptr("a-1")))
+		})
+
 		It("422s a voice/audience id not in the tenant", func() {
 			Expect(do("PUT", "/api/posts/"+postID+"/brand", fiber.Map{"brand_voice_id": "nope"}).StatusCode).To(Equal(422))
 			Expect(do("PUT", "/api/posts/"+postID+"/brand", fiber.Map{"brand_audience_id": "nope"}).StatusCode).To(Equal(422))
@@ -192,6 +243,29 @@ var _ = Describe("Brand bindings (CON-245)", Ordered, func() {
 
 			bad := fiber.Map{"name": "C", "campaign_type_id": seededCampaignTypeID, "brand_voice_id": "nope"}
 			Expect(do("PUT", "/api/campaigns/"+campaignID, bad).StatusCode).To(Equal(422))
+		})
+
+		// CON-245 fix: an ordinary campaign save that omits the brand fields must
+		// not null them; an explicit null still clears.
+		It("preserves refs when the update omits them, clears on explicit null", func() {
+			set := fiber.Map{"name": "C", "campaign_type_id": seededCampaignTypeID, "brand_voice_id": "v-1", "brand_audience_id": "a-1"}
+			Expect(do("PUT", "/api/campaigns/"+campaignID, set).StatusCode).To(Equal(200))
+
+			// Save with the brand fields omitted — refs survive.
+			resp := do("PUT", "/api/campaigns/"+campaignID, fiber.Map{"name": "C2", "campaign_type_id": seededCampaignTypeID})
+			Expect(resp.StatusCode).To(Equal(200))
+			var c models.Campaign
+			Expect(json.NewDecoder(resp.Body).Decode(&c)).To(Succeed())
+			Expect(c.BrandVoiceID).To(Equal(strptr("v-1")))
+			Expect(c.BrandAudienceID).To(Equal(strptr("a-1")))
+
+			// Explicit null on the voice clears it; the omitted audience stays.
+			resp = do("PUT", "/api/campaigns/"+campaignID, fiber.Map{"name": "C2", "campaign_type_id": seededCampaignTypeID, "brand_voice_id": nil})
+			Expect(resp.StatusCode).To(Equal(200))
+			var c2 models.Campaign
+			Expect(json.NewDecoder(resp.Body).Decode(&c2)).To(Succeed())
+			Expect(c2.BrandVoiceID).To(BeNil())
+			Expect(c2.BrandAudienceID).To(Equal(strptr("a-1")))
 		})
 	})
 })
