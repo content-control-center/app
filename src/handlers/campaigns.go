@@ -42,9 +42,9 @@ type CampaignsHandler struct {
 	campaignTypeRepo repository.CampaignTypeRepository
 	// brandRepo validates campaign brand_voice_id/brand_audience_id belong to
 	// the tenant (CON-245). Optional (SetBrandRepo); nil skips validation.
-	brandRepo repository.BrandRepository
-	auth      fiber.Handler
-	generateDraft    func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)
+	brandRepo     repository.BrandRepository
+	auth          fiber.Handler
+	generateDraft func(ctx context.Context, campaignID string, onEvent content_plan.OnEventFunc) (*content_plan.ContentPlanResponse, error)
 	// isContentPlanReady reports whether the underlying Anthropic key
 	// is currently configured. Decoupled from generateDraft so we can
 	// return 503 before opening the SSE stream rather than emitting
@@ -180,6 +180,10 @@ func (h *CampaignsHandler) Register(app *fiber.App) {
 	g.Get("/:id", h.auth, h.Get)
 	g.Put("/:id", h.auth, h.Update)
 	g.Delete("/:id", h.auth, h.Delete)
+	// CON-156 (BE 6): campaign lifecycle. Archive removes a campaign from the
+	// active list (reversible); unarchive returns it. Both tenant-scoped.
+	g.Post("/:id/archive", h.auth, h.Archive)
+	g.Post("/:id/unarchive", h.auth, h.Unarchive)
 	// CON-233: targeted membership writes for the content-bank set, so attaching
 	// or detaching one document touches only asset_ids (no full-record PUT, no
 	// omitted-field reset, atomic under concurrent adds).
@@ -203,13 +207,15 @@ func (h *CampaignsHandler) Register(app *fiber.App) {
 }
 
 type campaignRequest struct {
-	Name               string                   `json:"name"                validate:"required"`
-	Description        string                   `json:"description"`
-	TargetPersona      string                   `json:"target_persona"`
-	KeyMessages        string                   `json:"key_messages"`
-	ToneGuidelines     string                   `json:"tone_guidelines"`
-	BrandVoiceID       *string                  `json:"brand_voice_id"`
-	BrandAudienceID    *string                  `json:"brand_audience_id"`
+	Name           string `json:"name"                validate:"required"`
+	Description    string `json:"description"`
+	TargetPersona  string `json:"target_persona"`
+	KeyMessages    string `json:"key_messages"`
+	ToneGuidelines string `json:"tone_guidelines"`
+	// Presence-aware (CON-245): omitting a brand ref on a full-replace save
+	// leaves the stored value alone; an explicit null clears it. See Optional.
+	BrandVoiceID       Optional[string]         `json:"brand_voice_id"`
+	BrandAudienceID    Optional[string]         `json:"brand_audience_id"`
 	UseAssets          bool                     `json:"use_assets"`
 	AssetIDs           models.StringSlice       `json:"asset_ids"`
 	TargetPlatforms    models.CampaignPlatforms `json:"target_platforms"`
@@ -279,24 +285,33 @@ func (r *campaignRequest) normalizeScheduling() (publishingTime string, timezone
 	return publishingTime, timezone, days, spread, nil
 }
 
+// toStatus resolves the campaign's status, defaulting to active. CON-156 BE 6:
+// draft is not a user-facing distinction (nothing behaves differently), so a
+// campaign with no explicit status is created active rather than draft. Existing
+// draft campaigns keep working — nothing in the backend branches on the value.
 func (r *campaignRequest) toStatus() models.CampaignStatus {
 	if r.Status == "" {
-		return models.StatusDraft
+		return models.StatusActive
 	}
 	return r.Status
 }
 
 // List godoc
 // @Summary      List campaigns
-// @Description  Returns all campaigns ordered by creation date.
+// @Description  Returns the active set (neither archived nor deleted) ordered by creation date. Pass ?archived=true to list archived campaigns instead.
 // @Tags         campaigns
 // @Produce      json
 // @Security     CookieAuth
+// @Param        archived  query     bool  false  "List archived campaigns instead of the active set"
 // @Success      200  {array}   models.Campaign
 // @Failure      401  {object}  map[string]string
 // @Router       /api/campaigns [get]
 func (h *CampaignsHandler) List(c *fiber.Ctx) error {
-	campaigns, err := h.repo.List(c.Context())
+	list := h.repo.List
+	if c.QueryBool("archived", false) {
+		list = h.repo.ListArchived
+	}
+	campaigns, err := list(c.Context())
 	if err != nil {
 		return err
 	}
@@ -346,7 +361,7 @@ func (h *CampaignsHandler) Create(c *fiber.Ctx) error {
 		return err
 	}
 
-	if err := validateBrandRefs(c.Context(), h.brandRepo, req.BrandVoiceID, req.BrandAudienceID); err != nil {
+	if err := validateBrandRefs(c.Context(), h.brandRepo, req.BrandVoiceID.Value, req.BrandAudienceID.Value); err != nil {
 		return err
 	}
 
@@ -357,8 +372,8 @@ func (h *CampaignsHandler) Create(c *fiber.Ctx) error {
 		TargetPersona:      req.TargetPersona,
 		KeyMessages:        req.KeyMessages,
 		ToneGuidelines:     req.ToneGuidelines,
-		BrandVoiceID:       req.BrandVoiceID,
-		BrandAudienceID:    req.BrandAudienceID,
+		BrandVoiceID:       req.BrandVoiceID.Value,
+		BrandAudienceID:    req.BrandAudienceID.Value,
 		UseAssets:          req.UseAssets,
 		AssetIDs:           nullSlice(req.AssetIDs),
 		TargetPlatforms:    nullCampaignPlatforms(req.TargetPlatforms),
@@ -449,7 +464,7 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
 
-	if err := validateBrandRefs(c.Context(), h.brandRepo, req.BrandVoiceID, req.BrandAudienceID); err != nil {
+	if err := validateBrandRefs(c.Context(), h.brandRepo, req.BrandVoiceID.Value, req.BrandAudienceID.Value); err != nil {
 		return err
 	}
 
@@ -470,8 +485,9 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 	campaign.TargetPersona = req.TargetPersona
 	campaign.KeyMessages = req.KeyMessages
 	campaign.ToneGuidelines = req.ToneGuidelines
-	campaign.BrandVoiceID = req.BrandVoiceID
-	campaign.BrandAudienceID = req.BrandAudienceID
+	// Presence-aware (CON-245): omit to leave alone, explicit null to clear.
+	req.BrandVoiceID.applyTo(&campaign.BrandVoiceID)
+	req.BrandAudienceID.applyTo(&campaign.BrandAudienceID)
 	campaign.UseAssets = req.UseAssets
 	campaign.AssetIDs = nullSlice(req.AssetIDs)
 	campaign.TargetPlatforms = nullCampaignPlatforms(req.TargetPlatforms)
@@ -589,7 +605,7 @@ func (h *CampaignsHandler) RemoveAsset(c *fiber.Ctx) error {
 
 // Delete godoc
 // @Summary      Delete campaign
-// @Description  Deletes a campaign by Sqid.
+// @Description  Soft-deletes a campaign by Sqid. The row is retained as a safety net (no self-serve restore); it disappears from lists and reads.
 // @Tags         campaigns
 // @Security     CookieAuth
 // @Param        id   path  string  true  "Campaign Sqid"
@@ -606,6 +622,54 @@ func (h *CampaignsHandler) Delete(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "campaign not found")
 	}
 	h.recordActivity(c, activity.CategoryCampaign, "campaign_deleted",
+		activity.WithEntity("campaign", c.Params("id")),
+	)
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// Archive godoc
+// @Summary      Archive campaign
+// @Description  Removes a campaign from the active list. Reversible via unarchive.
+// @Tags         campaigns
+// @Security     CookieAuth
+// @Param        id   path  string  true  "Campaign Sqid"
+// @Success      204
+// @Failure      401  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Router       /api/campaigns/{id}/archive [post]
+func (h *CampaignsHandler) Archive(c *fiber.Ctx) error {
+	ok, err := h.repo.Archive(c.Context(), c.Params("id"))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fiber.NewError(fiber.StatusNotFound, "campaign not found")
+	}
+	h.recordActivity(c, activity.CategoryCampaign, "campaign_archived",
+		activity.WithEntity("campaign", c.Params("id")),
+	)
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// Unarchive godoc
+// @Summary      Unarchive campaign
+// @Description  Returns an archived campaign to the active list.
+// @Tags         campaigns
+// @Security     CookieAuth
+// @Param        id   path  string  true  "Campaign Sqid"
+// @Success      204
+// @Failure      401  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Router       /api/campaigns/{id}/unarchive [post]
+func (h *CampaignsHandler) Unarchive(c *fiber.Ctx) error {
+	ok, err := h.repo.Unarchive(c.Context(), c.Params("id"))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fiber.NewError(fiber.StatusNotFound, "campaign not found")
+	}
+	h.recordActivity(c, activity.CategoryCampaign, "campaign_unarchived",
 		activity.WithEntity("campaign", c.Params("id")),
 	)
 	return c.SendStatus(fiber.StatusNoContent)

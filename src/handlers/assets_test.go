@@ -367,6 +367,187 @@ var _ = Describe("AssetsHandler", Ordered, func() {
 		})
 	})
 
+	// ── Tagging (CON-279) ─────────────────────────────────────────────────────
+
+	Describe("asset tagging (CON-279)", func() {
+		createTag := func(name string) string {
+			body, _ := json.Marshal(fiber.Map{"name": name})
+			req := httptest.NewRequest("POST", "/api/tags", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+			var t map[string]any
+			Expect(json.NewDecoder(resp.Body).Decode(&t)).To(Succeed())
+			return t["id"].(string)
+		}
+
+		putJSON := func(id string, body fiber.Map) *http.Response {
+			buf, _ := json.Marshal(body)
+			req := httptest.NewRequest("PUT", "/api/content-bank/assets/"+id, bytes.NewReader(buf))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			return resp
+		}
+
+		postJSON := func(path string, body fiber.Map) *http.Response {
+			buf, _ := json.Marshal(body)
+			req := httptest.NewRequest("POST", path, bytes.NewReader(buf))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			return resp
+		}
+
+		getAsset := func(id string) models.Asset {
+			req := httptest.NewRequest("GET", "/api/content-bank/assets/"+id, nil)
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(200))
+			var a models.Asset
+			Expect(json.NewDecoder(resp.Body).Decode(&a)).To(Succeed())
+			return a
+		}
+
+		body := `[{"type":"paragraph"}]`
+
+		// The bug this fixes: the PUT is a whole-resource write, and a
+		// title/content-only save (all the document editor sends) used to reset
+		// tags and alt text to empty.
+		Context("PUT preserves fields the payload omits", func() {
+			It("keeps existing tags when tag_ids is omitted", func() {
+				tagID := createTag("Legal")
+				p := createPiece("Doc", body)
+				Expect(putJSON(p.ID, fiber.Map{"title": "Doc", "content": body, "tag_ids": []string{tagID}}).StatusCode).To(Equal(200))
+
+				// A rename with no tag_ids field must not touch the tags.
+				Expect(putJSON(p.ID, fiber.Map{"title": "Doc renamed", "content": body}).StatusCode).To(Equal(200))
+
+				got := getAsset(p.ID)
+				Expect(got.Title).To(Equal("Doc renamed"))
+				Expect(got.TagIDs).To(ConsistOf(tagID))
+			})
+
+			It("clears tags when tag_ids is an explicit empty array", func() {
+				tagID := createTag("Legal")
+				p := createPiece("Doc", body)
+				Expect(putJSON(p.ID, fiber.Map{"title": "Doc", "content": body, "tag_ids": []string{tagID}}).StatusCode).To(Equal(200))
+
+				Expect(putJSON(p.ID, fiber.Map{"title": "Doc", "content": body, "tag_ids": []string{}}).StatusCode).To(Equal(200))
+
+				Expect(getAsset(p.ID).TagIDs).To(BeEmpty())
+			})
+
+			It("keeps existing alt_text when alt_text is omitted", func() {
+				p := createPiece("Doc", body)
+				Expect(putJSON(p.ID, fiber.Map{"title": "Doc", "content": body, "alt_text": "a bar chart"}).StatusCode).To(Equal(200))
+
+				Expect(putJSON(p.ID, fiber.Map{"title": "Doc renamed", "content": body}).StatusCode).To(Equal(200))
+
+				Expect(getAsset(p.ID).AltText).To(Equal("a bar chart"))
+			})
+		})
+
+		Context("POST /api/content-bank/assets/tags (bulk)", func() {
+			It("adds a tag across multiple assets", func() {
+				tagID := createTag("Legal")
+				a1 := createPiece("A", body)
+				a2 := createPiece("B", body)
+
+				resp := postJSON("/api/content-bank/assets/tags", fiber.Map{
+					"asset_ids": []string{a1.ID, a2.ID},
+					"add":       []string{tagID},
+				})
+				Expect(resp.StatusCode).To(Equal(200))
+				var updated []models.Asset
+				Expect(json.NewDecoder(resp.Body).Decode(&updated)).To(Succeed())
+				Expect(updated).To(HaveLen(2))
+
+				Expect(getAsset(a1.ID).TagIDs).To(ConsistOf(tagID))
+				Expect(getAsset(a2.ID).TagIDs).To(ConsistOf(tagID))
+			})
+
+			It("removes a tag and leaves the others", func() {
+				t1 := createTag("Legal")
+				t2 := createTag("Q4")
+				a := createPiece("A", body)
+				Expect(putJSON(a.ID, fiber.Map{"title": "A", "content": body, "tag_ids": []string{t1, t2}}).StatusCode).To(Equal(200))
+
+				resp := postJSON("/api/content-bank/assets/tags", fiber.Map{
+					"asset_ids": []string{a.ID},
+					"remove":    []string{t1},
+				})
+				Expect(resp.StatusCode).To(Equal(200))
+				Expect(getAsset(a.ID).TagIDs).To(ConsistOf(t2))
+			})
+
+			It("does not duplicate a tag already present", func() {
+				t1 := createTag("Legal")
+				a := createPiece("A", body)
+				Expect(putJSON(a.ID, fiber.Map{"title": "A", "content": body, "tag_ids": []string{t1}}).StatusCode).To(Equal(200))
+
+				resp := postJSON("/api/content-bank/assets/tags", fiber.Map{
+					"asset_ids": []string{a.ID},
+					"add":       []string{t1},
+				})
+				Expect(resp.StatusCode).To(Equal(200))
+				Expect(getAsset(a.ID).TagIDs).To(ConsistOf(t1))
+			})
+
+			It("adds and removes in one call", func() {
+				t1 := createTag("Legal")
+				t2 := createTag("Q4")
+				a := createPiece("A", body)
+				Expect(putJSON(a.ID, fiber.Map{"title": "A", "content": body, "tag_ids": []string{t1}}).StatusCode).To(Equal(200))
+
+				resp := postJSON("/api/content-bank/assets/tags", fiber.Map{
+					"asset_ids": []string{a.ID},
+					"add":       []string{t2},
+					"remove":    []string{t1},
+				})
+				Expect(resp.StatusCode).To(Equal(200))
+				Expect(getAsset(a.ID).TagIDs).To(ConsistOf(t2))
+			})
+
+			It("rejects a request with neither add nor remove", func() {
+				a := createPiece("A", body)
+				resp := postJSON("/api/content-bank/assets/tags", fiber.Map{"asset_ids": []string{a.ID}})
+				Expect(resp.StatusCode).To(Equal(400))
+			})
+
+			It("rejects an empty asset_ids", func() {
+				t1 := createTag("Legal")
+				resp := postJSON("/api/content-bank/assets/tags", fiber.Map{"asset_ids": []string{}, "add": []string{t1}})
+				Expect(resp.StatusCode).To(Equal(400))
+			})
+
+			It("rejects a tag named in both add and remove", func() {
+				t1 := createTag("Legal")
+				a := createPiece("A", body)
+				resp := postJSON("/api/content-bank/assets/tags", fiber.Map{
+					"asset_ids": []string{a.ID},
+					"add":       []string{t1},
+					"remove":    []string{t1},
+				})
+				Expect(resp.StatusCode).To(Equal(400))
+			})
+
+			It("returns 401 when not authenticated", func() {
+				buf, _ := json.Marshal(fiber.Map{"asset_ids": []string{"x"}, "add": []string{"y"}})
+				req := httptest.NewRequest("POST", "/api/content-bank/assets/tags", bytes.NewReader(buf))
+				req.Header.Set("Content-Type", "application/json")
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+		})
+	})
+
 	// ── Delete ───────────────────────────────────────────────────────────────
 
 	Describe("DELETE /api/content-bank/assets/:id", func() {

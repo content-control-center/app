@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -30,6 +31,15 @@ type AssetRepository interface {
 	// UpdateContent sets title + content (and bumps updated_at) without touching
 	// status/source_url — the process_url worker's write after a scrape (CON-222).
 	UpdateContent(ctx context.Context, id, title, content string) error
+	// ApplyTags adds and removes tag IDs across many assets in one transaction —
+	// the Content Bank's bulk-filing operation (CON-279). Each asset keeps its
+	// existing tags minus `remove` plus `add`, deduped and order-preserving. The
+	// load and the writes are tenant-scoped by the TenantScoped hooks, so asset
+	// IDs outside the caller's tenant are silently skipped. Every `add` id must
+	// resolve to a tag in the caller's tenant or the call fails with
+	// ErrUnknownTag; `remove` ids are applied as-is. Returns the updated assets
+	// (never nil) with tags and files hydrated.
+	ApplyTags(ctx context.Context, assetIDs, add, remove []string) ([]models.Asset, error)
 	Delete(ctx context.Context, id string) (bool, error)
 }
 
@@ -142,6 +152,110 @@ func (r *assetRepository) UpdateContent(ctx context.Context, id, title, content 
 		Where("id = ?", id).
 		Exec(ctx)
 	return err
+}
+
+// ErrUnknownTag is returned by ApplyTags when an `add` id doesn't resolve to a
+// tag in the caller's tenant — the request references a tag that doesn't exist
+// or belongs to another tenant. Handlers map it to a 400. `remove` ids are not
+// validated: dropping an unknown id is a harmless no-op, and rejecting it would
+// block cleaning up references to an already-deleted tag.
+var ErrUnknownTag = errors.New("unknown tag id")
+
+func (r *assetRepository) ApplyTags(ctx context.Context, assetIDs, add, remove []string) ([]models.Asset, error) {
+	if len(assetIDs) == 0 {
+		return []models.Asset{}, nil
+	}
+	// Validate the tags being added before persisting anything: GetByIDs is
+	// tenant-scoped by the TenantScoped hooks, so an id that's missing from the
+	// result is either nonexistent or another tenant's — reject rather than
+	// silently write a dangling id into the asset's tag_ids.
+	if len(add) > 0 {
+		tags, err := r.tagRepo.GetByIDs(ctx, add)
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range add {
+			if _, ok := tags[id]; !ok {
+				return nil, fmt.Errorf("%w: %s", ErrUnknownTag, id)
+			}
+		}
+	}
+	var updated []models.Asset
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// The TenantScoped hooks scope this to the caller's tenant, so a request
+		// naming another tenant's asset id simply doesn't load it — and therefore
+		// can't be written below. FOR UPDATE locks the loaded rows so concurrent
+		// bulk-tag calls on the same assets serialise their read-merge-write and
+		// don't clobber each other's tag_ids (lost update).
+		var assets []models.Asset
+		if err := tx.NewSelect().
+			Model(&assets).
+			Where("a.id IN (?)", bun.In(assetIDs)).
+			For("UPDATE").
+			Scan(ctx); err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		for i := range assets {
+			assets[i].TagIDs = mergeTagIDs(assets[i].TagIDs, add, remove)
+			assets[i].UpdatedAt = now
+			// Only the tag set and its timestamp — never title/content, so this
+			// can't disturb an in-flight document edit or trigger a re-embed.
+			if _, err := tx.NewUpdate().
+				Model(&assets[i]).
+				Column("tag_ids", "updated_at").
+				WherePK().
+				Exec(ctx); err != nil {
+				return err
+			}
+		}
+		updated = assets
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := r.hydrateTags(ctx, updated); err != nil {
+		return nil, err
+	}
+	if err := r.hydrateFiles(ctx, updated); err != nil {
+		return nil, err
+	}
+	// Never return nil: when assetIDs are all outside the tenant nothing loads,
+	// and the handler's c.JSON(updated) must emit [] rather than null.
+	if updated == nil {
+		updated = []models.Asset{}
+	}
+	return updated, nil
+}
+
+// mergeTagIDs returns existing minus remove, then add appended for any id not
+// already present — deduped, preserving existing order with adds last. It never
+// returns nil, so the notnull jsonb column always receives an array.
+func mergeTagIDs(existing models.StringSlice, add, remove []string) models.StringSlice {
+	drop := make(map[string]struct{}, len(remove))
+	for _, id := range remove {
+		drop[id] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(existing)+len(add))
+	out := make(models.StringSlice, 0, len(existing)+len(add))
+	keep := func(id string) {
+		if _, dropped := drop[id]; dropped {
+			return
+		}
+		if _, dup := seen[id]; dup {
+			return
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	for _, id := range existing {
+		keep(id)
+	}
+	for _, id := range add {
+		keep(id)
+	}
+	return out
 }
 
 // Delete removes the asset and, in the same transaction, scrubs its id from

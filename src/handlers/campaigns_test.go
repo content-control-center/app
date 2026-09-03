@@ -175,7 +175,8 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				Expect(c.ID).NotTo(BeEmpty())
 				Expect(c.Name).To(Equal("Launch Campaign"))
 				Expect(c.CampaignTypeID).To(Equal("gb"))
-				Expect(c.Status).To(Equal(models.StatusDraft))
+				// CON-156 BE 6: campaigns are created active, not draft.
+				Expect(c.Status).To(Equal(models.StatusActive))
 				Expect(c.CreatedBy).NotTo(BeEmpty())
 				Expect(c.AssetIDs).To(BeEmpty())
 				Expect(c.TargetPlatforms).To(BeEmpty())
@@ -2086,7 +2087,7 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 		})
 
 		Context("when authenticated", func() {
-			It("deletes the campaign and returns 204", func() {
+			It("soft-deletes the campaign: 204, then gone from reads and list", func() {
 				c := createCampaign("To Delete", "Ef")
 
 				req := httptest.NewRequest("DELETE", "/api/campaigns/"+c.ID, nil)
@@ -2094,6 +2095,35 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(204))
+
+				// GET the deleted campaign → 404 (soft-deleted rows read as gone).
+				getReq := httptest.NewRequest("GET", "/api/campaigns/"+c.ID, nil)
+				getReq.AddCookie(authCookie)
+				getResp, err := app.Test(getReq)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(getResp.StatusCode).To(Equal(404))
+
+				// It no longer appears in the active list.
+				listReq := httptest.NewRequest("GET", "/api/campaigns", nil)
+				listReq.AddCookie(authCookie)
+				listResp, err := app.Test(listReq)
+				Expect(err).NotTo(HaveOccurred())
+				var campaigns []models.Campaign
+				Expect(json.NewDecoder(listResp.Body).Decode(&campaigns)).To(Succeed())
+				Expect(campaigns).To(BeEmpty())
+			})
+
+			It("returns 404 when deleting an already-deleted campaign", func() {
+				c := createCampaign("Delete Twice", "Ef")
+				del := func() int {
+					req := httptest.NewRequest("DELETE", "/api/campaigns/"+c.ID, nil)
+					req.AddCookie(authCookie)
+					resp, err := app.Test(req)
+					Expect(err).NotTo(HaveOccurred())
+					return resp.StatusCode
+				}
+				Expect(del()).To(Equal(204))
+				Expect(del()).To(Equal(404))
 			})
 
 			It("returns 404 for an unknown id", func() {
@@ -2102,6 +2132,93 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(404))
+			})
+		})
+	})
+
+	// ── Archive / Unarchive (CON-156 BE 6) ─────────────────────────────────────
+
+	Describe("POST /api/campaigns/:id/archive and /unarchive", func() {
+		archive := func(id string) int {
+			req := httptest.NewRequest("POST", "/api/campaigns/"+id+"/archive", nil)
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			return resp.StatusCode
+		}
+		unarchive := func(id string) int {
+			req := httptest.NewRequest("POST", "/api/campaigns/"+id+"/unarchive", nil)
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			return resp.StatusCode
+		}
+		listActive := func() []models.Campaign {
+			req := httptest.NewRequest("GET", "/api/campaigns", nil)
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			var out []models.Campaign
+			Expect(json.NewDecoder(resp.Body).Decode(&out)).To(Succeed())
+			return out
+		}
+		listArchived := func() []models.Campaign {
+			req := httptest.NewRequest("GET", "/api/campaigns?archived=true", nil)
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			var out []models.Campaign
+			Expect(json.NewDecoder(resp.Body).Decode(&out)).To(Succeed())
+			return out
+		}
+
+		Context("when not authenticated", func() {
+			It("returns 401", func() {
+				req := httptest.NewRequest("POST", "/api/campaigns/someid/archive", nil)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+		})
+
+		Context("when authenticated", func() {
+			It("archives then unarchives, moving the campaign between lists", func() {
+				c := createCampaign("Archive Me", "Ef")
+
+				Expect(archive(c.ID)).To(Equal(204))
+				// Gone from active, present in archived.
+				Expect(listActive()).To(BeEmpty())
+				arch := listArchived()
+				Expect(arch).To(HaveLen(1))
+				Expect(arch[0].ID).To(Equal(c.ID))
+				Expect(arch[0].ArchivedAt).NotTo(BeNil())
+				// Still directly readable (so it can be unarchived).
+				getReq := httptest.NewRequest("GET", "/api/campaigns/"+c.ID, nil)
+				getReq.AddCookie(authCookie)
+				getResp, err := app.Test(getReq)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(getResp.StatusCode).To(Equal(200))
+
+				Expect(unarchive(c.ID)).To(Equal(204))
+				Expect(listArchived()).To(BeEmpty())
+				active := listActive()
+				Expect(active).To(HaveLen(1))
+				Expect(active[0].ID).To(Equal(c.ID))
+				Expect(active[0].ArchivedAt).To(BeNil())
+			})
+
+			It("returns 404 when archiving an unknown id", func() {
+				Expect(archive("nonexistent")).To(Equal(404))
+			})
+
+			It("returns 404 when archiving a soft-deleted campaign", func() {
+				c := createCampaign("Deleted Then Archived", "Ef")
+				req := httptest.NewRequest("DELETE", "/api/campaigns/"+c.ID, nil)
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(204))
+				Expect(archive(c.ID)).To(Equal(404))
 			})
 		})
 	})
