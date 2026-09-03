@@ -4,6 +4,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/post_actions/schedule"
 )
 
 // The editPost tool must reject an empty instruction before it ever spins up
@@ -16,6 +19,51 @@ func TestToolEditPost_RequiresInstruction(t *testing.T) {
 	}
 	if st.editResult != nil {
 		t.Fatal("editResult must stay nil when no writer ran")
+	}
+}
+
+// CON-251: a schedule committed earlier in the same generation must lock the
+// content against a later editPost. The editPost guard reads postStatus, so
+// schedulePost has to advance it — otherwise edit-after-schedule in one turn
+// would rewrite a post whose content just locked at schedule time. Exercise the
+// state seam recordScheduled fills, then confirm editPost refuses gracefully.
+func TestToolEditPost_RefusesAfterScheduleThisTurn(t *testing.T) {
+	st := &requestState{postID: "p1", postStatus: models.PostStatusDraft}
+
+	// schedulePost commits an auto-publish schedule this turn.
+	st.recordScheduled(&schedule.Result{Status: models.PostStatusScheduled})
+	if st.postStatus != models.PostStatusScheduled {
+		t.Fatalf("recordScheduled must advance postStatus to the routed status; got %q", st.postStatus)
+	}
+
+	ctx := withRequestState(context.Background(), st)
+	out, err := toolEditPost(ctx, EditPostInput{Instruction: "make it punchier"})
+	if err != nil {
+		// A start-of-turn status that was never refreshed would fall through to
+		// the (unavailable) writer and error — the regression this guards.
+		t.Fatalf("editPost after schedule must refuse gracefully, not error: %v", err)
+	}
+	if out == nil || out.OK {
+		t.Fatal("editPost must refuse once the post was scheduled to auto-publish this turn")
+	}
+	if st.editResult != nil {
+		t.Fatal("editResult must stay nil when the post locked this turn")
+	}
+}
+
+// A manual-publish schedule leaves nothing outside Ogen yet, so the content
+// stays editable within the same turn — recordScheduled advances the status but
+// IsSubmitted (and thus the editPost guard) excludes it.
+func TestToolEditPost_ManualScheduleStaysEditable(t *testing.T) {
+	st := &requestState{postID: "p1", postStatus: models.PostStatusDraft}
+	st.recordScheduled(&schedule.Result{Status: models.PostStatusScheduledForManualPublish})
+
+	ctx := withRequestState(context.Background(), st)
+	// Writer is unavailable in this bare state, so a permitted edit reaches it
+	// and surfaces the write-content error — proving the lock did NOT engage.
+	_, err := toolEditPost(ctx, EditPostInput{Instruction: "make it punchier"})
+	if err == nil || !strings.Contains(err.Error(), "write content") {
+		t.Fatalf("a manual-publish schedule must leave content editable (reach the writer); got err=%v", err)
 	}
 }
 

@@ -158,6 +158,7 @@ func runPostAssistant(
 	}
 	st := &requestState{
 		postID:      req.PostID,
+		postStatus:  post.Status,
 		assetIDs:    post.UsedAssetIDs,
 		repos:       repos,
 		embedder:    cfg.Embedder,
@@ -547,6 +548,20 @@ func runPostAssistant(
 	// it could write one.
 	if result.Explanation == "" && result.UpdatedContent != "" {
 		result.Explanation = "Updated post content."
+	}
+
+	// CON-251 backstop: a submitted post's content is locked. The planner
+	// path already refuses in the editPost tool, but the legacy single-model
+	// path writes content straight into updatedContent with no tool, so guard
+	// the persist here too. Coerce the edit to a declined turn — drop the
+	// content and version so nothing is written — and explain why, keeping the
+	// response coherent rather than silently discarding the write.
+	if result.Action == "edited" && post.Status.IsSubmitted() {
+		slog.WarnContext(ctx, "refused content edit on submitted post", logging.AttrComponent, "genkit.post_assistant", "post_id", req.PostID, "status", string(post.Status))
+		result.Action = "declined"
+		result.UpdatedContent = ""
+		result.SaveVersion = false
+		result.Explanation = "This post is " + string(post.Status) + ", so its content is locked and I can't change it. Unschedule it (or duplicate it into a new draft) if you'd like to make edits."
 	}
 
 	// Content is persisted and returned as Markdown. The frontend is the

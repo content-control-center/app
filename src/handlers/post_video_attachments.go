@@ -80,8 +80,8 @@ func (h *PostAttachmentsHandler) PresignVideo(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	if terminalForMutations(post.Status) {
-		return fiber.NewError(fiber.StatusConflict, "post is in a terminal publishing state and its attachments are immutable")
+	if lockedForMutations(post.Status) {
+		return fiber.NewError(fiber.StatusConflict, "post has been submitted (scheduled or published) and its attachments are locked")
 	}
 
 	var req presignVideoRequest
@@ -156,8 +156,8 @@ func (h *PostAttachmentsHandler) FinalizeVideo(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	if terminalForMutations(post.Status) {
-		return fiber.NewError(fiber.StatusConflict, "post is in a terminal publishing state and its attachments are immutable")
+	if lockedForMutations(post.Status) {
+		return fiber.NewError(fiber.StatusConflict, "post has been submitted (scheduled or published) and its attachments are locked")
 	}
 
 	var req finalizeVideoRequest
