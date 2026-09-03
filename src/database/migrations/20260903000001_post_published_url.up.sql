@@ -18,9 +18,23 @@ ALTER TABLE posts
 -- one). Same-DB, so this is a plain UPDATE. The verify-external tail (URL only in
 -- the separate analytics DB) is not reachable from here and is left to an
 -- app-level backfill; those posts also self-heal on the next verify/refresh.
-UPDATE posts
-SET published_url = published_results::jsonb -> 0 ->> 'platformPostUrl'
-WHERE published_url IS NULL
-  AND published_results <> ''
-  AND jsonb_typeof(published_results::jsonb) = 'array'
-  AND NULLIF(published_results::jsonb -> 0 ->> 'platformPostUrl', '') IS NOT NULL;
+--
+-- published_results is TEXT (DEFAULT ''), so a bare ::jsonb cast throws on the
+-- empty-string default and on any malformed historical row. SQL doesn't promise
+-- WHERE-clause short-circuit, so guarding the cast with `published_results <> ''`
+-- alone isn't safe — the planner may evaluate the cast first and abort the whole
+-- migration. Gate it with pg_input_is_valid (PG16+) in a CTE whose WHERE touches
+-- no cast, so ::jsonb runs only on rows already proven to be valid JSON.
+WITH candidates AS (
+    SELECT id, published_results::jsonb AS results
+    FROM posts
+    WHERE published_url IS NULL
+      AND published_results <> ''
+      AND pg_input_is_valid(published_results, 'jsonb')
+)
+UPDATE posts p
+SET published_url = c.results -> 0 ->> 'platformPostUrl'
+FROM candidates c
+WHERE p.id = c.id
+  AND jsonb_typeof(c.results) = 'array'
+  AND NULLIF(c.results -> 0 ->> 'platformPostUrl', '') IS NOT NULL;
