@@ -22,7 +22,8 @@ func TestMutatesLockedContent(t *testing.T) {
 			UsedAssetIDs:     models.StringSlice{"src_1"},
 		}
 	}
-	// reqFor builds a request that mirrors the post exactly (a no-op save).
+	// reqFor builds a request that mirrors the post exactly (a no-op save). Sources
+	// are presence-aware (CON-233), so a faithful mirror sends them present.
 	reqFor := func(p *models.Post) postRequest {
 		return postRequest{
 			Content:          p.Content,
@@ -30,7 +31,7 @@ func TestMutatesLockedContent(t *testing.T) {
 			PlatformID:       p.PlatformID,
 			PlatformPostType: p.PlatformPostType,
 			MediaURLs:        p.MediaURLs,
-			UsedAssetIDs:     p.UsedAssetIDs,
+			UsedAssetIDs:     present(p.UsedAssetIDs),
 		}
 	}
 
@@ -51,7 +52,7 @@ func TestMutatesLockedContent(t *testing.T) {
 		{"post_type", func(r *postRequest) { r.PlatformPostType = "story" }},
 		{"media_removed", func(r *postRequest) { r.MediaURLs = models.StringSlice{"a"} }},
 		{"media_reordered", func(r *postRequest) { r.MediaURLs = models.StringSlice{"b", "a"} }},
-		{"sources", func(r *postRequest) { r.UsedAssetIDs = models.StringSlice{"src_1", "src_2"} }},
+		{"sources", func(r *postRequest) { r.UsedAssetIDs = present(models.StringSlice{"src_1", "src_2"}) }},
 	}
 	for _, tc := range locked {
 		r := reqFor(p)
@@ -59,6 +60,15 @@ func TestMutatesLockedContent(t *testing.T) {
 		if !r.mutatesLockedContent(p) {
 			t.Errorf("changing %s must count as a locked-content mutation", tc.name)
 		}
+	}
+
+	// CON-233: a save that OMITS used_asset_ids preserves the set (the membership
+	// endpoints own it), so it must not count as touching the locked sources —
+	// even though the post has sources the request doesn't restate.
+	omitsSources := reqFor(p)
+	omitsSources.UsedAssetIDs = Optional[models.StringSlice]{} // key absent
+	if omitsSources.mutatesLockedContent(p) {
+		t.Error("omitting used_asset_ids must not count as a content mutation")
 	}
 
 	// Fields the lock deliberately does NOT own (date/account/CTA/notes/status

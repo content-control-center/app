@@ -1,6 +1,10 @@
 package handlers
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/ogen-app/ogen/src/models"
+)
 
 // Optional distinguishes the three JSON states a request field can be in:
 // absent, explicit null, and a concrete value. A plain pointer field collapses
@@ -45,5 +49,45 @@ func (o *Optional[T]) UnmarshalJSON(data []byte) error {
 func (o Optional[T]) applyTo(dst **T) {
 	if o.Present {
 		*dst = o.Value
+	}
+}
+
+// applyToValue is applyTo for a non-pointer destination: it overwrites *dst only
+// when the field carried a concrete value (present and non-null). Omission — and
+// an explicit null, which cannot be represented in a plain value — leave *dst
+// untouched. Used for scalar fields that gained a dedicated write path and so
+// must survive an unrelated whole-record save (CON-233 use_assets).
+func (o Optional[T]) applyToValue(dst *T) {
+	if o.Present && o.Value != nil {
+		*dst = *o.Value
+	}
+}
+
+// orZero returns the concrete value the field carried, or the type's zero value
+// when it was absent or explicit null. For a slice T the zero value is a nil
+// slice (which nullSlice normalises to empty); for a bool it is false. Used on
+// the Create path, where there is no stored value to preserve.
+func (o Optional[T]) orZero() T {
+	if o.Present && o.Value != nil {
+		return *o.Value
+	}
+	var zero T
+	return zero
+}
+
+// present builds an Optional carrying a concrete value — the present, non-null
+// state. For code paths (and tests) that already hold the value.
+func present[T any](v T) Optional[T] {
+	return Optional[T]{Present: true, Value: &v}
+}
+
+// applyOptionalSlice applies a presence-aware id-list to *dst: an omitted key
+// leaves the stored slice untouched, so a whole-record save no longer restates —
+// and clobbers — a set that now has its own membership endpoints (CON-233); a
+// present array replaces it and an explicit null clears it. Stored values are
+// normalised to a non-null empty slice (nullSlice).
+func applyOptionalSlice(o Optional[models.StringSlice], dst *models.StringSlice) {
+	if o.Present {
+		*dst = nullSlice(o.orZero())
 	}
 }

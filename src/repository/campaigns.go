@@ -28,10 +28,11 @@ type CampaignRepository interface {
 	Archive(ctx context.Context, id string) (bool, error)
 	Unarchive(ctx context.Context, id string) (bool, error)
 	// AddAssetIDs / RemoveAssetID are the CON-233 membership write path: they
-	// mutate only campaigns.asset_ids, in one atomic UPDATE, so attaching or
-	// detaching one document no longer round-trips the whole record and
-	// concurrent adds of different ids don't clobber each other. Both return the
-	// hydrated campaign, or sql.ErrNoRows if it doesn't exist (in this tenant).
+	// mutate campaigns.asset_ids (and keep use_assets derived from it), in one
+	// atomic UPDATE, so attaching or detaching one document no longer round-trips
+	// the whole record and concurrent adds of different ids don't clobber each
+	// other. Both return the hydrated campaign, or sql.ErrNoRows if it doesn't
+	// exist (in this tenant).
 	AddAssetIDs(ctx context.Context, id string, assetIDs []string) (*models.Campaign, error)
 	RemoveAssetID(ctx context.Context, id, assetID string) (*models.Campaign, error)
 }
@@ -145,6 +146,14 @@ func (r *campaignRepository) AddAssetIDs(ctx context.Context, id string, assetID
 	res, err := r.db.NewUpdate().
 		Model((*models.Campaign)(nil)).
 		Set(jsonbIDUnionSet("asset_ids"), string(payload)).
+		// CON-233: keep use_assets in lockstep with the set. The content-bank set
+		// is the FE's only source of truth for this flag since CON-210 retired the
+		// three-mode picker, and resolveAssets returns early when use_assets is
+		// false — so without this a first attach to a brief-only campaign is
+		// silently ignored by generation. A union with non-empty input is always
+		// non-empty (empty input is handled by the no-op read above), so attaching
+		// always turns generation on.
+		Set("use_assets = ?", true).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", id).
 		Exec(ctx)
@@ -159,11 +168,18 @@ func (r *campaignRepository) AddAssetIDs(ctx context.Context, id string, assetID
 
 // RemoveAssetID drops assetID from campaigns.asset_ids atomically (CON-233).
 // Removal is idempotent — an absent id still matches the row (so it is not a
-// 404) and leaves the set unchanged.
+// 404) and leaves the set unchanged. use_assets is re-derived from the set (see
+// AddAssetIDs), so detaching the last source turns generation off rather than
+// leaving use_assets=true over an empty list — which collectReadyCandidateIDs
+// would read as "every asset in the workspace".
 func (r *campaignRepository) RemoveAssetID(ctx context.Context, id, assetID string) (*models.Campaign, error) {
 	res, err := r.db.NewUpdate().
 		Model((*models.Campaign)(nil)).
 		Set(jsonbIDRemoveSet("asset_ids"), assetID).
+		// Every SET reads the pre-update row, so `asset_ids - ?` here is exactly the
+		// value being stored by the Set above: use_assets tracks the post-removal
+		// length, never the stale pre-removal one.
+		Set("use_assets = (jsonb_array_length(asset_ids - ?) > 0)", assetID).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", id).
 		Exec(ctx)

@@ -553,6 +553,52 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				Expect(got.Platform).NotTo(BeNil())
 			})
 
+			// CON-233 #2: used_asset_ids is presence-aware on PUT, so an autosave
+			// that omits it leaves the sources alone (the membership endpoints own
+			// them) instead of restating a stale list over an in-flight attach.
+			It("preserves used_asset_ids when a PUT omits it", func() {
+				p := createPost("Sourced Post", fiber.Map{"used_asset_ids": []string{"a", "b"}})
+
+				body, _ := json.Marshal(fiber.Map{
+					"campaign_id": campaignID,
+					"title":       "Renamed",
+					"status":      "draft",
+				})
+				req := httptest.NewRequest("PUT", "/api/posts/"+p.ID, bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+				var got models.Post
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect(got.Title).To(Equal("Renamed"))
+				Expect([]string(got.UsedAssetIDs)).To(Equal([]string{"a", "b"}))
+			})
+
+			It("replaces used_asset_ids on a present value and clears on []", func() {
+				p := createPost("Sourced Post", fiber.Map{"used_asset_ids": []string{"a", "b"}})
+				put := func(v any) models.Post {
+					body, _ := json.Marshal(fiber.Map{
+						"campaign_id":    campaignID,
+						"title":          "Sourced Post",
+						"status":         "draft",
+						"used_asset_ids": v,
+					})
+					req := httptest.NewRequest("PUT", "/api/posts/"+p.ID, bytes.NewReader(body))
+					req.Header.Set("Content-Type", "application/json")
+					req.AddCookie(authCookie)
+					resp, err := app.Test(req)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(resp.StatusCode).To(Equal(200))
+					var got models.Post
+					Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+					return got
+				}
+				Expect([]string(put([]string{"c"}).UsedAssetIDs)).To(Equal([]string{"c"}))
+				Expect([]string(put([]string{}).UsedAssetIDs)).To(BeEmpty())
+			})
+
 			It("persists published_url on update (CON-165 manual/skip path)", func() {
 				p := createPost("Manual Post", nil)
 

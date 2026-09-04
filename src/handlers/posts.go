@@ -928,8 +928,13 @@ type postRequest struct {
 	CTAType             models.PostCTAType `json:"cta_type"`
 	CTAUrl              string             `json:"cta_url"`
 	TargetAudienceNotes string             `json:"target_audience_notes"`
-	UsedAssetIDs        models.StringSlice `json:"used_asset_ids"`
-	CampaignTypePhaseID *string            `json:"campaign_type_phase_id"`
+	// UsedAssetIDs is presence-aware (CON-233): the sources have their own
+	// membership endpoints (POST/DELETE /posts/:id/assets), so an ordinary
+	// whole-record save that omits the key must leave the stored set alone rather
+	// than restate it and race the membership write. A present array replaces it;
+	// an explicit null clears it. See Optional and applyOptionalSlice.
+	UsedAssetIDs        Optional[models.StringSlice] `json:"used_asset_ids"`
+	CampaignTypePhaseID *string                      `json:"campaign_type_phase_id"`
 	// BrandVoiceID / BrandAudienceID are presence-aware (CON-245): unlike the
 	// other client-authored fields on this full-replace body, these are stamped
 	// server-side by content_plan / draft_post, so an omitted key must leave the
@@ -984,7 +989,9 @@ func (r *postRequest) apply(post *models.Post, status models.PostStatus, ctaType
 	// place; an explicit null clears them.
 	r.BrandVoiceID.applyTo(&post.BrandVoiceID)
 	r.BrandAudienceID.applyTo(&post.BrandAudienceID)
-	post.UsedAssetIDs = nullSlice(r.UsedAssetIDs)
+	// Presence-aware (CON-233): omit to leave the sources alone (the membership
+	// endpoints own them), a present array to replace, an explicit null to clear.
+	applyOptionalSlice(r.UsedAssetIDs, &post.UsedAssetIDs)
 	post.UpdatedAt = time.Now().UTC()
 }
 
@@ -1001,7 +1008,9 @@ func (r *postRequest) mutatesLockedContent(post *models.Post) bool {
 		r.PlatformID != post.PlatformID ||
 		r.PlatformPostType != post.PlatformPostType ||
 		!slices.Equal(nullSlice(r.MediaURLs), post.MediaURLs) ||
-		!slices.Equal(nullSlice(r.UsedAssetIDs), post.UsedAssetIDs)
+		// Sources are presence-aware (CON-233): an omitted key preserves the set,
+		// so only a present-and-different value is a mutation of the locked content.
+		(r.UsedAssetIDs.Present && !slices.Equal(nullSlice(r.UsedAssetIDs.orZero()), post.UsedAssetIDs))
 }
 
 // requirePlatformIfNotDraft enforces that platform fields are populated
@@ -1150,7 +1159,7 @@ func (h *PostsHandler) Create(c *fiber.Ctx) error {
 		CTAType:             ctaType,
 		CTAUrl:              req.CTAUrl,
 		TargetAudienceNotes: req.TargetAudienceNotes,
-		UsedAssetIDs:        nullSlice(req.UsedAssetIDs),
+		UsedAssetIDs:        nullSlice(req.UsedAssetIDs.orZero()),
 		CampaignTypePhaseID: req.CampaignTypePhaseID,
 		CreatedBy:           session.UserID,
 		UsedAssets:          []models.Asset{},

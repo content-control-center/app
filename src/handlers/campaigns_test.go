@@ -577,6 +577,96 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				// Neither add clobbered the other: both ids present, in some order.
 				Expect([]string(got.AssetIDs)).To(ConsistOf("concurrent-1", "concurrent-2"))
 			})
+
+			// ── use_assets stays derived from the set (CON-233 review) ──────────
+			// The FE derives use_assets purely from the membership set (CON-210
+			// retired the three-mode picker), so these endpoints must keep it in
+			// lockstep — otherwise generation silently ignores a first attach, or
+			// a last-detach flips the campaign to whole-workspace mode.
+			It("turns use_assets on when the first document is attached", func() {
+				c := createCampaign("Brief Only", "Uk")
+				Expect(c.UseAssets).To(BeFalse()) // brief-only campaign
+
+				resp := addAssets(c.ID, []string{"asset-a"})
+				Expect(resp.StatusCode).To(Equal(200))
+				var got models.Campaign
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect(got.UseAssets).To(BeTrue())
+				Expect([]string(got.AssetIDs)).To(Equal([]string{"asset-a"}))
+			})
+
+			It("turns use_assets off when the last document is detached", func() {
+				c := createCampaign("Single Source", "Uk")
+				Expect(addAssets(c.ID, []string{"only"}).StatusCode).To(Equal(200))
+
+				resp := removeAsset(c.ID, "only")
+				Expect(resp.StatusCode).To(Equal(200))
+				var got models.Campaign
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				// Never leaves use_assets=true over an empty list — the whole-bank trap.
+				Expect(got.UseAssets).To(BeFalse())
+				Expect([]string(got.AssetIDs)).To(BeEmpty())
+			})
+
+			It("keeps use_assets on while some documents remain", func() {
+				c := createCampaign("Multi Source", "Uk")
+				Expect(addAssets(c.ID, []string{"a", "b"}).StatusCode).To(Equal(200))
+
+				resp := removeAsset(c.ID, "a")
+				Expect(resp.StatusCode).To(Equal(200))
+				var got models.Campaign
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect(got.UseAssets).To(BeTrue())
+				Expect([]string(got.AssetIDs)).To(Equal([]string{"b"}))
+			})
+
+			// CON-233 #2: membership fields are presence-aware on PUT, so an
+			// unrelated whole-record save (a brief edit) that omits them must not
+			// clobber a set attached via the membership endpoints.
+			It("preserves use_assets + asset_ids when a PUT omits them", func() {
+				c := createCampaign("Brief + Bank", "Uk")
+				Expect(addAssets(c.ID, []string{"a"}).StatusCode).To(Equal(200))
+
+				body, _ := json.Marshal(fiber.Map{
+					"name":             "Brief + Bank (edited)",
+					"campaign_type_id": "Uk",
+				})
+				req := httptest.NewRequest("PUT", "/api/campaigns/"+c.ID, bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+				var got models.Campaign
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect(got.Name).To(Equal("Brief + Bank (edited)"))
+				Expect(got.UseAssets).To(BeTrue())
+				Expect([]string(got.AssetIDs)).To(Equal([]string{"a"}))
+			})
+
+			// A PUT that DOES restate membership still full-replaces (back-compat
+			// for clients that send it): explicit values win.
+			It("still replaces use_assets + asset_ids when a PUT sends them", func() {
+				c := createCampaign("Explicit Bank", "Uk")
+				Expect(addAssets(c.ID, []string{"a"}).StatusCode).To(Equal(200))
+
+				body, _ := json.Marshal(fiber.Map{
+					"name":             "Explicit Bank",
+					"campaign_type_id": "Uk",
+					"use_assets":       false,
+					"asset_ids":        []string{},
+				})
+				req := httptest.NewRequest("PUT", "/api/campaigns/"+c.ID, bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+				var got models.Campaign
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect(got.UseAssets).To(BeFalse())
+				Expect([]string(got.AssetIDs)).To(BeEmpty())
+			})
 		})
 	})
 
