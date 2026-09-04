@@ -516,7 +516,19 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 	campaign.GoalCadence = goalCadence
 	campaign.UpdatedAt = time.Now().UTC()
 
-	if err := h.repo.Update(c.Context(), campaign); err != nil {
+	// Presence-aware content-bank fields (CON-233): the in-memory apply above
+	// already left an omitted field at its hydrated value, but the whole-record
+	// UPDATE would still write that stale value back and clobber a concurrent
+	// membership write (AddAssetIDs/RemoveAssetID) that landed after GetByID.
+	// Drop the omitted columns from the write so "leave alone" holds at the DB.
+	var omit []string
+	if !req.AssetIDs.Present {
+		omit = append(omit, "asset_ids")
+	}
+	if !(req.UseAssets.Present && req.UseAssets.Value != nil) {
+		omit = append(omit, "use_assets")
+	}
+	if err := h.repo.Update(c.Context(), campaign, omit...); err != nil {
 		return err
 	}
 	h.recordActivity(c, activity.CategoryCampaign, "campaign_updated",

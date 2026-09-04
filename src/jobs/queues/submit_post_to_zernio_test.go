@@ -46,7 +46,7 @@ func (r *fakePostRepo) GetByID(_ context.Context, id string) (*models.Post, erro
 	}
 	return nil, errors.New("not found")
 }
-func (r *fakePostRepo) Update(_ context.Context, p *models.Post) error {
+func (r *fakePostRepo) Update(_ context.Context, p *models.Post, _ ...string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	cp := *p

@@ -1370,7 +1370,16 @@ func (h *PostsHandler) Update(c *fiber.Ctx) error {
 		}
 	} else {
 		req.apply(post, status, ctaType)
-		if err := h.repo.Update(c.Context(), post); err != nil {
+		// Presence-aware sources (CON-233): apply already left an omitted
+		// used_asset_ids at its hydrated value, but the whole-record UPDATE would
+		// still write that stale value back and clobber a concurrent membership
+		// write (AddUsedAssetIDs/RemoveUsedAssetID) that landed after GetByID. Drop
+		// the omitted column from the write so "leave alone" holds at the DB.
+		var omit []string
+		if !req.UsedAssetIDs.Present {
+			omit = append(omit, "used_asset_ids")
+		}
+		if err := h.repo.Update(c.Context(), post, omit...); err != nil {
 			return err
 		}
 		h.logTransition(c, post, prevStatus, status)

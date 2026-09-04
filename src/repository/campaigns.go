@@ -23,7 +23,10 @@ type CampaignRepository interface {
 	ListArchived(ctx context.Context) ([]models.Campaign, error)
 	Create(ctx context.Context, campaign *models.Campaign) error
 	GetByID(ctx context.Context, id string) (*models.Campaign, error)
-	Update(ctx context.Context, campaign *models.Campaign) error
+	// Update writes the whole record; excludeColumns drops the named columns
+	// from the write so a PUT that omits the presence-aware content-bank fields
+	// (asset_ids / use_assets) doesn't clobber a concurrent membership write.
+	Update(ctx context.Context, campaign *models.Campaign, excludeColumns ...string) error
 	Delete(ctx context.Context, id string) (bool, error)
 	Archive(ctx context.Context, id string) (bool, error)
 	Unarchive(ctx context.Context, id string) (bool, error)
@@ -124,8 +127,18 @@ func (r *campaignRepository) GetByID(ctx context.Context, id string) (*models.Ca
 	return &campaigns[0], nil
 }
 
-func (r *campaignRepository) Update(ctx context.Context, campaign *models.Campaign) error {
-	_, err := r.db.NewUpdate().Model(campaign).WherePK().Exec(ctx)
+// Update writes the whole campaign record. excludeColumns drops the named
+// columns from the UPDATE: the CON-233 content-bank fields (asset_ids /
+// use_assets) have their own atomic membership write path, so a whole-record
+// PUT that omits them must leave the stored value untouched at the DB — not
+// merely restate the hydrated (pre-read) value, which would clobber a
+// concurrent AddAssetIDs/RemoveAssetID that landed after the caller's GetByID.
+func (r *campaignRepository) Update(ctx context.Context, campaign *models.Campaign, excludeColumns ...string) error {
+	q := r.db.NewUpdate().Model(campaign).WherePK()
+	if len(excludeColumns) > 0 {
+		q = q.ExcludeColumn(excludeColumns...)
+	}
+	_, err := q.Exec(ctx)
 	return err
 }
 

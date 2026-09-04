@@ -21,7 +21,10 @@ type PostRepository interface {
 	Create(ctx context.Context, post *models.Post) error
 	CreateBatch(ctx context.Context, posts []*models.Post) error
 	GetByID(ctx context.Context, id string) (*models.Post, error)
-	Update(ctx context.Context, post *models.Post) error
+	// Update writes the whole record; excludeColumns drops the named columns
+	// from the write so a PUT that omits the presence-aware source set
+	// (used_asset_ids) doesn't clobber a concurrent membership write.
+	Update(ctx context.Context, post *models.Post, excludeColumns ...string) error
 	// AddUsedAssetIDs / RemoveUsedAssetID are the CON-233 membership write path
 	// for a post's sources: they mutate only posts.used_asset_ids, in one atomic
 	// UPDATE, so attaching or detaching one source no longer round-trips the whole
@@ -171,8 +174,18 @@ func (r *postRepository) GetByID(ctx context.Context, id string) (*models.Post, 
 	return &posts[0], nil
 }
 
-func (r *postRepository) Update(ctx context.Context, post *models.Post) error {
-	_, err := r.db.NewUpdate().Model(post).WherePK().Exec(ctx)
+// Update writes the whole post record. excludeColumns drops the named columns
+// from the UPDATE: the CON-233 source set (used_asset_ids) has its own atomic
+// membership write path, so a whole-record PUT that omits it must leave the
+// stored value untouched at the DB — not restate the hydrated (pre-read) value,
+// which would clobber a concurrent AddUsedAssetIDs/RemoveUsedAssetID that landed
+// after the caller's GetByID.
+func (r *postRepository) Update(ctx context.Context, post *models.Post, excludeColumns ...string) error {
+	q := r.db.NewUpdate().Model(post).WherePK()
+	if len(excludeColumns) > 0 {
+		q = q.ExcludeColumn(excludeColumns...)
+	}
+	_, err := q.Exec(ctx)
 	return err
 }
 
