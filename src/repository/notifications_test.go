@@ -220,6 +220,58 @@ func TestNotifications_ReplaySinceAscending(t *testing.T) {
 	}
 }
 
+// TestNotifications_ReadsHydrateSeq guards the CON-242 bug where a `scanonly`
+// tag on Seq dropped the column from the generated SELECT, so every List /
+// ReplaySince row came back seq=0 (breaking replay cursors and mark-all-read's
+// `before` bound) while Insert still populated Seq via its explicit RETURNING —
+// which is why the other tests, all reading Seq off the *inserted* model,
+// stayed green. Here we assert Seq on rows coming back from a read.
+func TestNotifications_ReadsHydrateSeq(t *testing.T) {
+	db := openNotifDB(t)
+	repo := repository.NewNotificationRepository(db)
+	ctx := tctx("t1")
+
+	inserted := make(map[string]int64)
+	for _, id := range []string{"a", "b", "c"} {
+		n := newNotif(id, "u1", "x")
+		if _, err := repo.Insert(ctx, n); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+		if n.Seq == 0 {
+			t.Fatalf("insert %s did not populate Seq", id)
+		}
+		inserted[id] = n.Seq
+	}
+
+	list, err := repo.List(ctx, "u1", repository.NotificationListOpts{})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, n := range list {
+		if n.Seq == 0 {
+			t.Fatalf("List returned seq=0 for %s (column dropped from SELECT)", n.ID)
+		}
+		if n.Seq != inserted[n.ID] {
+			t.Fatalf("List seq for %s = %d, want %d", n.ID, n.Seq, inserted[n.ID])
+		}
+	}
+
+	// A cursor built from a List row must actually advance ReplaySince — the
+	// downstream effect the bug nullified. Page after the oldest row's seq.
+	replay, err := repo.ReplaySince(ctx, "u1", inserted["a"], 100)
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if len(replay) != 2 || replay[0].ID != "b" || replay[1].ID != "c" {
+		t.Fatalf("replay after a = %+v, want [b c]", ids(replay))
+	}
+	for _, n := range replay {
+		if n.Seq != inserted[n.ID] {
+			t.Fatalf("ReplaySince seq for %s = %d, want %d", n.ID, n.Seq, inserted[n.ID])
+		}
+	}
+}
+
 func TestNotifications_TenantIsolation(t *testing.T) {
 	db := openNotifDB(t)
 	repo := repository.NewNotificationRepository(db)
