@@ -46,7 +46,7 @@ func (r *fakePostRepo) GetByID(_ context.Context, id string) (*models.Post, erro
 	}
 	return nil, errors.New("not found")
 }
-func (r *fakePostRepo) Update(_ context.Context, p *models.Post) error {
+func (r *fakePostRepo) Update(_ context.Context, p *models.Post, _ ...string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	cp := *p
@@ -65,6 +65,12 @@ func (r *fakePostRepo) ListSummaryProjections(context.Context) ([]models.Post, e
 	return nil, nil
 }
 func (r *fakePostRepo) UpdateScheduledAtBatch(context.Context, []*models.Post) error { return nil }
+func (r *fakePostRepo) AddUsedAssetIDs(context.Context, string, []string) (*models.Post, error) {
+	return nil, nil
+}
+func (r *fakePostRepo) RemoveUsedAssetID(context.Context, string, string) (*models.Post, error) {
+	return nil, nil
+}
 func (r *fakePostRepo) ListWithPublisherPostID(context.Context) ([]models.Post, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

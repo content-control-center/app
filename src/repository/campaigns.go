@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -22,10 +23,21 @@ type CampaignRepository interface {
 	ListArchived(ctx context.Context) ([]models.Campaign, error)
 	Create(ctx context.Context, campaign *models.Campaign) error
 	GetByID(ctx context.Context, id string) (*models.Campaign, error)
-	Update(ctx context.Context, campaign *models.Campaign) error
+	// Update writes the whole record; excludeColumns drops the named columns
+	// from the write so a PUT that omits the presence-aware content-bank fields
+	// (asset_ids / use_assets) doesn't clobber a concurrent membership write.
+	Update(ctx context.Context, campaign *models.Campaign, excludeColumns ...string) error
 	Delete(ctx context.Context, id string) (bool, error)
 	Archive(ctx context.Context, id string) (bool, error)
 	Unarchive(ctx context.Context, id string) (bool, error)
+	// AddAssetIDs / RemoveAssetID are the CON-233 membership write path: they
+	// mutate campaigns.asset_ids (and keep use_assets derived from it), in one
+	// atomic UPDATE, so attaching or detaching one document no longer round-trips
+	// the whole record and concurrent adds of different ids don't clobber each
+	// other. Both return the hydrated campaign, or sql.ErrNoRows if it doesn't
+	// exist (in this tenant).
+	AddAssetIDs(ctx context.Context, id string, assetIDs []string) (*models.Campaign, error)
+	RemoveAssetID(ctx context.Context, id, assetID string) (*models.Campaign, error)
 }
 
 type campaignRepository struct {
@@ -115,9 +127,82 @@ func (r *campaignRepository) GetByID(ctx context.Context, id string) (*models.Ca
 	return &campaigns[0], nil
 }
 
-func (r *campaignRepository) Update(ctx context.Context, campaign *models.Campaign) error {
-	_, err := r.db.NewUpdate().Model(campaign).WherePK().Exec(ctx)
+// Update writes the whole campaign record. excludeColumns drops the named
+// columns from the UPDATE: the CON-233 content-bank fields (asset_ids /
+// use_assets) have their own atomic membership write path, so a whole-record
+// PUT that omits them must leave the stored value untouched at the DB — not
+// merely restate the hydrated (pre-read) value, which would clobber a
+// concurrent AddAssetIDs/RemoveAssetID that landed after the caller's GetByID.
+func (r *campaignRepository) Update(ctx context.Context, campaign *models.Campaign, excludeColumns ...string) error {
+	q := r.db.NewUpdate().Model(campaign).WherePK()
+	if len(excludeColumns) > 0 {
+		q = q.ExcludeColumn(excludeColumns...)
+	}
+	_, err := q.Exec(ctx)
 	return err
+}
+
+// AddAssetIDs unions assetIDs into campaigns.asset_ids atomically (CON-233).
+// An empty input is a no-op read: it still validates existence and returns the
+// current campaign, so the caller gets a 404 for a missing id without a
+// pointless write. The TenantScoped hook scopes the UPDATE to the caller's
+// tenant, so a foreign or unknown id matches zero rows and surfaces as
+// sql.ErrNoRows.
+func (r *campaignRepository) AddAssetIDs(ctx context.Context, id string, assetIDs []string) (*models.Campaign, error) {
+	if len(assetIDs) == 0 {
+		return r.GetByID(ctx, id)
+	}
+	payload, err := json.Marshal(assetIDs)
+	if err != nil {
+		return nil, err
+	}
+	res, err := r.db.NewUpdate().
+		Model((*models.Campaign)(nil)).
+		Set(jsonbIDUnionSet("asset_ids"), string(payload)).
+		// CON-233: keep use_assets in lockstep with the set. The content-bank set
+		// is the FE's only source of truth for this flag since CON-210 retired the
+		// three-mode picker, and resolveAssets returns early when use_assets is
+		// false — so without this a first attach to a brief-only campaign is
+		// silently ignored by generation. A union with non-empty input is always
+		// non-empty (empty input is handled by the no-op read above), so attaching
+		// always turns generation on.
+		Set("use_assets = ?", true).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", id).
+		Exec(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return r.GetByID(ctx, id)
+}
+
+// RemoveAssetID drops assetID from campaigns.asset_ids atomically (CON-233).
+// Removal is idempotent — an absent id still matches the row (so it is not a
+// 404) and leaves the set unchanged. use_assets is re-derived from the set (see
+// AddAssetIDs), so detaching the last source turns generation off rather than
+// leaving use_assets=true over an empty list — which collectReadyCandidateIDs
+// would read as "every asset in the workspace".
+func (r *campaignRepository) RemoveAssetID(ctx context.Context, id, assetID string) (*models.Campaign, error) {
+	res, err := r.db.NewUpdate().
+		Model((*models.Campaign)(nil)).
+		Set(jsonbIDRemoveSet("asset_ids"), assetID).
+		// Every SET reads the pre-update row, so `asset_ids - ?` here is exactly the
+		// value being stored by the Set above: use_assets tracks the post-removal
+		// length, never the stale pre-removal one.
+		Set("use_assets = (jsonb_array_length(asset_ids - ?) > 0)", assetID).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", id).
+		Exec(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return r.GetByID(ctx, id)
 }
 
 // Delete soft-deletes a campaign by stamping deleted_at. Returns false when the

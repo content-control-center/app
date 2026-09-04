@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -428,6 +429,243 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 				resp, err := app.Test(req)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.StatusCode).To(Equal(400))
+			})
+		})
+	})
+
+	// ── Asset membership (CON-233) ───────────────────────────────────────────
+
+	Describe("asset membership on /api/campaigns/:id/assets", func() {
+		// addAssets POSTs a membership add and returns the raw response.
+		addAssets := func(id string, assetIDs []string) *http.Response {
+			body, _ := json.Marshal(fiber.Map{"asset_ids": assetIDs})
+			req := httptest.NewRequest("POST", "/api/campaigns/"+id+"/assets", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			return resp
+		}
+		removeAsset := func(id, assetID string) *http.Response {
+			req := httptest.NewRequest("DELETE", "/api/campaigns/"+id+"/assets/"+assetID, nil)
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			return resp
+		}
+
+		Context("when not authenticated", func() {
+			It("returns 401 for add", func() {
+				body, _ := json.Marshal(fiber.Map{"asset_ids": []string{"a"}})
+				req := httptest.NewRequest("POST", "/api/campaigns/x/assets", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+			It("returns 401 for remove", func() {
+				req := httptest.NewRequest("DELETE", "/api/campaigns/x/assets/a", nil)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+		})
+
+		Context("when authenticated", func() {
+			It("adds ids to an empty set and returns the updated campaign", func() {
+				c := createCampaign("Bank Campaign", "Uk")
+				resp := addAssets(c.ID, []string{"asset-a", "asset-b"})
+				Expect(resp.StatusCode).To(Equal(200))
+				var got models.Campaign
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect([]string(got.AssetIDs)).To(Equal([]string{"asset-a", "asset-b"}))
+			})
+
+			It("unions without duplicating and preserves existing order", func() {
+				c := createCampaign("Union Campaign", "Uk")
+				Expect(addAssets(c.ID, []string{"a", "b"}).StatusCode).To(Equal(200))
+				// Re-add an existing id plus a new one; only the new one appends.
+				resp := addAssets(c.ID, []string{"b", "c"})
+				Expect(resp.StatusCode).To(Equal(200))
+				var got models.Campaign
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect([]string(got.AssetIDs)).To(Equal([]string{"a", "b", "c"}))
+			})
+
+			It("leaves omitted fields untouched — the whole point of CON-233", func() {
+				// Create a campaign with non-default scheduling + meta, so a naive
+				// full-record write would reset them.
+				body, _ := json.Marshal(fiber.Map{
+					"name":             "Keep My Fields",
+					"campaign_type_id": "Uk",
+					"status":           "active",
+					"language":         "fr",
+					"publishing_days":  []string{"mon", "tue"},
+					"publishing_time":  "07:30",
+					"spread_minutes":   5,
+				})
+				req := httptest.NewRequest("POST", "/api/campaigns", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+				var created models.Campaign
+				Expect(json.NewDecoder(resp.Body).Decode(&created)).To(Succeed())
+
+				addResp := addAssets(created.ID, []string{"asset-a"})
+				Expect(addResp.StatusCode).To(Equal(200))
+				var got models.Campaign
+				Expect(json.NewDecoder(addResp.Body).Decode(&got)).To(Succeed())
+
+				Expect([]string(got.AssetIDs)).To(Equal([]string{"asset-a"}))
+				// None of these reset to defaults.
+				Expect(got.Status).To(Equal(models.StatusActive))
+				Expect(got.Language).To(Equal("fr"))
+				Expect([]string(got.PublishingDays)).To(Equal([]string{"mon", "tue"}))
+				Expect(got.PublishingTime).To(Equal("07:30"))
+				Expect(got.SpreadMinutes).To(Equal(5))
+			})
+
+			It("returns 404 when adding to an unknown campaign", func() {
+				Expect(addAssets("nonexistent", []string{"a"}).StatusCode).To(Equal(404))
+			})
+
+			It("removes an id and returns the updated campaign", func() {
+				c := createCampaign("Remove Campaign", "Uk")
+				Expect(addAssets(c.ID, []string{"a", "b", "c"}).StatusCode).To(Equal(200))
+				resp := removeAsset(c.ID, "b")
+				Expect(resp.StatusCode).To(Equal(200))
+				var got models.Campaign
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect([]string(got.AssetIDs)).To(Equal([]string{"a", "c"}))
+			})
+
+			It("is a no-op when removing an id that isn't present", func() {
+				c := createCampaign("Idempotent Remove", "Uk")
+				Expect(addAssets(c.ID, []string{"a"}).StatusCode).To(Equal(200))
+				resp := removeAsset(c.ID, "does-not-exist")
+				Expect(resp.StatusCode).To(Equal(200))
+				var got models.Campaign
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect([]string(got.AssetIDs)).To(Equal([]string{"a"}))
+			})
+
+			It("returns 404 when removing from an unknown campaign", func() {
+				Expect(removeAsset("nonexistent", "a").StatusCode).To(Equal(404))
+			})
+
+			It("survives two concurrent adds of different ids (CON-233 acceptance)", func() {
+				c := createCampaign("Concurrent Campaign", "Uk")
+				var wg sync.WaitGroup
+				for _, id := range []string{"concurrent-1", "concurrent-2"} {
+					wg.Add(1)
+					go func(assetID string) {
+						defer GinkgoRecover()
+						defer wg.Done()
+						Expect(addAssets(c.ID, []string{assetID}).StatusCode).To(Equal(200))
+					}(id)
+				}
+				wg.Wait()
+
+				req := httptest.NewRequest("GET", "/api/campaigns/"+c.ID, nil)
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				var got models.Campaign
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				// Neither add clobbered the other: both ids present, in some order.
+				Expect([]string(got.AssetIDs)).To(ConsistOf("concurrent-1", "concurrent-2"))
+			})
+
+			// ── use_assets stays derived from the set (CON-233 review) ──────────
+			// The FE derives use_assets purely from the membership set (CON-210
+			// retired the three-mode picker), so these endpoints must keep it in
+			// lockstep — otherwise generation silently ignores a first attach, or
+			// a last-detach flips the campaign to whole-workspace mode.
+			It("turns use_assets on when the first document is attached", func() {
+				c := createCampaign("Brief Only", "Uk")
+				Expect(c.UseAssets).To(BeFalse()) // brief-only campaign
+
+				resp := addAssets(c.ID, []string{"asset-a"})
+				Expect(resp.StatusCode).To(Equal(200))
+				var got models.Campaign
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect(got.UseAssets).To(BeTrue())
+				Expect([]string(got.AssetIDs)).To(Equal([]string{"asset-a"}))
+			})
+
+			It("turns use_assets off when the last document is detached", func() {
+				c := createCampaign("Single Source", "Uk")
+				Expect(addAssets(c.ID, []string{"only"}).StatusCode).To(Equal(200))
+
+				resp := removeAsset(c.ID, "only")
+				Expect(resp.StatusCode).To(Equal(200))
+				var got models.Campaign
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				// Never leaves use_assets=true over an empty list — the whole-bank trap.
+				Expect(got.UseAssets).To(BeFalse())
+				Expect([]string(got.AssetIDs)).To(BeEmpty())
+			})
+
+			It("keeps use_assets on while some documents remain", func() {
+				c := createCampaign("Multi Source", "Uk")
+				Expect(addAssets(c.ID, []string{"a", "b"}).StatusCode).To(Equal(200))
+
+				resp := removeAsset(c.ID, "a")
+				Expect(resp.StatusCode).To(Equal(200))
+				var got models.Campaign
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect(got.UseAssets).To(BeTrue())
+				Expect([]string(got.AssetIDs)).To(Equal([]string{"b"}))
+			})
+
+			// CON-233 #2: membership fields are presence-aware on PUT, so an
+			// unrelated whole-record save (a brief edit) that omits them must not
+			// clobber a set attached via the membership endpoints.
+			It("preserves use_assets + asset_ids when a PUT omits them", func() {
+				c := createCampaign("Brief + Bank", "Uk")
+				Expect(addAssets(c.ID, []string{"a"}).StatusCode).To(Equal(200))
+
+				body, _ := json.Marshal(fiber.Map{
+					"name":             "Brief + Bank (edited)",
+					"campaign_type_id": "Uk",
+				})
+				req := httptest.NewRequest("PUT", "/api/campaigns/"+c.ID, bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+				var got models.Campaign
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect(got.Name).To(Equal("Brief + Bank (edited)"))
+				Expect(got.UseAssets).To(BeTrue())
+				Expect([]string(got.AssetIDs)).To(Equal([]string{"a"}))
+			})
+
+			// A PUT that DOES restate membership still full-replaces (back-compat
+			// for clients that send it): explicit values win.
+			It("still replaces use_assets + asset_ids when a PUT sends them", func() {
+				c := createCampaign("Explicit Bank", "Uk")
+				Expect(addAssets(c.ID, []string{"a"}).StatusCode).To(Equal(200))
+
+				body, _ := json.Marshal(fiber.Map{
+					"name":             "Explicit Bank",
+					"campaign_type_id": "Uk",
+					"use_assets":       false,
+					"asset_ids":        []string{},
+				})
+				req := httptest.NewRequest("PUT", "/api/campaigns/"+c.ID, bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+				var got models.Campaign
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect(got.UseAssets).To(BeFalse())
+				Expect([]string(got.AssetIDs)).To(BeEmpty())
 			})
 		})
 	})

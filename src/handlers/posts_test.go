@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -552,6 +553,52 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				Expect(got.Platform).NotTo(BeNil())
 			})
 
+			// CON-233 #2: used_asset_ids is presence-aware on PUT, so an autosave
+			// that omits it leaves the sources alone (the membership endpoints own
+			// them) instead of restating a stale list over an in-flight attach.
+			It("preserves used_asset_ids when a PUT omits it", func() {
+				p := createPost("Sourced Post", fiber.Map{"used_asset_ids": []string{"a", "b"}})
+
+				body, _ := json.Marshal(fiber.Map{
+					"campaign_id": campaignID,
+					"title":       "Renamed",
+					"status":      "draft",
+				})
+				req := httptest.NewRequest("PUT", "/api/posts/"+p.ID, bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(200))
+				var got models.Post
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect(got.Title).To(Equal("Renamed"))
+				Expect([]string(got.UsedAssetIDs)).To(Equal([]string{"a", "b"}))
+			})
+
+			It("replaces used_asset_ids on a present value and clears on []", func() {
+				p := createPost("Sourced Post", fiber.Map{"used_asset_ids": []string{"a", "b"}})
+				put := func(v any) models.Post {
+					body, _ := json.Marshal(fiber.Map{
+						"campaign_id":    campaignID,
+						"title":          "Sourced Post",
+						"status":         "draft",
+						"used_asset_ids": v,
+					})
+					req := httptest.NewRequest("PUT", "/api/posts/"+p.ID, bytes.NewReader(body))
+					req.Header.Set("Content-Type", "application/json")
+					req.AddCookie(authCookie)
+					resp, err := app.Test(req)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(resp.StatusCode).To(Equal(200))
+					var got models.Post
+					Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+					return got
+				}
+				Expect([]string(put([]string{"c"}).UsedAssetIDs)).To(Equal([]string{"c"}))
+				Expect([]string(put([]string{}).UsedAssetIDs)).To(BeEmpty())
+			})
+
 			It("persists published_url on update (CON-165 manual/skip path)", func() {
 				p := createPost("Manual Post", nil)
 
@@ -811,6 +858,180 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				p := createPost("Valid Draft", nil) // LinkedIn, no attachments
 				resp := putStatus(app, authCookie, campaignID, p.ID, models.PostStatusReadyForPublish)
 				Expect(resp.StatusCode).To(Equal(200))
+			})
+		})
+	})
+
+	// ── Asset membership (CON-233) ───────────────────────────────────────────
+
+	Describe("source membership on /api/posts/:id/assets", func() {
+		addAssets := func(id string, assetIDs []string) *http.Response {
+			body, _ := json.Marshal(fiber.Map{"asset_ids": assetIDs})
+			req := httptest.NewRequest("POST", "/api/posts/"+id+"/assets", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			return resp
+		}
+		removeAsset := func(id, assetID string) *http.Response {
+			req := httptest.NewRequest("DELETE", "/api/posts/"+id+"/assets/"+assetID, nil)
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			return resp
+		}
+		// setStatus forces a post into a submitted state directly (bypassing PUT,
+		// which would wipe used_asset_ids), mirroring the cancel-endpoint tests.
+		setStatus := func(id string, status models.PostStatus) {
+			_, err := db.NewUpdate().Model((*models.Post)(nil)).
+				Set("status = ?", status).
+				Where("id = ?", id).Exec(tenantCtx())
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		Context("when not authenticated", func() {
+			It("returns 401 for add", func() {
+				body, _ := json.Marshal(fiber.Map{"asset_ids": []string{"a"}})
+				req := httptest.NewRequest("POST", "/api/posts/x/assets", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+			It("returns 401 for remove", func() {
+				req := httptest.NewRequest("DELETE", "/api/posts/x/assets/a", nil)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.StatusCode).To(Equal(401))
+			})
+		})
+
+		Context("when authenticated", func() {
+			It("adds ids to a draft post's sources and returns the updated post", func() {
+				p := createPost("Sourced Post", nil)
+				resp := addAssets(p.ID, []string{"a", "b"})
+				Expect(resp.StatusCode).To(Equal(200))
+				var got models.Post
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect([]string(got.UsedAssetIDs)).To(Equal([]string{"a", "b"}))
+			})
+
+			It("unions without duplicating and preserves order", func() {
+				p := createPost("Union Sources", nil)
+				Expect(addAssets(p.ID, []string{"a", "b"}).StatusCode).To(Equal(200))
+				resp := addAssets(p.ID, []string{"b", "c"})
+				Expect(resp.StatusCode).To(Equal(200))
+				var got models.Post
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect([]string(got.UsedAssetIDs)).To(Equal([]string{"a", "b", "c"}))
+			})
+
+			It("leaves other fields untouched", func() {
+				p := createPost("Keep Content", fiber.Map{"title": "Keep Content", "content": "body text"})
+				Expect(addAssets(p.ID, []string{"a"}).StatusCode).To(Equal(200))
+				resp := removeAsset(p.ID, "zzz") // no-op; just re-read
+				var got models.Post
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect(got.Title).To(Equal("Keep Content"))
+				Expect(got.Content).To(Equal("body text"))
+				Expect([]string(got.UsedAssetIDs)).To(Equal([]string{"a"}))
+			})
+
+			It("removes an id and is idempotent for an absent id", func() {
+				p := createPost("Remove Sources", nil)
+				Expect(addAssets(p.ID, []string{"a", "b", "c"}).StatusCode).To(Equal(200))
+				resp := removeAsset(p.ID, "b")
+				Expect(resp.StatusCode).To(Equal(200))
+				var got models.Post
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect([]string(got.UsedAssetIDs)).To(Equal([]string{"a", "c"}))
+				// Removing an absent id changes nothing.
+				resp2 := removeAsset(p.ID, "nope")
+				Expect(resp2.StatusCode).To(Equal(200))
+				var got2 models.Post
+				Expect(json.NewDecoder(resp2.Body).Decode(&got2)).To(Succeed())
+				Expect([]string(got2.UsedAssetIDs)).To(Equal([]string{"a", "c"}))
+			})
+
+			It("returns 404 for an unknown post", func() {
+				Expect(addAssets("nonexistent", []string{"a"}).StatusCode).To(Equal(404))
+				Expect(removeAsset("nonexistent", "a").StatusCode).To(Equal(404))
+			})
+
+			It("survives two concurrent adds of different ids", func() {
+				p := createPost("Concurrent Sources", nil)
+				var wg sync.WaitGroup
+				for _, id := range []string{"c1", "c2"} {
+					wg.Add(1)
+					go func(assetID string) {
+						defer GinkgoRecover()
+						defer wg.Done()
+						Expect(addAssets(p.ID, []string{assetID}).StatusCode).To(Equal(200))
+					}(id)
+				}
+				wg.Wait()
+
+				req := httptest.NewRequest("GET", "/api/posts/"+p.ID, nil)
+				req.AddCookie(authCookie)
+				resp, err := app.Test(req)
+				Expect(err).NotTo(HaveOccurred())
+				var got models.Post
+				Expect(json.NewDecoder(resp.Body).Decode(&got)).To(Succeed())
+				Expect([]string(got.UsedAssetIDs)).To(ConsistOf("c1", "c2"))
+			})
+
+			// ── CON-251 content-lock ─────────────────────────────────────────
+			Context("when the post is submitted (scheduled/published)", func() {
+				It("rejects a real add with 409 but allows a no-op add", func() {
+					p := createPost("Locked Add", fiber.Map{"used_asset_ids": []string{"a"}})
+					setStatus(p.ID, models.PostStatusScheduled)
+
+					// Adding a genuinely new id is a locked content change.
+					Expect(addAssets(p.ID, []string{"b"}).StatusCode).To(Equal(409))
+					// Re-adding an id it already has changes nothing → allowed.
+					Expect(addAssets(p.ID, []string{"a"}).StatusCode).To(Equal(200))
+				})
+
+				It("rejects removing a present source with 409 but allows a no-op remove", func() {
+					p := createPost("Locked Remove", fiber.Map{"used_asset_ids": []string{"a"}})
+					setStatus(p.ID, models.PostStatusPublished)
+
+					// Detaching a source it actually has is a locked change.
+					Expect(removeAsset(p.ID, "a").StatusCode).To(Equal(409))
+					// Removing an id it doesn't have changes nothing → allowed.
+					Expect(removeAsset(p.ID, "absent").StatusCode).To(Equal(200))
+				})
+
+				// The handler's pre-check and the repo write are separated by a
+				// window in which a schedule/publish can land. The repo re-checks
+				// the lock under a row lock (SELECT ... FOR UPDATE), so the race
+				// resolves to a distinct *PostSubmittedError — which the handlers
+				// map to 409 — instead of silently mutating a frozen post. Drive
+				// the repo directly to exercise that guard past the pre-check.
+				It("refuses a racing source change atomically at the repo layer", func() {
+					p := createPost("Racing Source", fiber.Map{"used_asset_ids": []string{"a"}})
+					setStatus(p.ID, models.PostStatusScheduled)
+					repo := repository.NewPostRepository(db)
+					ctx := tenantCtx()
+
+					var submitted *repository.PostSubmittedError
+					_, err := repo.AddUsedAssetIDs(ctx, p.ID, []string{"b"})
+					Expect(errors.As(err, &submitted)).To(BeTrue())
+					Expect(submitted.Status).To(Equal(models.PostStatusScheduled))
+
+					_, err = repo.RemoveUsedAssetID(ctx, p.ID, "a")
+					Expect(errors.As(err, &submitted)).To(BeTrue())
+
+					// No-op writes still pass through untouched while submitted.
+					got, err := repo.AddUsedAssetIDs(ctx, p.ID, []string{"a"})
+					Expect(err).NotTo(HaveOccurred())
+					Expect([]string(got.UsedAssetIDs)).To(Equal([]string{"a"}))
+
+					got, err = repo.RemoveUsedAssetID(ctx, p.ID, "absent")
+					Expect(err).NotTo(HaveOccurred())
+					Expect([]string(got.UsedAssetIDs)).To(Equal([]string{"a"}))
+				})
 			})
 		})
 	})

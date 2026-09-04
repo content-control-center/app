@@ -184,6 +184,11 @@ func (h *CampaignsHandler) Register(app *fiber.App) {
 	// active list (reversible); unarchive returns it. Both tenant-scoped.
 	g.Post("/:id/archive", h.auth, h.Archive)
 	g.Post("/:id/unarchive", h.auth, h.Unarchive)
+	// CON-233: targeted membership writes for the content-bank set, so attaching
+	// or detaching one document touches only asset_ids (no full-record PUT, no
+	// omitted-field reset, atomic under concurrent adds).
+	g.Post("/:id/assets", h.auth, h.AddAssets)
+	g.Delete("/:id/assets/:assetId", h.auth, h.RemoveAsset)
 	g.Post("/:id/generate-draft", h.auth, h.GenerateDraft)
 	g.Post("/:id/enrich-brief", h.auth, h.EnrichBrief)
 	// CON-114: targeted generation — add a few posts for a platform subset,
@@ -209,20 +214,26 @@ type campaignRequest struct {
 	ToneGuidelines string `json:"tone_guidelines"`
 	// Presence-aware (CON-245): omitting a brand ref on a full-replace save
 	// leaves the stored value alone; an explicit null clears it. See Optional.
-	BrandVoiceID       Optional[string]         `json:"brand_voice_id"`
-	BrandAudienceID    Optional[string]         `json:"brand_audience_id"`
-	UseAssets          bool                     `json:"use_assets"`
-	AssetIDs           models.StringSlice       `json:"asset_ids"`
-	TargetPlatforms    models.CampaignPlatforms `json:"target_platforms"`
-	CampaignTypeID     string                   `json:"campaign_type_id"    validate:"required"`
-	Status             models.CampaignStatus    `json:"status"`
-	StartDate          *time.Time               `json:"start_date"`
-	EndDate            *time.Time               `json:"end_date"`
-	EstimatedPostCount *int                     `json:"estimated_post_count"`
-	Budget             *float64                 `json:"budget"`
-	Currency           string                   `json:"currency"`
-	Language           string                   `json:"language"`
-	TagIDs             models.StringSlice       `json:"tag_ids"`
+	BrandVoiceID    Optional[string] `json:"brand_voice_id"`
+	BrandAudienceID Optional[string] `json:"brand_audience_id"`
+	// UseAssets / AssetIDs are presence-aware (CON-233): the content-bank set has
+	// its own membership endpoints (POST/DELETE /campaigns/:id/assets) that keep
+	// use_assets derived from it, so an ordinary whole-record save that omits
+	// these must leave them alone rather than restate the set (and reset the flag)
+	// over an in-flight membership write. Present replaces; explicit null on
+	// asset_ids clears. See Optional, applyToValue and applyOptionalSlice.
+	UseAssets          Optional[bool]               `json:"use_assets"`
+	AssetIDs           Optional[models.StringSlice] `json:"asset_ids"`
+	TargetPlatforms    models.CampaignPlatforms     `json:"target_platforms"`
+	CampaignTypeID     string                       `json:"campaign_type_id"    validate:"required"`
+	Status             models.CampaignStatus        `json:"status"`
+	StartDate          *time.Time                   `json:"start_date"`
+	EndDate            *time.Time                   `json:"end_date"`
+	EstimatedPostCount *int                         `json:"estimated_post_count"`
+	Budget             *float64                     `json:"budget"`
+	Currency           string                       `json:"currency"`
+	Language           string                       `json:"language"`
+	TagIDs             models.StringSlice           `json:"tag_ids"`
 	// Scheduling settings (CON-181). All optional; omitted fields fall back to
 	// defaults (09:00 / UTC / every day / ±15 min) via normalizeScheduling.
 	PublishingTime string             `json:"publishing_time"`
@@ -369,8 +380,8 @@ func (h *CampaignsHandler) Create(c *fiber.Ctx) error {
 		ToneGuidelines:     req.ToneGuidelines,
 		BrandVoiceID:       req.BrandVoiceID.Value,
 		BrandAudienceID:    req.BrandAudienceID.Value,
-		UseAssets:          req.UseAssets,
-		AssetIDs:           nullSlice(req.AssetIDs),
+		UseAssets:          req.UseAssets.orZero(),
+		AssetIDs:           nullSlice(req.AssetIDs.orZero()),
 		TargetPlatforms:    nullCampaignPlatforms(req.TargetPlatforms),
 		CampaignTypeID:     req.CampaignTypeID,
 		Status:             status,
@@ -483,8 +494,11 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 	// Presence-aware (CON-245): omit to leave alone, explicit null to clear.
 	req.BrandVoiceID.applyTo(&campaign.BrandVoiceID)
 	req.BrandAudienceID.applyTo(&campaign.BrandAudienceID)
-	campaign.UseAssets = req.UseAssets
-	campaign.AssetIDs = nullSlice(req.AssetIDs)
+	// Presence-aware (CON-233): omit to leave the content-bank set + derived flag
+	// alone (the membership endpoints own them), present to replace, explicit null
+	// on asset_ids to clear.
+	req.UseAssets.applyToValue(&campaign.UseAssets)
+	applyOptionalSlice(req.AssetIDs, &campaign.AssetIDs)
 	campaign.TargetPlatforms = nullCampaignPlatforms(req.TargetPlatforms)
 	campaign.CampaignTypeID = req.CampaignTypeID
 	campaign.Status = status
@@ -502,7 +516,19 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 	campaign.GoalCadence = goalCadence
 	campaign.UpdatedAt = time.Now().UTC()
 
-	if err := h.repo.Update(c.Context(), campaign); err != nil {
+	// Presence-aware content-bank fields (CON-233): the in-memory apply above
+	// already left an omitted field at its hydrated value, but the whole-record
+	// UPDATE would still write that stale value back and clobber a concurrent
+	// membership write (AddAssetIDs/RemoveAssetID) that landed after GetByID.
+	// Drop the omitted columns from the write so "leave alone" holds at the DB.
+	var omit []string
+	if !req.AssetIDs.Present {
+		omit = append(omit, "asset_ids")
+	}
+	if !(req.UseAssets.Present && req.UseAssets.Value != nil) {
+		omit = append(omit, "use_assets")
+	}
+	if err := h.repo.Update(c.Context(), campaign, omit...); err != nil {
 		return err
 	}
 	h.recordActivity(c, activity.CategoryCampaign, "campaign_updated",
@@ -520,6 +546,82 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 			activity.WithEntity("campaign", campaign.ID),
 		)
 	}
+	return c.JSON(campaign)
+}
+
+// assetMembershipRequest is the body of the CON-233 membership-add endpoints on
+// both campaigns and posts: only the ids to attach, so the client never restates
+// the whole record.
+type assetMembershipRequest struct {
+	AssetIDs models.StringSlice `json:"asset_ids"`
+}
+
+// AddAssets godoc
+// @Summary      Attach content-bank assets to a campaign
+// @Description  Unions the given asset ids into the campaign's content-bank set
+// @Description  (campaigns.asset_ids) and turns use_assets on, touching no other
+// @Description  field. The write is a single atomic UPDATE, so concurrent
+// @Description  attaches of different documents both survive and omitted fields
+// @Description  are never reset (CON-233). Adding an already-present id is a
+// @Description  no-op. Returns the updated campaign.
+// @Tags         campaigns
+// @Accept       json
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id    path      string                 true  "Campaign Sqid"
+// @Param        body  body      assetMembershipRequest true  "Asset ids to attach"
+// @Success      200   {object}  models.Campaign
+// @Failure      400   {object}  map[string]string
+// @Failure      401   {object}  map[string]string
+// @Failure      404   {object}  map[string]string
+// @Router       /api/campaigns/{id}/assets [post]
+func (h *CampaignsHandler) AddAssets(c *fiber.Ctx) error {
+	var req assetMembershipRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	campaign, err := h.repo.AddAssetIDs(c.Context(), c.Params("id"), req.AssetIDs)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "campaign not found")
+		}
+		return err
+	}
+	h.recordActivity(c, activity.CategoryCampaign, "campaign_updated",
+		activity.WithEntity("campaign", campaign.ID),
+		activity.WithStatus(string(campaign.Status)),
+	)
+	return c.JSON(campaign)
+}
+
+// RemoveAsset godoc
+// @Summary      Detach a content-bank asset from a campaign
+// @Description  Removes one asset id from the campaign's content-bank set
+// @Description  (campaigns.asset_ids) and re-derives use_assets from it, so
+// @Description  detaching the last source turns use_assets off (CON-233).
+// @Description  Removing an id that is not present is a no-op. Returns the
+// @Description  updated campaign.
+// @Tags         campaigns
+// @Produce      json
+// @Security     CookieAuth
+// @Param        id       path      string  true  "Campaign Sqid"
+// @Param        assetId  path      string  true  "Asset Sqid to detach"
+// @Success      200      {object}  models.Campaign
+// @Failure      401      {object}  map[string]string
+// @Failure      404      {object}  map[string]string
+// @Router       /api/campaigns/{id}/assets/{assetId} [delete]
+func (h *CampaignsHandler) RemoveAsset(c *fiber.Ctx) error {
+	campaign, err := h.repo.RemoveAssetID(c.Context(), c.Params("id"), c.Params("assetId"))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "campaign not found")
+		}
+		return err
+	}
+	h.recordActivity(c, activity.CategoryCampaign, "campaign_updated",
+		activity.WithEntity("campaign", campaign.ID),
+		activity.WithStatus(string(campaign.Status)),
+	)
 	return c.JSON(campaign)
 }
 
