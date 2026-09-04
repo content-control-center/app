@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -954,6 +955,36 @@ var _ = Describe("PostsHandler", Ordered, func() {
 					Expect(removeAsset(p.ID, "a").StatusCode).To(Equal(409))
 					// Removing an id it doesn't have changes nothing → allowed.
 					Expect(removeAsset(p.ID, "absent").StatusCode).To(Equal(200))
+				})
+
+				// The handler's pre-check and the repo write are separated by a
+				// window in which a schedule/publish can land. The repo re-checks
+				// the lock under a row lock (SELECT ... FOR UPDATE), so the race
+				// resolves to a distinct *PostSubmittedError — which the handlers
+				// map to 409 — instead of silently mutating a frozen post. Drive
+				// the repo directly to exercise that guard past the pre-check.
+				It("refuses a racing source change atomically at the repo layer", func() {
+					p := createPost("Racing Source", fiber.Map{"used_asset_ids": []string{"a"}})
+					setStatus(p.ID, models.PostStatusScheduled)
+					repo := repository.NewPostRepository(db)
+					ctx := tenantCtx()
+
+					var submitted *repository.PostSubmittedError
+					_, err := repo.AddUsedAssetIDs(ctx, p.ID, []string{"b"})
+					Expect(errors.As(err, &submitted)).To(BeTrue())
+					Expect(submitted.Status).To(Equal(models.PostStatusScheduled))
+
+					_, err = repo.RemoveUsedAssetID(ctx, p.ID, "a")
+					Expect(errors.As(err, &submitted)).To(BeTrue())
+
+					// No-op writes still pass through untouched while submitted.
+					got, err := repo.AddUsedAssetIDs(ctx, p.ID, []string{"a"})
+					Expect(err).NotTo(HaveOccurred())
+					Expect([]string(got.UsedAssetIDs)).To(Equal([]string{"a"}))
+
+					got, err = repo.RemoveUsedAssetID(ctx, p.ID, "absent")
+					Expect(err).NotTo(HaveOccurred())
+					Expect([]string(got.UsedAssetIDs)).To(Equal([]string{"a"}))
 				})
 			})
 		})

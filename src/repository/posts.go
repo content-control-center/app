@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -26,8 +27,10 @@ type PostRepository interface {
 	// UPDATE, so attaching or detaching one source no longer round-trips the whole
 	// record and concurrent adds of different ids don't clobber each other. Both
 	// return the hydrated post, or sql.ErrNoRows if it doesn't exist (in this
-	// tenant). The CON-251 submitted-post content-lock is enforced in the handler,
-	// not here.
+	// tenant). The CON-251 submitted-post content-lock is enforced here too, under
+	// a row lock (SELECT ... FOR UPDATE): a real source change to a submitted post
+	// is refused with *PostSubmittedError even if a concurrent schedule/publish
+	// wins the race against the handler's optimistic pre-check.
 	AddUsedAssetIDs(ctx context.Context, id string, assetIDs []string) (*models.Post, error)
 	RemoveUsedAssetID(ctx context.Context, id, assetID string) (*models.Post, error)
 	// UpdateScheduledAtBatch updates only the scheduled_at (+ updated_at)
@@ -173,10 +176,26 @@ func (r *postRepository) Update(ctx context.Context, post *models.Post) error {
 	return err
 }
 
+// PostSubmittedError reports that a CON-233 source-membership write was refused
+// because the post is in a submitted state (scheduled/published) and its sources
+// are frozen (CON-251). The membership repo methods verify the status and apply
+// the write atomically under a row lock, so a concurrent schedule/publish that
+// slips in after a handler's optimistic pre-check is still caught here and
+// surfaced as a lock (HTTP 409) rather than silently mutating a frozen post. The
+// carried Status feeds the handler's 409 message.
+type PostSubmittedError struct {
+	Status models.PostStatus
+}
+
+func (e *PostSubmittedError) Error() string {
+	return "post is submitted (" + string(e.Status) + "); its sources are locked"
+}
+
 // AddUsedAssetIDs unions assetIDs into posts.used_asset_ids atomically (CON-233),
 // mirroring campaignRepository.AddAssetIDs. An empty input is a no-op read that
 // still validates existence. The TenantScoped hook scopes the UPDATE, so an
-// unknown or foreign id surfaces as sql.ErrNoRows.
+// unknown or foreign id surfaces as sql.ErrNoRows. A real change to a submitted
+// post is refused with *PostSubmittedError (CON-251); see mutateUsedAssets.
 func (r *postRepository) AddUsedAssetIDs(ctx context.Context, id string, assetIDs []string) (*models.Post, error) {
 	if len(assetIDs) == 0 {
 		return r.GetByID(ctx, id)
@@ -185,37 +204,71 @@ func (r *postRepository) AddUsedAssetIDs(ctx context.Context, id string, assetID
 	if err != nil {
 		return nil, err
 	}
-	res, err := r.db.NewUpdate().
-		Model((*models.Post)(nil)).
-		Set(jsonbIDUnionSet("used_asset_ids"), string(payload)).
-		Set("updated_at = ?", time.Now().UTC()).
-		Where("po.id = ?", id).
-		Exec(ctx)
-	if err != nil {
-		return nil, err
+	// A union adds nothing (no real change) only when every incoming id is
+	// already present.
+	changes := func(current models.StringSlice) bool {
+		for _, a := range assetIDs {
+			if !slices.Contains(current, a) {
+				return true
+			}
+		}
+		return false
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return nil, sql.ErrNoRows
+	if err := r.mutateUsedAssets(ctx, id, jsonbIDUnionSet("used_asset_ids"), string(payload), changes); err != nil {
+		return nil, err
 	}
 	return r.GetByID(ctx, id)
 }
 
 // RemoveUsedAssetID drops assetID from posts.used_asset_ids atomically (CON-233).
 // Removal is idempotent — an absent id still matches the row and changes nothing.
+// A real change to a submitted post is refused with *PostSubmittedError
+// (CON-251); see mutateUsedAssets.
 func (r *postRepository) RemoveUsedAssetID(ctx context.Context, id, assetID string) (*models.Post, error) {
-	res, err := r.db.NewUpdate().
-		Model((*models.Post)(nil)).
-		Set(jsonbIDRemoveSet("used_asset_ids"), assetID).
-		Set("updated_at = ?", time.Now().UTC()).
-		Where("po.id = ?", id).
-		Exec(ctx)
-	if err != nil {
+	changes := func(current models.StringSlice) bool {
+		return slices.Contains(current, assetID)
+	}
+	if err := r.mutateUsedAssets(ctx, id, jsonbIDRemoveSet("used_asset_ids"), assetID, changes); err != nil {
 		return nil, err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return nil, sql.ErrNoRows
-	}
 	return r.GetByID(ctx, id)
+}
+
+// mutateUsedAssets applies one used_asset_ids write (setExpr/arg) atomically with
+// the CON-251 content-lock. It locks the row FOR UPDATE, so the submitted-state
+// check and the write cannot straddle a concurrent schedule/publish: if the
+// change would really alter the set (changes reports true) on a submitted post,
+// it refuses with *PostSubmittedError instead of writing. A no-op is allowed on
+// any status (matching the handler's no-op rule); an unknown or foreign id
+// surfaces as sql.ErrNoRows.
+func (r *postRepository) mutateUsedAssets(ctx context.Context, id, setExpr string, arg any, changes func(current models.StringSlice) bool) error {
+	return r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		current := new(models.Post)
+		err := tx.NewSelect().Model(current).
+			Column("id", "status", "used_asset_ids").
+			Where("po.id = ?", id).
+			For("UPDATE").
+			Scan(ctx)
+		if err != nil {
+			return err // sql.ErrNoRows when missing or in another tenant
+		}
+		if changes(current.UsedAssetIDs) && current.Status.IsSubmitted() {
+			return &PostSubmittedError{Status: current.Status}
+		}
+		res, err := tx.NewUpdate().
+			Model((*models.Post)(nil)).
+			Set(setExpr, arg).
+			Set("updated_at = ?", time.Now().UTC()).
+			Where("po.id = ?", id).
+			Exec(ctx)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return sql.ErrNoRows
+		}
+		return nil
+	})
 }
 
 func (r *postRepository) CountPendingByAccount(ctx context.Context, socialAccountID string) (int, error) {

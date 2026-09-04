@@ -791,6 +791,12 @@ func (h *PostsHandler) AddAssets(c *fiber.Ctx) error {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fiber.NewError(fiber.StatusNotFound, "post not found")
 		}
+		// The repo re-checks the lock atomically, so a submit that won the race
+		// against the pre-check above still surfaces as a 409 (CON-251).
+		var submitted *repository.PostSubmittedError
+		if errors.As(err, &submitted) {
+			return submittedLockError(submitted.Status)
+		}
 		return err
 	}
 	h.recordActivity(c, "post_updated",
@@ -833,6 +839,12 @@ func (h *PostsHandler) RemoveAsset(c *fiber.Ctx) error {
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fiber.NewError(fiber.StatusNotFound, "post not found")
+		}
+		// The repo re-checks the lock atomically, so a submit that won the race
+		// against the pre-check above still surfaces as a 409 (CON-251).
+		var submitted *repository.PostSubmittedError
+		if errors.As(err, &submitted) {
+			return submittedLockError(submitted.Status)
 		}
 		return err
 	}
