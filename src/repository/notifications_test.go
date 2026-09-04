@@ -247,6 +247,12 @@ func TestNotifications_ReadsHydrateSeq(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
+	// Guard against a vacuous pass: the per-row seq checks below only exercise
+	// hydration if List actually returned the seeded rows. An empty (or short)
+	// list would slip through the loop silently.
+	if len(list) != 3 {
+		t.Fatalf("List returned %d rows, want the 3 seeded (a, b, c)", len(list))
+	}
 	for _, n := range list {
 		if n.Seq == 0 {
 			t.Fatalf("List returned seq=0 for %s (column dropped from SELECT)", n.ID)
