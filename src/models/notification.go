@@ -36,14 +36,17 @@ func (l NotificationLevel) Valid() bool {
 //
 // Seq is a monotonic BIGSERIAL used as the SSE stream cursor (Last-Event-ID /
 // ?since=): the sqids ID is cryptographically random, so it cannot order the
-// stream. It is DB-assigned (scanonly — never written by the app) and read back
-// via RETURNING on insert.
+// stream. It is DB-assigned: `nullzero` makes an unset (zero) Seq marshal as
+// DEFAULT on INSERT so the sequence assigns it, while keeping the column in the
+// generated SELECT so reads (List/ReplaySince/Get) hydrate it. It must NOT be
+// `scanonly` — that drops it from the SELECT column list and every read hands
+// back seq=0, breaking replay cursors and mark-all-read's `before` bound.
 type Notification struct {
 	bun.BaseModel `bun:"table:notifications,alias:n" swaggerignore:"true"`
 	TenantScoped  // tenant_id column + central scoping hooks (CON-97)
 
 	ID          string            `bun:"id,pk"                                        json:"id"`
-	Seq         int64             `bun:"seq,scanonly"                                 json:"seq"`
+	Seq         int64             `bun:"seq,nullzero,autoincrement"                   json:"seq"`
 	UserID      string            `bun:"user_id,notnull"                              json:"user_id"`
 	Level       NotificationLevel `bun:"level,notnull,default:'info'"                 json:"level"`
 	Type        string            `bun:"type,notnull"                                 json:"type"`
