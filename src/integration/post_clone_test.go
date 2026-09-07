@@ -71,16 +71,16 @@ var _ = Describe("Post clone — CON-59 (real S3/MinIO)", Ordered, func() {
 		postAttRepo = repository.NewPostAttachmentRepository(db)
 		versionRepo = repository.NewPostVersionRepository(db)
 		logRepo = repository.NewPostLogRepository(db)
-		postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, userRepo, "test_session")
 
 		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, "test_session", false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
 
-		postsHandler := handlers.NewPostsHandler(postRepo, versionRepo, postMessageRepo, platformRepo, postAttRepo, auth, nil, nil)
+		postsHandler := handlers.NewPostsHandler(postRepo, versionRepo, platformRepo, postAttRepo, auth)
 		postsHandler.SetPostLogRepo(logRepo)
-		postsHandler.SetCloneService(clone.New(db, postRepo, versionRepo, postAttRepo, platformRepo, logRepo, store, nil))
+		// POST /:id/clone now lives on the actions handler (CON-291).
+		handlers.NewPostActionsHandler(postRepo, clone.New(db, postRepo, versionRepo, postAttRepo, platformRepo, logRepo, store, nil), nil, nil, auth).Register(app)
 		// Same S3-cleanup-on-delete hook the production server wires —
 		// the independence test relies on it.
 		postsHandler.SetOnBeforeDelete(func(ctx context.Context, postID string) error {

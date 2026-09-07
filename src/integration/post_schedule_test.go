@@ -70,7 +70,6 @@ var _ = Describe("Post schedule — CON-78", Ordered, func() {
 		versionRepo := repository.NewPostVersionRepository(db)
 		logRepo = repository.NewPostLogRepository(db)
 		postAttRepo := repository.NewPostAttachmentRepository(db)
-		postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 		allowlistRepo = repository.NewAutoPublishAllowlistRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, userRepo, "test_session")
 
@@ -78,7 +77,7 @@ var _ = Describe("Post schedule — CON-78", Ordered, func() {
 		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, "test_session", false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
 
-		postsHandler := handlers.NewPostsHandler(postRepo, versionRepo, postMessageRepo, platformRepo, postAttRepo, auth, nil, nil)
+		postsHandler := handlers.NewPostsHandler(postRepo, versionRepo, platformRepo, postAttRepo, auth)
 		postsHandler.SetPostLogRepo(logRepo)
 		// CON-78: real schedule service over a real allowlist. No jobs
 		// client wired — the auto-publish routing decision is still

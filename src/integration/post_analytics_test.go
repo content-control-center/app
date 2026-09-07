@@ -128,10 +128,10 @@ var _ = Describe("Post analytics — CON-93", Ordered, func() {
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
 
 		postsHandler := handlers.NewPostsHandler(postRepo, repository.NewPostVersionRepository(db),
-			repository.NewPostAssistantMessageRepository(db), platformRepo,
-			repository.NewPostAttachmentRepository(db), auth, nil, nil)
-		postsHandler.SetAnalyticsRepo(analyticsRepo)
+			platformRepo, repository.NewPostAttachmentRepository(db), auth)
 		postsHandler.Register(app)
+		// GET /:id/analytics now lives on the insights handler (CON-291).
+		handlers.NewPostInsightsHandler(postRepo, nil, nil, analyticsRepo, nil, nil, auth).Register(app)
 		handlers.NewAnalyticsHandler(analyticsRepo, nil, nil, nil, nil, auth).Register(app)
 
 		u := seedTenantUser(db, "Admin", "analytics@example.com", "analytics-password")

@@ -28,6 +28,7 @@ import (
 	"github.com/ogen-app/ogen/src/infra/secrets"
 	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 	"github.com/ogen-app/ogen/src/transport/handlers"
+	"github.com/ogen-app/ogen/src/usecase/tenant_actions/signup"
 )
 
 // ztSharedKey is the single, app-wide Zernio API key every tenant authenticates
@@ -190,7 +191,7 @@ func newZernioTenancyRig() *ztRig {
 	})
 	const cookieName = "c3_session_ztenancy"
 	auth := handlers.RequireAuth(repository.NewSessionRepository(db), repository.NewUserRepository(db), cookieName)
-	handlers.NewTenantsHandler(db, repository.NewTenantRepository(db), repository.NewUserRepository(db), repository.NewAccountRepository(db), nil, cookieName, false, auth).Register(app)
+	handlers.NewTenantsHandler(signup.New(db, repository.NewAccountRepository(db), repository.NewTenantRepository(db), nil), repository.NewTenantRepository(db), cookieName, false, auth).Register(app)
 	handlers.NewZernioHandler(integ, bootstrapper, settings, platformRepo, accountRepo, repository.NewPostRepository(db), nil, zernio.NewConnectLinkRateLimiter(), auth, repository.NewZernioConnectSessionRepository(db), nil, "http://localhost").Register(app)
 
 	return &ztRig{app: app, stub: stub, stubState: stubState, accounts: accountRepo, settings: settings, cookieName: cookieName}

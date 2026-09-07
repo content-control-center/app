@@ -65,18 +65,17 @@ var _ = Describe("Post restore — CON-68", Ordered, func() {
 		versionRepo = repository.NewPostVersionRepository(db)
 		logRepo = repository.NewPostLogRepository(db)
 		postAttRepo := repository.NewPostAttachmentRepository(db)
-		postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, userRepo, "test_session")
 
 		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, "test_session", false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
 
-		postsHandler := handlers.NewPostsHandler(postRepo, versionRepo, postMessageRepo, platformRepo, postAttRepo, auth, nil, nil)
+		postsHandler := handlers.NewPostsHandler(postRepo, versionRepo, platformRepo, postAttRepo, auth)
 		postsHandler.SetPostLogRepo(logRepo)
-		// CON-68: the same restore service the assistant uses, behind REST.
-		postsHandler.SetRestoreService(restore.New(db, postRepo, versionRepo, logRepo, nil))
 		postsHandler.Register(app)
+		// CON-68/CON-291: the restore action now lives on the actions handler.
+		handlers.NewPostActionsHandler(postRepo, nil, restore.New(db, postRepo, versionRepo, logRepo, nil), nil, auth).Register(app)
 
 		// Seed user + session + campaign.
 		seedTenantUser(db, "Admin", "restore@example.com", "restore-password")
