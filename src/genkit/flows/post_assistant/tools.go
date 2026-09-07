@@ -15,10 +15,10 @@ import (
 	"github.com/ogen-app/ogen/src/genkit/embedopts"
 	"github.com/ogen-app/ogen/src/infra/vendors/llm"
 	"github.com/ogen-app/ogen/src/kernel/usage"
-	"github.com/ogen-app/ogen/src/notes"
-	"github.com/ogen-app/ogen/src/post_actions/clone"
-	"github.com/ogen-app/ogen/src/post_actions/restore"
-	"github.com/ogen-app/ogen/src/post_actions/schedule"
+	"github.com/ogen-app/ogen/src/usecase/notes"
+	"github.com/ogen-app/ogen/src/usecase/post_actions/clone"
+	"github.com/ogen-app/ogen/src/usecase/post_actions/restore"
+	"github.com/ogen-app/ogen/src/usecase/post_actions/schedule"
 )
 
 // Per-turn token budget for tool-retrieved chunks.

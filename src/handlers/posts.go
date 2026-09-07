@@ -18,8 +18,8 @@ import (
 	"github.com/ogen-app/ogen/src/infra/repository"
 	"github.com/ogen-app/ogen/src/jobs/queues"
 	"github.com/ogen-app/ogen/src/kernel/activity"
-	"github.com/ogen-app/ogen/src/post_actions/logs"
-	"github.com/ogen-app/ogen/src/post_actions/schedule"
+	"github.com/ogen-app/ogen/src/usecase/post_actions/logs"
+	"github.com/ogen-app/ogen/src/usecase/post_actions/schedule"
 )
 
 var validPostStatuses = map[models.PostStatus]bool{

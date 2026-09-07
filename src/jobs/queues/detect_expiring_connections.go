@@ -19,7 +19,7 @@ import (
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/kernel/logging"
 	"github.com/ogen-app/ogen/src/kernel/tenantctx"
-	"github.com/ogen-app/ogen/src/notify"
+	"github.com/ogen-app/ogen/src/usecase/notify"
 )
 
 // DetectExpiringConnectionsQueue is the recurring connection-health sweep

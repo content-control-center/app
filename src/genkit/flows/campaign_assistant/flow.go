@@ -15,7 +15,7 @@ import (
 	"github.com/ogen-app/ogen/src/infra/eventhub"
 	"github.com/ogen-app/ogen/src/kernel/logging"
 	"github.com/ogen-app/ogen/src/kernel/tenantctx"
-	"github.com/ogen-app/ogen/src/notify"
+	"github.com/ogen-app/ogen/src/usecase/notify"
 )
 
 //go:embed prompts/campaign_assistant.tmpl

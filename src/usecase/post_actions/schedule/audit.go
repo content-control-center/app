@@ -8,7 +8,7 @@ import (
 	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/infra/eventhub"
 	"github.com/ogen-app/ogen/src/infra/publishers/zernio"
-	"github.com/ogen-app/ogen/src/post_actions/logs"
+	"github.com/ogen-app/ogen/src/usecase/post_actions/logs"
 )
 
 // promoteLogs builds the audit entries for an auto-promote: the CON-74

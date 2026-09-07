@@ -23,13 +23,13 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"github.com/ogen-app/ogen/src/accountselect"
 	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/domain/platforms"
 	"github.com/ogen-app/ogen/src/infra/eventhub"
 	"github.com/ogen-app/ogen/src/infra/publishers/zernio"
 	"github.com/ogen-app/ogen/src/infra/repository"
 	"github.com/ogen-app/ogen/src/kernel/logging"
+	"github.com/ogen-app/ogen/src/usecase/accountselect"
 )
 
 var (

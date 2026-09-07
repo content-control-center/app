@@ -12,7 +12,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/valyala/fasthttp"
 
-	"github.com/ogen-app/ogen/src/campaigngoal"
 	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
@@ -20,8 +19,9 @@ import (
 	"github.com/ogen-app/ogen/src/infra/repository"
 	"github.com/ogen-app/ogen/src/kernel/activity"
 	"github.com/ogen-app/ogen/src/kernel/tenantctx"
-	"github.com/ogen-app/ogen/src/scheduling"
-	"github.com/ogen-app/ogen/src/settings"
+	"github.com/ogen-app/ogen/src/usecase/campaigngoal"
+	"github.com/ogen-app/ogen/src/usecase/scheduling"
+	"github.com/ogen-app/ogen/src/usecase/settings"
 )
 
 var validStatuses = map[models.CampaignStatus]bool{

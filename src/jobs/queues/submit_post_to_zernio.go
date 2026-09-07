@@ -12,7 +12,6 @@ import (
 
 	"github.com/riverqueue/river"
 
-	"github.com/ogen-app/ogen/src/accountselect"
 	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/infra/publishers/zernio"
 	"github.com/ogen-app/ogen/src/infra/vendors"
@@ -20,9 +19,10 @@ import (
 	"github.com/ogen-app/ogen/src/kernel/activity"
 	"github.com/ogen-app/ogen/src/kernel/logging"
 	"github.com/ogen-app/ogen/src/kernel/tenantctx"
-	"github.com/ogen-app/ogen/src/notify"
-	"github.com/ogen-app/ogen/src/post_actions/logs"
-	"github.com/ogen-app/ogen/src/settings"
+	"github.com/ogen-app/ogen/src/usecase/accountselect"
+	"github.com/ogen-app/ogen/src/usecase/notify"
+	"github.com/ogen-app/ogen/src/usecase/post_actions/logs"
+	"github.com/ogen-app/ogen/src/usecase/settings"
 )
 
 // SubmitPostToZernioQueue is the River queue name (CON-69 §3).

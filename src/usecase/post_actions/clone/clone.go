@@ -26,7 +26,7 @@ import (
 	"github.com/ogen-app/ogen/src/infra/eventhub"
 	"github.com/ogen-app/ogen/src/infra/repository"
 	"github.com/ogen-app/ogen/src/infra/storage"
-	"github.com/ogen-app/ogen/src/post_actions/logs"
+	"github.com/ogen-app/ogen/src/usecase/post_actions/logs"
 )
 
 // ErrSourceNotFound is returned when the post being cloned does not exist.

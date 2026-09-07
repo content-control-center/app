@@ -13,7 +13,7 @@ import (
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/kernel/activity"
 	"github.com/ogen-app/ogen/src/kernel/tenantctx"
-	"github.com/ogen-app/ogen/src/post_actions/logs"
+	"github.com/ogen-app/ogen/src/usecase/post_actions/logs"
 )
 
 // CancelZernioJobQueue is the River queue name (CON-69 §3, §9).

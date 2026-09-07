@@ -11,7 +11,6 @@ import (
 	"github.com/firebase/genkit/go/genkit"
 	"github.com/firebase/genkit/go/plugins/anthropic"
 
-	"github.com/ogen-app/ogen/src/campaign_actions/overview"
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/consistency"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
@@ -25,11 +24,12 @@ import (
 	"github.com/ogen-app/ogen/src/kernel/config"
 	"github.com/ogen-app/ogen/src/kernel/logging"
 	"github.com/ogen-app/ogen/src/kernel/usage"
-	"github.com/ogen-app/ogen/src/notes"
-	"github.com/ogen-app/ogen/src/notify"
-	"github.com/ogen-app/ogen/src/post_actions/clone"
-	"github.com/ogen-app/ogen/src/post_actions/restore"
-	"github.com/ogen-app/ogen/src/post_actions/schedule"
+	"github.com/ogen-app/ogen/src/usecase/campaign_actions/overview"
+	"github.com/ogen-app/ogen/src/usecase/notes"
+	"github.com/ogen-app/ogen/src/usecase/notify"
+	"github.com/ogen-app/ogen/src/usecase/post_actions/clone"
+	"github.com/ogen-app/ogen/src/usecase/post_actions/restore"
+	"github.com/ogen-app/ogen/src/usecase/post_actions/schedule"
 )
 
 // ErrAnthropicUnavailable is returned by the runtime callbacks when no

@@ -13,7 +13,7 @@ import (
 	"github.com/ogen-app/ogen/src/kernel/activity"
 	"github.com/ogen-app/ogen/src/kernel/logging"
 	"github.com/ogen-app/ogen/src/kernel/tenantctx"
-	"github.com/ogen-app/ogen/src/post_actions/logs"
+	"github.com/ogen-app/ogen/src/usecase/post_actions/logs"
 )
 
 // ReconcileScheduledPostsQueue is the recurring sweeper queue

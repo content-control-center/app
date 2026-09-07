@@ -18,7 +18,7 @@ import (
 	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/infra/repository"
-	"github.com/ogen-app/ogen/src/tenant_actions/signup"
+	"github.com/ogen-app/ogen/src/usecase/tenant_actions/signup"
 )
 
 // fakeProfileEnqueuer records the tenant ids signup asks to provision a Zernio

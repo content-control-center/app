@@ -5,7 +5,6 @@ import (
 
 	"github.com/firebase/genkit/go/ai"
 
-	"github.com/ogen-app/ogen/src/campaign_actions/overview"
 	"github.com/ogen-app/ogen/src/genkit/flows/consistency"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/draft_post"
@@ -14,7 +13,8 @@ import (
 	"github.com/ogen-app/ogen/src/infra/repository"
 	"github.com/ogen-app/ogen/src/infra/vendors/llm"
 	"github.com/ogen-app/ogen/src/kernel/usage"
-	"github.com/ogen-app/ogen/src/notify"
+	"github.com/ogen-app/ogen/src/usecase/campaign_actions/overview"
+	"github.com/ogen-app/ogen/src/usecase/notify"
 )
 
 // CampaignAssistantRequest is the input to the campaignAssistant flow — one

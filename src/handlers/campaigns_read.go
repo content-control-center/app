@@ -5,8 +5,8 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/ogen-app/ogen/src/campaign_actions/overview"
-	"github.com/ogen-app/ogen/src/campaign_actions/summaries"
+	"github.com/ogen-app/ogen/src/usecase/campaign_actions/overview"
+	"github.com/ogen-app/ogen/src/usecase/campaign_actions/summaries"
 )
 
 // CampaignReadHandler owns the campaign read/projection endpoints — the

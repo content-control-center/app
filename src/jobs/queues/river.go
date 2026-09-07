@@ -16,7 +16,7 @@ import (
 	"github.com/ogen-app/ogen/src/infra/publishers/zernio"
 	"github.com/ogen-app/ogen/src/infra/repository"
 	"github.com/ogen-app/ogen/src/kernel/logging"
-	"github.com/ogen-app/ogen/src/notify"
+	"github.com/ogen-app/ogen/src/usecase/notify"
 )
 
 // This file holds the central River plumbing for the queue package: the

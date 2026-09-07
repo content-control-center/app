@@ -16,7 +16,7 @@ import (
 	"github.com/ogen-app/ogen/src/kernel/activity"
 	"github.com/ogen-app/ogen/src/kernel/logging"
 	"github.com/ogen-app/ogen/src/kernel/tenantctx"
-	"github.com/ogen-app/ogen/src/tenant_actions/signup"
+	"github.com/ogen-app/ogen/src/usecase/tenant_actions/signup"
 )
 
 // ProfileBootstrapEnqueuer enqueues an eager Zernio profile-provisioning job in

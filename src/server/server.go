@@ -15,8 +15,6 @@ import (
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/uptrace/bun"
 
-	"github.com/ogen-app/ogen/src/campaign_actions/overview"
-	"github.com/ogen-app/ogen/src/campaign_actions/summaries"
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/draft_post"
@@ -37,12 +35,14 @@ import (
 	"github.com/ogen-app/ogen/src/kernel/config"
 	"github.com/ogen-app/ogen/src/kernel/logging"
 	"github.com/ogen-app/ogen/src/kernel/usage"
-	"github.com/ogen-app/ogen/src/notes"
-	"github.com/ogen-app/ogen/src/notify"
-	"github.com/ogen-app/ogen/src/post_actions/clone"
-	"github.com/ogen-app/ogen/src/post_actions/restore"
-	"github.com/ogen-app/ogen/src/post_actions/schedule"
-	"github.com/ogen-app/ogen/src/tenant_actions/signup"
+	"github.com/ogen-app/ogen/src/usecase/campaign_actions/overview"
+	"github.com/ogen-app/ogen/src/usecase/campaign_actions/summaries"
+	"github.com/ogen-app/ogen/src/usecase/notes"
+	"github.com/ogen-app/ogen/src/usecase/notify"
+	"github.com/ogen-app/ogen/src/usecase/post_actions/clone"
+	"github.com/ogen-app/ogen/src/usecase/post_actions/restore"
+	"github.com/ogen-app/ogen/src/usecase/post_actions/schedule"
+	"github.com/ogen-app/ogen/src/usecase/tenant_actions/signup"
 )
 
 // TODO: refactor this function

@@ -11,11 +11,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/ogen-app/ogen/src/brandresolve"
 	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/domain/platforms"
 	"github.com/ogen-app/ogen/src/infra/publishers/zernio"
-	"github.com/ogen-app/ogen/src/settings"
+	"github.com/ogen-app/ogen/src/usecase/brandresolve"
+	"github.com/ogen-app/ogen/src/usecase/settings"
 )
 
 // maxSummaryChars caps the combined asset summaries at ~1000 tokens.

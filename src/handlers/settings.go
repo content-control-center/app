@@ -5,7 +5,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/infra/repository"
-	"github.com/ogen-app/ogen/src/settings"
+	"github.com/ogen-app/ogen/src/usecase/settings"
 )
 
 type SettingsHandler struct {

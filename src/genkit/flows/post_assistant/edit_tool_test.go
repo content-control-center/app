@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/ogen-app/ogen/src/domain/models"
-	"github.com/ogen-app/ogen/src/post_actions/schedule"
+	"github.com/ogen-app/ogen/src/usecase/post_actions/schedule"
 )
 
 // The editPost tool must reject an empty instruction before it ever spins up

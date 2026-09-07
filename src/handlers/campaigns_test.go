@@ -17,8 +17,6 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
 
-	"github.com/ogen-app/ogen/src/campaign_actions/overview"
-	"github.com/ogen-app/ogen/src/campaign_actions/summaries"
 	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/consistency"
@@ -27,6 +25,8 @@ import (
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/infra/repository"
 	"github.com/ogen-app/ogen/src/kernel/tenantctx"
+	"github.com/ogen-app/ogen/src/usecase/campaign_actions/overview"
+	"github.com/ogen-app/ogen/src/usecase/campaign_actions/summaries"
 )
 
 var _ = Describe("CampaignsHandler", Ordered, func() {

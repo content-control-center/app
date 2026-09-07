@@ -30,7 +30,7 @@ import (
 	"github.com/ogen-app/ogen/src/kernel/netguard"
 	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 	"github.com/ogen-app/ogen/src/kernel/usage"
-	"github.com/ogen-app/ogen/src/notify"
+	"github.com/ogen-app/ogen/src/usecase/notify"
 )
 
 // ProcessURLQueue ingests a URL asset (CON-222): scrape the page to Markdown via

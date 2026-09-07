@@ -23,7 +23,7 @@ import (
 	"github.com/ogen-app/ogen/src/kernel/logging"
 	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 	"github.com/ogen-app/ogen/src/kernel/usage"
-	"github.com/ogen-app/ogen/src/notify"
+	"github.com/ogen-app/ogen/src/usecase/notify"
 )
 
 // ProcessPDFQueue ingests an uploaded PDF (CON-103): download original.pdf from

@@ -17,7 +17,7 @@ import (
 	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/infra/repository"
-	"github.com/ogen-app/ogen/src/notes"
+	"github.com/ogen-app/ogen/src/usecase/notes"
 )
 
 var _ = Describe("Post notes CRUD (CON-188)", Ordered, func() {

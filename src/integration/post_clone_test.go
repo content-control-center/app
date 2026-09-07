@@ -19,7 +19,7 @@ import (
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/infra/repository"
 	"github.com/ogen-app/ogen/src/infra/storage"
-	"github.com/ogen-app/ogen/src/post_actions/clone"
+	"github.com/ogen-app/ogen/src/usecase/post_actions/clone"
 )
 
 // threadsPlatformID is the Threads Sqid assigned by
