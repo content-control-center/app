@@ -616,7 +616,9 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// CON-153: POST /api/posts/:id/verify-external — confirm a manually
 	// published post via Zernio's sync-external, back-fill publisher_post_id +
 	// a first analytics snapshot, and emit post.analytics.updated.
-	postsHandler.SetVerifyExternalDeps(zernioRT.Integration.Client, r.socialAccountRepo, profileIDResolver, hub)
+	// CON-153 external-post verification is its own focused handler (CON-291 split
+	// out of PostsHandler), registered on the same /api/posts group.
+	handlers.NewPostVerificationHandler(r.postRepo, zernioRT.Integration.Client, r.socialAccountRepo, profileIDResolver, r.postAnalyticsRepo, r.postVersionRepo, hub, auth).Register(app)
 	postsHandler.SetActivityRecorder(activityWiring.recorder)
 	// Cascade post-attachment S3 cleanup on post delete (CON-73 §2.7).
 	// FK CASCADE handles the DB rows; this hook handles the bucket.

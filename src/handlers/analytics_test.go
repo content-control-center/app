@@ -30,7 +30,7 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 		postRepo          repository.PostRepository
 		analyticsRepo     repository.PostAnalyticsRepository
 		socialAccountRepo repository.SocialAccountRepository
-		postsHandlerRef   *handlers.PostsHandler
+		auth              fiber.Handler
 	)
 
 	const linkedinSqid = "AXqWG7U2qnpt"
@@ -63,7 +63,7 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 		postRepo = repository.NewPostRepository(db)
 		analyticsRepo = repository.NewPostAnalyticsRepository(db)
 		socialAccountRepo = repository.NewSocialAccountRepository(db)
-		auth := handlers.RequireAuth(sessionRepo, userRepo, testCookieName)
+		auth = handlers.RequireAuth(sessionRepo, userRepo, testCookieName)
 
 		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(app)
@@ -74,7 +74,6 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 			repository.NewPostAttachmentRepository(db), auth, nil, nil)
 		ph.SetAnalyticsRepo(analyticsRepo)
 		ph.Register(app)
-		postsHandlerRef = ph
 		handlers.NewAnalyticsHandler(analyticsRepo, nil, nil, nil, nil, auth).Register(app)
 
 		// Auth user + login.
@@ -298,8 +297,9 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 				http.NotFound(w, r)
 			}))
 			client := zernio.NewClient(zernio.StaticKey("k"), stub.URL, zernio.ClientOpts{Timeout: 5 * time.Second})
-			postsHandlerRef.SetVerifyExternalDeps(client, socialAccountRepo,
-				func(ctx context.Context) (string, error) { return "prof-1", nil }, nil)
+			handlers.NewPostVerificationHandler(postRepo, client, socialAccountRepo,
+				func(ctx context.Context) (string, error) { return "prof-1", nil },
+				analyticsRepo, repository.NewPostVersionRepository(db), nil, auth).Register(app)
 		})
 
 		AfterEach(func() { stub.Close() })
