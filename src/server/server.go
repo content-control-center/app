@@ -605,14 +605,11 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// CON-78: same schedule service the assistant uses, behind the REST
 	// endpoint POST /api/posts/:id/schedule and the PUT scheduling branch.
 	postsHandler.SetScheduleService(scheduleSvc)
-	// CON-85: Post quality assessment agent behind POST /api/posts/:id/assess.
-	postsHandler.SetQualityAssessor(gkRuntime.AssessPostQuality)
-	// CON-92: cached read behind GET /api/posts/:id/assessment, so the
-	// frontend can render an existing evaluation without re-running the model.
-	postsHandler.SetEvaluationRepo(r.postEvaluationRepo)
-	// CON-93 FR4: per-post analytics snapshot behind GET /api/posts/:id/analytics,
-	// served from the DB (never live-calls the publisher).
-	postsHandler.SetAnalyticsRepo(r.postAnalyticsRepo)
+	// CON-85/CON-92/CON-93: post quality assessment (POST /:id/assess + GET
+	// /:id/assessment) and the per-post analytics snapshot read (GET
+	// /:id/analytics) are a focused insights handler (CON-291 split out of
+	// PostsHandler), registered on the same /api/posts group.
+	handlers.NewPostInsightsHandler(r.postRepo, gkRuntime.AssessPostQuality, r.postEvaluationRepo, r.postAnalyticsRepo, gkRuntime.IsAnthropicAvailable, activityWiring.recorder, auth).Register(app)
 	// CON-153: POST /api/posts/:id/verify-external — confirm a manually
 	// published post via Zernio's sync-external, back-fill publisher_post_id +
 	// a first analytics snapshot, and emit post.analytics.updated.

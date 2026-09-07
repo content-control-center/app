@@ -18,7 +18,6 @@ import (
 
 	"github.com/ogen-app/ogen/src/activity"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
-	"github.com/ogen-app/ogen/src/genkit/flows/post_quality"
 	"github.com/ogen-app/ogen/src/jobs/queues"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/platforms"
@@ -58,16 +57,6 @@ type PostsHandler struct {
 	brandRepo repository.BrandRepository
 	auth      fiber.Handler
 	assistant func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error)
-	// assessQuality runs the Post quality assessment agent (CON-85). nil
-	// makes the /assess endpoint return 503. Wired via SetQualityAssessor.
-	assessQuality func(ctx context.Context, postID string, onEvent post_quality.OnEventFunc) (*post_quality.PostQualityResponse, error)
-	// evaluationRepo serves the cached assessment read (CON-92). nil makes
-	// GET /:id/assessment return 503. Wired via SetEvaluationRepo.
-	evaluationRepo repository.PostEvaluationRepository
-	// analyticsRepo serves the per-post analytics snapshot read (CON-93
-	// FR4, GET /:id/analytics). nil makes that endpoint return 503. Wired
-	// via SetAnalyticsRepo.
-	analyticsRepo repository.PostAnalyticsRepository
 	// isAssistantReady reports whether the Anthropic key is currently
 	// configured. nil is treated as "always ready" so existing test
 	// fixtures keep working without rewiring.
@@ -132,26 +121,6 @@ func (h *PostsHandler) SetAttachmentRepo(r repository.PostAttachmentRepository) 
 // fixtures that don't care about the audit trail).
 func (h *PostsHandler) SetPostLogRepo(r repository.PostLogRepository) {
 	h.postLogRepo = r
-}
-
-// SetQualityAssessor wires the Post quality assessment callback (CON-85).
-// Kept as a setter (not a constructor arg) so existing NewPostsHandler
-// call sites and test fixtures stay unchanged.
-func (h *PostsHandler) SetQualityAssessor(fn func(ctx context.Context, postID string, onEvent post_quality.OnEventFunc) (*post_quality.PostQualityResponse, error)) {
-	h.assessQuality = fn
-}
-
-// SetEvaluationRepo wires the repository backing the cached assessment read
-// (CON-92, GET /:id/assessment). Setter (not a constructor arg) so existing
-// NewPostsHandler call sites and fixtures stay unchanged.
-func (h *PostsHandler) SetEvaluationRepo(r repository.PostEvaluationRepository) {
-	h.evaluationRepo = r
-}
-
-// SetAnalyticsRepo wires the repository backing the per-post analytics
-// read (CON-93 FR4, GET /:id/analytics). nil leaves the endpoint at 503.
-func (h *PostsHandler) SetAnalyticsRepo(r repository.PostAnalyticsRepository) {
-	h.analyticsRepo = r
 }
 
 // CancelEnqueuer enqueues a Zernio cancellation task. Implemented by
@@ -877,9 +846,6 @@ func (h *PostsHandler) Register(app *fiber.App) {
 	g.Delete("/:id/assets/:assetId", h.auth, h.RemoveAsset)
 	g.Delete("/:id", h.auth, h.Delete)
 	g.Post("/:id/assistant", h.auth, h.Assistant)
-	g.Post("/:id/assess", h.auth, h.Assess)
-	g.Get("/:id/assessment", h.auth, h.GetAssessment)
-	g.Get("/:id/analytics", h.auth, h.GetAnalytics)
 	g.Post("/:id/clone", h.auth, h.Clone)
 	g.Get("/:id/messages", h.auth, h.ListMessages)
 	g.Get("/:id/versions", h.auth, h.ListVersions)
@@ -1554,175 +1520,6 @@ func (h *PostsHandler) Assistant(c *fiber.Ctx) error {
 	}))
 
 	return nil
-}
-
-// Assess godoc
-// @Summary      Assess post quality
-// @Description  Runs the Post quality assessment agent (CON-85) and streams
-// @Description  Server-Sent Events: a "step" event per flow stage, then a
-// @Description  final "complete" event carrying the persisted evaluation
-// @Description  (four 0-10 dimension scores with rationale, weakness, and
-// @Description  span-anchored suggestions, plus the backend-computed overall).
-// @Tags         posts
-// @Produce      text/event-stream
-// @Security     CookieAuth
-// @Param        id   path      string  true  "Post Sqid"
-// @Success      200  {object}  post_quality.PostQualityResponse
-// @Failure      401  {object}  map[string]string
-// @Failure      404  {object}  map[string]string
-// @Failure      503  {object}  map[string]string
-// @Router       /api/posts/{id}/assess [post]
-func (h *PostsHandler) Assess(c *fiber.Ctx) error {
-	if h.assessQuality == nil {
-		return fiber.NewError(fiber.StatusServiceUnavailable, "post quality assessment is not available")
-	}
-	if h.isAssistantReady != nil && !h.isAssistantReady() {
-		return fiber.NewError(fiber.StatusServiceUnavailable, "post quality assessment is not available")
-	}
-
-	// Confirm the post exists before opening the SSE stream so a bad id
-	// gets a clean 404 rather than an in-stream error event. Posts are
-	// shared across the workspace — any authenticated user may assess any
-	// post, consistent with GET/PUT/DELETE/assistant/clone.
-	post, err := h.repo.GetByID(c.Context(), c.Params("id"))
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "post not found")
-		}
-		return err
-	}
-
-	c.Set("Content-Type", "text/event-stream")
-	c.Set("Cache-Control", "no-cache")
-	c.Set("Connection", "keep-alive")
-	c.Set("X-Accel-Buffering", "no")
-
-	postID := post.ID
-	assess := h.assessQuality
-	tenantID, _ := c.Locals(tenantctx.Key).(string)
-	flowCtx := tenantctx.With(context.Background(), tenantID)
-	// Capture the actor now; the stream writer runs after the request context
-	// may be recycled, so the activity record can't read it from c.Context().
-	var actorID string
-	if sess, ok := c.Locals("session").(*models.Session); ok && sess != nil {
-		actorID = sess.UserID
-	}
-
-	c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
-		writeEvent := func(event string, data any) {
-			b, _ := json.Marshal(data)
-			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
-			_ = w.Flush()
-		}
-
-		onEvent := post_quality.OnEventFunc(func(name post_quality.SSEEventKind, data any) {
-			writeEvent(string(name), data)
-		})
-
-		_, err := assess(flowCtx, postID, onEvent)
-		if err != nil {
-			code := fiber.StatusInternalServerError
-			msg := err.Error()
-			var ve *post_quality.ValidationError
-			var ae *post_quality.AIError
-			switch {
-			case errors.As(err, &ve):
-				code = fiber.StatusBadRequest
-				msg = ve.Msg
-			case errors.As(err, &ae):
-				code = fiber.StatusBadGateway
-				msg = ae.Msg
-			}
-			writeEvent(string(post_quality.SSEEventError), post_quality.ErrorEventPayload{Message: msg, Code: code})
-			return
-		}
-		// "complete" is emitted by the runner itself; nothing to write here.
-		h.activity.Record(flowCtx, activity.CategoryPost, "post_quality_assessed",
-			activity.WithUser(actorID),
-			activity.WithEntity("post", postID),
-			activity.WithSource(activity.SourceAPI),
-			activity.WithStatus("success"),
-		)
-	}))
-
-	return nil
-}
-
-// GetAssessment godoc
-// @Summary      Get stored post quality assessment
-// @Description  Returns the most recent persisted quality evaluation for a
-// @Description  post (CON-85/CON-92) without invoking the model. The frontend
-// @Description  reads this to render an existing assessment and only triggers
-// @Description  POST /assess when the post has changed since it was scored.
-// @Tags         posts
-// @Produce      json
-// @Security     CookieAuth
-// @Param        id   path      string  true  "Post Sqid"
-// @Success      200  {object}  models.PostEvaluation
-// @Failure      401  {object}  map[string]string
-// @Failure      404  {object}  map[string]string
-// @Failure      503  {object}  map[string]string
-// @Router       /api/posts/{id}/assessment [get]
-func (h *PostsHandler) GetAssessment(c *fiber.Ctx) error {
-	if h.evaluationRepo == nil {
-		return fiber.NewError(fiber.StatusServiceUnavailable, "post quality assessment is not available")
-	}
-	eval, err := h.evaluationRepo.GetByPostID(c.Context(), c.Params("id"))
-	if err != nil {
-		return err
-	}
-	// GetByPostID returns (nil, nil) when the post has never been assessed.
-	// Surface that as 404 so the frontend shows the "Assess" affordance
-	// rather than a stale or empty result.
-	if eval == nil {
-		return fiber.NewError(fiber.StatusNotFound, "post has not been assessed")
-	}
-	return c.JSON(eval)
-}
-
-// GetAnalytics godoc
-// @Summary      Get a post's analytics snapshot
-// @Description  Returns the latest engagement snapshot for a post published through a publisher. Served entirely from the database — never live-calls the publisher (CON-93 FR4). Two 200 shapes: a full snapshot, or — when the background refresh has not yet covered the post — the pending form `{"status":"pending","post_id":"..."}` so clients can poll. Both are covered by the schema below (the snapshot fields are absent on the pending response; `status` is absent on a snapshot).
-// @Tags         posts
-// @Produce      json
-// @Security     CookieAuth
-// @Param        id   path      string  true  "Post Sqid"
-// @Success      200  {object}  handlers.postAnalyticsResponse
-// @Failure      401  {object}  map[string]string
-// @Failure      404  {object}  map[string]string
-// @Failure      409  {object}  map[string]string
-// @Failure      503  {object}  map[string]string
-// @Router       /api/posts/{id}/analytics [get]
-func (h *PostsHandler) GetAnalytics(c *fiber.Ctx) error {
-	if h.analyticsRepo == nil {
-		return fiber.NewError(fiber.StatusServiceUnavailable, "post analytics is not available")
-	}
-	post, err := h.repo.GetByID(c.Context(), c.Params("id"))
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "post not found")
-		}
-		return err
-	}
-	// Analytics is defined only for posts published through a publisher;
-	// today that's Zernio (CON-93 §9). 409 with a machine-readable code so
-	// the client can distinguish "wrong kind of post" from "not found".
-	if post.PublisherPostID == "" {
-		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
-			"code":  "not_published_via_publisher",
-			"error": "post has not been published through a publisher",
-		})
-	}
-	snapshot, err := h.analyticsRepo.GetByPostID(c.Context(), post.ID)
-	if err != nil {
-		return err
-	}
-	// No snapshot yet → the background refresh hasn't covered this post.
-	// Return 200 pending (not 404) so clients can poll (CON-93 §10).
-	if snapshot == nil {
-		return c.JSON(fiber.Map{"status": "pending", "post_id": post.ID})
-	}
-	return c.JSON(newPostAnalyticsResponse(post, snapshot))
 }
 
 // ── Messages ─────────────────────────────────────────────────────────────────

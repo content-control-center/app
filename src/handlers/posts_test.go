@@ -96,6 +96,11 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		// CON-69 §11: wire the audit log so transition tests can read it back.
 		ph.SetPostLogRepo(postLogRepo)
 		ph.Register(app)
+		// CON-291: assess/assessment/analytics live on the insights handler. Wired
+		// with nil deps here (matching the old shared PostsHandler) so the routes
+		// exist — 401 unauthenticated, 503 when authenticated — for the route-level
+		// specs; the assessor/eval/analytics behaviour is covered by dedicated apps.
+		handlers.NewPostInsightsHandler(postRepo, nil, nil, nil, nil, nil, auth).Register(app)
 		handlers.NewPostLogsHandler(postLogRepo, postRepo, auth).Register(app)
 
 		// Seed auth user and log in.
@@ -1612,8 +1617,9 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(stubApp)
 				handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(stubApp)
 				ph := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, repository.NewPlatformRepository(db), repository.NewPostAttachmentRepository(db), auth, nil, nil)
-				ph.SetQualityAssessor(stub)
 				ph.Register(stubApp)
+				// POST /:id/assess now lives on the insights handler (CON-291).
+				handlers.NewPostInsightsHandler(postRepo, stub, nil, nil, nil, nil, auth).Register(stubApp)
 
 				seedTenantUser(db, "Assess", "sse-assess@example.com", "sse-password")
 				loginBody, _ := json.Marshal(fiber.Map{"email": "sse-assess@example.com", "password": "sse-password"})
@@ -1818,8 +1824,9 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(readApp)
 				handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(readApp)
 				ph := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, repository.NewPlatformRepository(db), repository.NewPostAttachmentRepository(db), auth, nil, nil)
-				ph.SetEvaluationRepo(evalRepo)
 				ph.Register(readApp)
+				// GET /:id/assessment now lives on the insights handler (CON-291).
+				handlers.NewPostInsightsHandler(postRepo, nil, evalRepo, nil, nil, nil, auth).Register(readApp)
 
 				seedTenantUser(db, "Reader", "assessment-read@example.com", "read-password")
 				loginBody, _ := json.Marshal(fiber.Map{"email": "assessment-read@example.com", "password": "read-password"})
