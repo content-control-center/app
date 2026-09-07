@@ -55,7 +55,9 @@ var supportedPlatforms = []SupportedPlatform{
 	},
 	{
 		ZernioID: "threads", Label: "Threads", OgenID: "threads",
-		SupportedPostTypes: []string{"text-post", "image-post", "carousel", "video"},
+		// "thread" (CON-284): Threads publishes native reply chains via the same
+		// platformSpecificData.threadItems payload as X.
+		SupportedPostTypes: []string{"text-post", "image-post", "carousel", "video", "thread"},
 	},
 }
 

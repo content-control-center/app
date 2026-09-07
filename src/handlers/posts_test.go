@@ -1219,11 +1219,48 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		})
 
 		Context("thread (X)", func() {
-			It("rejects empty content", func() {
-				p := createPost("Thread empty", nil)
-				resp := putReady(p.ID, readyBody(xID, "thread", ""))
+			// CON-284: a thread post is validated per segment — 2..25 messages,
+			// each non-empty and within X's 280-char limit — not as one body.
+			threadReady := func(id string, segments ...string) *http.Response {
+				segs := make([]fiber.Map, len(segments))
+				for i, s := range segments {
+					segs[i] = fiber.Map{"content": s}
+				}
+				body, _ := json.Marshal(fiber.Map{
+					"campaign_id":        campaignID,
+					"platform_id":        xID,
+					"platform_post_type": "thread",
+					"thread_segments":    segs,
+					"status":             "ready_for_publish",
+				})
+				return putReady(id, body)
+			}
+
+			It("rejects a thread with fewer than two messages", func() {
+				p := createPost("Thread too short", nil)
+				resp := threadReady(p.ID, "only one")
+				Expect(resp.StatusCode).To(Equal(422))
+				Expect(decodeRules(resp)).To(ContainElement("thread_segment_count"))
+			})
+
+			It("rejects a thread with an empty message", func() {
+				p := createPost("Thread blank msg", nil)
+				resp := threadReady(p.ID, "root", "   ")
 				Expect(resp.StatusCode).To(Equal(422))
 				Expect(decodeRules(resp)).To(ContainElement("requires_content"))
+			})
+
+			It("rejects a message over the per-segment character limit", func() {
+				p := createPost("Thread too long", nil)
+				resp := threadReady(p.ID, "root", strings.Repeat("a", 281))
+				Expect(resp.StatusCode).To(Equal(422))
+				Expect(decodeRules(resp)).To(ContainElement("max_content_chars"))
+			})
+
+			It("passes a valid two-message thread", func() {
+				p := createPost("Thread happy", nil)
+				resp := threadReady(p.ID, "root message", "second message")
+				Expect(resp.StatusCode).To(Equal(200))
 			})
 		})
 

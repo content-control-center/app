@@ -40,6 +40,27 @@ func (s JobStatus) IsTerminal() bool {
 type PlatformVariant struct {
 	Platform  string `json:"platform"`
 	AccountID string `json:"accountId"`
+	// PlatformSpecificData carries per-platform extras — today only a native
+	// thread's ordered messages (CON-284). A pointer so it (and its
+	// platformSpecificData key) is omitted entirely for ordinary posts, keeping
+	// their payload byte-identical to before.
+	PlatformSpecificData *PlatformSpecificData `json:"platformSpecificData,omitempty"`
+}
+
+// PlatformSpecificData is the per-variant extras bag. Serialised as
+// platformSpecificData; only ThreadItems is populated so far.
+type PlatformSpecificData struct {
+	ThreadItems []ThreadItem `json:"threadItems,omitempty"`
+}
+
+// ThreadItem is one message of a native thread (CON-284). Item 0 is the root;
+// the rest become ordered replies — Zernio owns the reply-chaining, so Ogen
+// sends the whole chain in one submit. Content is the message text; MediaItems
+// carries that message's media in the same {url,type,altText?} shape as the
+// top-level SubmitRequest.MediaItems.
+type ThreadItem struct {
+	Content    string           `json:"content"`
+	MediaItems []map[string]any `json:"mediaItems,omitempty"`
 }
 
 // PlatformOutcome is one row of the per-platform status returned in

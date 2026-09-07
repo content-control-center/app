@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -86,6 +87,14 @@ func (s PostStatus) CanTransition(next PostStatus) bool {
 	return false
 }
 
+// PostTypeThread is the platform_post_type slug that marks a post as a native
+// thread — an ordered chain of messages (root + replies) published as one unit
+// on X or Threads (CON-284). It is the single trigger for the thread path;
+// there is no separate boolean. Defined here (not in the platforms package) so
+// models, handlers, and the submit worker can key off one constant without an
+// import cycle.
+const PostTypeThread = "thread"
+
 // PostCTAType represents the call-to-action type attached to a post.
 type PostCTAType string
 
@@ -116,13 +125,21 @@ type Post struct {
 	// then auto-selects the platform's single account, or fails
 	// `account_selection_required` when the platform has more than one.
 	// `nullzero` sends NULL (not "") so the FK to social_accounts holds.
-	SocialAccountID string      `bun:"social_account_id,nullzero" json:"social_account_id"`
-	Title           string      `bun:"title"                                        json:"title"`
-	Content         string      `bun:"content,notnull"                              json:"content"`
-	MediaURLs       StringSlice `bun:"media_urls,notnull,type:jsonb"                json:"media_urls"`
-	ScheduledAt     *time.Time  `bun:"scheduled_at"                                 json:"scheduled_at"`
-	PublishedAt     *time.Time  `bun:"published_at"                                 json:"published_at"`
-	Status          PostStatus  `bun:"status,notnull"                               json:"status"`
+	SocialAccountID string `bun:"social_account_id,nullzero" json:"social_account_id"`
+	Title           string `bun:"title"                                        json:"title"`
+	Content         string `bun:"content,notnull"                              json:"content"`
+	// ThreadSegments holds the ordered messages of a threaded post (CON-284),
+	// used only when PlatformPostType == PostTypeThread: index 0 is the root,
+	// 1..N-1 the ordered replies. Empty [] for every other post. Content
+	// mirrors segment 0 so thread-unaware readers (quality CON-184, listings,
+	// campaign summaries CON-152, analytics title) keep working; writes that
+	// set segments restamp Content from the root. Per-segment media is carried
+	// by PostAttachment.SegmentIndex, not here.
+	ThreadSegments ThreadSegments `bun:"thread_segments,notnull,type:jsonb"           json:"thread_segments"`
+	MediaURLs      StringSlice    `bun:"media_urls,notnull,type:jsonb"                json:"media_urls"`
+	ScheduledAt    *time.Time     `bun:"scheduled_at"                                 json:"scheduled_at"`
+	PublishedAt    *time.Time     `bun:"published_at"                                 json:"published_at"`
+	Status         PostStatus     `bun:"status,notnull"                               json:"status"`
 	// Publisher integration fields (CON-69 §6/§7, generalized to
 	// publisher-agnostic names in CON-93 §14).
 	// Publisher marks which publisher adapter owns the external identity
@@ -137,10 +154,10 @@ type Post struct {
 	// platform IDs) once the post resolves.
 	// FailureReason distinguishes a publisher-reported failure from
 	// reconciliation timeout — see CON-69 §8.
-	Publisher           string      `bun:"publisher,notnull,default:''"                json:"publisher,omitempty"`
-	PublisherPostID     string      `bun:"publisher_post_id,nullzero"                  json:"publisher_post_id,omitempty"`
-	PublisherStatus     string      `bun:"publisher_status,notnull,default:''"         json:"publisher_status,omitempty"`
-	PublishedResults    string      `bun:"published_results,notnull,default:''"        json:"published_results,omitempty"`
+	Publisher        string `bun:"publisher,notnull,default:''"                json:"publisher,omitempty"`
+	PublisherPostID  string `bun:"publisher_post_id,nullzero"                  json:"publisher_post_id,omitempty"`
+	PublisherStatus  string `bun:"publisher_status,notnull,default:''"         json:"publisher_status,omitempty"`
+	PublishedResults string `bun:"published_results,notnull,default:''"        json:"published_results,omitempty"`
 	// PublishedURL is the platform permalink for the live post (CON-165), kept
 	// as a first-class field so the front-end can render "View post" off the
 	// post it already has, without an analytics round-trip (CON-149). Set from
@@ -174,4 +191,31 @@ type Post struct {
 	SocialAccount     *SocialAccount     `bun:"-" json:"social_account,omitempty"`
 	UsedAssets        []Asset            `bun:"-" json:"used_assets"`
 	CampaignTypePhase *CampaignTypePhase `bun:"-" json:"campaign_type_phase,omitempty"`
+}
+
+// IsThread reports whether this post publishes as a native thread — an ordered
+// chain of messages rather than a single one (CON-284). Keyed off the post type
+// alone; there is no separate boolean.
+func (p *Post) IsThread() bool {
+	return p.PlatformPostType == PostTypeThread
+}
+
+// SnapshotContent renders the post's content for a CON-251 "what went out"
+// PostVersion. For an ordinary post it is just Content; for a thread (CON-284)
+// PostVersion.Content is a single TEXT field, so the whole ordered chain is
+// serialised into it as JSON. JSON is used rather than a text delimiter so the
+// encoding is injective and decodable: distinct segment sequences always
+// produce distinct Content (a plain join collides when a message contains the
+// delimiter, e.g. ["x","y","z"] vs ["x\n—\ny","z"]), which the snapshot dedup
+// and the audit record both rely on. Falls back to the root mirror if marshal
+// somehow fails, so the snapshot is never empty.
+func (p *Post) SnapshotContent() string {
+	if !p.IsThread() || len(p.ThreadSegments) == 0 {
+		return p.Content
+	}
+	b, err := json.Marshal(p.ThreadSegments)
+	if err != nil {
+		return p.Content
+	}
+	return string(b)
 }
