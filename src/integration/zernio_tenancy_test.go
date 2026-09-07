@@ -22,12 +22,12 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/ogen-app/ogen/src/domain/models"
-	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/infra/crypto/envelope"
 	"github.com/ogen-app/ogen/src/infra/publishers/zernio"
 	"github.com/ogen-app/ogen/src/infra/repository"
 	"github.com/ogen-app/ogen/src/infra/secrets"
 	"github.com/ogen-app/ogen/src/kernel/tenantctx"
+	"github.com/ogen-app/ogen/src/transport/handlers"
 )
 
 // ztSharedKey is the single, app-wide Zernio API key every tenant authenticates

@@ -30,10 +30,10 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/ogen-app/ogen/src/domain/models"
-	"github.com/ogen-app/ogen/src/grpc/client/pdf"
-	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/infra/repository"
 	"github.com/ogen-app/ogen/src/infra/storage"
+	"github.com/ogen-app/ogen/src/transport/grpc/client/pdf"
+	"github.com/ogen-app/ogen/src/transport/handlers"
 )
 
 // LinkedIn Sqid from the platform seed migration. Same constant the

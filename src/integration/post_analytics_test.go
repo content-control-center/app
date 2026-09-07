@@ -18,11 +18,11 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/ogen-app/ogen/src/domain/models"
-	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/infra/database"
 	"github.com/ogen-app/ogen/src/infra/publishers/zernio"
 	"github.com/ogen-app/ogen/src/infra/repository"
 	"github.com/ogen-app/ogen/src/jobs/queues"
+	"github.com/ogen-app/ogen/src/transport/handlers"
 )
 
 // memSettings is a minimal in-memory zernio.SettingsStore for driving
