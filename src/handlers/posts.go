@@ -306,9 +306,16 @@ func (h *PostsHandler) validateReadyForPublish(c *fiber.Ctx, post *models.Post, 
 	incoming := *post
 	incoming.PlatformPostType = req.PlatformPostType
 	incoming.Content = req.Content
-	incoming.ThreadSegments = nullThreadSegments(req.ThreadSegments)
-	if len(incoming.ThreadSegments) > 0 {
-		incoming.Content = incoming.ThreadSegments.RootContent()
+	// Mirror apply's gating so the gate sees exactly what will be persisted:
+	// segments (and the root-restamped Content) only when the incoming type is a
+	// thread; otherwise segments are empty and the body stands (CON-284).
+	if incoming.PlatformPostType == models.PostTypeThread {
+		incoming.ThreadSegments = nullThreadSegments(req.ThreadSegments)
+		if len(incoming.ThreadSegments) > 0 {
+			incoming.Content = incoming.ThreadSegments.RootContent()
+		}
+	} else {
+		incoming.ThreadSegments = models.ThreadSegments{}
 	}
 	errsByPlatform := platforms.ValidatePublishReadiness(&incoming, platform, atts)
 	from := post.Status
@@ -980,14 +987,20 @@ func (r *postRequest) apply(post *models.Post, status models.PostStatus, ctaType
 	post.SocialAccountID = r.SocialAccountID
 	post.Title = r.Title
 	post.Content = r.Content
-	// CON-284: a present, non-empty thread_segments replaces the stored segments
-	// and restamps Content from the root (index 0), so the many readers of
-	// post.content keep working. An omitted/empty array clears the segments —
-	// the demotion-to-single-message path — and leaves the just-applied Content
-	// (the former root) in place.
-	post.ThreadSegments = nullThreadSegments(r.ThreadSegments)
-	if len(post.ThreadSegments) > 0 {
-		post.Content = post.ThreadSegments.RootContent()
+	// CON-284: thread_segments are meaningful only for a thread post. When the
+	// post is a thread, a present non-empty array replaces the stored segments and
+	// restamps Content from the root (index 0), so the many readers of post.content
+	// keep working. For any other type the segments are forced empty and the
+	// just-applied Content stands: a stray array on a non-thread post is ignored,
+	// not persisted, so it can't silently overwrite the body. This also covers
+	// demotion (thread → single-message type clears the segments, keeps the body).
+	if post.PlatformPostType == models.PostTypeThread {
+		post.ThreadSegments = nullThreadSegments(r.ThreadSegments)
+		if len(post.ThreadSegments) > 0 {
+			post.Content = post.ThreadSegments.RootContent()
+		}
+	} else {
+		post.ThreadSegments = models.ThreadSegments{}
 	}
 	post.MediaURLs = nullSlice(r.MediaURLs)
 	post.ScheduledAt = r.ScheduledAt
@@ -1185,10 +1198,16 @@ func (h *PostsHandler) Create(c *fiber.Ctx) error {
 		CreatedBy:           session.UserID,
 		UsedAssets:          []models.Asset{},
 	}
-	// CON-284: mirror the root segment into Content when creating a thread, so
-	// the post is consistent with the whole-record contract from the start.
-	if len(post.ThreadSegments) > 0 {
-		post.Content = post.ThreadSegments.RootContent()
+	// CON-284: segments are meaningful only for a thread. On a thread, mirror the
+	// root into Content so the post is consistent with the whole-record contract
+	// from the start; on any other type ignore a stray array (don't persist it or
+	// let it overwrite the body).
+	if post.PlatformPostType == models.PostTypeThread {
+		if len(post.ThreadSegments) > 0 {
+			post.Content = post.ThreadSegments.RootContent()
+		}
+	} else {
+		post.ThreadSegments = models.ThreadSegments{}
 	}
 
 	if done, err := h.validateForCreate(c, post); err != nil {

@@ -1,7 +1,7 @@
 package models
 
 import (
-	"strings"
+	"encoding/json"
 	"testing"
 )
 
@@ -156,12 +156,23 @@ func TestSnapshotContent(t *testing.T) {
 		ThreadSegments:   ThreadSegments{{Content: "root"}, {Content: "reply"}},
 	}
 	got := thread.SnapshotContent()
-	want := "root" + ThreadSnapshotDelimiter + "reply"
-	if got != want {
-		t.Errorf("thread SnapshotContent() = %q, want %q", got, want)
+	// JSON-encoded chain: injective + decodable back to the segments.
+	var decoded ThreadSegments
+	if err := json.Unmarshal([]byte(got), &decoded); err != nil {
+		t.Fatalf("thread SnapshotContent() not decodable JSON: %v (%q)", err, got)
 	}
-	if !strings.Contains(got, "root") || !strings.Contains(got, "reply") {
-		t.Errorf("thread SnapshotContent() lost a message: %q", got)
+	if len(decoded) != 2 || decoded[0].Content != "root" || decoded[1].Content != "reply" {
+		t.Errorf("thread SnapshotContent() round-trip lost messages: %+v", decoded)
+	}
+	// Injectivity: a single message containing the old text delimiter must NOT
+	// collide with the two-message thread that a plain join would flatten to.
+	collide := &Post{
+		PlatformPostType: PostTypeThread,
+		Content:          "root\n\n———\n\nreply",
+		ThreadSegments:   ThreadSegments{{Content: "root\n\n———\n\nreply"}, {Content: "x"}},
+	}
+	if collide.SnapshotContent() == got {
+		t.Error("distinct threads produced identical SnapshotContent() — encoding is not injective")
 	}
 
 	// A thread type with no segments falls back to Content (defensive).

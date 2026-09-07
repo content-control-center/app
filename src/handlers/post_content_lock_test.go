@@ -141,4 +141,21 @@ func TestApplyThreadSegments(t *testing.T) {
 	if post.Content != "just this" {
 		t.Errorf("demote: Content = %q, want %q", post.Content, "just this")
 	}
+
+	// A non-thread request that still carries thread_segments must ignore them:
+	// they are not persisted and must NOT overwrite the ordinary body with the
+	// root segment (CON-284 — segments are meaningful only for a thread).
+	stray := &models.Post{}
+	strayReq := postRequest{
+		PlatformPostType: "text-post",
+		Content:          "ordinary body",
+		ThreadSegments:   models.ThreadSegments{{Content: "root"}, {Content: "reply"}},
+	}
+	strayReq.apply(stray, models.PostStatusDraft, models.CTATypeNone)
+	if len(stray.ThreadSegments) != 0 {
+		t.Errorf("stray segments on non-thread: segments = %d, want 0", len(stray.ThreadSegments))
+	}
+	if stray.Content != "ordinary body" {
+		t.Errorf("stray segments on non-thread: Content = %q, want %q (must not restamp from root)", stray.Content, "ordinary body")
+	}
 }

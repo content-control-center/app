@@ -1,7 +1,7 @@
 package models
 
 import (
-	"strings"
+	"encoding/json"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -200,23 +200,22 @@ func (p *Post) IsThread() bool {
 	return p.PlatformPostType == PostTypeThread
 }
 
-// ThreadSnapshotDelimiter separates messages when a thread is serialised into a
-// single PostVersion.Content TEXT field (CON-284). A visible rule, so the "what
-// went out" snapshot reads as a thread rather than a run-on paragraph.
-const ThreadSnapshotDelimiter = "\n\n———\n\n"
-
 // SnapshotContent renders the post's content for a CON-251 "what went out"
 // PostVersion. For an ordinary post it is just Content; for a thread (CON-284)
 // PostVersion.Content is a single TEXT field, so the whole ordered chain is
-// serialised into it — every message joined by ThreadSnapshotDelimiter — so the
-// snapshot records the entire thread, not only the mirrored root.
+// serialised into it as JSON. JSON is used rather than a text delimiter so the
+// encoding is injective and decodable: distinct segment sequences always
+// produce distinct Content (a plain join collides when a message contains the
+// delimiter, e.g. ["x","y","z"] vs ["x\n—\ny","z"]), which the snapshot dedup
+// and the audit record both rely on. Falls back to the root mirror if marshal
+// somehow fails, so the snapshot is never empty.
 func (p *Post) SnapshotContent() string {
 	if !p.IsThread() || len(p.ThreadSegments) == 0 {
 		return p.Content
 	}
-	parts := make([]string, len(p.ThreadSegments))
-	for i := range p.ThreadSegments {
-		parts[i] = p.ThreadSegments[i].Content
+	b, err := json.Marshal(p.ThreadSegments)
+	if err != nil {
+		return p.Content
 	}
-	return strings.Join(parts, ThreadSnapshotDelimiter)
+	return string(b)
 }
