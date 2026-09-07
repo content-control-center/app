@@ -160,11 +160,8 @@ func (h *UsersHandler) Create(c *fiber.Ctx) error {
 	}
 
 	var req createUserRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 
 	id, err := models.NewID()
@@ -242,11 +239,8 @@ func (h *UsersHandler) SetRole(c *fiber.Ctx) error {
 	}
 
 	var req setRoleRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 
 	// SetRoleGuarded scopes to the caller's tenant (404 for an outsider) and
@@ -283,10 +277,7 @@ func (h *UsersHandler) SetRole(c *fiber.Ctx) error {
 func (h *UsersHandler) Get(c *fiber.Ctx) error {
 	user, err := h.repo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "user not found")
-		}
-		return err
+		return notFound(err, "user not found")
 	}
 	return c.JSON(user)
 }
@@ -315,19 +306,13 @@ func (h *UsersHandler) Update(c *fiber.Ctx) error {
 	session := c.Locals("session").(*models.Session)
 
 	var req updateUserRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 
 	user, err := h.repo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "user not found")
-		}
-		return err
+		return notFound(err, "user not found")
 	}
 
 	if req.Password == "" {

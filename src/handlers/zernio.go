@@ -260,11 +260,8 @@ func (h *ZernioHandler) CreateConnectLink(c *fiber.Ctx) error {
 	}
 
 	var req connectLinkRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 	if zernio.LookupSupportedPlatform(req.Platform) == nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid_platform")
@@ -481,10 +478,7 @@ func (h *ZernioHandler) DisconnectAccount(c *fiber.Ctx) error {
 
 	account, err := h.accounts.GetActive(c.Context(), profileID, id)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "account_not_found")
-		}
-		return err
+		return notFound(err, "account_not_found")
 	}
 
 	// Refuse to strand scheduled posts unless the caller forces it.

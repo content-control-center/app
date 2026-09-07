@@ -241,11 +241,8 @@ func (h *AssetsHandler) decorateImages(ctx context.Context, asset *models.Asset)
 // @Router       /api/content-bank/assets [post]
 func (h *AssetsHandler) Create(c *fiber.Ctx) error {
 	var req createAssetRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 
 	altText, err := normalizeAltText(req.AltText)
@@ -693,11 +690,8 @@ type createURLAssetRequest struct {
 // @Router       /api/content-bank/assets/url [post]
 func (h *AssetsHandler) CreateURL(c *fiber.Ctx) error {
 	var req createURLAssetRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 	normalized, host, err := normalizeSourceURL(req.URL)
 	if err != nil {
@@ -830,10 +824,7 @@ func normalizeSourceURL(raw string) (normalized, host string, err error) {
 func (h *AssetsHandler) Get(c *fiber.Ctx) error {
 	asset, err := h.repo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "asset not found")
-		}
-		return err
+		return notFound(err, "asset not found")
 	}
 	h.decorateFile(asset)
 	h.decorateImages(c.Context(), asset)
@@ -856,19 +847,13 @@ func (h *AssetsHandler) Get(c *fiber.Ctx) error {
 // @Router       /api/content-bank/assets/{id} [put]
 func (h *AssetsHandler) Update(c *fiber.Ctx) error {
 	var req updateAssetRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 
 	asset, err := h.repo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "asset not found")
-		}
-		return err
+		return notFound(err, "asset not found")
 	}
 
 	// Content is required for document assets but optional for images, whose
@@ -945,11 +930,8 @@ type bulkTagRequest struct {
 // @Router       /api/content-bank/assets/tags [post]
 func (h *AssetsHandler) BulkTag(c *fiber.Ctx) error {
 	var req bulkTagRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 	if len(req.Add) == 0 && len(req.Remove) == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "add or remove must name at least one tag")

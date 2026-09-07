@@ -241,10 +241,7 @@ func (h *PostAttachmentsHandler) Get(c *fiber.Ctx) error {
 	}
 	att, err := h.repo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "attachment not found")
-		}
-		return err
+		return notFound(err, "attachment not found")
 	}
 	if att.PostID != post.ID {
 		return fiber.NewError(fiber.StatusNotFound, "attachment not found")
@@ -538,10 +535,7 @@ func (h *PostAttachmentsHandler) Update(c *fiber.Ctx) error {
 
 	att, err := h.repo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "attachment not found")
-		}
-		return err
+		return notFound(err, "attachment not found")
 	}
 	if att.PostID != post.ID {
 		return fiber.NewError(fiber.StatusNotFound, "attachment not found")
@@ -729,10 +723,7 @@ func (h *PostAttachmentsHandler) Delete(c *fiber.Ctx) error {
 
 	att, err := h.repo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "attachment not found")
-		}
-		return err
+		return notFound(err, "attachment not found")
 	}
 	if att.PostID != post.ID {
 		return fiber.NewError(fiber.StatusNotFound, "attachment not found")

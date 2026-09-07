@@ -149,11 +149,8 @@ func (h *InvitationsHandler) Create(c *fiber.Ctx) error {
 	}
 
 	var req createInvitationRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 	email := repository.NormalizeEmail(req.Email)
 	role := req.Role
@@ -410,11 +407,8 @@ func (h *InvitationsHandler) Accept(c *fiber.Ctx) error {
 	}
 
 	var req acceptInvitationRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 
 	// Peek the invite WITHOUT consuming, to choose the path: a new email needs

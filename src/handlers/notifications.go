@@ -3,7 +3,6 @@ package handlers
 import (
 	"bufio"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -180,10 +179,7 @@ func (h *NotificationsHandler) Patch(c *fiber.Ctx) error {
 	}
 	n, err := h.repo.Get(c.Context(), s.UserID, c.Params("id"))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "notification not found")
-		}
-		return err
+		return notFound(err, "notification not found")
 	}
 	return c.JSON(n)
 }

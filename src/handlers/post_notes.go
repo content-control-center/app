@@ -126,11 +126,8 @@ func (h *PostNotesHandler) Create(c *fiber.Ctx) error {
 	}
 
 	var req createNoteRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 
 	session := c.Locals("session").(*models.Session)

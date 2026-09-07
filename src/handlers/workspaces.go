@@ -115,11 +115,8 @@ func (h *WorkspacesHandler) Create(c *fiber.Ctx) error {
 	session := c.Locals("session").(*models.Session)
 
 	var req createWorkspaceRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 
 	// The membership is created for the caller's account, so it inherits the
@@ -247,10 +244,7 @@ func (h *WorkspacesHandler) Delete(c *fiber.Ctx) error {
 	// the existence of workspaces the account can't see (CON-97 §12.3).
 	membership, err := h.userRepo.GetMembership(c.Context(), session.AccountID, targetID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "workspace not found")
-		}
-		return err
+		return notFound(err, "workspace not found")
 	}
 	if membership.Role != models.RoleOwner {
 		return fiber.NewError(fiber.StatusForbidden, "only an owner can delete a workspace")

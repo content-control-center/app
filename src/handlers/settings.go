@@ -1,9 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
-	"errors"
-
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/ogen-app/ogen/src/models"
@@ -67,10 +64,7 @@ func (h *SettingsHandler) List(c *fiber.Ctx) error {
 func (h *SettingsHandler) Get(c *fiber.Ctx) error {
 	setting, err := h.repo.GetByKey(c.Context(), c.Params("key"))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "setting not found")
-		}
-		return err
+		return notFound(err, "setting not found")
 	}
 	return c.JSON(setting)
 }
@@ -90,11 +84,8 @@ func (h *SettingsHandler) Get(c *fiber.Ctx) error {
 // @Router       /api/settings/{key} [put]
 func (h *SettingsHandler) Upsert(c *fiber.Ctx) error {
 	var req upsertSettingRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 
 	key := c.Params("key")

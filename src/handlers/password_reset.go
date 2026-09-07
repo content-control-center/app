@@ -108,11 +108,8 @@ type passwordResetRequest struct {
 // @Router       /api/password-reset [post]
 func (h *PasswordResetHandler) Request(c *fiber.Ctx) error {
 	var req passwordResetRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 	email := repository.NormalizeEmail(req.Email)
 

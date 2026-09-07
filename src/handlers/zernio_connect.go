@@ -239,11 +239,8 @@ func (h *ZernioHandler) SelectPendingConnection(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusConflict, "integration_disabled")
 	}
 	var req selectConnectionRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 	sess, err := h.loadPendingForTenant(c)
 	if err != nil {

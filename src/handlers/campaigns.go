@@ -338,11 +338,8 @@ func (h *CampaignsHandler) List(c *fiber.Ctx) error {
 // @Router       /api/campaigns [post]
 func (h *CampaignsHandler) Create(c *fiber.Ctx) error {
 	var req campaignRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 	status := req.toStatus()
 	if !validStatuses[status] {
@@ -424,10 +421,7 @@ func (h *CampaignsHandler) Create(c *fiber.Ctx) error {
 func (h *CampaignsHandler) Get(c *fiber.Ctx) error {
 	campaign, err := h.repo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "campaign not found")
-		}
-		return err
+		return notFound(err, "campaign not found")
 	}
 	return c.JSON(campaign)
 }
@@ -448,11 +442,8 @@ func (h *CampaignsHandler) Get(c *fiber.Ctx) error {
 // @Router       /api/campaigns/{id} [put]
 func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 	var req campaignRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 	status := req.toStatus()
 	if !validStatuses[status] {
@@ -476,10 +467,7 @@ func (h *CampaignsHandler) Update(c *fiber.Ctx) error {
 
 	campaign, err := h.repo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "campaign not found")
-		}
-		return err
+		return notFound(err, "campaign not found")
 	}
 
 	// Snapshot the fields we emit change-events for before overwriting them.
@@ -582,10 +570,7 @@ func (h *CampaignsHandler) AddAssets(c *fiber.Ctx) error {
 	}
 	campaign, err := h.repo.AddAssetIDs(c.Context(), c.Params("id"), req.AssetIDs)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "campaign not found")
-		}
-		return err
+		return notFound(err, "campaign not found")
 	}
 	h.recordActivity(c, activity.CategoryCampaign, "campaign_updated",
 		activity.WithEntity("campaign", campaign.ID),
@@ -613,10 +598,7 @@ func (h *CampaignsHandler) AddAssets(c *fiber.Ctx) error {
 func (h *CampaignsHandler) RemoveAsset(c *fiber.Ctx) error {
 	campaign, err := h.repo.RemoveAssetID(c.Context(), c.Params("id"), c.Params("assetId"))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "campaign not found")
-		}
-		return err
+		return notFound(err, "campaign not found")
 	}
 	h.recordActivity(c, activity.CategoryCampaign, "campaign_updated",
 		activity.WithEntity("campaign", campaign.ID),
@@ -723,10 +705,7 @@ func (h *CampaignsHandler) GenerateDraft(c *fiber.Ctx) error {
 
 	campaign, err := h.repo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "campaign not found")
-		}
-		return err
+		return notFound(err, "campaign not found")
 	}
 
 	session := c.Locals("session").(*models.Session)
@@ -827,10 +806,7 @@ func (h *CampaignsHandler) EnrichBrief(c *fiber.Ctx) error {
 
 	campaign, err := h.repo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "campaign not found")
-		}
-		return err
+		return notFound(err, "campaign not found")
 	}
 
 	session := c.Locals("session").(*models.Session)
@@ -915,11 +891,8 @@ func (h *CampaignsHandler) Assistant(c *fiber.Ctx) error {
 	}
 
 	var req assistantRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 
 	c.Set("Content-Type", "text/event-stream")

@@ -132,11 +132,8 @@ type signupResponse struct {
 // @Router       /api/tenants [post]
 func (h *TenantsHandler) Signup(c *fiber.Ctx) error {
 	var req signupRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 
 	// Throttle mass signup per client IP (CON-162). Every well-formed attempt is
@@ -312,19 +309,13 @@ func (h *TenantsHandler) Update(c *fiber.Ctx) error {
 	}
 
 	var req updateTenantRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 
 	tenant, err := h.tenantRepo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "tenant not found")
-		}
-		return err
+		return notFound(err, "tenant not found")
 	}
 
 	tenant.Name = req.Name
@@ -353,10 +344,7 @@ func (h *TenantsHandler) callerTenantID(c *fiber.Ctx) string {
 func (h *TenantsHandler) respondTenant(c *fiber.Ctx, id string) error {
 	tenant, err := h.tenantRepo.GetByID(c.Context(), id)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "tenant not found")
-		}
-		return err
+		return notFound(err, "tenant not found")
 	}
 	return c.JSON(tenant)
 }

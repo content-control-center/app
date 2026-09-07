@@ -1,8 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
-	"errors"
 	"strings"
 	"time"
 
@@ -46,10 +44,7 @@ func (h *AnalyticsHandler) PostDetail(c *fiber.Ctx) error {
 
 	post, err := h.posts.GetByID(ctx, c.Params("post_id"))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "post not found")
-		}
-		return err
+		return notFound(err, "post not found")
 	}
 	// Analytics is defined only for posts published through a publisher; mirror
 	// the CON-93 machine-readable 409 so the client can tell "wrong kind of post"

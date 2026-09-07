@@ -2,8 +2,6 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"strings"
 	"time"
 
@@ -133,11 +131,8 @@ func (h *PlatformsHandler) List(c *fiber.Ctx) error {
 // @Router       /api/platforms [post]
 func (h *PlatformsHandler) Create(c *fiber.Ctx) error {
 	var req platformRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 
 	id, err := models.NewID()
@@ -173,10 +168,7 @@ func (h *PlatformsHandler) Create(c *fiber.Ctx) error {
 func (h *PlatformsHandler) Get(c *fiber.Ctx) error {
 	platform, err := h.repo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "platform not found")
-		}
-		return err
+		return notFound(err, "platform not found")
 	}
 	views, err := h.collectPublisherViews(c.Context(), []models.Platform{*platform})
 	if err != nil {
@@ -214,19 +206,13 @@ func ensurePublishersSlice(s []publisherView) []publisherView {
 // @Router       /api/platforms/{id} [put]
 func (h *PlatformsHandler) Update(c *fiber.Ctx) error {
 	var req platformRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 
 	platform, err := h.repo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "platform not found")
-		}
-		return err
+		return notFound(err, "platform not found")
 	}
 
 	platform.Name = req.Name
@@ -261,10 +247,7 @@ func (h *PlatformsHandler) Update(c *fiber.Ctx) error {
 func (h *PlatformsHandler) PostTypeRules(c *fiber.Ctx) error {
 	platform, err := h.repo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "platform not found")
-		}
-		return err
+		return notFound(err, "platform not found")
 	}
 	return c.JSON(platforms.ResolvePostTypeRules(platform))
 }

@@ -1,8 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
-	"errors"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -65,11 +63,8 @@ func (h *TagsHandler) List(c *fiber.Ctx) error {
 // @Router       /api/tags [post]
 func (h *TagsHandler) Create(c *fiber.Ctx) error {
 	var req tagRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 
 	session := c.Locals("session").(*models.Session)
@@ -105,10 +100,7 @@ func (h *TagsHandler) Create(c *fiber.Ctx) error {
 func (h *TagsHandler) Get(c *fiber.Ctx) error {
 	tag, err := h.repo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "tag not found")
-		}
-		return err
+		return notFound(err, "tag not found")
 	}
 	return c.JSON(tag)
 }
@@ -129,19 +121,13 @@ func (h *TagsHandler) Get(c *fiber.Ctx) error {
 // @Router       /api/tags/{id} [put]
 func (h *TagsHandler) Update(c *fiber.Ctx) error {
 	var req tagRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 
 	tag, err := h.repo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "tag not found")
-		}
-		return err
+		return notFound(err, "tag not found")
 	}
 
 	tag.Name = req.Name

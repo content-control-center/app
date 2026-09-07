@@ -113,11 +113,8 @@ type createSessionRequest struct {
 // @Router       /api/sessions [post]
 func (h *SessionsHandler) Create(c *fiber.Ctx) error {
 	var req createSessionRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
+	if err := bindAndValidate(c, &req); err != nil {
+		return err
 	}
 
 	// Throttle before any credential work. The IP budget is checked first so a
