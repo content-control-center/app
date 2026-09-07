@@ -574,8 +574,10 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// registered BEFORE it so the static /summaries route wins over /:id.
 	handlers.NewCampaignReadHandler(campaignOverviewSvc, campaignSummariesSvc, auth).Register(app)
 	campaignsHandler := handlers.NewCampaignsHandler(r.campaignRepo, r.campaignTypeRepo, auth, gkRuntime.GenerateDraft, gkRuntime.IsAnthropicAvailable, gkRuntime.EnrichBrief, r.campaignMessageRepo, gkRuntime.RunCampaignAssistant)
-	campaignsHandler.SetGeneratePosts(gkRuntime.GeneratePosts, cfg.GeneratePostsMax)
-	campaignsHandler.SetConsistency(gkRuntime.CheckBrief, gkRuntime.CheckPosts)
+	// CON-114/CON-116: targeted generation + consistency reviews are a focused
+	// handler (CON-291 split out of CampaignsHandler), sharing the Anthropic-key
+	// readiness gate and the same flow callbacks the assistant uses.
+	handlers.NewCampaignGenerationHandler(r.campaignRepo, gkRuntime.GeneratePosts, cfg.GeneratePostsMax, gkRuntime.CheckBrief, gkRuntime.CheckPosts, gkRuntime.IsAnthropicAvailable, activityWiring.recorder, auth).Register(app)
 	campaignsHandler.SetActivityRecorder(activityWiring.recorder)
 	// CON-245: validate campaign brand_voice_id/brand_audience_id against the tenant.
 	campaignsHandler.SetBrandRepo(r.brandRepo)

@@ -66,6 +66,10 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 		// app route-level specs; registered before CampaignsHandler so /summaries
 		// wins over /:id.
 		handlers.NewCampaignReadHandler(nil, nil, auth).Register(app)
+		// CON-291: generate-posts + brief/posts-review live on the generation
+		// handler. Nil deps so the routes exist (401 unauthenticated) for the
+		// default-app route-level specs.
+		handlers.NewCampaignGenerationHandler(campaignRepo, nil, 0, nil, nil, nil, nil, auth).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
 		handlers.NewTagsHandler(tagRepo, auth).Register(app)
 
@@ -1870,8 +1874,8 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 			handlers.NewUsersHandler(db, uRepo, repository.NewAccountRepository(db), setRepo, a2).Register(a)
 			handlers.NewSessionsHandler(uRepo, repository.NewAccountRepository(db), sRepo, testCookieName, false).Register(a)
 			ch := handlers.NewCampaignsHandler(cRepo, ctRepo, a2, nil, nil, nil, nil, nil)
-			ch.SetGeneratePosts(stub, 10)
 			ch.Register(a)
+			handlers.NewCampaignGenerationHandler(cRepo, stub, 10, nil, nil, nil, nil, a2).Register(a)
 			return a
 		}
 
@@ -2023,8 +2027,8 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 			handlers.NewUsersHandler(db, uRepo, repository.NewAccountRepository(db), setRepo, a2).Register(a)
 			handlers.NewSessionsHandler(uRepo, repository.NewAccountRepository(db), sRepo, testCookieName, false).Register(a)
 			ch := handlers.NewCampaignsHandler(cRepo, ctRepo, a2, nil, nil, nil, nil, nil)
-			ch.SetConsistency(checkBrief, checkPosts)
 			ch.Register(a)
+			handlers.NewCampaignGenerationHandler(cRepo, nil, 0, checkBrief, checkPosts, nil, nil, a2).Register(a)
 			return a
 		}
 
