@@ -23,6 +23,7 @@ import (
 
 	"github.com/uptrace/bun"
 
+	"github.com/ogen-app/ogen/src/accountselect"
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
@@ -425,36 +426,28 @@ func (s *Service) checkAccountSelection(ctx context.Context, post *models.Post, 
 		return nil // no profile yet — can't validate here; submit worker will.
 	}
 
-	// Explicit selection: verify it is connected and on the right platform.
-	if post.SocialAccountID != "" {
-		acc, err := s.accounts.GetActive(ctx, profileID, post.SocialAccountID)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return &AccountSelectionError{Reason: "account_unavailable", Platform: zernioPlatform}
-			}
-			return err
-		}
-		if acc.Platform != zernioPlatform {
-			return &AccountSelectionError{Reason: "account_platform_mismatch", Platform: zernioPlatform}
-		}
-		return nil
-	}
-
-	// No choice made: require one only when the platform is ambiguous (2+).
-	// 0 or 1 account falls through — the submit worker auto-selects the one
-	// or terminally fails "no_account_connected", preserving prior behaviour.
-	accounts, err := s.accounts.ListActiveByPlatform(ctx, profileID, zernioPlatform)
+	res, err := accountselect.Resolve(ctx, s.accounts, profileID, post, zernioPlatform)
 	if err != nil {
 		return err
 	}
-	if len(accounts) >= 2 {
-		candidates := make([]AccountCandidate, 0, len(accounts))
-		for _, a := range accounts {
-			candidates = append(candidates, AccountCandidate{ID: a.ID, Username: a.Username, DisplayName: a.DisplayName})
+	// The gate only blocks the schedule for the cases the user must fix now: a
+	// bad explicit account, or an ambiguous 2+. Resolved and NoAccount fall
+	// through (return nil) — the submit worker auto-selects the one or terminally
+	// fails "no_account_connected", preserving prior behaviour.
+	switch res.Outcome {
+	case accountselect.Unavailable:
+		return &AccountSelectionError{Reason: "account_unavailable", Platform: zernioPlatform}
+	case accountselect.PlatformMismatch:
+		return &AccountSelectionError{Reason: "account_platform_mismatch", Platform: zernioPlatform}
+	case accountselect.Ambiguous:
+		candidates := make([]AccountCandidate, 0, len(res.Candidates))
+		for _, c := range res.Candidates {
+			candidates = append(candidates, AccountCandidate{ID: c.ID, Username: c.Username, DisplayName: c.DisplayName})
 		}
 		return &AccountSelectionError{Reason: "account_selection_required", Platform: zernioPlatform, Candidates: candidates}
+	default:
+		return nil
 	}
-	return nil
 }
 
 // persist writes the post row, every supplied log entry, and (when

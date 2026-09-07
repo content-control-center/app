@@ -9,6 +9,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/ogen-app/ogen/src/accountselect"
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/models"
@@ -236,35 +237,23 @@ func (h *PostVerificationHandler) resolveExternalAccountID(c *fiber.Ctx, post *m
 	if h.socialAccountRepo == nil {
 		return "", true, fiber.NewError(fiber.StatusServiceUnavailable, "social accounts are not available")
 	}
-	// Explicit account on the post wins; verify it's connected and on-platform.
-	if post.SocialAccountID != "" {
-		acc, err := h.socialAccountRepo.GetActive(c.Context(), profileID, post.SocialAccountID)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return "", true, writeAccountSelectionError(c, &schedule.AccountSelectionError{Reason: "account_unavailable", Platform: zernioPlatform})
-			}
-			return "", true, err
-		}
-		if acc.Platform != zernioPlatform {
-			return "", true, writeAccountSelectionError(c, &schedule.AccountSelectionError{Reason: "account_platform_mismatch", Platform: zernioPlatform})
-		}
-		return acc.ID, false, nil
-	}
-	// No explicit choice: auto-select the single account, require a choice at
-	// 2+, terminally fail at 0 (CON-150).
-	accounts, err := h.socialAccountRepo.ListActiveByPlatform(c.Context(), profileID, zernioPlatform)
+	res, err := accountselect.Resolve(c.Context(), h.socialAccountRepo, profileID, post, zernioPlatform)
 	if err != nil {
 		return "", true, err
 	}
-	switch len(accounts) {
-	case 0:
+	switch res.Outcome {
+	case accountselect.Resolved:
+		return res.AccountID, false, nil
+	case accountselect.Unavailable:
+		return "", true, writeAccountSelectionError(c, &schedule.AccountSelectionError{Reason: "account_unavailable", Platform: zernioPlatform})
+	case accountselect.PlatformMismatch:
+		return "", true, writeAccountSelectionError(c, &schedule.AccountSelectionError{Reason: "account_platform_mismatch", Platform: zernioPlatform})
+	case accountselect.NoAccount:
 		return "", true, c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "no_account_connected", "platform": zernioPlatform})
-	case 1:
-		return accounts[0].ID, false, nil
-	default:
-		candidates := make([]schedule.AccountCandidate, 0, len(accounts))
-		for _, a := range accounts {
-			candidates = append(candidates, schedule.AccountCandidate{ID: a.ID, Username: a.Username, DisplayName: a.DisplayName})
+	default: // Ambiguous
+		candidates := make([]schedule.AccountCandidate, 0, len(res.Candidates))
+		for _, cc := range res.Candidates {
+			candidates = append(candidates, schedule.AccountCandidate{ID: cc.ID, Username: cc.Username, DisplayName: cc.DisplayName})
 		}
 		return "", true, writeAccountSelectionError(c, &schedule.AccountSelectionError{Reason: "account_selection_required", Platform: zernioPlatform, Candidates: candidates})
 	}
