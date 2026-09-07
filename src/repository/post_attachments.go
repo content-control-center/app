@@ -23,6 +23,10 @@ type PostAttachmentRepository interface {
 	CreateAtNextPosition(ctx context.Context, att *models.PostAttachment) error
 	UpdatePosition(ctx context.Context, id string, position int) error
 	UpdateAltText(ctx context.Context, id string, altText string) error
+	// UpdateSegmentIndex reassigns which thread segment an attachment belongs
+	// to (CON-284). A nil segmentIndex clears it (detach from any segment,
+	// i.e. back to a non-thread attachment).
+	UpdateSegmentIndex(ctx context.Context, id string, segmentIndex *int) error
 	// ReorderPositions renumbers the post's attachments to 0..n-1 to match
 	// orderedIDs, in one transaction, without tripping UNIQUE(post_id, position)
 	// (CON-124). Callers must pass every current attachment of the post exactly
@@ -118,14 +122,17 @@ func (r *postAttachmentRepository) CreateAtNextPosition(ctx context.Context, att
 		if err := tx.NewRaw(`SELECT 1 FROM posts WHERE id = ? AND tenant_id = ? FOR UPDATE`, att.PostID, tid).Scan(ctx, &locked); err != nil {
 			return err
 		}
+		// segment_index (CON-284) is NULL for non-thread attachments; a nil
+		// *int binds as NULL, a non-nil pointer as the 0-based segment.
 		const q = `INSERT INTO post_attachments
-			(id, post_id, tenant_id, position, mime_type, size_bytes, width, height,
+			(id, post_id, tenant_id, position, segment_index, mime_type, size_bytes, width, height,
 			 is_animated, page_count, checksum_sha256, s3_key, thumbnail_s3_key, created_by)
 			VALUES (?, ?, ?, COALESCE((SELECT MAX(position)+1 FROM post_attachments WHERE post_id=? AND tenant_id=?), 0),
-			        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			RETURNING position`
 		return tx.NewRaw(q,
 			att.ID, att.PostID, tid, att.PostID, tid,
+			att.SegmentIndex,
 			att.MimeType, att.SizeBytes, att.Width, att.Height,
 			att.IsAnimated, att.PageCount, att.ChecksumSHA256, att.S3Key, thumb, att.CreatedBy,
 		).Scan(ctx, &att.Position)
@@ -145,6 +152,17 @@ func (r *postAttachmentRepository) UpdateAltText(ctx context.Context, id string,
 	_, err := r.db.NewUpdate().
 		Model((*models.PostAttachment)(nil)).
 		Set("alt_text = ?", altText).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
+func (r *postAttachmentRepository) UpdateSegmentIndex(ctx context.Context, id string, segmentIndex *int) error {
+	// bun binds a nil *int as NULL, a non-nil pointer as the value — so this
+	// both sets and clears segment_index (CON-284).
+	_, err := r.db.NewUpdate().
+		Model((*models.PostAttachment)(nil)).
+		Set("segment_index = ?", segmentIndex).
 		Where("id = ?", id).
 		Exec(ctx)
 	return err

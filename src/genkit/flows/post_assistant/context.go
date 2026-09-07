@@ -551,10 +551,8 @@ func schedulingReadinessReasons(ctx context.Context, post *models.Post, repos Po
 			atts = a
 		}
 	}
-	errsByPlatform := platforms.ValidateForPublish(atts, []*models.Platform{platform})
-	if typeErrs := platforms.ValidatePostType(post, platform, atts); len(typeErrs) > 0 {
-		errsByPlatform[platform.ID] = append(errsByPlatform[platform.ID], typeErrs...)
-	}
+	// CON-284: the per-segment gate for threads, whole-post gate otherwise.
+	errsByPlatform := platforms.ValidatePublishReadiness(post, platform, atts)
 	var reasons []string
 	for _, errs := range errsByPlatform {
 		for _, e := range errs {

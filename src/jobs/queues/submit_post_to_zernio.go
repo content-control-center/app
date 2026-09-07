@@ -169,20 +169,44 @@ func (p *SubmitPostProcessor) Process(ctx context.Context, task SubmitPostTask) 
 	// schedule in the operator's zone. Defaults to UTC when unset.
 	_, tzName := settings.WorkspaceTimezone(ctx, p.Deps.SettingRepo)
 
-	// CON-122: upload the post's attachments to Zernio and reference them as
-	// mediaItems. A failure here is transient (network / Zernio media endpoint)
-	// so River retries; media isn't lost because the post stays Scheduled.
-	mediaItems, mediaErr := p.buildMediaItems(ctx, post)
-	if mediaErr != nil {
-		jobs.ZernioSubmitRetried.Add(1)
-		appendLog(ctx, p.Deps, post.ID, models.PostLogEventTaskRetried, post.Status, post.Status,
-			"transient error uploading media to Zernio; River will retry", `{"error":"`+mediaErr.Error()+`"}`)
-		return mediaErr
+	// CON-122/CON-284: upload the post's attachments to Zernio and reference
+	// them as mediaItems. A thread carries its media inside per-segment
+	// threadItems (built below); an ordinary post carries a flat top-level
+	// mediaItems array. Either upload failure is transient (network / Zernio
+	// media endpoint) so River retries; media isn't lost because the post
+	// stays Scheduled.
+	variant := zernio.PlatformVariant{Platform: supported.ZernioID, AccountID: accountID}
+	var mediaItems []map[string]any
+	if post.IsThread() {
+		threadItems, tErr := p.buildThreadItems(ctx, post)
+		if tErr != nil {
+			jobs.ZernioSubmitRetried.Add(1)
+			appendLog(ctx, p.Deps, post.ID, models.PostLogEventTaskRetried, post.Status, post.Status,
+				"transient error uploading thread media to Zernio; River will retry", `{"error":"`+tErr.Error()+`"}`)
+			return tErr
+		}
+		variant.PlatformSpecificData = &zernio.PlatformSpecificData{ThreadItems: threadItems}
+	} else {
+		items, mediaErr := p.buildMediaItems(ctx, post)
+		if mediaErr != nil {
+			jobs.ZernioSubmitRetried.Add(1)
+			appendLog(ctx, p.Deps, post.ID, models.PostLogEventTaskRetried, post.Status, post.Status,
+				"transient error uploading media to Zernio; River will retry", `{"error":"`+mediaErr.Error()+`"}`)
+			return mediaErr
+		}
+		mediaItems = items
 	}
 
 	req := zernio.SubmitRequest{
+		// For a thread, Content mirrors the root segment (post.Content already
+		// holds it): it's kept top-level for the ZernioSubmit log and CON-129
+		// dedupe recovery (which matches on req.Content = the root), while the
+		// chain rides in Platforms[0].PlatformSpecificData.ThreadItems and
+		// top-level MediaItems stays empty. Zernio publishes from threadItems
+		// when present; confirm against docs.zernio.com during rollout that it
+		// does NOT also post the top-level content (if it does, blank it here).
 		Content:      post.Content,
-		Platforms:    []zernio.PlatformVariant{{Platform: supported.ZernioID, AccountID: accountID}},
+		Platforms:    []zernio.PlatformVariant{variant},
 		ScheduledFor: when,
 		Timezone:     tzName,
 		MediaItems:   mediaItems,
@@ -346,6 +370,49 @@ func (p *SubmitPostProcessor) buildMediaItems(ctx context.Context, post *models.
 			return nil, err
 		}
 		items = append(items, item)
+	}
+	return items, nil
+}
+
+// buildThreadItems builds the ordered per-segment payload for a native thread
+// (CON-284): one ThreadItem per thread_segment (item 0 = root), each carrying
+// its own text and its own media. Attachments are grouped by segment_index and
+// uploaded to Zernio (presign → PUT) exactly like buildMediaItems, preserving
+// position order within a segment. Nil storage/repo ⇒ a text-only thread. An
+// attachment with a missing / out-of-range segment_index can't be placed, so it
+// is skipped with a warning (the publish gate rejects those before submit; this
+// is defence in depth).
+func (p *SubmitPostProcessor) buildThreadItems(ctx context.Context, post *models.Post) ([]zernio.ThreadItem, error) {
+	items := make([]zernio.ThreadItem, len(post.ThreadSegments))
+	for i := range post.ThreadSegments {
+		items[i] = zernio.ThreadItem{Content: post.ThreadSegments[i].Content}
+	}
+	if p.Deps.Storage == nil || p.Deps.PostAttachmentRepo == nil {
+		return items, nil
+	}
+	atts, err := p.Deps.PostAttachmentRepo.ListByPostID(ctx, post.ID)
+	if err != nil {
+		return nil, fmt.Errorf("submit: list attachments: %w", err)
+	}
+	for i := range atts {
+		att := atts[i]
+		seg := att.SegmentIndex
+		if seg == nil || *seg < 0 || *seg >= len(items) {
+			slog.WarnContext(ctx, "skipping thread attachment with missing/out-of-range segment_index",
+				logging.AttrComponent, "jobs.submit", "post_id", post.ID, "attachment_id", att.ID)
+			continue
+		}
+		mediaType := zernio.MediaType(att.MimeType)
+		if mediaType == "" {
+			slog.WarnContext(ctx, "skipping attachment: unsupported media type for Zernio",
+				logging.AttrComponent, "jobs.submit", "post_id", post.ID, "attachment_id", att.ID, "mime", att.MimeType)
+			continue
+		}
+		item, err := p.uploadMedia(ctx, &att, mediaType)
+		if err != nil {
+			return nil, err
+		}
+		items[*seg].MediaItems = append(items[*seg].MediaItems, item)
 	}
 	return items, nil
 }

@@ -83,3 +83,62 @@ func TestMutatesLockedContent(t *testing.T) {
 		t.Error("changing only non-locked fields (status/cta/notes/account) must not count as a content mutation")
 	}
 }
+
+// CON-284: a thread's segment list is locked content too. A faithful mirror is
+// a no-op; editing or adding a segment trips the lock. Pure logic — no DB.
+func TestMutatesLockedContentThread(t *testing.T) {
+	post := &models.Post{
+		PlatformPostType: models.PostTypeThread,
+		Content:          "root",
+		ThreadSegments:   models.ThreadSegments{{Content: "root"}, {Content: "reply"}},
+	}
+	mirror := postRequest{
+		PlatformPostType: post.PlatformPostType,
+		Content:          post.Content,
+		ThreadSegments:   post.ThreadSegments,
+	}
+	if mirror.mutatesLockedContent(post) {
+		t.Fatal("mirroring the thread exactly must not count as a mutation")
+	}
+
+	edited := mirror
+	edited.ThreadSegments = models.ThreadSegments{{Content: "root"}, {Content: "changed"}}
+	if !edited.mutatesLockedContent(post) {
+		t.Error("editing a thread segment must count as a locked-content mutation")
+	}
+
+	added := mirror
+	added.ThreadSegments = models.ThreadSegments{{Content: "root"}, {Content: "reply"}, {Content: "third"}}
+	if !added.mutatesLockedContent(post) {
+		t.Error("adding a thread segment must count as a locked-content mutation")
+	}
+}
+
+// CON-284: apply restamps Content from the root segment on a thread write, and
+// demotion (empty segments) clears the segments while keeping the applied body.
+func TestApplyThreadSegments(t *testing.T) {
+	post := &models.Post{}
+	// A thread write authors segments; Content is sent empty and derived.
+	req := postRequest{
+		PlatformPostType: models.PostTypeThread,
+		Content:          "",
+		ThreadSegments:   models.ThreadSegments{{Content: "root"}, {Content: "reply"}},
+	}
+	req.apply(post, models.PostStatusDraft, models.CTATypeNone)
+	if post.Content != "root" {
+		t.Errorf("thread apply: Content = %q, want root mirror %q", post.Content, "root")
+	}
+	if len(post.ThreadSegments) != 2 {
+		t.Fatalf("thread apply: segments = %d, want 2", len(post.ThreadSegments))
+	}
+
+	// Demotion to a single-message type: segments cleared, body kept.
+	demote := postRequest{PlatformPostType: "text-post", Content: "just this"}
+	demote.apply(post, models.PostStatusDraft, models.CTATypeNone)
+	if len(post.ThreadSegments) != 0 {
+		t.Errorf("demote: segments = %d, want 0", len(post.ThreadSegments))
+	}
+	if post.Content != "just this" {
+		t.Errorf("demote: Content = %q, want %q", post.Content, "just this")
+	}
+}

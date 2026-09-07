@@ -81,6 +81,15 @@ func ValidatePostType(post *models.Post, p *models.Platform, atts []models.PostA
 		return nil
 	}
 
+	// CON-284: a threaded post is validated per segment (count + per-segment
+	// char limit + per-segment media + segment_index integrity), not as one
+	// whole message. Its structure lives in ThreadSegments + the attachments'
+	// segment_index, which the single-message checks below can't express — so
+	// the thread path replaces them entirely.
+	if post.PlatformPostType == models.PostTypeThread {
+		return validateThread(post, p, atts)
+	}
+
 	var errs []ValidationError
 
 	if rule.RequiresContent && strings.TrimSpace(post.Content) == "" {
@@ -172,6 +181,152 @@ func ValidatePostType(post *models.Post, p *models.Platform, atts []models.PostA
 	return errs
 }
 
+// MaxThreadSegments caps how many messages one thread post may carry (CON-284
+// §6.5). A generous default; promote it to a platform override if X and Threads
+// ever diverge on the limit.
+const MaxThreadSegments = 25
+
+// validateThread runs the CON-284 per-segment publish rules for a thread post,
+// replacing the whole-post content/attachment checks that can't express a
+// thread's structure:
+//   - segment count is 2..MaxThreadSegments (a single message is an ordinary post);
+//   - each segment carries non-empty content within the platform's per-segment
+//     char limit (X 280 / Threads 500 — "thread" has no per-type override, so the
+//     platform default applies);
+//   - every attachment names a valid segment via segment_index, and the media
+//     within each segment obeys the platform's kind/count rules.
+func validateThread(post *models.Post, p *models.Platform, atts []models.PostAttachment) []ValidationError {
+	var errs []ValidationError
+	segs := post.ThreadSegments
+	n := len(segs)
+
+	switch {
+	case n < 2:
+		errs = append(errs, ValidationError{
+			Platform: p.ID,
+			Rule:     RuleThreadSegmentCount,
+			Expected: ">= 2 messages",
+			Actual:   strconv.Itoa(n),
+			Message:  "a thread needs at least 2 messages",
+		})
+	case n > MaxThreadSegments:
+		errs = append(errs, ValidationError{
+			Platform: p.ID,
+			Rule:     RuleThreadSegmentCount,
+			Expected: fmt.Sprintf("<= %d messages", MaxThreadSegments),
+			Actual:   strconv.Itoa(n),
+			Message:  fmt.Sprintf("a thread allows at most %d messages; got %d", MaxThreadSegments, n),
+		})
+	}
+
+	limit := p.TextConstraints.ContentLimitFor(post.PlatformPostType)
+	for i := range segs {
+		seg := i
+		if strings.TrimSpace(segs[i].Content) == "" {
+			errs = append(errs, ValidationError{
+				Platform: p.ID,
+				Rule:     RuleRequiresContent,
+				Expected: "non-empty content",
+				Actual:   "empty",
+				Message:  fmt.Sprintf("thread message %d is empty", i+1),
+				Segment:  &seg,
+			})
+			continue
+		}
+		if limit > 0 {
+			if c := utf8.RuneCountInString(segs[i].Content); c > limit {
+				errs = append(errs, ValidationError{
+					Platform: p.ID,
+					Rule:     RuleMaxContentChars,
+					Expected: fmt.Sprintf("<= %d characters", limit),
+					Actual:   strconv.Itoa(c),
+					Message:  fmt.Sprintf("thread message %d allows up to %d characters; content is %d", i+1, limit, c),
+					Segment:  &seg,
+				})
+			}
+		}
+	}
+
+	errs = append(errs, validateThreadAttachments(p, atts, n)...)
+	return errs
+}
+
+// validateThreadAttachments checks segment_index integrity on every attachment
+// of a thread post, then runs the platform's media rules within each segment
+// (reusing ValidatePostAttachments scoped to the segment's media). Iterates
+// segments in order so the returned errors are stable.
+func validateThreadAttachments(p *models.Platform, atts []models.PostAttachment, segCount int) []ValidationError {
+	var errs []ValidationError
+	bySegment := map[int][]models.PostAttachment{}
+	for i := range atts {
+		att := atts[i]
+		if att.SegmentIndex == nil {
+			errs = append(errs, ValidationError{
+				Platform:     p.ID,
+				AttachmentID: att.ID,
+				Rule:         RuleThreadSegmentIndex,
+				Expected:     "a segment_index",
+				Actual:       "null",
+				Message:      "attachment on a thread post must name its segment (segment_index)",
+			})
+			continue
+		}
+		idx := *att.SegmentIndex
+		if idx < 0 || idx >= segCount {
+			seg := idx
+			errs = append(errs, ValidationError{
+				Platform:     p.ID,
+				AttachmentID: att.ID,
+				Rule:         RuleThreadSegmentIndex,
+				Expected:     fmt.Sprintf("segment_index in [0, %d]", max(segCount-1, 0)),
+				Actual:       strconv.Itoa(idx),
+				Message:      fmt.Sprintf("attachment segment_index %d is out of range for a %d-message thread", idx, segCount),
+				Segment:      &seg,
+			})
+			continue
+		}
+		bySegment[idx] = append(bySegment[idx], att)
+	}
+	for idx := 0; idx < segCount; idx++ {
+		segAtts := bySegment[idx]
+		if len(segAtts) == 0 {
+			continue
+		}
+		seg := idx
+		for _, e := range ValidatePostAttachments(segAtts, p) {
+			e.Segment = &seg
+			errs = append(errs, e)
+		}
+	}
+	return errs
+}
+
+// ValidatePublishReadiness is the single publish-gate entry point shared by the
+// REST create/update paths, the schedule service, and the assistant's readiness
+// advisor. For an ordinary post it runs the whole-post media rules
+// (ValidateForPublish) plus the per-post-type rules (ValidatePostType); for a
+// thread post (CON-284) it runs ONLY the per-segment gate, because the
+// whole-post media caps would wrongly count every segment's media against one
+// per-post limit. Returns the per-platform error map (keyed by platform.ID);
+// empty when the post passes or platform is nil.
+func ValidatePublishReadiness(post *models.Post, platform *models.Platform, atts []models.PostAttachment) map[string][]ValidationError {
+	if platform == nil {
+		return map[string][]ValidationError{}
+	}
+	if post != nil && post.IsThread() {
+		out := map[string][]ValidationError{}
+		if errs := ValidatePostType(post, platform, atts); len(errs) > 0 {
+			out[platform.ID] = errs
+		}
+		return out
+	}
+	out := ValidateForPublish(atts, []*models.Platform{platform})
+	if typeErrs := ValidatePostType(post, platform, atts); len(typeErrs) > 0 {
+		out[platform.ID] = append(out[platform.ID], typeErrs...)
+	}
+	return out
+}
+
 func sortedSlugs(m models.PostTypeMap) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
@@ -196,6 +351,11 @@ type ResolvedPostTypeRule struct {
 	// platform default). nil means unbounded — the UI shows no counter cap.
 	// Counts are Unicode code points, matching the server-side check (CON-91).
 	MaxContentChars *int `json:"max_content_chars"`
+	// Segmented marks a post type whose composer authors an ordered list of
+	// messages rather than one body (CON-284: the "thread" type). MaxContentChars
+	// then carries the PER-SEGMENT limit (X 280 / Threads 500), and the UI renders
+	// the segmented composer with a counter per message. false for every other type.
+	Segmented bool `json:"segmented"`
 }
 
 // PostTypeRuleView is one entry in the platform-scoped rules response.
@@ -235,6 +395,7 @@ func ResolvePostTypeRules(p *models.Platform) []PostTypeRuleView {
 			MinAttachments:  rule.MinAttachments,
 			MaxAttachments:  resolveMaxAttachments(rule, p),
 			MaxContentChars: resolveMaxContentChars(slug, p),
+			Segmented:       slug == models.PostTypeThread,
 		}
 		out = append(out, view)
 	}

@@ -33,6 +33,8 @@ const (
 	RuleRequiresVideoTitle  = "requires_video_title"  // CON-148: platform needs a title for video (YouTube)
 	RuleMaxContentChars     = "max_content_chars"     // CON-91: body text exceeds the platform/post-type cap
 	RuleMaxTitleChars       = "max_title_chars"       // CON-91: title exceeds the platform cap
+	RuleThreadSegmentCount  = "thread_segment_count"  // CON-284: a thread needs 2..MaxThreadSegments messages
+	RuleThreadSegmentIndex  = "thread_segment_index"  // CON-284: attachment segment_index missing / out of range / set off-thread
 )
 
 // Attachment kinds, returned by AttachmentKind. PDF, image, and video

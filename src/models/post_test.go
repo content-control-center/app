@@ -1,6 +1,9 @@
 package models
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // The CON-130 edges: a scheduled post can be converted straight to
 // manual publishing, and a manually-scheduled post can go straight to
@@ -86,5 +89,84 @@ func TestIsSubmitted(t *testing.T) {
 		if got := s.IsSubmitted(); got != submitted[s] {
 			t.Errorf("IsSubmitted(%q) = %v, want %v", s, got, submitted[s])
 		}
+	}
+}
+
+// CON-284: IsThread keys off the post-type slug alone.
+func TestIsThread(t *testing.T) {
+	if (&Post{PlatformPostType: PostTypeThread}).IsThread() != true {
+		t.Error("thread post: want IsThread=true")
+	}
+	if (&Post{PlatformPostType: "text-post"}).IsThread() != false {
+		t.Error("text-post: want IsThread=false")
+	}
+	if (&Post{}).IsThread() != false {
+		t.Error("empty post type: want IsThread=false")
+	}
+}
+
+// CON-284: ThreadSegments round-trips through the jsonb Value/Scan pair, a nil
+// slice serialises as an empty array (not JSON null, so the NOT NULL column
+// holds), and RootContent returns index 0.
+func TestThreadSegmentsValueScan(t *testing.T) {
+	// nil normalises to "[]".
+	v, err := ThreadSegments(nil).Value()
+	if err != nil || v.(string) != "[]" {
+		t.Fatalf("nil Value() = %v, %v; want \"[]\"", v, err)
+	}
+
+	orig := ThreadSegments{{Content: "root"}, {Content: "reply"}}
+	raw, err := orig.Value()
+	if err != nil {
+		t.Fatalf("Value() error: %v", err)
+	}
+	var back ThreadSegments
+	if err := back.Scan(raw.(string)); err != nil {
+		t.Fatalf("Scan() error: %v", err)
+	}
+	if len(back) != 2 || back[0].Content != "root" || back[1].Content != "reply" {
+		t.Fatalf("round-trip mismatch: %+v", back)
+	}
+
+	// Scanning SQL NULL yields an empty (non-nil) slice.
+	var fromNull ThreadSegments
+	if err := fromNull.Scan(nil); err != nil || fromNull == nil || len(fromNull) != 0 {
+		t.Fatalf("Scan(nil) = %+v, %v; want empty non-nil slice", fromNull, err)
+	}
+
+	if orig.RootContent() != "root" {
+		t.Errorf("RootContent() = %q, want %q", orig.RootContent(), "root")
+	}
+	if (ThreadSegments{}).RootContent() != "" {
+		t.Error("empty RootContent(): want \"\"")
+	}
+}
+
+// CON-284: SnapshotContent joins the whole chain for a thread (so the "what
+// went out" version records every message), but is just Content otherwise.
+func TestSnapshotContent(t *testing.T) {
+	plain := &Post{PlatformPostType: "text-post", Content: "hello"}
+	if got := plain.SnapshotContent(); got != "hello" {
+		t.Errorf("ordinary post: SnapshotContent() = %q, want %q", got, "hello")
+	}
+
+	thread := &Post{
+		PlatformPostType: PostTypeThread,
+		Content:          "root",
+		ThreadSegments:   ThreadSegments{{Content: "root"}, {Content: "reply"}},
+	}
+	got := thread.SnapshotContent()
+	want := "root" + ThreadSnapshotDelimiter + "reply"
+	if got != want {
+		t.Errorf("thread SnapshotContent() = %q, want %q", got, want)
+	}
+	if !strings.Contains(got, "root") || !strings.Contains(got, "reply") {
+		t.Errorf("thread SnapshotContent() lost a message: %q", got)
+	}
+
+	// A thread type with no segments falls back to Content (defensive).
+	empty := &Post{PlatformPostType: PostTypeThread, Content: "solo"}
+	if got := empty.SnapshotContent(); got != "solo" {
+		t.Errorf("thread w/o segments: SnapshotContent() = %q, want %q", got, "solo")
 	}
 }

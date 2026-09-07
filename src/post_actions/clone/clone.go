@@ -229,6 +229,14 @@ func (s *Service) Clone(ctx context.Context, sourceID string, opts Options) (*Re
 		UpdatedAt:        now,
 		UsedAssets:       []models.Asset{},
 	}
+	// CON-284: keep the thread's ordered segments only when the clone remains a
+	// thread and the content wasn't adapted (an adapted body would diverge from
+	// the stored segments). A retarget to a single-message type demotes the
+	// clone — segments stay empty, matching the PUT demotion path.
+	keepThread := targetPostType == models.PostTypeThread && !adapted
+	if keepThread {
+		clone.ThreadSegments = append(models.ThreadSegments{}, src.ThreadSegments...)
+	}
 	if opts.CopyMedia {
 		clone.MediaURLs = append(models.StringSlice{}, src.MediaURLs...)
 	}
@@ -247,7 +255,7 @@ func (s *Service) Clone(ctx context.Context, sourceID string, opts Options) (*Re
 	// Deep-copy attachments in object storage before the DB transaction
 	// so the rows reference keys that already exist. copiedKeys lets us
 	// roll the storage side back if the transaction fails.
-	newAtts, copiedKeys, err := s.copyAttachments(ctx, src.ID, newID, opts, now)
+	newAtts, copiedKeys, err := s.copyAttachments(ctx, src.ID, newID, opts, now, keepThread)
 	if err != nil {
 		s.cleanupKeys(context.Background(), copiedKeys)
 		return nil, err
@@ -324,6 +332,7 @@ func (s *Service) copyAttachments(
 	newPostID string,
 	opts Options,
 	now time.Time,
+	keepThread bool,
 ) ([]*models.PostAttachment, []string, error) {
 	if !opts.CopyMedia {
 		return nil, nil, nil
@@ -370,10 +379,18 @@ func (s *Service) copyAttachments(
 			}
 		}
 
+		// CON-284: carry which thread segment the media belonged to only when
+		// the clone stays a thread; otherwise it becomes an ordinary (NULL)
+		// attachment.
+		var segIdx *int
+		if keepThread {
+			segIdx = a.SegmentIndex
+		}
 		newAtts = append(newAtts, &models.PostAttachment{
 			ID:             attID,
 			PostID:         newPostID,
 			Position:       i,
+			SegmentIndex:   segIdx,
 			MimeType:       a.MimeType,
 			SizeBytes:      a.SizeBytes,
 			Width:          a.Width,

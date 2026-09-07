@@ -58,6 +58,54 @@ func (s *CampaignPlatforms) Scan(src any) error {
 	}
 }
 
+// ThreadSegment is one message in a threaded post (CON-284). A thread post
+// (PlatformPostType == PostTypeThread) is an ordered list of these: index 0 is
+// the root message, 1..N-1 the ordered replies. Only text lives here —
+// per-segment media is expressed by PostAttachment.SegmentIndex — so the array
+// stays a thin text spine that mirrors into posts.content (the root) for the
+// many thread-unaware readers of that field.
+type ThreadSegment struct {
+	Content string `json:"content"`
+}
+
+// ThreadSegments is an ordered []ThreadSegment persisted as a JSON array in a
+// jsonb column. Empty for every non-thread post.
+type ThreadSegments []ThreadSegment
+
+func (s ThreadSegments) Value() (driver.Value, error) {
+	// Normalise nil to an empty array so a Post built without segments still
+	// satisfies the NOT NULL DEFAULT '[]' column (a nil slice would marshal to
+	// the JSON literal "null"). Every non-thread post relies on this.
+	if s == nil {
+		return "[]", nil
+	}
+	b, err := json.Marshal(s)
+	return string(b), err
+}
+
+func (s *ThreadSegments) Scan(src any) error {
+	switch v := src.(type) {
+	case string:
+		return json.Unmarshal([]byte(v), s)
+	case []byte:
+		return json.Unmarshal(v, s)
+	case nil:
+		*s = ThreadSegments{}
+		return nil
+	default:
+		return fmt.Errorf("ThreadSegments: cannot scan %T", src)
+	}
+}
+
+// RootContent returns segment 0's content — the message mirrored into
+// posts.content — or "" when the thread carries no segments.
+func (s ThreadSegments) RootContent() string {
+	if len(s) == 0 {
+		return ""
+	}
+	return s[0].Content
+}
+
 // JSONMap is a free-form map[string]any that serialises as a JSON object in a
 // jsonb column. Used for the tenant_activity_events payload (CON-125), where each
 // activity type carries its own small bag of fields.

@@ -299,19 +299,18 @@ func (h *PostsHandler) validateReadyForPublish(c *fiber.Ctx, post *models.Post, 
 			platform = fresh
 		}
 	}
-	errsByPlatform := platforms.ValidateForPublish(atts, []*models.Platform{platform})
-	// CON-74: per-post-type rules (whitelist + content/min/max-attachments/kind).
-	// Validates against the incoming request's content/post_type so the
-	// gate sees what's about to be persisted, not the prior draft. Errors
-	// are folded into the same per-platform map for one unified response.
-	if platform != nil {
-		incoming := *post
-		incoming.PlatformPostType = req.PlatformPostType
-		incoming.Content = req.Content
-		if typeErrs := platforms.ValidatePostType(&incoming, platform, atts); len(typeErrs) > 0 {
-			errsByPlatform[platform.ID] = append(errsByPlatform[platform.ID], typeErrs...)
-		}
+	// CON-74/CON-284: validate against the incoming request's content/post_type/
+	// thread_segments so the gate sees what's about to be persisted, not the
+	// prior draft. ValidatePublishReadiness runs the whole-post media + post-type
+	// rules, or the per-segment gate when the incoming post is a thread.
+	incoming := *post
+	incoming.PlatformPostType = req.PlatformPostType
+	incoming.Content = req.Content
+	incoming.ThreadSegments = nullThreadSegments(req.ThreadSegments)
+	if len(incoming.ThreadSegments) > 0 {
+		incoming.Content = incoming.ThreadSegments.RootContent()
 	}
+	errsByPlatform := platforms.ValidatePublishReadiness(&incoming, platform, atts)
 	from := post.Status
 	if hasAnyErrors(errsByPlatform) {
 		h.logEvent(c, post.ID, models.PostLogEventValidationFailed, &from, &status,
@@ -918,16 +917,24 @@ type postRequest struct {
 	// SocialAccountID (CON-150) names which same-platform account the post
 	// publishes to. Optional: omit it and the submit worker auto-selects the
 	// platform's single account, or requires a choice when there are several.
-	SocialAccountID     string             `json:"social_account_id"`
-	Title               string             `json:"title"`
-	Content             string             `json:"content"`
-	MediaURLs           models.StringSlice `json:"media_urls"`
-	ScheduledAt         *time.Time         `json:"scheduled_at"`
-	PublishedAt         *time.Time         `json:"published_at"`
-	Status              models.PostStatus  `json:"status"`
-	CTAType             models.PostCTAType `json:"cta_type"`
-	CTAUrl              string             `json:"cta_url"`
-	TargetAudienceNotes string             `json:"target_audience_notes"`
+	SocialAccountID string `json:"social_account_id"`
+	Title           string `json:"title"`
+	Content         string `json:"content"`
+	// ThreadSegments (CON-284) is the ordered message list for a thread post
+	// (platform_post_type == "thread"): index 0 is the root, 1..N-1 the ordered
+	// replies. A plain full-replace field — a present array replaces the stored
+	// segments, an omitted/empty [] means "not a thread". It needs no CON-233
+	// presence-aware carve-out: per-segment media rides the attachments endpoint
+	// (via segment_index), so a whole-record save has nothing to race. When
+	// non-empty, apply restamps Content from index 0 (the root mirror).
+	ThreadSegments      models.ThreadSegments `json:"thread_segments"`
+	MediaURLs           models.StringSlice    `json:"media_urls"`
+	ScheduledAt         *time.Time            `json:"scheduled_at"`
+	PublishedAt         *time.Time            `json:"published_at"`
+	Status              models.PostStatus     `json:"status"`
+	CTAType             models.PostCTAType    `json:"cta_type"`
+	CTAUrl              string                `json:"cta_url"`
+	TargetAudienceNotes string                `json:"target_audience_notes"`
 	// UsedAssetIDs is presence-aware (CON-233): the sources have their own
 	// membership endpoints (POST/DELETE /posts/:id/assets), so an ordinary
 	// whole-record save that omits the key must leave the stored set alone rather
@@ -973,6 +980,15 @@ func (r *postRequest) apply(post *models.Post, status models.PostStatus, ctaType
 	post.SocialAccountID = r.SocialAccountID
 	post.Title = r.Title
 	post.Content = r.Content
+	// CON-284: a present, non-empty thread_segments replaces the stored segments
+	// and restamps Content from the root (index 0), so the many readers of
+	// post.content keep working. An omitted/empty array clears the segments —
+	// the demotion-to-single-message path — and leaves the just-applied Content
+	// (the former root) in place.
+	post.ThreadSegments = nullThreadSegments(r.ThreadSegments)
+	if len(post.ThreadSegments) > 0 {
+		post.Content = post.ThreadSegments.RootContent()
+	}
 	post.MediaURLs = nullSlice(r.MediaURLs)
 	post.ScheduledAt = r.ScheduledAt
 	post.PublishedAt = r.PublishedAt
@@ -1008,6 +1024,10 @@ func (r *postRequest) mutatesLockedContent(post *models.Post) bool {
 		r.PlatformID != post.PlatformID ||
 		r.PlatformPostType != post.PlatformPostType ||
 		!slices.Equal(nullSlice(r.MediaURLs), post.MediaURLs) ||
+		// CON-284: the thread's message list is locked content too — a full-
+		// replace field, so a present-and-different array is a mutation (an
+		// omitted key round-trips equal for a locked post's FE).
+		!slices.Equal(nullThreadSegments(r.ThreadSegments), post.ThreadSegments) ||
 		// Sources are presence-aware (CON-233): an omitted key preserves the set,
 		// so only a present-and-different value is a mutation of the locked content.
 		(r.UsedAssetIDs.Present && !slices.Equal(nullSlice(r.UsedAssetIDs.orZero()), post.UsedAssetIDs))
@@ -1048,10 +1068,10 @@ func (h *PostsHandler) validateForCreate(c *fiber.Ctx, post *models.Post) (done 
 		}
 		return false, err
 	}
-	errsByPlatform := platforms.ValidateForPublish(nil, []*models.Platform{platform})
-	if typeErrs := platforms.ValidatePostType(post, platform, nil); len(typeErrs) > 0 {
-		errsByPlatform[platform.ID] = append(errsByPlatform[platform.ID], typeErrs...)
-	}
+	// New posts carry no attachments yet, so only the structural rules fire —
+	// including the per-segment thread checks (a create-as-thread with < 2
+	// segments is rejected). CON-284.
+	errsByPlatform := platforms.ValidatePublishReadiness(post, platform, nil)
 	if !hasAnyErrors(errsByPlatform) {
 		return false, nil
 	}
@@ -1152,6 +1172,7 @@ func (h *PostsHandler) Create(c *fiber.Ctx) error {
 		PlatformPostType:    req.PlatformPostType,
 		Title:               req.Title,
 		Content:             req.Content,
+		ThreadSegments:      nullThreadSegments(req.ThreadSegments),
 		MediaURLs:           nullSlice(req.MediaURLs),
 		ScheduledAt:         req.ScheduledAt,
 		PublishedAt:         req.PublishedAt,
@@ -1163,6 +1184,11 @@ func (h *PostsHandler) Create(c *fiber.Ctx) error {
 		CampaignTypePhaseID: req.CampaignTypePhaseID,
 		CreatedBy:           session.UserID,
 		UsedAssets:          []models.Asset{},
+	}
+	// CON-284: mirror the root segment into Content when creating a thread, so
+	// the post is consistent with the whole-record contract from the start.
+	if len(post.ThreadSegments) > 0 {
+		post.Content = post.ThreadSegments.RootContent()
 	}
 
 	if done, err := h.validateForCreate(c, post); err != nil {
@@ -2070,8 +2096,11 @@ func (h *PostsHandler) snapshotPublished(ctx context.Context, post *models.Post)
 	if err != nil {
 		return
 	}
+	// CON-284: capture the full thread (not just the mirrored root) for a thread
+	// post; SnapshotContent == post.Content for an ordinary post.
+	content := post.SnapshotContent()
 	if latest != nil && latest.IsSystemSnapshot() &&
-		latest.Note == models.PostVersionNotePublished && latest.Content == post.Content {
+		latest.Note == models.PostVersionNotePublished && latest.Content == content {
 		return
 	}
 	nextNum := 1
@@ -2086,7 +2115,7 @@ func (h *PostsHandler) snapshotPublished(ctx context.Context, post *models.Post)
 		ID:            id,
 		PostID:        post.ID,
 		VersionNumber: nextNum,
-		Content:       post.Content,
+		Content:       content,
 		Note:          models.PostVersionNotePublished,
 		Creator:       models.PostVersionCreatorSystem,
 	})

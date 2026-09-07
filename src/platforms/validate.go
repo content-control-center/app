@@ -18,6 +18,10 @@ type ValidationError struct {
 	Expected     string `json:"expected"`
 	Actual       string `json:"actual"`
 	Message      string `json:"message"`
+	// Segment names the 0-based thread message a failure belongs to (CON-284),
+	// so the composer can highlight the offending message. nil for whole-post
+	// failures and every non-thread post.
+	Segment *int `json:"segment,omitempty"`
 }
 
 // ValidateAttachment runs all rules carried by the platform row for

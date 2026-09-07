@@ -23,6 +23,7 @@ func (s stubAttRepo) GetByID(context.Context, string) (*models.PostAttachment, e
 func (s stubAttRepo) CreateAtNextPosition(context.Context, *models.PostAttachment) error { return nil }
 func (s stubAttRepo) UpdatePosition(context.Context, string, int) error                  { return nil }
 func (s stubAttRepo) UpdateAltText(context.Context, string, string) error                { return nil }
+func (s stubAttRepo) UpdateSegmentIndex(context.Context, string, *int) error             { return nil }
 func (s stubAttRepo) ReorderPositions(context.Context, string, []string) error           { return nil }
 func (s stubAttRepo) Delete(context.Context, string) (bool, error)                       { return false, nil }
 
@@ -34,7 +35,7 @@ func TestCopyAttachments_NoStorage(t *testing.T) {
 			store:       nil,
 			attachments: stubAttRepo{atts: []models.PostAttachment{{ID: "a", S3Key: "post-attachments/x/a.png"}}},
 		}
-		_, _, err := s.copyAttachments(ctx, "src", "new", DefaultOptions("u", TriggerAPI), time.Time{})
+		_, _, err := s.copyAttachments(ctx, "src", "new", DefaultOptions("u", TriggerAPI), time.Time{}, false)
 		if !errors.Is(err, ErrStorageUnavailable) {
 			t.Fatalf("want ErrStorageUnavailable, got %v", err)
 		}
@@ -42,7 +43,7 @@ func TestCopyAttachments_NoStorage(t *testing.T) {
 
 	t.Run("no attachments → no error", func(t *testing.T) {
 		s := &Service{store: nil, attachments: stubAttRepo{}}
-		atts, _, err := s.copyAttachments(ctx, "src", "new", DefaultOptions("u", TriggerAPI), time.Time{})
+		atts, _, err := s.copyAttachments(ctx, "src", "new", DefaultOptions("u", TriggerAPI), time.Time{}, false)
 		if err != nil || len(atts) != 0 {
 			t.Fatalf("want no error and no atts, got atts=%d err=%v", len(atts), err)
 		}
@@ -52,7 +53,7 @@ func TestCopyAttachments_NoStorage(t *testing.T) {
 		opts := DefaultOptions("u", TriggerAPI)
 		opts.CopyMedia = false
 		s := &Service{store: nil, attachments: stubAttRepo{atts: []models.PostAttachment{{ID: "a", S3Key: "k"}}}}
-		if _, _, err := s.copyAttachments(ctx, "src", "new", opts, time.Time{}); err != nil {
+		if _, _, err := s.copyAttachments(ctx, "src", "new", opts, time.Time{}, false); err != nil {
 			t.Fatalf("CopyMedia=false should skip, got %v", err)
 		}
 	})

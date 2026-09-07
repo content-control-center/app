@@ -13,6 +13,12 @@ type PostAttachment struct {
 	ID       string `bun:"id,pk"                                        json:"id"`
 	PostID   string `bun:"post_id,notnull"                              json:"post_id"`
 	Position int    `bun:"position,notnull"                             json:"position"`
+	// SegmentIndex names which message of a threaded post this attachment
+	// belongs to (CON-284), 0-based into Post.ThreadSegments. NULL for every
+	// attachment of a non-thread post — it belongs to the whole/single post,
+	// today's behaviour. Within a segment, Position still orders the media. A
+	// pointer so nil ⇔ NULL is distinct from a valid segment 0.
+	SegmentIndex *int `bun:"segment_index"                                json:"segment_index"`
 	// AltText is the accessibility description for the media (CON-122). Empty
 	// means "no alt text". Editable on upload and via PATCH; sent to Zernio as
 	// mediaItems[].altText.

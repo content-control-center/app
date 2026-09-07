@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -336,11 +337,21 @@ func (h *PostAttachmentsHandler) Upload(c *fiber.Ctx) error {
 		return err
 	}
 
+	// CON-284: on a thread post the client names which segment this media
+	// belongs to (0-based). Omitted/blank ⇒ NULL (whole-post attachment,
+	// today's behaviour). Range against thread_segments is enforced at the
+	// publish gate, not here — media may be uploaded before segments are set.
+	segIdx, err := parseSegmentIndex(c.FormValue("segment_index"))
+	if err != nil {
+		return err
+	}
+
 	att := &models.PostAttachment{
-		ID:        id,
-		PostID:    post.ID,
-		AltText:   altText,
-		CreatedBy: session.UserID,
+		ID:           id,
+		PostID:       post.ID,
+		AltText:      altText,
+		SegmentIndex: segIdx,
+		CreatedBy:    session.UserID,
 	}
 	var data []byte
 	var keyExt string
@@ -453,6 +464,22 @@ func (h *PostAttachmentsHandler) Upload(c *fiber.Ctx) error {
 	})
 }
 
+// parseSegmentIndex parses the optional segment_index form/JSON value for a
+// thread attachment (CON-284). A blank value yields nil (NULL — a whole-post
+// attachment); a non-negative integer yields a pointer to it. A negative or
+// non-numeric value is a 400.
+func parseSegmentIndex(s string) (*int, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		return nil, fiber.NewError(fiber.StatusBadRequest, "segment_index must be a non-negative integer")
+	}
+	return &n, nil
+}
+
 // normalizeAltText trims and length-bounds accessibility alt text (CON-122).
 // The cap is in characters (runes), so multibyte alt text isn't rejected early.
 func normalizeAltText(s string) (string, error) {
@@ -470,6 +497,11 @@ func normalizeAltText(s string) (string, error) {
 type updateAttachmentRequest struct {
 	Position *int    `json:"position"`
 	AltText  *string `json:"alt_text"`
+	// SegmentIndex reassigns which thread segment the media belongs to (CON-284).
+	// Presence-aware so the three JSON states stay distinct: absent ⇒ leave as-is,
+	// a number ⇒ move to that segment, explicit null ⇒ detach (back to a
+	// whole-post attachment).
+	SegmentIndex Optional[int] `json:"segment_index"`
 }
 
 // Update godoc
@@ -514,15 +546,18 @@ func (h *PostAttachmentsHandler) Update(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
-	if req.Position == nil && req.AltText == nil {
-		return fiber.NewError(fiber.StatusBadRequest, "at least one of position or alt_text is required")
+	if req.Position == nil && req.AltText == nil && !req.SegmentIndex.Present {
+		return fiber.NewError(fiber.StatusBadRequest, "at least one of position, alt_text or segment_index is required")
 	}
 
-	// Validate + normalize both inputs before any mutation, so an invalid
-	// alt_text can't leave a partially-applied update (e.g. position already
+	// Validate + normalize all inputs before any mutation, so an invalid
+	// field can't leave a partially-applied update (e.g. position already
 	// changed).
 	if req.Position != nil && *req.Position < 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "position must be non-negative")
+	}
+	if req.SegmentIndex.Present && req.SegmentIndex.Value != nil && *req.SegmentIndex.Value < 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "segment_index must be non-negative")
 	}
 	var altText string
 	if req.AltText != nil {
@@ -547,6 +582,13 @@ func (h *PostAttachmentsHandler) Update(c *fiber.Ctx) error {
 	}
 	if req.AltText != nil {
 		if err := h.repo.UpdateAltText(c.Context(), att.ID, altText); err != nil {
+			return err
+		}
+	}
+	if req.SegmentIndex.Present {
+		// Optional[int].Value is already the *int UpdateSegmentIndex wants: a
+		// number sets the segment, an explicit null (nil) detaches it.
+		if err := h.repo.UpdateSegmentIndex(c.Context(), att.ID, req.SegmentIndex.Value); err != nil {
 			return err
 		}
 	}

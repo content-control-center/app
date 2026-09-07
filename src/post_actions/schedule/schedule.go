@@ -360,8 +360,12 @@ func (s *Service) snapshotSubmitted(ctx context.Context, post *models.Post) {
 			logging.AttrComponent, "schedule", "post_id", post.ID, logging.AttrError, err)
 		return
 	}
+	// CON-284: for a thread the snapshot captures the whole chain, not just the
+	// mirrored root — so both the dedup compare and the stored content use
+	// SnapshotContent (== post.Content for an ordinary post).
+	content := post.SnapshotContent()
 	if latest != nil && latest.IsSystemSnapshot() &&
-		latest.Note == models.PostVersionNoteSubmitted && latest.Content == post.Content {
+		latest.Note == models.PostVersionNoteSubmitted && latest.Content == content {
 		return // already snapshotted this exact submission — nothing new went out
 	}
 	nextNum := 1
@@ -376,7 +380,7 @@ func (s *Service) snapshotSubmitted(ctx context.Context, post *models.Post) {
 		ID:            id,
 		PostID:        post.ID,
 		VersionNumber: nextNum,
-		Content:       post.Content,
+		Content:       content,
 		Note:          models.PostVersionNoteSubmitted,
 		Creator:       models.PostVersionCreatorSystem,
 	}); err != nil {
@@ -526,10 +530,10 @@ func (s *Service) loadForValidation(ctx context.Context, post *models.Post) (*mo
 // per-post-type rules) for the promote gate. Returns nil when the post
 // passes, or the populated per-platform error map when it does not.
 func (s *Service) validateForPublish(post *models.Post, platform *models.Platform, atts []models.PostAttachment) map[string][]platforms.ValidationError {
-	errsByPlatform := platforms.ValidateForPublish(atts, []*models.Platform{platform})
-	if typeErrs := platforms.ValidatePostType(post, platform, atts); len(typeErrs) > 0 {
-		errsByPlatform[platform.ID] = append(errsByPlatform[platform.ID], typeErrs...)
-	}
+	// CON-284: ValidatePublishReadiness runs the per-segment gate for thread
+	// posts and the whole-post gate otherwise, so the schedule path never
+	// double-counts a thread's media against the per-post cap.
+	errsByPlatform := platforms.ValidatePublishReadiness(post, platform, atts)
 	if !hasAnyErrors(errsByPlatform) {
 		return nil
 	}
