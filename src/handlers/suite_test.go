@@ -8,8 +8,8 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
 
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // testCookieName is the session cookie name used across all handler tests.

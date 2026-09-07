@@ -5,9 +5,9 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // TestListTenantIDsByKey covers the cross-tenant enumeration the per-tenant

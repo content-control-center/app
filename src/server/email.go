@@ -7,13 +7,13 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/ogen-app/ogen/src/activity"
-	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/email/resend"
 	"github.com/ogen-app/ogen/src/email/templates"
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/jobs/queues"
-	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/kernel/activity"
+	"github.com/ogen-app/ogen/src/kernel/config"
+	"github.com/ogen-app/ogen/src/kernel/logging"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/secrets"
 )

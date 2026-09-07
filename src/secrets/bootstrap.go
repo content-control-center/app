@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/ogen-app/ogen/src/crypto/envelope"
-	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/kernel/logging"
 )
 
 // KEKFilename is the on-disk name of the active KEK file inside the

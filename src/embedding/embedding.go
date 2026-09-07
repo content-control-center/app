@@ -12,14 +12,14 @@ import (
 	"github.com/firebase/genkit/go/genkit"
 	"github.com/firebase/genkit/go/plugins/googlegenai"
 
-	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/genkit/embedopts"
 	"github.com/ogen-app/ogen/src/genkit/flows"
-	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/kernel/config"
+	"github.com/ogen-app/ogen/src/kernel/logging"
+	"github.com/ogen-app/ogen/src/kernel/usage"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/secrets"
 	"github.com/ogen-app/ogen/src/storage"
-	"github.com/ogen-app/ogen/src/usage"
 )
 
 // Callbacks bundles the fire-and-forget callbacks registered by Init.

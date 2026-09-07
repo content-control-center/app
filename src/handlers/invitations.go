@@ -10,11 +10,11 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/uptrace/bun"
 
-	"github.com/ogen-app/ogen/src/activity"
-	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/kernel/activity"
+	"github.com/ogen-app/ogen/src/kernel/logging"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // Invitation rate-limit budget (CON-26). Creating an invite sends mail on

@@ -6,9 +6,9 @@ import (
 
 	"github.com/firebase/genkit/go/genkit"
 
-	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/genkit/flows/draft_post"
-	"github.com/ogen-app/ogen/src/usage"
+	"github.com/ogen-app/ogen/src/kernel/config"
+	"github.com/ogen-app/ogen/src/kernel/usage"
 	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 

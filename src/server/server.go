@@ -17,7 +17,6 @@ import (
 
 	"github.com/ogen-app/ogen/src/campaign_actions/overview"
 	"github.com/ogen-app/ogen/src/campaign_actions/summaries"
-	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/firecrawl"
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
@@ -31,7 +30,9 @@ import (
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/jobs/queues"
-	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/kernel/config"
+	"github.com/ogen-app/ogen/src/kernel/logging"
+	"github.com/ogen-app/ogen/src/kernel/usage"
 	"github.com/ogen-app/ogen/src/notes"
 	"github.com/ogen-app/ogen/src/notify"
 	"github.com/ogen-app/ogen/src/post_actions/clone"
@@ -42,7 +43,6 @@ import (
 	"github.com/ogen-app/ogen/src/secrets"
 	"github.com/ogen-app/ogen/src/storage"
 	"github.com/ogen-app/ogen/src/tenant_actions/signup"
-	"github.com/ogen-app/ogen/src/usage"
 )
 
 // TODO: refactor this function

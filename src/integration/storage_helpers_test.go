@@ -14,7 +14,7 @@ import (
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 
-	"github.com/ogen-app/ogen/src/config"
+	"github.com/ogen-app/ogen/src/kernel/config"
 	"github.com/ogen-app/ogen/src/storage"
 )
 

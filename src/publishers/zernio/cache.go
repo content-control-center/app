@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ogen-app/ogen/src/tenantctx"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 )
 
 // DefaultCacheTTL is the cache freshness window from the ticket.

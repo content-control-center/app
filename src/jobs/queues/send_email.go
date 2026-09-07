@@ -10,12 +10,12 @@ import (
 
 	"github.com/riverqueue/river"
 
-	"github.com/ogen-app/ogen/src/activity"
 	"github.com/ogen-app/ogen/src/email"
 	"github.com/ogen-app/ogen/src/email/templates"
-	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/kernel/activity"
+	"github.com/ogen-app/ogen/src/kernel/logging"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // SendEmailQueue is the single async send path for all mail (CON-154). Welcome

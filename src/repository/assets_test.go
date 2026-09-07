@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // TestAssetDelete_ScrubsDanglingReferences verifies that deleting an asset also

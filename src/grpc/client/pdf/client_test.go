@@ -13,8 +13,8 @@ import (
 
 	pdfv1 "github.com/ogen-app/ogen/gen/pdf/v1"
 	"github.com/ogen-app/ogen/src/grpc/client/pdf"
-	"github.com/ogen-app/ogen/src/logging"
-	"github.com/ogen-app/ogen/src/tenantctx"
+	"github.com/ogen-app/ogen/src/kernel/logging"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 )
 
 // stubServer records the streamed request and returns a canned response.

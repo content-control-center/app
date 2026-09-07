@@ -4,10 +4,10 @@ import "testing"
 
 func TestMatchTopic(t *testing.T) {
 	tests := []struct {
-		name      string
-		filter    string
-		topic     string
-		want      bool
+		name   string
+		filter string
+		topic  string
+		want   bool
 	}{
 		{"all matches anything", "all", "entity:post:abc", true},
 		{"all matches simple topic", "all", "job:xyz", true},

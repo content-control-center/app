@@ -7,9 +7,9 @@ import (
 
 	"github.com/uptrace/bun"
 
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // insertSummaryPost seeds a post in the given tenant context (the TenantScoped

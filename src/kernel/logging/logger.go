@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/ogen-app/ogen/src/config"
+	"github.com/ogen-app/ogen/src/kernel/config"
 )
 
 // New builds the application logger from config, installs it as slog's default,

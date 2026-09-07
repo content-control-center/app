@@ -13,7 +13,7 @@ import (
 	"github.com/firebase/genkit/go/genkit"
 
 	"github.com/ogen-app/ogen/src/genkit/jsonstream"
-	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/kernel/logging"
 	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 

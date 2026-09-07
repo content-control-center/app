@@ -11,8 +11,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
-	"github.com/ogen-app/ogen/src/config"
-	"github.com/ogen-app/ogen/src/tenantctx"
+	"github.com/ogen-app/ogen/src/kernel/config"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 )
 
 // TenantKey namespaces an object key by the tenant in ctx (CON-97 §10.4):

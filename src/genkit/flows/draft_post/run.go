@@ -17,7 +17,7 @@ import (
 	"github.com/firebase/genkit/go/genkit"
 
 	"github.com/ogen-app/ogen/src/brandresolve"
-	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/kernel/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/notes"
 	"github.com/ogen-app/ogen/src/repository"

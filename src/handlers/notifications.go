@@ -15,11 +15,11 @@ import (
 	"github.com/valyala/fasthttp"
 
 	"github.com/ogen-app/ogen/src/eventhub"
-	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/kernel/logging"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/notify"
 	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // maxReplayNotifications caps how many missed notifications one SSE reconnect

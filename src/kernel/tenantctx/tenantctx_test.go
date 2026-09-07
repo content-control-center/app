@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ogen-app/ogen/src/tenantctx"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 )
 
 func TestWithFromRoundTrip(t *testing.T) {

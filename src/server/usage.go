@@ -6,10 +6,10 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"github.com/ogen-app/ogen/src/config"
-	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/kernel/config"
+	"github.com/ogen-app/ogen/src/kernel/logging"
+	"github.com/ogen-app/ogen/src/kernel/usage"
 	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/usage"
 )
 
 // usageMetrics is registered once per process: expvar.NewInt panics on a

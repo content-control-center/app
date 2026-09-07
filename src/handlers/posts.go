@@ -12,8 +12,8 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"github.com/ogen-app/ogen/src/activity"
 	"github.com/ogen-app/ogen/src/jobs/queues"
+	"github.com/ogen-app/ogen/src/kernel/activity"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/platforms"
 	"github.com/ogen-app/ogen/src/post_actions/logs"

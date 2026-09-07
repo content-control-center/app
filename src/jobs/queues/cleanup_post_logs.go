@@ -8,9 +8,9 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/ogen-app/ogen/src/jobs"
-	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/kernel/logging"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // CleanupPostLogsQueue is the recurring sweep that drops Post Log entries

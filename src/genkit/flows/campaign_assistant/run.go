@@ -16,7 +16,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/brandresolve"
 	"github.com/ogen-app/ogen/src/genkit/jsonstream"
-	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/kernel/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/vendors/llm"
 )

@@ -3,7 +3,7 @@ package usage_test
 import (
 	"testing"
 
-	"github.com/ogen-app/ogen/src/usage"
+	"github.com/ogen-app/ogen/src/kernel/usage"
 	"github.com/ogen-app/ogen/src/vendors"
 )
 

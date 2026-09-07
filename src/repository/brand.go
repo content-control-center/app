@@ -9,8 +9,8 @@ import (
 
 	"github.com/uptrace/bun"
 
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // BrandRepository is the persistence for the Brand module (CON-228): one

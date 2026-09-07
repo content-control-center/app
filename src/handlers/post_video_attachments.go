@@ -12,7 +12,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/ogen-app/ogen/src/grpc/client/video"
-	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/kernel/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/platforms"
 	"github.com/ogen-app/ogen/src/storage"

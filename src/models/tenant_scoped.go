@@ -6,7 +6,7 @@ import (
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/schema"
 
-	"github.com/ogen-app/ogen/src/tenantctx"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 )
 
 // TenantScoped is embedded (anonymously) by every tenant-owned model to enforce

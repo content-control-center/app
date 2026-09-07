@@ -5,11 +5,11 @@ package queues
 import (
 	"context"
 
-	"github.com/ogen-app/ogen/src/activity"
+	"github.com/ogen-app/ogen/src/kernel/activity"
+	"github.com/ogen-app/ogen/src/kernel/usage"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/storage"
-	"github.com/ogen-app/ogen/src/usage"
 )
 
 // ProfileIDResolver returns the Zernio profile id this single-tenant

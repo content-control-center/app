@@ -3,7 +3,7 @@ package repository
 import (
 	"context"
 
-	"github.com/ogen-app/ogen/src/tenantctx"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 )
 
 // writeTenantID resolves the tenant_id to stamp on a RAW write. It mirrors the

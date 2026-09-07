@@ -12,7 +12,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/email/templates"
 	"github.com/ogen-app/ogen/src/eventhub"
-	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/kernel/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/notify"
 	"github.com/ogen-app/ogen/src/publishers/zernio"

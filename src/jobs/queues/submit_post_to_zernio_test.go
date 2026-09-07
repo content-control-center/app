@@ -99,9 +99,9 @@ func (r *fakePostRepo) PublishedAtsBetween(context.Context, time.Time, time.Time
 func (r *fakePostRepo) ListPublishedSince(context.Context, time.Time) ([]models.Post, error) {
 	return nil, nil
 }
-func (r *fakePostRepo) Create(context.Context, *models.Post) error                 { return nil }
-func (r *fakePostRepo) CreateBatch(context.Context, []*models.Post) error          { return nil }
-func (r *fakePostRepo) Delete(context.Context, string) (bool, error)               { return false, nil }
+func (r *fakePostRepo) Create(context.Context, *models.Post) error        { return nil }
+func (r *fakePostRepo) CreateBatch(context.Context, []*models.Post) error { return nil }
+func (r *fakePostRepo) Delete(context.Context, string) (bool, error)      { return false, nil }
 func (r *fakePostRepo) ListStuckScheduled(context.Context, time.Time, int) ([]models.Post, error) {
 	return nil, nil
 }

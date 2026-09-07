@@ -15,7 +15,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/ogen-app/ogen/src/tenantctx"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 )
 
 // Attribute keys used across the codebase. Centralised so the field names stay

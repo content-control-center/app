@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ogen-app/ogen/src/tenantctx"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 )
 
 // drain reads at most n events from ch with a timeout. Returns the

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ogen-app/ogen/src/tenantctx"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 )
 
 // TestBootstrapPerTenantProfileNaming proves CON-100: the bootstrapper names

@@ -3,8 +3,8 @@ package repository_test
 import (
 	"context"
 
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // tenantCtx is the default-tenant context for repository tests that exercise

@@ -8,9 +8,9 @@ import (
 
 	"github.com/riverqueue/river"
 
-	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/kernel/logging"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
-	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // BootstrapZernioProfileQueue eagerly provisions a tenant's Zernio profile at

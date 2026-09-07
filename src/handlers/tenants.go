@@ -11,12 +11,12 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/ogen-app/ogen/src/activity"
-	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/kernel/activity"
+	"github.com/ogen-app/ogen/src/kernel/logging"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/tenant_actions/signup"
-	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // ProfileBootstrapEnqueuer enqueues an eager Zernio profile-provisioning job in

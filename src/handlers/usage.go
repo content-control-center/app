@@ -9,9 +9,9 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/ogen-app/ogen/src/kernel/usage"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/usage"
 )
 
 // UsageHandler serves the CON-86 read APIs (current consumption, effective

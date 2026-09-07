@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ogen-app/ogen/src/logging"
-	"github.com/ogen-app/ogen/src/tenantctx"
+	"github.com/ogen-app/ogen/src/kernel/logging"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 )
 
 // SettingsStore is the narrow contract Bootstrapper (and the Phase 4

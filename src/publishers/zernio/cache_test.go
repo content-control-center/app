@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ogen-app/ogen/src/tenantctx"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 )
 
 // memStore is a tiny in-memory SettingsStore for tests. The cache and

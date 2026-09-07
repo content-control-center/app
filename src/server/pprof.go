@@ -6,7 +6,7 @@ import (
 	_ "net/http/pprof" // registers /debug/pprof/* on http.DefaultServeMux
 	"time"
 
-	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/kernel/logging"
 )
 
 // startPprof serves net/http/pprof on a container-internal address (default

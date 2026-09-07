@@ -8,11 +8,11 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
-	"github.com/ogen-app/ogen/src/activity"
-	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/kernel/activity"
+	"github.com/ogen-app/ogen/src/kernel/logging"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 const sessionTTL = 7 * 24 * time.Hour

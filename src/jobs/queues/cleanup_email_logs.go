@@ -7,9 +7,9 @@ import (
 
 	"github.com/riverqueue/river"
 
-	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/kernel/logging"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // CleanupEmailLogsQueue drops email_logs rows older than the retention window

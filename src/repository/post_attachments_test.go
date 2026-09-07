@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // TestCreateAtNextPositionRequiresParentPost guards CON-97: the FOR UPDATE lock

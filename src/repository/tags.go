@@ -84,4 +84,3 @@ func (r *tagRepository) Delete(ctx context.Context, id string) (bool, error) {
 	n, _ := res.RowsAffected()
 	return n > 0, nil
 }
-

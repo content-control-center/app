@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/kernel/logging"
 )
 
 var installAnthropicHTTPLoggingOnce sync.Once

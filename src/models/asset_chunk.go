@@ -27,6 +27,6 @@ type AssetChunk struct {
 	// dimensions. Similarity search runs in-database via the `<=>`
 	// cosine-distance operator (see AssetChunksRepository.SearchSimilar).
 	Embedding pgvector.HalfVector `bun:"embedding,type:halfvec(3072)" json:"-"`
-	Model     string          `bun:"model"                     json:"model"`
-	CreatedAt time.Time       `bun:"created_at,notnull,default:current_timestamp" json:"-"`
+	Model     string              `bun:"model"                     json:"model"`
+	CreatedAt time.Time           `bun:"created_at,notnull,default:current_timestamp" json:"-"`
 }

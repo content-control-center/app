@@ -10,7 +10,7 @@ import (
 	"github.com/pgvector/pgvector-go"
 
 	"github.com/ogen-app/ogen/src/genkit/embedopts"
-	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/kernel/logging"
 	"github.com/ogen-app/ogen/src/models"
 )
 

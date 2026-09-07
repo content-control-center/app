@@ -10,7 +10,7 @@ import "strings"
 //   - "all"       — catches every event (subject still to authz filter).
 //   - "kind:id"   — exact match.
 //   - "kind:*"    — prefix match; the "*" must be the last segment after
-//                   a colon. Matches "kind:anything" and "kind:nested:x".
+//     a colon. Matches "kind:anything" and "kind:nested:x".
 //
 // Empty event topics never match (treated as malformed).
 func MatchTopic(filter, eventTopic string) bool {

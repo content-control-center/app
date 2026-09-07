@@ -12,10 +12,10 @@ import (
 
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/jobs"
-	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/kernel/logging"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
-	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // RefreshZernioAnalyticsQueue is the recurring analytics-refresh queue

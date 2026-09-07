@@ -17,10 +17,10 @@ import (
 
 	"github.com/ogen-app/ogen/src/crypto/envelope"
 	"github.com/ogen-app/ogen/src/jobs"
-	"github.com/ogen-app/ogen/src/logging"
+	"github.com/ogen-app/ogen/src/kernel/logging"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
-	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // This file implements the CON-217 headless connect flow: the browser-facing

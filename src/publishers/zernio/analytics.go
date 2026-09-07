@@ -144,19 +144,19 @@ func (m Metrics) LastUpdatedTime() *time.Time { return m.LastUpdated.ptr() }
 // mirror Zernio's exactly. IGReels* are Instagram-only and zero
 // elsewhere. LastUpdated is when Zernio last refreshed these numbers.
 type Metrics struct {
-	Impressions               int        `json:"impressions"`
-	Reach                     int        `json:"reach"`
-	Likes                     int        `json:"likes"`
-	Comments                  int        `json:"comments"`
-	Shares                    int        `json:"shares"`
-	Saves                     int        `json:"saves"`
-	Clicks                    int        `json:"clicks"`
-	Views                     int        `json:"views"`
-	Follows                   int        `json:"follows"`
-	IGReelsAvgWatchTime       float64    `json:"igReelsAvgWatchTime,omitempty"`
-	IGReelsVideoViewTotalTime float64    `json:"igReelsVideoViewTotalTime,omitempty"`
-	EngagementRate            float64    `json:"engagementRate"`
-	LastUpdated               *flexTime  `json:"lastUpdated,omitempty"`
+	Impressions               int       `json:"impressions"`
+	Reach                     int       `json:"reach"`
+	Likes                     int       `json:"likes"`
+	Comments                  int       `json:"comments"`
+	Shares                    int       `json:"shares"`
+	Saves                     int       `json:"saves"`
+	Clicks                    int       `json:"clicks"`
+	Views                     int       `json:"views"`
+	Follows                   int       `json:"follows"`
+	IGReelsAvgWatchTime       float64   `json:"igReelsAvgWatchTime,omitempty"`
+	IGReelsVideoViewTotalTime float64   `json:"igReelsVideoViewTotalTime,omitempty"`
+	EngagementRate            float64   `json:"engagementRate"`
+	LastUpdated               *flexTime `json:"lastUpdated,omitempty"`
 }
 
 // PlatformAnalytics is one per-platform row inside an AnalyticsItem.

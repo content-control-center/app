@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // TestZernioPerTenantSyncIsolation proves the per-tenant sync sweep (CON-100):

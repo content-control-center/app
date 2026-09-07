@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 // TestScopedRepoFailsClosedWithoutTenant is the regression guard for CON-97

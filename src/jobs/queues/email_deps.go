@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ogen-app/ogen/src/activity"
 	"github.com/ogen-app/ogen/src/email"
+	"github.com/ogen-app/ogen/src/kernel/activity"
 	"github.com/ogen-app/ogen/src/repository"
 )
 
