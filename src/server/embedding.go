@@ -5,12 +5,12 @@ import (
 
 	"github.com/firebase/genkit/go/ai"
 
-	"github.com/ogen-app/ogen/src/embedding"
+	"github.com/ogen-app/ogen/src/infra/embedding"
+	"github.com/ogen-app/ogen/src/infra/repository"
+	"github.com/ogen-app/ogen/src/infra/secrets"
+	"github.com/ogen-app/ogen/src/infra/storage"
 	"github.com/ogen-app/ogen/src/kernel/config"
 	"github.com/ogen-app/ogen/src/kernel/usage"
-	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/secrets"
-	"github.com/ogen-app/ogen/src/storage"
 )
 
 // initEmbedding delegates to the embedding package so the same setup can be

@@ -3,8 +3,8 @@ package usage_test
 import (
 	"testing"
 
+	"github.com/ogen-app/ogen/src/infra/vendors"
 	"github.com/ogen-app/ogen/src/kernel/usage"
-	"github.com/ogen-app/ogen/src/vendors"
 )
 
 func TestApplyModelPrices(t *testing.T) {

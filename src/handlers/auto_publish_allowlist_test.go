@@ -13,7 +13,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/ogen-app/ogen/src/handlers"
-	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/infra/repository"
 )
 
 var _ = Describe("AutoPublishAllowlistHandler", Ordered, func() {

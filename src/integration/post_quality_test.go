@@ -15,7 +15,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_quality"
-	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/infra/repository"
 )
 
 var _ = Describe("Post quality assessment flow", Ordered, func() {

@@ -18,8 +18,8 @@ import (
 
 	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/genkit/jsonstream"
+	"github.com/ogen-app/ogen/src/infra/vendors/llm"
 	"github.com/ogen-app/ogen/src/kernel/logging"
-	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 // isPostRemovedFKViolation reports whether err is a Postgres foreign-key

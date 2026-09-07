@@ -29,7 +29,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/uptrace/bun"
 
-	"github.com/ogen-app/ogen/src/database"
+	"github.com/ogen-app/ogen/src/infra/database"
 	"github.com/ogen-app/ogen/src/jobs"
 )
 

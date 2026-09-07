@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ogen-app/ogen/src/vendors"
+	"github.com/ogen-app/ogen/src/infra/vendors"
 )
 
 // priceOverride is the USAGE_MODEL_PRICES JSON shape: vendor → model/sku →

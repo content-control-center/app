@@ -20,8 +20,8 @@ import (
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/draft_post"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
-	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/vendors/llm"
+	"github.com/ogen-app/ogen/src/infra/repository"
+	"github.com/ogen-app/ogen/src/infra/vendors/llm"
 )
 
 // This suite exercises the real Campaign Assistant flow end to end against a

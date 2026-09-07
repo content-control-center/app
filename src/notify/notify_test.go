@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/ogen-app/ogen/src/domain/models"
-	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/infra/eventhub"
+	"github.com/ogen-app/ogen/src/infra/repository"
 	"github.com/ogen-app/ogen/src/kernel/tenantctx"
-	"github.com/ogen-app/ogen/src/repository"
 )
 
 // fakeRepo is an in-memory NotificationRepository for DB-free service tests.

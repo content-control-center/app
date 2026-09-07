@@ -21,7 +21,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/handlers"
-	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/infra/repository"
 )
 
 // pngBytes encodes a w×h PNG and returns it as a string (multipart bodies here

@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/ogen-app/ogen/src/domain/models"
-	"github.com/ogen-app/ogen/src/email/templates"
-	"github.com/ogen-app/ogen/src/publishers/zernio"
+	"github.com/ogen-app/ogen/src/infra/email/templates"
+	"github.com/ogen-app/ogen/src/infra/publishers/zernio"
 )
 
 func ptr[T any](v T) *T { return &v }

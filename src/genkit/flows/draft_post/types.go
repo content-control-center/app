@@ -3,9 +3,9 @@ package draft_post
 import (
 	"text/template"
 
+	"github.com/ogen-app/ogen/src/infra/repository"
+	"github.com/ogen-app/ogen/src/infra/vendors/llm"
 	"github.com/ogen-app/ogen/src/kernel/usage"
-	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 // DraftPostRequest is the input to the draftPost generation flow (CON-207):

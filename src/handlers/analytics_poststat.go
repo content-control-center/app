@@ -9,7 +9,7 @@ import (
 	"github.com/ogen-app/ogen/src/analytics/learnings"
 	"github.com/ogen-app/ogen/src/analytics/poststat"
 	"github.com/ogen-app/ogen/src/domain/models"
-	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/infra/repository"
 )
 
 // PostDetail serves the CON-250 per-post statistics drill-down: the post header,

@@ -15,8 +15,8 @@ import (
 
 	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/handlers"
+	"github.com/ogen-app/ogen/src/infra/repository"
 	"github.com/ogen-app/ogen/src/post_actions/restore"
-	"github.com/ogen-app/ogen/src/repository"
 )
 
 // restoreResp mirrors the JSON body returned by POST /api/posts/:id/restore.

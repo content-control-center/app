@@ -7,9 +7,9 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/requestid"
 	"github.com/uptrace/bun"
 
+	"github.com/ogen-app/ogen/src/infra/repository"
 	"github.com/ogen-app/ogen/src/kernel/config"
 	"github.com/ogen-app/ogen/src/kernel/logging"
-	"github.com/ogen-app/ogen/src/repository"
 )
 
 // repos is the API server's full data-access surface, built once by

@@ -12,7 +12,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	secretsv1 "github.com/ogen-app/ogen/gen/secrets/v1"
-	"github.com/ogen-app/ogen/src/secrets"
+	"github.com/ogen-app/ogen/src/infra/secrets"
 )
 
 // TestServerRoundTrip exercises the full gRPC path Harbor uses — a live listener

@@ -6,7 +6,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/uptrace/bun"
 
-	"github.com/ogen-app/ogen/src/secrets"
+	"github.com/ogen-app/ogen/src/infra/secrets"
 )
 
 type HealthHandler struct {

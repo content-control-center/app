@@ -14,8 +14,8 @@ import (
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 
+	"github.com/ogen-app/ogen/src/infra/storage"
 	"github.com/ogen-app/ogen/src/kernel/config"
-	"github.com/ogen-app/ogen/src/storage"
 )
 
 // minioEndpoint is the path-style S3 endpoint exposed by

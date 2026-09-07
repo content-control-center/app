@@ -3,14 +3,14 @@ package post_assistant
 import (
 	"github.com/firebase/genkit/go/ai"
 
-	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/infra/eventhub"
+	"github.com/ogen-app/ogen/src/infra/repository"
+	"github.com/ogen-app/ogen/src/infra/vendors/llm"
 	"github.com/ogen-app/ogen/src/kernel/usage"
 	"github.com/ogen-app/ogen/src/notes"
 	"github.com/ogen-app/ogen/src/post_actions/clone"
 	"github.com/ogen-app/ogen/src/post_actions/restore"
 	"github.com/ogen-app/ogen/src/post_actions/schedule"
-	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 // PostAssistantRequest is the input to the postAssistant flow.

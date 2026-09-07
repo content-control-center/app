@@ -14,9 +14,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/ogen-app/ogen/src/domain/models"
+	"github.com/ogen-app/ogen/src/infra/repository"
+	"github.com/ogen-app/ogen/src/infra/storage"
 	"github.com/ogen-app/ogen/src/kernel/activity"
-	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/storage"
 )
 
 // BrandHandler is the REST surface for the Brand module (CON-228): one aggregate

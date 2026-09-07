@@ -6,12 +6,12 @@ import (
 
 	"github.com/firebase/genkit/go/genkit"
 
-	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/genkit/flows/consistency"
+	"github.com/ogen-app/ogen/src/infra/eventhub"
+	"github.com/ogen-app/ogen/src/infra/repository"
+	"github.com/ogen-app/ogen/src/infra/vendors/llm"
 	"github.com/ogen-app/ogen/src/kernel/config"
 	"github.com/ogen-app/ogen/src/kernel/usage"
-	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 // initConsistency registers the read-only consistency review flow (CON-116) on

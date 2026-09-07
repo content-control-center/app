@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/ogen-app/ogen/src/domain/models"
+	"github.com/ogen-app/ogen/src/infra/publishers/zernio"
+	"github.com/ogen-app/ogen/src/infra/storage"
 	"github.com/ogen-app/ogen/src/jobs/queues"
-	"github.com/ogen-app/ogen/src/publishers/zernio"
-	"github.com/ogen-app/ogen/src/storage"
 )
 
 // fakeAttachmentRepo returns a fixed attachment list (CON-122 media tests).

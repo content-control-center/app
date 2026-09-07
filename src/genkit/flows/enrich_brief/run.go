@@ -13,8 +13,8 @@ import (
 	"github.com/firebase/genkit/go/genkit"
 
 	"github.com/ogen-app/ogen/src/genkit/jsonstream"
+	"github.com/ogen-app/ogen/src/infra/vendors/llm"
 	"github.com/ogen-app/ogen/src/kernel/logging"
-	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 // defaultMaxOutputTokens caps a single brief generation. A brief is well

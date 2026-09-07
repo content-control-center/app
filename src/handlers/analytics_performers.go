@@ -11,7 +11,7 @@ import (
 	"github.com/ogen-app/ogen/src/analytics/performers"
 	"github.com/ogen-app/ogen/src/analytics/timeframe"
 	"github.com/ogen-app/ogen/src/domain/models"
-	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/infra/repository"
 )
 
 // Performers serves the CON-238 "performers and outliers" board: the window's

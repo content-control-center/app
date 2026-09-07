@@ -13,13 +13,13 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/ogen-app/ogen/src/domain/models"
-	"github.com/ogen-app/ogen/src/email/templates"
+	"github.com/ogen-app/ogen/src/infra/email/templates"
+	"github.com/ogen-app/ogen/src/infra/publishers/zernio"
+	"github.com/ogen-app/ogen/src/infra/repository"
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/kernel/logging"
 	"github.com/ogen-app/ogen/src/kernel/tenantctx"
 	"github.com/ogen-app/ogen/src/notify"
-	"github.com/ogen-app/ogen/src/publishers/zernio"
-	"github.com/ogen-app/ogen/src/repository"
 )
 
 // DetectExpiringConnectionsQueue is the recurring connection-health sweep

@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/ogen-app/ogen/src/domain/models"
-	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/infra/eventhub"
+	"github.com/ogen-app/ogen/src/infra/repository"
 	"github.com/ogen-app/ogen/src/kernel/logging"
-	"github.com/ogen-app/ogen/src/repository"
 )
 
 // StreamTopic is the eventhub topic the notification SSE stream subscribes to.

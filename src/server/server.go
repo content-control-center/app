@@ -17,8 +17,6 @@ import (
 
 	"github.com/ogen-app/ogen/src/campaign_actions/overview"
 	"github.com/ogen-app/ogen/src/campaign_actions/summaries"
-	"github.com/ogen-app/ogen/src/eventhub"
-	"github.com/ogen-app/ogen/src/firecrawl"
 	"github.com/ogen-app/ogen/src/genkit/flows/campaign_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/draft_post"
@@ -28,6 +26,12 @@ import (
 	"github.com/ogen-app/ogen/src/grpc/client/pdf"
 	"github.com/ogen-app/ogen/src/grpc/client/video"
 	"github.com/ogen-app/ogen/src/handlers"
+	"github.com/ogen-app/ogen/src/infra/eventhub"
+	"github.com/ogen-app/ogen/src/infra/firecrawl"
+	"github.com/ogen-app/ogen/src/infra/publishers"
+	pubzernio "github.com/ogen-app/ogen/src/infra/publishers/zernio"
+	"github.com/ogen-app/ogen/src/infra/secrets"
+	"github.com/ogen-app/ogen/src/infra/storage"
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/jobs/queues"
 	"github.com/ogen-app/ogen/src/kernel/config"
@@ -38,10 +42,6 @@ import (
 	"github.com/ogen-app/ogen/src/post_actions/clone"
 	"github.com/ogen-app/ogen/src/post_actions/restore"
 	"github.com/ogen-app/ogen/src/post_actions/schedule"
-	"github.com/ogen-app/ogen/src/publishers"
-	pubzernio "github.com/ogen-app/ogen/src/publishers/zernio"
-	"github.com/ogen-app/ogen/src/secrets"
-	"github.com/ogen-app/ogen/src/storage"
 	"github.com/ogen-app/ogen/src/tenant_actions/signup"
 )
 

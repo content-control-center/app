@@ -9,8 +9,8 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/ogen-app/ogen/src/domain/models"
-	"github.com/ogen-app/ogen/src/email"
-	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/infra/email"
+	"github.com/ogen-app/ogen/src/infra/repository"
 )
 
 // SecretResolver resolves a named secret (e.g. email_link_secret) per call so a

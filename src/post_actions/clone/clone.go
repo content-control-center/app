@@ -23,10 +23,10 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/ogen-app/ogen/src/domain/models"
-	"github.com/ogen-app/ogen/src/eventhub"
+	"github.com/ogen-app/ogen/src/infra/eventhub"
+	"github.com/ogen-app/ogen/src/infra/repository"
+	"github.com/ogen-app/ogen/src/infra/storage"
 	"github.com/ogen-app/ogen/src/post_actions/logs"
-	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/storage"
 )
 
 // ErrSourceNotFound is returned when the post being cloned does not exist.

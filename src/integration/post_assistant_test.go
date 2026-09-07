@@ -16,8 +16,8 @@ import (
 
 	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
-	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/vendors/llm"
+	"github.com/ogen-app/ogen/src/infra/repository"
+	"github.com/ogen-app/ogen/src/infra/vendors/llm"
 )
 
 var _ = Describe("Post assistant flow", Ordered, func() {

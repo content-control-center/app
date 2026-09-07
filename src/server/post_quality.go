@@ -6,11 +6,11 @@ import (
 
 	"github.com/firebase/genkit/go/genkit"
 
-	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_quality"
+	"github.com/ogen-app/ogen/src/infra/eventhub"
+	"github.com/ogen-app/ogen/src/infra/vendors/llm"
 	"github.com/ogen-app/ogen/src/kernel/config"
 	"github.com/ogen-app/ogen/src/kernel/usage"
-	"github.com/ogen-app/ogen/src/vendors/llm"
 )
 
 // initPostQuality registers the assessPostQuality flow on the shared

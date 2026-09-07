@@ -12,8 +12,8 @@ import (
 
 	"github.com/riverqueue/river"
 
+	"github.com/ogen-app/ogen/src/infra/publishers/zernio"
 	"github.com/ogen-app/ogen/src/jobs/queues"
-	"github.com/ogen-app/ogen/src/publishers/zernio"
 )
 
 // profileStub is a minimal Zernio /profiles server for the bootstrap job tests.

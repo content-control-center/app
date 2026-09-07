@@ -24,11 +24,11 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	secretsv1 "github.com/ogen-app/ogen/gen/secrets/v1"
-	"github.com/ogen-app/ogen/src/crypto/envelope"
 	grpcserver "github.com/ogen-app/ogen/src/grpc/server"
 	"github.com/ogen-app/ogen/src/handlers"
-	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/secrets"
+	"github.com/ogen-app/ogen/src/infra/crypto/envelope"
+	"github.com/ogen-app/ogen/src/infra/repository"
+	"github.com/ogen-app/ogen/src/infra/secrets"
 )
 
 // Secrets are managed exclusively over the internal gRPC surface (there is no

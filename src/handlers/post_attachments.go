@@ -19,11 +19,11 @@ import (
 	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/domain/platforms"
 	"github.com/ogen-app/ogen/src/grpc/client/pdf"
+	"github.com/ogen-app/ogen/src/infra/repository"
+	"github.com/ogen-app/ogen/src/infra/storage"
+	"github.com/ogen-app/ogen/src/infra/storage/imageprobe"
+	"github.com/ogen-app/ogen/src/infra/storage/pdfprobe"
 	"github.com/ogen-app/ogen/src/kernel/logging"
-	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/storage"
-	"github.com/ogen-app/ogen/src/storage/imageprobe"
-	"github.com/ogen-app/ogen/src/storage/pdfprobe"
 )
 
 const (

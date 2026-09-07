@@ -7,9 +7,9 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/ogen-app/ogen/src/domain/models"
+	"github.com/ogen-app/ogen/src/infra/repository"
 	"github.com/ogen-app/ogen/src/kernel/activity"
 	"github.com/ogen-app/ogen/src/notes"
-	"github.com/ogen-app/ogen/src/repository"
 )
 
 // PostNotesHandler exposes the CRUD API for per-post Notes (CON-188), nested

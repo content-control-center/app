@@ -16,7 +16,7 @@ import (
 	"errors"
 
 	"github.com/ogen-app/ogen/src/domain/models"
-	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/infra/repository"
 )
 
 // Outcome is the classification of a post's account selection under the rule.

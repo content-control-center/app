@@ -13,7 +13,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/infra/repository"
 )
 
 // TimezoneKey is the `settings` row key holding the workspace IANA

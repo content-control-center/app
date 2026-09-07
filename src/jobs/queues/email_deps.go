@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ogen-app/ogen/src/email"
+	"github.com/ogen-app/ogen/src/infra/email"
+	"github.com/ogen-app/ogen/src/infra/repository"
 	"github.com/ogen-app/ogen/src/kernel/activity"
-	"github.com/ogen-app/ogen/src/repository"
 )
 
 // EmailDeps bundles everything the send_email + cleanup_email_logs workers need

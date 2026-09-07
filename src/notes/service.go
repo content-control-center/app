@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/ogen-app/ogen/src/domain/models"
-	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/infra/repository"
 )
 
 // Length bounds guard the unbounded TEXT columns against abuse; they are

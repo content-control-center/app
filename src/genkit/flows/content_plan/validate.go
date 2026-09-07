@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/ogen-app/ogen/src/domain/models"
-	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/infra/repository"
 )
 
 func validateInput(ctx context.Context, campaignID string, campaignRepo repository.CampaignRepository) (*models.Campaign, error) {

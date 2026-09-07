@@ -11,7 +11,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/campaigngoal"
 	"github.com/ogen-app/ogen/src/domain/models"
-	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/infra/repository"
 	"github.com/ogen-app/ogen/src/settings"
 )
 

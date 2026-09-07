@@ -9,8 +9,8 @@ import (
 
 	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/domain/platforms"
-	"github.com/ogen-app/ogen/src/publishers"
-	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/infra/publishers"
+	"github.com/ogen-app/ogen/src/infra/repository"
 )
 
 type PlatformsHandler struct {

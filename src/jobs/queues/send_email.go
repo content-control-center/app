@@ -11,8 +11,8 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/ogen-app/ogen/src/domain/models"
-	"github.com/ogen-app/ogen/src/email"
-	"github.com/ogen-app/ogen/src/email/templates"
+	"github.com/ogen-app/ogen/src/infra/email"
+	"github.com/ogen-app/ogen/src/infra/email/templates"
 	"github.com/ogen-app/ogen/src/kernel/activity"
 	"github.com/ogen-app/ogen/src/kernel/logging"
 	"github.com/ogen-app/ogen/src/kernel/tenantctx"

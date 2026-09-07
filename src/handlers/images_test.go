@@ -21,8 +21,8 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/ogen-app/ogen/src/handlers"
-	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/storage"
+	"github.com/ogen-app/ogen/src/infra/repository"
+	"github.com/ogen-app/ogen/src/infra/storage"
 )
 
 // stubStorage is an in-memory Storage implementation for tests.

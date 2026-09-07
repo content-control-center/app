@@ -6,10 +6,10 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/ogen-app/ogen/src/domain/models"
+	"github.com/ogen-app/ogen/src/infra/repository"
 	"github.com/ogen-app/ogen/src/kernel/activity"
 	"github.com/ogen-app/ogen/src/post_actions/clone"
 	"github.com/ogen-app/ogen/src/post_actions/restore"
-	"github.com/ogen-app/ogen/src/repository"
 )
 
 // PostActionsHandler owns the post derivation actions — clone (CON-59: duplicate

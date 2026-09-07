@@ -7,15 +7,15 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/ogen-app/ogen/src/email/resend"
-	"github.com/ogen-app/ogen/src/email/templates"
 	"github.com/ogen-app/ogen/src/handlers"
+	"github.com/ogen-app/ogen/src/infra/email/resend"
+	"github.com/ogen-app/ogen/src/infra/email/templates"
+	"github.com/ogen-app/ogen/src/infra/repository"
+	"github.com/ogen-app/ogen/src/infra/secrets"
 	"github.com/ogen-app/ogen/src/jobs/queues"
 	"github.com/ogen-app/ogen/src/kernel/activity"
 	"github.com/ogen-app/ogen/src/kernel/config"
 	"github.com/ogen-app/ogen/src/kernel/logging"
-	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/secrets"
 )
 
 // emailRuntime bundles the CON-154 email collaborators built at boot: the job

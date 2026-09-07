@@ -11,7 +11,7 @@ import (
 
 	"github.com/ogen-app/ogen/src/analytics/learnings"
 	"github.com/ogen-app/ogen/src/domain/models"
-	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/infra/repository"
 )
 
 // Learnings serves the CON-239 "What we've learned" board: an all-time day×hour

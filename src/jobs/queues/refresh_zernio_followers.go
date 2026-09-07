@@ -10,10 +10,10 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/ogen-app/ogen/src/domain/models"
+	"github.com/ogen-app/ogen/src/infra/publishers/zernio"
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/kernel/logging"
 	"github.com/ogen-app/ogen/src/kernel/tenantctx"
-	"github.com/ogen-app/ogen/src/publishers/zernio"
 )
 
 // RefreshZernioFollowersQueue is the recurring follower-stats snapshot queue

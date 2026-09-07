@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/ogen-app/ogen/src/domain/models"
-	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/infra/repository"
 )
 
 // fakeAccountRepo is a tiny in-memory repository.SocialAccountRepository for

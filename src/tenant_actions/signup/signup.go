@@ -22,7 +22,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/ogen-app/ogen/src/domain/models"
-	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/infra/repository"
 )
 
 // sessionTTL mirrors handlers.sessionTTL (CON-147): a fresh signup opens a

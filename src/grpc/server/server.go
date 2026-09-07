@@ -29,8 +29,8 @@ import (
 
 	secretsv1 "github.com/ogen-app/ogen/gen/secrets/v1"
 	tenantsv1 "github.com/ogen-app/ogen/gen/tenants/v1"
-	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/secrets"
+	"github.com/ogen-app/ogen/src/infra/repository"
+	"github.com/ogen-app/ogen/src/infra/secrets"
 )
 
 // authMetadataKey is the (lowercased) gRPC metadata key carrying the shared

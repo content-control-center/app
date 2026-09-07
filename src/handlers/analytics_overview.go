@@ -10,7 +10,7 @@ import (
 	"github.com/ogen-app/ogen/src/analytics/overview"
 	"github.com/ogen-app/ogen/src/analytics/timeframe"
 	"github.com/ogen-app/ogen/src/domain/models"
-	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/infra/repository"
 )
 
 // Overview serves the CON-237 "what happened over last N days" dashboard: five

@@ -10,8 +10,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	secretsv1 "github.com/ogen-app/ogen/gen/secrets/v1"
+	"github.com/ogen-app/ogen/src/infra/secrets"
 	"github.com/ogen-app/ogen/src/kernel/logging"
-	"github.com/ogen-app/ogen/src/secrets"
 )
 
 // secretsService adapts secrets.Store to the generated SecretsServiceServer.
