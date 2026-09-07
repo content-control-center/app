@@ -596,12 +596,10 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// allowlist and (for allowlisted platforms) enqueues a submit task
 	// transactionally with the status change + log write.
 	postsHandler.SetSchedulingDeps(r.autoPublishAllowlistRepo, enqueuer, db)
-	// CON-59: same clone service the assistant uses, behind the REST
-	// endpoint that backs the (future) Duplicate button.
-	postsHandler.SetCloneService(cloneSvc)
-	// CON-68: same restore service the assistant uses, behind the REST
-	// endpoint POST /api/posts/:id/restore.
-	postsHandler.SetRestoreService(restoreSvc)
+	// CON-59/CON-68: clone + restore actions (POST /:id/clone, /:id/restore) are a
+	// focused actions handler (CON-291 split out of PostsHandler), sharing the same
+	// services the assistant tools use.
+	handlers.NewPostActionsHandler(r.postRepo, cloneSvc, restoreSvc, activityWiring.recorder, auth).Register(app)
 	// CON-78: same schedule service the assistant uses, behind the REST
 	// endpoint POST /api/posts/:id/schedule and the PUT scheduling branch.
 	postsHandler.SetScheduleService(scheduleSvc)
