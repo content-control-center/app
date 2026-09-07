@@ -14,6 +14,7 @@ import (
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/tenant_actions/signup"
 )
 
 // Proves the central tenant-scoping (the TenantScoped model hooks) actually
@@ -44,7 +45,7 @@ var _ = Describe("Multi-tenant isolation (CON-97)", Ordered, func() {
 		campaignTypeRepo := repository.NewCampaignTypeRepository(db)
 		campaignRepo := repository.NewCampaignRepository(db, tagRepo, repository.NewPlatformRepository(db), campaignTypeRepo)
 		auth := handlers.RequireAuth(sessionRepo, userRepo, testCookieName)
-		handlers.NewTenantsHandler(db, tenantRepo, userRepo, repository.NewAccountRepository(db), nil, testCookieName, false, auth).Register(app)
+		handlers.NewTenantsHandler(signup.New(db, repository.NewAccountRepository(db), tenantRepo, nil), tenantRepo, testCookieName, false, auth).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
 		handlers.NewTagsHandler(tagRepo, auth).Register(app)
 	})

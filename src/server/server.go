@@ -41,6 +41,7 @@ import (
 	pubzernio "github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/secrets"
 	"github.com/ogen-app/ogen/src/storage"
+	"github.com/ogen-app/ogen/src/tenant_actions/signup"
 	"github.com/ogen-app/ogen/src/usage"
 )
 
@@ -375,14 +376,14 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	}
 	enqueuer := &queues.Enqueuer{Client: riverClient}
 
-	// CON-97: public self-service signup (POST /api/tenants) + tenant CRU.
-	// CON-102: signup enqueues an eager Zernio profile-bootstrap job in its
-	// transaction via the enqueuer, so the registration here waits until the
-	// River client exists.
-	tenantsHandler := handlers.NewTenantsHandler(db, r.tenantRepo, r.userRepo, r.accountRepo, enqueuer, cfg.SessionCookieName, !cfg.Debug, auth)
+	// CON-97: public self-service signup (POST /api/tenants) + tenant CRU. The
+	// transactional signup use case (CON-102 profile bootstrap + CON-154 welcome/
+	// drip mail enqueued in its tx) lives in the signup service; both enqueues go
+	// through the River enqueuer, so this waits until the River client exists.
+	signupSvc := signup.New(db, r.accountRepo, r.tenantRepo, enqueuer)
+	signupSvc.SetEmailEnqueuer(enqueuer)
+	tenantsHandler := handlers.NewTenantsHandler(signupSvc, r.tenantRepo, cfg.SessionCookieName, !cfg.Debug, auth)
 	tenantsHandler.SetActivityRecorder(activityWiring.recorder)
-	// CON-154: signup enqueues the welcome email + onboarding drip in its tx.
-	tenantsHandler.SetEmailEnqueuer(enqueuer)
 	tenantsHandler.Register(app)
 
 	// CON-147: authenticated workspace surface (list / create / switch). Create

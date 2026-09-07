@@ -18,6 +18,7 @@ import (
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/tenant_actions/signup"
 )
 
 // fakeProfileEnqueuer records the tenant ids signup asks to provision a Zernio
@@ -66,7 +67,8 @@ var _ = Describe("TenantsHandler", Ordered, func() {
 		sessionRepo := repository.NewSessionRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, userRepo, testCookieName)
 		enq = &fakeProfileEnqueuer{}
-		handlers.NewTenantsHandler(db, tenantRepo, userRepo, repository.NewAccountRepository(db), enq, testCookieName, false, auth).Register(app)
+		signupSvc := signup.New(db, repository.NewAccountRepository(db), tenantRepo, enq)
+		handlers.NewTenantsHandler(signupSvc, tenantRepo, testCookieName, false, auth).Register(app)
 	})
 
 	AfterEach(func() {

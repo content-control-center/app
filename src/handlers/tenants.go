@@ -4,19 +4,18 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/uptrace/bun"
 
 	"github.com/ogen-app/ogen/src/activity"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/tenant_actions/signup"
 	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
@@ -55,12 +54,8 @@ const signupThrottledMsg = "Too many signup attempts. Please wait a minute and t
 // tenant CRU surface (no delete). Tenants are the isolation boundary, so the
 // read/update endpoints only ever operate on the caller's own tenant (CON-97).
 type TenantsHandler struct {
-	db           *bun.DB
+	signup       *signup.Service
 	tenantRepo   repository.TenantRepository
-	userRepo     repository.UserRepository
-	accountRepo  repository.AccountRepository
-	profileJobs  ProfileBootstrapEnqueuer
-	emailJobs    EmailEnqueuer
 	cookieName   string
 	secureCookie bool
 	auth         fiber.Handler
@@ -72,13 +67,10 @@ type TenantsHandler struct {
 	activity *activity.Recorder
 }
 
-func NewTenantsHandler(db *bun.DB, tenantRepo repository.TenantRepository, userRepo repository.UserRepository, accountRepo repository.AccountRepository, profileJobs ProfileBootstrapEnqueuer, cookieName string, secureCookie bool, auth fiber.Handler) *TenantsHandler {
+func NewTenantsHandler(signupSvc *signup.Service, tenantRepo repository.TenantRepository, cookieName string, secureCookie bool, auth fiber.Handler) *TenantsHandler {
 	return &TenantsHandler{
-		db:           db,
+		signup:       signupSvc,
 		tenantRepo:   tenantRepo,
-		userRepo:     userRepo,
-		accountRepo:  accountRepo,
-		profileJobs:  profileJobs,
 		cookieName:   cookieName,
 		secureCookie: secureCookie,
 		auth:         auth,
@@ -88,10 +80,6 @@ func NewTenantsHandler(db *bun.DB, tenantRepo repository.TenantRepository, userR
 
 // SetActivityRecorder wires the CON-125 activity recorder (nil-safe no-op).
 func (h *TenantsHandler) SetActivityRecorder(r *activity.Recorder) { h.activity = r }
-
-// SetEmailEnqueuer wires the CON-154 lifecycle-email enqueuer (nil-safe no-op).
-// When unset, signup simply sends no welcome/drip mail.
-func (h *TenantsHandler) SetEmailEnqueuer(e EmailEnqueuer) { h.emailJobs = e }
 
 func (h *TenantsHandler) Register(app *fiber.App) {
 	app.Post("/api/tenants", h.Signup) // public self-service signup
@@ -143,95 +131,16 @@ func (h *TenantsHandler) Signup(c *fiber.Ctx) error {
 		return tooManyRequests(c, retry, signupThrottledMsg)
 	}
 
-	// Email uniquely identifies an ACCOUNT (CON-147). Reject a duplicate up front
-	// with 409 (an existing account should log in and create a workspace instead);
-	// the accounts.email unique constraint is the TOCTOU backstop below.
-	if _, err := h.accountRepo.GetByEmail(c.Context(), req.User.Email); err == nil {
-		return fiber.NewError(fiber.StatusConflict, "email already in use")
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
-
-	slug, err := h.uniqueSlug(c.Context(), req.Tenant.Name)
+	// The transactional create + job enqueues live in the signup use case; the
+	// handler keeps only transport: throttle, cookie, activity, response.
+	res, err := h.signup.Create(c.Context(), signup.Input{
+		TenantName: req.Tenant.Name,
+		UserName:   req.User.Name,
+		Email:      req.User.Email,
+		Password:   req.User.Password,
+	})
 	if err != nil {
-		return err
-	}
-
-	tenantID, err := models.NewID()
-	if err != nil {
-		return err
-	}
-	accountID, err := models.NewID()
-	if err != nil {
-		return err
-	}
-	userID, err := models.NewID()
-	if err != nil {
-		return err
-	}
-	hash, err := models.HashPassword(req.User.Password)
-	if err != nil {
-		return err
-	}
-	token, err := models.NewSessionToken()
-	if err != nil {
-		return err
-	}
-
-	now := time.Now().UTC()
-	// CON-208: tenant.tier_id is required (NOT NULL). New workspaces start on the
-	// seeded default tier; Harbor reassigns them later over the gRPC admin surface.
-	tenant := &models.Tenant{ID: tenantID, Name: req.Tenant.Name, Slug: slug, TierID: models.DefaultTierID, CreatedAt: now, UpdatedAt: now}
-	// Identity (the credential) lives on the account; the users row is this
-	// account's membership of the new workspace (CON-147). The signup user creates
-	// the workspace, so they are its first owner (CON-26).
-	account := &models.Account{ID: accountID, Email: req.User.Email, PasswordHash: hash, Name: req.User.Name, CreatedAt: now, UpdatedAt: now}
-	user := &models.User{ID: userID, AccountID: accountID, TenantID: tenantID, Name: req.User.Name, Email: req.User.Email, Role: models.RoleOwner, CreatedAt: now, UpdatedAt: now}
-	session := &models.Session{ID: token, AccountID: accountID, UserID: userID, TenantID: tenantID, ExpiresAt: now.Add(sessionTTL), CreatedAt: now}
-
-	if err := h.db.RunInTx(c.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.NewInsert().Model(tenant).Exec(ctx); err != nil {
-			return err
-		}
-		if _, err := tx.NewInsert().Model(account).Exec(ctx); err != nil {
-			return err
-		}
-		if _, err := tx.NewInsert().Model(user).Exec(ctx); err != nil {
-			return err
-		}
-		if _, err := tx.NewInsert().Model(session).Exec(ctx); err != nil {
-			return err
-		}
-		// CON-102: eagerly provision this tenant's Zernio profile in the
-		// background, enqueued inside THIS tx so the job exists iff the tenant
-		// does. The enqueue is a local DB insert (River shares bun's pool); the
-		// Zernio call happens later in the worker, so signup never blocks on
-		// Zernio reachability.
-		if h.profileJobs != nil {
-			if err := h.profileJobs.EnqueueBootstrapProfileTx(ctx, tx.Tx, tenantID); err != nil {
-				return err
-			}
-		}
-		// CON-154: welcome (immediate) + onboarding drip (day 2/5/7) enqueued in
-		// this same tx, so a rolled-back signup queues no mail and a committed one
-		// durably queues exactly one welcome + drip. The enqueues are local DB
-		// inserts — the Resend calls happen later in the worker — so signup never
-		// blocks on Resend reachability.
-		if h.emailJobs != nil {
-			if err := h.emailJobs.EnqueueWelcomeEmailTx(ctx, tx.Tx, userID, tenantID); err != nil {
-				return err
-			}
-			if err := h.emailJobs.EnqueueDripTx(ctx, tx.Tx, userID, tenantID); err != nil {
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		// A concurrent signup with the same email passes the pre-check above
-		// but loses the race to the accounts.email unique constraint; surface that
-		// as 409 rather than a raw 500 (TOCTOU backstop — the constraint is the
-		// real source of truth).
-		if isUniqueViolation(err) {
+		if errors.Is(err, signup.ErrEmailInUse) {
 			return fiber.NewError(fiber.StatusConflict, "email already in use")
 		}
 		return err
@@ -239,21 +148,21 @@ func (h *TenantsHandler) Signup(c *fiber.Ctx) error {
 
 	c.Cookie(&fiber.Cookie{
 		Name:     h.cookieName,
-		Value:    token,
+		Value:    res.Session.ID,
 		Path:     "/",
-		Expires:  session.ExpiresAt,
+		Expires:  res.Session.ExpiresAt,
 		HTTPOnly: true,
 		Secure:   h.secureCookie,
 		SameSite: "Lax",
 	})
 
 	h.activity.Record(
-		logging.WithUserID(tenantctx.With(c.Context(), tenantID), user.ID),
+		logging.WithUserID(tenantctx.With(c.Context(), res.Tenant.ID), res.User.ID),
 		activity.CategoryAuthentication, "signup",
-		activity.WithEntity("tenant", tenantID), activity.WithSource(activity.SourceAPI),
+		activity.WithEntity("tenant", res.Tenant.ID), activity.WithSource(activity.SourceAPI),
 	)
 
-	return c.Status(fiber.StatusCreated).JSON(signupResponse{Tenant: tenant, User: user, Session: session})
+	return c.Status(fiber.StatusCreated).JSON(signupResponse{Tenant: res.Tenant, User: res.User, Session: res.Session})
 }
 
 // Current godoc
@@ -360,23 +269,6 @@ func slugify(name string) string {
 		s = "tenant"
 	}
 	return s
-}
-
-// uniqueSlug returns slugify(name), suffixed with -2, -3, … until free.
-func (h *TenantsHandler) uniqueSlug(ctx context.Context, name string) (string, error) {
-	base := slugify(name)
-	slug := base
-	for i := 2; i <= 1000; i++ {
-		_, err := h.tenantRepo.GetBySlug(ctx, slug)
-		if errors.Is(err, sql.ErrNoRows) {
-			return slug, nil
-		}
-		if err != nil {
-			return "", err
-		}
-		slug = fmt.Sprintf("%s-%d", base, i)
-	}
-	return "", fiber.NewError(fiber.StatusConflict, "could not allocate a unique slug")
 }
 
 // isUniqueViolation reports whether err is a Postgres unique-constraint

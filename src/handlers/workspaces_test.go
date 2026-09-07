@@ -16,6 +16,7 @@ import (
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/tenant_actions/signup"
 )
 
 // Exercises the CON-147 PR2 workspace surface end-to-end: one account holding
@@ -48,7 +49,7 @@ var _ = Describe("Workspaces (CON-147)", Ordered, func() {
 		settingRepo := repository.NewSettingRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, userRepo, testCookieName)
 		// profileJobs nil: no Zernio bootstrap in tests (creation still succeeds).
-		handlers.NewTenantsHandler(db, tenantRepo, userRepo, accountRepo, nil, testCookieName, false, auth).Register(app)
+		handlers.NewTenantsHandler(signup.New(db, accountRepo, tenantRepo, nil), tenantRepo, testCookieName, false, auth).Register(app)
 		handlers.NewWorkspacesHandler(db, workspaceRepo, userRepo, accountRepo, tenantRepo, sessionRepo, nil, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, accountRepo, sessionRepo, testCookieName, false).Register(app)
 		handlers.NewUsersHandler(db, userRepo, accountRepo, settingRepo, auth).Register(app)
