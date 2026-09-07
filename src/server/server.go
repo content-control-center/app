@@ -569,9 +569,11 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	slog.Info("genkit flows registered", logging.AttrComponent, "genkit")
 
 	handlers.NewCampaignTypesHandler(r.campaignTypeRepo, auth).Register(app)
+	// CON-113/CON-152: the campaign read projections (GET /:id/overview + GET
+	// /summaries) are a focused handler (CON-291 split out of CampaignsHandler),
+	// registered BEFORE it so the static /summaries route wins over /:id.
+	handlers.NewCampaignReadHandler(campaignOverviewSvc, campaignSummariesSvc, auth).Register(app)
 	campaignsHandler := handlers.NewCampaignsHandler(r.campaignRepo, r.campaignTypeRepo, auth, gkRuntime.GenerateDraft, gkRuntime.IsAnthropicAvailable, gkRuntime.EnrichBrief, r.campaignMessageRepo, gkRuntime.RunCampaignAssistant)
-	campaignsHandler.SetOverviewService(campaignOverviewSvc)
-	campaignsHandler.SetSummariesService(campaignSummariesSvc)
 	campaignsHandler.SetGeneratePosts(gkRuntime.GeneratePosts, cfg.GeneratePostsMax)
 	campaignsHandler.SetConsistency(gkRuntime.CheckBrief, gkRuntime.CheckPosts)
 	campaignsHandler.SetActivityRecorder(activityWiring.recorder)

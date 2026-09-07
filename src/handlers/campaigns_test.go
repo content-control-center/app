@@ -61,6 +61,11 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(app)
 		handlers.NewCampaignTypesHandler(campaignTypeRepo, auth).Register(app)
+		// CON-291: overview + summaries live on the read handler. Nil deps here so
+		// the routes exist (401 unauthenticated, 503 authenticated) for the default-
+		// app route-level specs; registered before CampaignsHandler so /summaries
+		// wins over /:id.
+		handlers.NewCampaignReadHandler(nil, nil, auth).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
 		handlers.NewTagsHandler(tagRepo, auth).Register(app)
 
@@ -1574,8 +1579,8 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 			handlers.NewUsersHandler(db, uRepo, repository.NewAccountRepository(db), setRepo, a2).Register(a)
 			handlers.NewSessionsHandler(uRepo, repository.NewAccountRepository(db), sRepo, testCookieName, false).Register(a)
 			ch := handlers.NewCampaignsHandler(cRepo, ctRepo, a2, nil, nil, nil, nil, nil)
-			ch.SetOverviewService(overview.New(cRepo, postRepo, pRepo))
 			ch.Register(a)
+			handlers.NewCampaignReadHandler(overview.New(cRepo, postRepo, pRepo), nil, a2).Register(a)
 			return a, postRepo
 		}
 
@@ -1729,7 +1734,8 @@ var _ = Describe("CampaignsHandler", Ordered, func() {
 			handlers.NewUsersHandler(db, uRepo, repository.NewAccountRepository(db), setRepo, a2).Register(a)
 			handlers.NewSessionsHandler(uRepo, repository.NewAccountRepository(db), sRepo, testCookieName, false).Register(a)
 			ch := handlers.NewCampaignsHandler(cRepo, ctRepo, a2, nil, nil, nil, nil, nil)
-			ch.SetSummariesService(summaries.New(postRepo))
+			// Read handler before ch so the static /summaries route wins over /:id.
+			handlers.NewCampaignReadHandler(nil, summaries.New(postRepo), a2).Register(a)
 			ch.Register(a)
 			return a, postRepo
 		}
