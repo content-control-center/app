@@ -8,7 +8,7 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/domain/models"
 )
 
 // AccountRepository persists the login identity (CON-147). Accounts are not

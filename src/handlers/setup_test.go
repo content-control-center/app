@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/domain/models"
 )
 
 // TestMain swaps the production argon2id cost profile for the

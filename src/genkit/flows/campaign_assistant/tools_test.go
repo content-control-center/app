@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
-	"github.com/ogen-app/ogen/src/models"
 )
 
 func day(s string) time.Time {

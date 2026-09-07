@@ -7,7 +7,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/domain/models"
 )
 
 // maxSummaryChars caps the combined asset previews at ~1000 tokens.

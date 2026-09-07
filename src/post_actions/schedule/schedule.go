@@ -24,10 +24,10 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/ogen-app/ogen/src/accountselect"
+	"github.com/ogen-app/ogen/src/domain/models"
+	"github.com/ogen-app/ogen/src/domain/platforms"
 	"github.com/ogen-app/ogen/src/eventhub"
 	"github.com/ogen-app/ogen/src/kernel/logging"
-	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/platforms"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
 )

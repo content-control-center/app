@@ -3,7 +3,7 @@ package handlers
 import (
 	"testing"
 
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/domain/models"
 )
 
 // CON-251: mutatesLockedContent is the pure comparison behind the submitted-

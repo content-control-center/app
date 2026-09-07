@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/kernel/tenantctx"
-	"github.com/ogen-app/ogen/src/models"
 )
 
 // LimitsReader resolves a tenant's configured limit row;

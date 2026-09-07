@@ -6,7 +6,7 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/domain/models"
 )
 
 // AssetImageRepository persists the page images mirrored for URL-scraped assets

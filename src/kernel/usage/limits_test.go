@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/kernel/usage"
-	"github.com/ogen-app/ogen/src/models"
 )
 
 func ptr(v int64) *int64 { return &v }

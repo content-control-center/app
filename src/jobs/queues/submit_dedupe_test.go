@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/jobs/queues"
-	"github.com/ogen-app/ogen/src/models"
 )
 
 // zernioPost is the raw JSON shape of a Zernio job as FindByContent decodes it

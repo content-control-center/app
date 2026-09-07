@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/domain/models"
 )
 
 // parseTestDate is a panic-on-error parser used by the tests in this file

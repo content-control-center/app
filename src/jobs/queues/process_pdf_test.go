@@ -12,8 +12,8 @@ import (
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 
+	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/grpc/client/pdf"
-	"github.com/ogen-app/ogen/src/models"
 )
 
 // ---- fakes (satisfy the job's narrow dependency interfaces) ----

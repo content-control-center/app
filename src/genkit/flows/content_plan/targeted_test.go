@@ -3,7 +3,7 @@ package content_plan
 import (
 	"testing"
 
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/domain/models"
 )
 
 func targetedPlatforms() []resolvedPlatform {

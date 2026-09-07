@@ -9,7 +9,7 @@ import (
 	"strings"
 	texttemplate "text/template"
 
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/domain/models"
 )
 
 // Delimiters are deliberately NOT the Go default {{ }} — Maizzle/Tailwind output

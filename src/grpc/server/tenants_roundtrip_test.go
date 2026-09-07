@@ -15,7 +15,7 @@ import (
 	"github.com/uptrace/bun"
 
 	tenantsv1 "github.com/ogen-app/ogen/gen/tenants/v1"
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/pgtest"
 	"github.com/ogen-app/ogen/src/repository"
 )

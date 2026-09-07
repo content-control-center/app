@@ -3,7 +3,7 @@ package zernio
 import (
 	"context"
 
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/publishers"
 	"github.com/ogen-app/ogen/src/repository"
 )

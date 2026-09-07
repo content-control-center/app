@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/domain/models"
 )
 
 // fakeBrandRepo implements repository.BrandRepository; only GetAll is functional

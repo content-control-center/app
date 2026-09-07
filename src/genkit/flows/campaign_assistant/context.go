@@ -5,7 +5,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/domain/models"
 )
 
 // assistantContext holds the rendered prompts ready for the model call.

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/jobs/queues"
-	"github.com/ogen-app/ogen/src/models"
 )
 
 // reconcileFakeRepo lives alongside fakePostRepo but only implements

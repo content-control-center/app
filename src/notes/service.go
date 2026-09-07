@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/repository"
 )
 

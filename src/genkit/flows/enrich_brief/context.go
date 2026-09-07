@@ -9,7 +9,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/domain/models"
 )
 
 // contextCacheTTL controls how long a cached context block stays valid.

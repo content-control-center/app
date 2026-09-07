@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/domain/models"
 )
 
 func day(s string) time.Time {

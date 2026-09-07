@@ -11,7 +11,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/domain/models"
 )
 
 // Assignment is a post's newly-computed publish date (00:00 UTC).

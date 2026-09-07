@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/domain/models"
 )
 
 // videoPlatform is a platform seeded with a representative video rule set

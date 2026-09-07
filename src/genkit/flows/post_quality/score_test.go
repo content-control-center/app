@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/domain/models"
 )
 
 const eps = 1e-9

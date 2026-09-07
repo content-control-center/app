@@ -1,6 +1,6 @@
 package activity
 
-import "github.com/ogen-app/ogen/src/models"
+import "github.com/ogen-app/ogen/src/domain/models"
 
 // Category values name the primary activity tag — the main slice dimension
 // (CON-125 §8). Free-form is allowed, but call-sites should use these.

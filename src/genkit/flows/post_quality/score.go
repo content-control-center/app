@@ -1,6 +1,6 @@
 package post_quality
 
-import "github.com/ogen-app/ogen/src/models"
+import "github.com/ogen-app/ogen/src/domain/models"
 
 // ComposeScore applies a weight profile to the model's four sub-scores,
 // stamps each dimension's Weight and Contribution into result in place,
