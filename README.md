@@ -172,41 +172,33 @@ starts the HTTP listener alongside the internal gRPC listener.
 cmd/server/        # main entrypoint: config → DB + migrations → secrets → server.New → listen
 
 src/
-  config/          # envconfig-loaded Config struct (single source of runtime knobs)
-  logging/         # slog setup (text local / JSON prod)
-  database/        # bun.DB factories (control-plane + analytics) and migrations
-  models/          # bun-tagged record structs (single source of truth for the schema)
-  repository/      # narrow per-aggregate persistence layer
-  handlers/        # Fiber HTTP handlers (REST + SSE) with swag annotations
-  server/          # server.New: wires repos → handlers → workers → routes; Genkit runtime
-  tenantctx/       # per-request tenant scoping
-  jobs/            # River runtime + metrics
-  jobs/queues/     # River workers (submit/poll/cancel/reconcile, analytics, PDF/URL, email, cleanups)
-  publishers/      # Publisher abstraction; publishers/zernio is the concrete impl
-  platforms/       # per-platform attachment + text validation rules
-  vendors/         # pluggable model/publisher vendor registry + per-kind pricing (metering)
-  usage/           # per-tenant usage metering & spend caps (analytics DB)
-  analytics/       # post-analytics read models (overview / performers / lessons / per-post)
-  activity/        # user-activity taxonomy + recording
-  genkit/          # Genkit AI flows (assistants, content plan, quality, embeddings)
-  brandresolve/    # brand voice/audience/guardrails resolution for the writing flows
-  embedding/       # asset chunking + Gemini embedding + vector search
-  grpc/server/     # internal operator gRPC surface (Secrets + TenantAdmin services)
-  grpc/client/     # gRPC clients we consume: pdf/ (pdf-service), video/ (video-service)
-  firecrawl/       # Firecrawl scrape client (URL assets)
-  email/           # Resend transactional/marketing email
-  storage/         # S3-compatible blob storage
-  secrets/         # envelope-encrypted secret store (per-secret DEK wrapped by KEK)
-  crypto/          # AES-GCM envelope-encryption primitives  netguard/        # SSRF / egress guards for outbound fetches
-  eventhub/        # in-process SSE event hub
-  notes/ scheduling/ campaigngoal/ settings/ post_actions/ campaign_actions/  # domain features
-  pgtest/ integration/  # test harness (real Postgres) + //go:build integration suite
+  transport/                       # inbound surface (CON-291 role grouping)
+    handlers/                      # Fiber HTTP handlers (REST + SSE) with swag annotations
+    grpc/server/                   # internal operator gRPC surface (Secrets + TenantAdmin services)
+    grpc/client/{pdf,video}/       # gRPC clients we consume (pdf-service, video-service)
+    server/                        # server.New: wires repos → handlers → workers → routes; Genkit runtime
+  usecase/                         # application orchestration / services — the one home for "where orchestration lives"
+    post_actions/ campaign_actions/ scheduling/ campaigngoal/ notes/ settings/
+    brandresolve/ notify/ accountselect/ tenant_actions/
+  domain/                          # business core
+    models/                        # bun-tagged record structs (single source of truth for the schema)
+    platforms/                     # per-platform attachment + text validation rules
+  infra/                           # persistence + outward adapters
+    repository/                    # narrow per-aggregate persistence layer
+    database/                      # bun.DB factories (control-plane + analytics) and migrations
+    publishers/                    # Publisher abstraction; publishers/zernio is the concrete impl
+    storage/ secrets/ crypto/ email/ firecrawl/ embedding/ eventhub/ vendors/
+  kernel/                          # cross-cutting: config/ logging/ tenantctx/ netguard/ usage/ activity/
+  jobs/ jobs/queues/               # River runtime + workers (submit/poll/cancel/reconcile, analytics, PDF/URL, email)
+  genkit/                          # Genkit AI flows (assistants, content plan, quality, embeddings)
+  analytics/                       # post-analytics read models (overview / performers / lessons / per-post)
+  pgtest/ integration/             # test harness (real Postgres) + //go:build integration suite
 ```
 
 **Persistence.** Domain data, sessions, the encrypted `secret` table, vector
 embeddings (`asset_chunks.embedding` as a pgvector `halfvec(3072)`), and River's
 own job tables all live in the **control-plane PostgreSQL 17 + pgvector**
-database. Bun is the ORM; migrations under `src/database/migrations/` run on
+database. Bun is the ORM; migrations under `src/infra/database/migrations/` run on
 every boot. Because River shares the same pool, background-job state, Post Log
 entries, and domain rows can co-commit in one transaction (used for the
 auto-publish schedule decision). A **separate TimescaleDB** database
@@ -252,9 +244,9 @@ All AI-powered features are [Firebase Genkit](https://firebase.google.com/docs/g
 flows under `src/genkit/flows/`. Two long-lived Genkit instances run at boot:
 
 - **Embedding instance** — the `googlegenai` plugin (Gemini Embedding 2). The wrapper is stable for the process lifetime; its backing embedder is rebuilt when `gemini_api_key` is set or rotated, so the key rotates without restart.
-- **Anthropic instance** — owned by `gkRuntime` (`src/server/genkit_runtime.go`). Hot-rebuildable, so rotating `anthropic_api_key` re-registers all Anthropic flows without a restart. With no key the runtime stays nil and consuming handlers return 503.
+- **Anthropic instance** — owned by `gkRuntime` (`src/transport/server/genkit_runtime.go`). Hot-rebuildable, so rotating `anthropic_api_key` re-registers all Anthropic flows without a restart. With no key the runtime stays nil and consuming handlers return 503.
 
-Foundation models are addressed by **role** (`src/vendors/llm`) so flows never
+Foundation models are addressed by **role** (`src/infra/vendors/llm`) so flows never
 hardcode a model id:
 
 | Role | Default model | Used by |
@@ -419,7 +411,7 @@ make docker           # build the API Docker image
 
 All runtime knobs are env vars, loaded by
 [`envconfig`](https://github.com/kelseyhightower/envconfig). See
-`src/config/config.go` for the full, documented list. Highlights:
+`src/kernel/config/config.go` for the full, documented list. Highlights:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|

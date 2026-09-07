@@ -278,7 +278,7 @@ behind a `PeriodicConfig` bool, like `IncludeAnalytics`.
 
 ---
 
-## Step 7: Wire into server (`src/server/server.go`)
+## Step 7: Wire into server (`src/transport/server/server.go`)
 
 Already wired for the existing jobs; for reference the shape is:
 
