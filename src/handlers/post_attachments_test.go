@@ -22,9 +22,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/ogen-app/ogen/src/grpc/client/pdf"
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/pdfclient"
 	"github.com/ogen-app/ogen/src/repository"
 )
 
@@ -62,7 +62,7 @@ func animatedGIF() []byte {
 // fixture's "/Type /Page /Parent" markers and returns a stub thumbnail.
 type fakePDFRenderer struct{}
 
-func (fakePDFRenderer) Render(_ context.Context, r io.Reader, _ pdfclient.RenderOptions) (*pdfclient.RenderResult, error) {
+func (fakePDFRenderer) Render(_ context.Context, r io.Reader, _ pdf.RenderOptions) (*pdf.RenderResult, error) {
 	data, _ := io.ReadAll(r)
 	pages := bytes.Count(data, []byte("/Type /Page /Parent"))
 	if pages == 0 {
@@ -71,7 +71,7 @@ func (fakePDFRenderer) Render(_ context.Context, r io.Reader, _ pdfclient.Render
 		// magic bytes alone are not a PDF.
 		return nil, status.Error(codes.InvalidArgument, "fake: not a parseable PDF")
 	}
-	return &pdfclient.RenderResult{PageCount: pages, ThumbnailPNG: []byte("PNGTHUMB")}, nil
+	return &pdf.RenderResult{PageCount: pages, ThumbnailPNG: []byte("PNGTHUMB")}, nil
 }
 
 // minimalPDF returns the bytes of a tiny structurally-valid 1-page PDF.

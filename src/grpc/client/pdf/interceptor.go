@@ -1,4 +1,4 @@
-package pdfclient
+package pdf
 
 import (
 	"context"

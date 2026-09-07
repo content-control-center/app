@@ -1,4 +1,4 @@
-package videoclient
+package video
 
 import (
 	"context"

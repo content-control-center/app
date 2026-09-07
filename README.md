@@ -191,15 +191,13 @@ src/
   genkit/          # Genkit AI flows (assistants, content plan, quality, embeddings)
   brandresolve/    # brand voice/audience/guardrails resolution for the writing flows
   embedding/       # asset chunking + Gemini embedding + vector search
-  pdfclient/       # gRPC client for pdf-service
-  videoclient/     # gRPC client for video-service
+  grpc/server/     # internal operator gRPC surface (Secrets + TenantAdmin services)
+  grpc/client/     # gRPC clients we consume: pdf/ (pdf-service), video/ (video-service)
   firecrawl/       # Firecrawl scrape client (URL assets)
   email/           # Resend transactional/marketing email
   storage/         # S3-compatible blob storage
   secrets/         # envelope-encrypted secret store (per-secret DEK wrapped by KEK)
-  crypto/          # AES-GCM envelope-encryption primitives
-  grpcserver/      # internal operator gRPC surface (SecretsService + TenantAdminService)
-  netguard/        # SSRF / egress guards for outbound fetches
+  crypto/          # AES-GCM envelope-encryption primitives  netguard/        # SSRF / egress guards for outbound fetches
   eventhub/        # in-process SSE event hub
   notes/ scheduling/ campaigngoal/ settings/ post_actions/ campaign_actions/  # domain features
   pgtest/ integration/  # test harness (real Postgres) + //go:build integration suite

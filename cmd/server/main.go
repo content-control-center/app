@@ -24,7 +24,7 @@ import (
 	_ "github.com/ogen-app/ogen/docs"
 	"github.com/ogen-app/ogen/src/config"
 	"github.com/ogen-app/ogen/src/database"
-	"github.com/ogen-app/ogen/src/grpcserver"
+	grpcserver "github.com/ogen-app/ogen/src/grpc/server"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/secrets"

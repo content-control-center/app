@@ -1,4 +1,4 @@
-// Package grpcserver hosts Ogen's internal, operator-facing gRPC surface.
+// Package server hosts Ogen's internal, operator-facing gRPC surface.
 //
 // Today it serves a single service — SecretsService — so Harbor (Ogen's
 // operations dashboard) can list / rotate / clear the third-party API keys in
@@ -14,7 +14,7 @@
 // exposed across hosts, the operator is expected to keep it on a private
 // network / behind a NetworkPolicy and add mTLS at the infra or transport layer
 // (grpc.Creds). Never carry the token over an untrusted path in cleartext.
-package grpcserver
+package server
 
 import (
 	"context"

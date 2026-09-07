@@ -12,20 +12,20 @@ import (
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 
+	"github.com/ogen-app/ogen/src/grpc/client/pdf"
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/pdfclient"
 )
 
 // ---- fakes (satisfy the job's narrow dependency interfaces) ----
 
 type fakeParser struct {
-	res      *pdfclient.Result
+	res      *pdf.Result
 	err      error
-	gotOpts  pdfclient.Options
+	gotOpts  pdf.Options
 	gotBytes []byte
 }
 
-func (f *fakeParser) Parse(_ context.Context, r io.Reader, opts pdfclient.Options) (*pdfclient.Result, error) {
+func (f *fakeParser) Parse(_ context.Context, r io.Reader, opts pdf.Options) (*pdf.Result, error) {
 	f.gotOpts = opts
 	f.gotBytes, _ = io.ReadAll(r)
 	return f.res, f.err
@@ -119,9 +119,9 @@ func (f *fakeFiles) Upsert(_ context.Context, file *models.AssetFile) error {
 func newProc(d PDFDeps) *ProcessPDFProcessor { return &ProcessPDFProcessor{Deps: d} }
 
 func TestProcessPDF_Success(t *testing.T) {
-	parser := &fakeParser{res: &pdfclient.Result{
+	parser := &fakeParser{res: &pdf.Result{
 		PageCount:    2,
-		Chunks:       []pdfclient.Chunk{{Index: 0, Text: "hello world", PageStart: 1, PageEnd: 1}},
+		Chunks:       []pdf.Chunk{{Index: 0, Text: "hello world", PageStart: 1, PageEnd: 1}},
 		ThumbnailPNG: []byte("PNGDATA"),
 	}}
 	blob := &fakeBlob{data: []byte("%PDF-1.7 body")}
@@ -163,9 +163,9 @@ func TestProcessPDF_Success(t *testing.T) {
 }
 
 func TestProcessPDF_FinalStatusWriteFailurePropagates(t *testing.T) {
-	parser := &fakeParser{res: &pdfclient.Result{
+	parser := &fakeParser{res: &pdf.Result{
 		PageCount: 1,
-		Chunks:    []pdfclient.Chunk{{Index: 0, Text: "hello world", PageStart: 1, PageEnd: 1}},
+		Chunks:    []pdf.Chunk{{Index: 0, Text: "hello world", PageStart: 1, PageEnd: 1}},
 	}}
 	// "processing" succeeds; the terminal "ready" write fails.
 	status := &fakeStatus{failOn: models.AssetStatusReady}
@@ -180,9 +180,9 @@ func TestProcessPDF_FinalStatusWriteFailurePropagates(t *testing.T) {
 }
 
 func TestProcessPDF_FileUpsertFailurePropagates(t *testing.T) {
-	parser := &fakeParser{res: &pdfclient.Result{
+	parser := &fakeParser{res: &pdf.Result{
 		PageCount: 1,
-		Chunks:    []pdfclient.Chunk{{Index: 0, Text: "hello world", PageStart: 1, PageEnd: 1}},
+		Chunks:    []pdf.Chunk{{Index: 0, Text: "hello world", PageStart: 1, PageEnd: 1}},
 	}}
 	status := &fakeStatus{}
 	files := &fakeFiles{err: errors.New("files: db down")}
@@ -200,7 +200,7 @@ func TestProcessPDF_FileUpsertFailurePropagates(t *testing.T) {
 }
 
 func TestProcessPDF_PartialOnSomeEmbedFailures(t *testing.T) {
-	parser := &fakeParser{res: &pdfclient.Result{PageCount: 1, Chunks: []pdfclient.Chunk{
+	parser := &fakeParser{res: &pdf.Result{PageCount: 1, Chunks: []pdf.Chunk{
 		{Index: 0, Text: "good chunk"},
 		{Index: 1, Text: "bad chunk"},
 	}}}
@@ -230,7 +230,7 @@ func TestProcessPDF_AllEmbedsFail_RetriesThenFailsOnLastAttempt(t *testing.T) {
 	mk := func() (*ProcessPDFProcessor, *fakeStatus) {
 		st := &fakeStatus{}
 		return newProc(PDFDeps{
-			Client:   &fakeParser{res: &pdfclient.Result{Chunks: []pdfclient.Chunk{{Index: 0, Text: "text"}}}},
+			Client:   &fakeParser{res: &pdf.Result{Chunks: []pdf.Chunk{{Index: 0, Text: "text"}}}},
 			Embedder: &fakeEmbedder{failAll: true},
 			Storage:  &fakeBlob{data: []byte("pdf")},
 			Assets:   st, Chunks: &fakeChunks{}, Files: &fakeFiles{},
@@ -288,7 +288,7 @@ func TestProcessPDF_EmptyPDFReadyNoChunks(t *testing.T) {
 	status := &fakeStatus{}
 	chunks := &fakeChunks{}
 	p := newProc(PDFDeps{
-		Client:   &fakeParser{res: &pdfclient.Result{PageCount: 1}},
+		Client:   &fakeParser{res: &pdf.Result{PageCount: 1}},
 		Embedder: &fakeEmbedder{}, Storage: &fakeBlob{data: []byte("pdf")},
 		Assets: status, Chunks: chunks, Files: &fakeFiles{},
 	})

@@ -29,9 +29,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/ogen-app/ogen/src/grpc/client/pdf"
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/pdfclient"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/storage"
 )
@@ -560,13 +560,13 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 // InvalidArgument verdict so the handler rejects magic-bytes-only garbage.
 type fakePDFRenderer struct{}
 
-func (fakePDFRenderer) Render(_ context.Context, r io.Reader, _ pdfclient.RenderOptions) (*pdfclient.RenderResult, error) {
+func (fakePDFRenderer) Render(_ context.Context, r io.Reader, _ pdf.RenderOptions) (*pdf.RenderResult, error) {
 	data, _ := io.ReadAll(r)
 	pages := bytes.Count(data, []byte("/Type /Page /Parent"))
 	if pages == 0 {
 		return nil, status.Error(codes.InvalidArgument, "fake: not a parseable PDF")
 	}
-	return &pdfclient.RenderResult{PageCount: pages, ThumbnailPNG: []byte("PNGTHUMB")}, nil
+	return &pdf.RenderResult{PageCount: pages, ThumbnailPNG: []byte("PNGTHUMB")}, nil
 }
 
 func buildIntegrationPDF(n int) []byte {

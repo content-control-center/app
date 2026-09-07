@@ -3,7 +3,7 @@ package handlers
 import (
 	"testing"
 
-	"github.com/ogen-app/ogen/src/videoclient"
+	"github.com/ogen-app/ogen/src/grpc/client/video"
 )
 
 func TestContainerToVideoMIME(t *testing.T) {
@@ -53,12 +53,12 @@ func TestVideoContentTypeToExt_Roundtrip(t *testing.T) {
 
 func TestResolveVideoMIME_Priority(t *testing.T) {
 	// Probe container wins when present.
-	if got := resolveVideoMIME(&videoclient.ProbeResult{Container: "matroska,webm"}, "video/mp4", "k.mp4"); got != "video/webm" {
+	if got := resolveVideoMIME(&video.ProbeResult{Container: "matroska,webm"}, "video/mp4", "k.mp4"); got != "video/webm" {
 		t.Errorf("probe container should win, got %q", got)
 	}
 	// The ambiguous matroska,webm container is disambiguated by the key
 	// extension: an .mkv key resolves to Matroska, not WebM.
-	if got := resolveVideoMIME(&videoclient.ProbeResult{Container: "matroska,webm"}, "", "post/clip.mkv"); got != "video/x-matroska" {
+	if got := resolveVideoMIME(&video.ProbeResult{Container: "matroska,webm"}, "", "post/clip.mkv"); got != "video/x-matroska" {
 		t.Errorf("mkv extension should disambiguate to matroska, got %q", got)
 	}
 	// Falls back to stored content-type when probe is absent.

@@ -9,7 +9,7 @@ import (
 // TenantGroup is an operator-owned, reusable classification (cohort / segment)
 // that many tenants can belong to (CON-208). The tenant↔group relation is
 // many-to-many (see TenantGroupAssignment). Groups are managed by Harbor over
-// the internal gRPC surface (src/grpcserver).
+// the internal gRPC surface (src/grpc/server).
 //
 // Like Tenant, this is a GLOBAL table — NOT TenantScoped: it is read and
 // written cross-tenant by operators, so it carries no tenant_id.

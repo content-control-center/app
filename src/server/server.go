@@ -29,13 +29,14 @@ import (
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
 	"github.com/ogen-app/ogen/src/genkit/flows/post_quality"
+	"github.com/ogen-app/ogen/src/grpc/client/pdf"
+	"github.com/ogen-app/ogen/src/grpc/client/video"
 	"github.com/ogen-app/ogen/src/handlers"
 	"github.com/ogen-app/ogen/src/jobs"
 	"github.com/ogen-app/ogen/src/jobs/queues"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/notes"
 	"github.com/ogen-app/ogen/src/notify"
-	"github.com/ogen-app/ogen/src/pdfclient"
 	"github.com/ogen-app/ogen/src/post_actions/clone"
 	"github.com/ogen-app/ogen/src/post_actions/restore"
 	"github.com/ogen-app/ogen/src/post_actions/schedule"
@@ -45,7 +46,6 @@ import (
 	"github.com/ogen-app/ogen/src/secrets"
 	"github.com/ogen-app/ogen/src/storage"
 	"github.com/ogen-app/ogen/src/usage"
-	"github.com/ogen-app/ogen/src/videoclient"
 )
 
 // TODO: refactor this function
@@ -187,7 +187,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	sessionsHandler.Register(app)
 	handlers.NewSettingsHandler(settingRepo, auth).Register(app)
 	// Secrets are managed exclusively over the internal gRPC surface
-	// (src/grpcserver), reached by Harbor — there is deliberately no REST CRUD
+	// (src/grpc/server), reached by Harbor — there is deliberately no REST CRUD
 	// for them. secretStore is still used below to resolve keys at call time and
 	// to power the health endpoint's resolvability report.
 	handlers.NewAutoPublishAllowlistHandler(autoPublishAllowlistRepo, auth).Register(app)
@@ -248,7 +248,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 
 	// CON-103: gRPC client for the PDF parsing microservice over the Railway
 	// private network. nil when PDF_SERVICE_ADDR is unset; closed on shutdown.
-	pdfClient, err := pdfclient.New(pdfclient.Config{
+	pdfClient, err := pdf.New(pdf.Config{
 		Addr:         cfg.PDFServiceAddr,
 		Timeout:      cfg.PDFServiceTimeout,
 		MaxRecvBytes: cfg.PDFServiceMaxRecvBytes,
@@ -262,7 +262,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 
 	// CON-148: gRPC client for the video probing microservice over the Railway
 	// private network. nil when VIDEO_SERVICE_ADDR is unset; closed on shutdown.
-	videoClient, err := videoclient.New(videoclient.Config{
+	videoClient, err := video.New(video.Config{
 		Addr:         cfg.VideoServiceAddr,
 		Timeout:      cfg.VideoServiceTimeout,
 		MaxRecvBytes: cfg.VideoServiceMaxRecvBytes,

@@ -9,7 +9,7 @@ import (
 // TenantTier is an operator-owned classification a tenant is assigned to
 // (CON-208). Every tenant has exactly one, required tier. Tiers are a small,
 // shared catalog (e.g. Free / Pro / Enterprise) managed by Harbor over the
-// internal gRPC surface (src/grpcserver).
+// internal gRPC surface (src/grpc/server).
 //
 // Like Tenant, this is a GLOBAL table — NOT TenantScoped: it is read and
 // written cross-tenant by operators, so it carries no tenant_id.

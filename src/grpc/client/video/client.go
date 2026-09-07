@@ -1,15 +1,15 @@
-// Package videoclient is a thin gRPC client for the video-service (CON-148).
+// Package video is a thin gRPC client for the video-service (CON-148).
 // It owns the connection, the raised receive limit, and the per-call deadline,
 // and presents video probing as a single unary Probe call.
 //
-// Unlike pdfclient — which client-streams the file bytes — videoclient hands
+// Unlike pdf — which client-streams the file bytes — video hands
 // video-service a short-lived presigned GET URL and lets ffprobe range-read
 // only what it needs. That keeps the (potentially multi-GB) video out of the
 // API process entirely (CON-148 §5.2).
 //
 // The link to video-service is private-network-only (Railway), so the channel
 // is plaintext h2c — no TLS between the two.
-package videoclient
+package video
 
 import (
 	"context"
@@ -29,14 +29,14 @@ const defaultTimeout = 2 * time.Minute
 
 // ErrDisabled is returned when Probe is called on a disabled (nil) client —
 // i.e. VIDEO_SERVICE_ADDR was not configured.
-var ErrDisabled = errors.New("videoclient: disabled (VIDEO_SERVICE_ADDR not set)")
+var ErrDisabled = errors.New("video: disabled (VIDEO_SERVICE_ADDR not set)")
 
 // IsInvalidVideo reports whether err is the service's terminal "not a usable
 // video" verdict — gRPC InvalidArgument: the input is corrupt, truncated, or
 // not a decodable video, and will never probe, so it must not be retried.
 // Transport/internal failures (Unavailable, DeadlineExceeded, Internal) are
 // transient and return false, so callers can degrade gracefully rather than
-// reject the upload — mirrors pdfclient.IsInvalidPDF.
+// reject the upload — mirrors pdf.IsInvalidPDF.
 func IsInvalidVideo(err error) bool {
 	st, ok := grpcstatus.FromError(err)
 	return ok && st.Code() == codes.InvalidArgument
@@ -82,7 +82,7 @@ type Client struct {
 }
 
 // New dials the video-service. When cfg.Addr is empty it returns (nil, nil): a
-// nil client that reports ErrDisabled, mirroring how an absent pdfclient
+// nil client that reports ErrDisabled, mirroring how an absent pdf
 // disables PDF features. grpc.NewClient connects lazily, so this never blocks
 // on the service being up.
 func New(cfg Config) (*Client, error) {
@@ -91,7 +91,7 @@ func New(cfg Config) (*Client, error) {
 	}
 	// The correlation interceptors copy request_id/tenant_id from the call
 	// context into outgoing gRPC metadata so video-service's logs join the
-	// API's, exactly as pdfclient does (CON-111).
+	// API's, exactly as pdf does (CON-111).
 	dialOpts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithChainStreamInterceptor(correlationStreamInterceptor),
@@ -102,7 +102,7 @@ func New(cfg Config) (*Client, error) {
 	}
 	conn, err := grpc.NewClient(cfg.Addr, dialOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("videoclient: dial %q: %w", cfg.Addr, err)
+		return nil, fmt.Errorf("video: dial %q: %w", cfg.Addr, err)
 	}
 	timeout := cfg.Timeout
 	if timeout <= 0 {
@@ -135,7 +135,7 @@ func (c *Client) Probe(ctx context.Context, opts ProbeOptions) (*ProbeResult, er
 		Filename:     opts.Filename,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("videoclient: probe: %w", err)
+		return nil, fmt.Errorf("video: probe: %w", err)
 	}
 	return &ProbeResult{
 		DurationMs: resp.GetDurationMs(),

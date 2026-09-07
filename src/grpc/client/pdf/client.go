@@ -1,10 +1,10 @@
-// Package pdfclient is a thin gRPC client for the pdf-service (CON-103). It owns
+// Package pdf is a thin gRPC client for the pdf-service (CON-103). It owns
 // the connection, the raised receive limit, and the per-call deadline, and
 // presents PDF parsing as a single Parse call that client-streams the bytes.
 //
 // The link to pdf-service is private-network-only (Railway), so the channel is
 // plaintext h2c — no TLS between the two.
-package pdfclient
+package pdf
 
 import (
 	"context"
@@ -29,7 +29,7 @@ const defaultTimeout = 2 * time.Minute
 
 // ErrDisabled is returned when Parse is called on a disabled (nil) client —
 // i.e. PDF_SERVICE_ADDR was not configured.
-var ErrDisabled = errors.New("pdfclient: disabled (PDF_SERVICE_ADDR not set)")
+var ErrDisabled = errors.New("pdf: disabled (PDF_SERVICE_ADDR not set)")
 
 // IsInvalidPDF reports whether err is the service's terminal "not a usable PDF"
 // verdict — gRPC InvalidArgument: the input is corrupt, encrypted, or not a
@@ -103,7 +103,7 @@ func New(cfg Config) (*Client, error) {
 	}
 	conn, err := grpc.NewClient(cfg.Addr, dialOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("pdfclient: dial %q: %w", cfg.Addr, err)
+		return nil, fmt.Errorf("pdf: dial %q: %w", cfg.Addr, err)
 	}
 	timeout := cfg.Timeout
 	if timeout <= 0 {
@@ -131,7 +131,7 @@ func (c *Client) Parse(ctx context.Context, r io.Reader, opts Options) (*Result,
 
 	stream, err := c.rpc.Parse(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("pdfclient: open stream: %w", err)
+		return nil, fmt.Errorf("pdf: open stream: %w", err)
 	}
 
 	// First frame carries the options.
@@ -143,7 +143,7 @@ func (c *Client) Parse(ctx context.Context, r io.Reader, opts Options) (*Result,
 		ChunkOverlapChars: int32(opts.ChunkOverlapChars),
 		ChunkMaxChars:     int32(opts.ChunkMaxChars),
 	}}}); err != nil {
-		return nil, fmt.Errorf("pdfclient: send options: %w", err)
+		return nil, fmt.Errorf("pdf: send options: %w", err)
 	}
 
 	// Subsequent frames carry the PDF bytes.
@@ -152,20 +152,20 @@ func (c *Client) Parse(ctx context.Context, r io.Reader, opts Options) (*Result,
 		n, rerr := r.Read(buf)
 		if n > 0 {
 			if err := stream.Send(&pdfv1.ParseRequest{Payload: &pdfv1.ParseRequest_Chunk{Chunk: buf[:n]}}); err != nil {
-				return nil, fmt.Errorf("pdfclient: send pdf bytes: %w", err)
+				return nil, fmt.Errorf("pdf: send pdf bytes: %w", err)
 			}
 		}
 		if rerr == io.EOF {
 			break
 		}
 		if rerr != nil {
-			return nil, fmt.Errorf("pdfclient: read pdf: %w", rerr)
+			return nil, fmt.Errorf("pdf: read pdf: %w", rerr)
 		}
 	}
 
 	resp, err := stream.CloseAndRecv()
 	if err != nil {
-		return nil, fmt.Errorf("pdfclient: parse: %w", err)
+		return nil, fmt.Errorf("pdf: parse: %w", err)
 	}
 
 	out := &Result{PageCount: int(resp.GetPageCount()), ThumbnailPNG: resp.GetThumbnailPng()}
@@ -205,14 +205,14 @@ func (c *Client) Render(ctx context.Context, r io.Reader, opts RenderOptions) (*
 
 	stream, err := c.rpc.Render(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("pdfclient: open render stream: %w", err)
+		return nil, fmt.Errorf("pdf: open render stream: %w", err)
 	}
 
 	if err := stream.Send(&pdfv1.RenderRequest{Payload: &pdfv1.RenderRequest_Options{Options: &pdfv1.RenderOptions{
 		RenderThumbnail: opts.RenderThumbnail,
 		ThumbnailDpi:    int32(opts.ThumbnailDPI),
 	}}}); err != nil {
-		return nil, fmt.Errorf("pdfclient: send render options: %w", err)
+		return nil, fmt.Errorf("pdf: send render options: %w", err)
 	}
 
 	buf := make([]byte, streamFrameSize)
@@ -220,20 +220,20 @@ func (c *Client) Render(ctx context.Context, r io.Reader, opts RenderOptions) (*
 		n, rerr := r.Read(buf)
 		if n > 0 {
 			if err := stream.Send(&pdfv1.RenderRequest{Payload: &pdfv1.RenderRequest_Chunk{Chunk: buf[:n]}}); err != nil {
-				return nil, fmt.Errorf("pdfclient: send pdf bytes: %w", err)
+				return nil, fmt.Errorf("pdf: send pdf bytes: %w", err)
 			}
 		}
 		if rerr == io.EOF {
 			break
 		}
 		if rerr != nil {
-			return nil, fmt.Errorf("pdfclient: read pdf: %w", rerr)
+			return nil, fmt.Errorf("pdf: read pdf: %w", rerr)
 		}
 	}
 
 	resp, err := stream.CloseAndRecv()
 	if err != nil {
-		return nil, fmt.Errorf("pdfclient: render: %w", err)
+		return nil, fmt.Errorf("pdf: render: %w", err)
 	}
 	return &RenderResult{PageCount: int(resp.GetPageCount()), ThumbnailPNG: resp.GetThumbnailPng()}, nil
 }

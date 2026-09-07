@@ -16,9 +16,9 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/ogen-app/ogen/src/grpc/client/pdf"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/pdfclient"
 	"github.com/ogen-app/ogen/src/platforms"
 	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/storage"
@@ -69,10 +69,10 @@ const (
 )
 
 // PDFRenderer renders an attachment PDF to a page count + first-page thumbnail
-// via pdf-service (CON-103). Implemented by *pdfclient.Client; an interface here
+// via pdf-service (CON-103). Implemented by *pdf.Client; an interface here
 // keeps the handler testable and nil-tolerant (nil disables it).
 type PDFRenderer interface {
-	Render(ctx context.Context, r io.Reader, opts pdfclient.RenderOptions) (*pdfclient.RenderResult, error)
+	Render(ctx context.Context, r io.Reader, opts pdf.RenderOptions) (*pdf.RenderResult, error)
 }
 
 // PresignedURLTTL controls how long pre-signed GET URLs returned in
@@ -388,7 +388,7 @@ func (h *PostAttachmentsHandler) Upload(c *fiber.Ctx) error {
 		// platform soft-validation below, so the max_pages check still works.
 		if h.pdf != nil {
 			rctx, cancel := context.WithTimeout(c.Context(), pdfRenderTimeout)
-			render, rerr := h.pdf.Render(rctx, bytes.NewReader(raw), pdfclient.RenderOptions{
+			render, rerr := h.pdf.Render(rctx, bytes.NewReader(raw), pdf.RenderOptions{
 				RenderThumbnail: true,
 				ThumbnailDPI:    pdfThumbnailDPI,
 			})
@@ -400,7 +400,7 @@ func (h *PostAttachmentsHandler) Upload(c *fiber.Ctx) error {
 				// pdf-service is the structural validator. Transient/unreachable
 				// failures degrade gracefully: keep the attachment, no page count
 				// or thumbnail.
-				if pdfclient.IsInvalidPDF(rerr) {
+				if pdf.IsInvalidPDF(rerr) {
 					return fiber.NewError(fiber.StatusBadRequest, "uploaded file is not a readable PDF")
 				}
 				slog.WarnContext(c.Context(), "pdf render failed", logging.AttrComponent, "post_attachments", "name", fh.Filename, logging.AttrError, rerr)

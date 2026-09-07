@@ -1,4 +1,4 @@
-package pdfclient_test
+package pdf_test
 
 import (
 	"bytes"
@@ -12,8 +12,8 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	pdfv1 "github.com/ogen-app/ogen/gen/pdf/v1"
+	"github.com/ogen-app/ogen/src/grpc/client/pdf"
 	"github.com/ogen-app/ogen/src/logging"
-	"github.com/ogen-app/ogen/src/pdfclient"
 	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
@@ -91,23 +91,23 @@ func TestParseStreamsBytesAndReturnsResult(t *testing.T) {
 	}}
 	addr := serveStub(t, stub)
 
-	client, err := pdfclient.New(pdfclient.Config{Addr: addr, Timeout: 5 * time.Second, MaxRecvBytes: 1 << 20})
+	client, err := pdf.New(pdf.Config{Addr: addr, Timeout: 5 * time.Second, MaxRecvBytes: 1 << 20})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	defer client.Close()
 
 	// ~1.5 MiB forces multiple stream frames (frame size is 1 MiB).
-	pdf := bytes.Repeat([]byte("%PDF-1.7 data "), 110_000)
-	res, err := client.Parse(context.Background(), bytes.NewReader(pdf),
-		pdfclient.Options{Filename: "doc.pdf", RenderThumbnail: true, ThumbnailDPI: 96})
+	pdfBytes := bytes.Repeat([]byte("%PDF-1.7 data "), 110_000)
+	res, err := client.Parse(context.Background(), bytes.NewReader(pdfBytes),
+		pdf.Options{Filename: "doc.pdf", RenderThumbnail: true, ThumbnailDPI: 96})
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
 
 	// All bytes arrived, reassembled in order.
-	if !bytes.Equal(stub.gotBytes, pdf) {
-		t.Fatalf("server got %d bytes, want %d", len(stub.gotBytes), len(pdf))
+	if !bytes.Equal(stub.gotBytes, pdfBytes) {
+		t.Fatalf("server got %d bytes, want %d", len(stub.gotBytes), len(pdfBytes))
 	}
 	// Options were carried in the first frame.
 	if got := stub.gotOptions; got == nil || got.GetFilename() != "doc.pdf" ||
@@ -139,7 +139,7 @@ func TestParsePropagatesCorrelationMetadata(t *testing.T) {
 	stub := &stubServer{resp: &pdfv1.ParseResponse{PageCount: 1}}
 	addr := serveStub(t, stub)
 
-	client, err := pdfclient.New(pdfclient.Config{Addr: addr, Timeout: 5 * time.Second})
+	client, err := pdf.New(pdf.Config{Addr: addr, Timeout: 5 * time.Second})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestParsePropagatesCorrelationMetadata(t *testing.T) {
 
 	ctx := logging.WithRequestID(context.Background(), "rid")
 	ctx = tenantctx.With(ctx, "ten")
-	if _, err := client.Parse(ctx, bytes.NewReader([]byte("%PDF-1.7")), pdfclient.Options{}); err != nil {
+	if _, err := client.Parse(ctx, bytes.NewReader([]byte("%PDF-1.7")), pdf.Options{}); err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
 
@@ -165,13 +165,13 @@ func TestParseWithoutCorrelationSendsNoHeaders(t *testing.T) {
 	stub := &stubServer{resp: &pdfv1.ParseResponse{PageCount: 1}}
 	addr := serveStub(t, stub)
 
-	client, err := pdfclient.New(pdfclient.Config{Addr: addr, Timeout: 5 * time.Second})
+	client, err := pdf.New(pdf.Config{Addr: addr, Timeout: 5 * time.Second})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	defer client.Close()
 
-	if _, err := client.Parse(context.Background(), bytes.NewReader([]byte("%PDF-1.7")), pdfclient.Options{}); err != nil {
+	if _, err := client.Parse(context.Background(), bytes.NewReader([]byte("%PDF-1.7")), pdf.Options{}); err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
 
@@ -190,20 +190,20 @@ func TestRenderStreamsBytesAndReturnsPageCountAndThumbnail(t *testing.T) {
 	}}
 	addr := serveStub(t, stub)
 
-	client, err := pdfclient.New(pdfclient.Config{Addr: addr, Timeout: 5 * time.Second, MaxRecvBytes: 1 << 20})
+	client, err := pdf.New(pdf.Config{Addr: addr, Timeout: 5 * time.Second, MaxRecvBytes: 1 << 20})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	defer client.Close()
 
-	pdf := bytes.Repeat([]byte("%PDF-1.7 data "), 110_000) // multi-frame
-	res, err := client.Render(context.Background(), bytes.NewReader(pdf),
-		pdfclient.RenderOptions{RenderThumbnail: true, ThumbnailDPI: 96})
+	pdfBytes := bytes.Repeat([]byte("%PDF-1.7 data "), 110_000) // multi-frame
+	res, err := client.Render(context.Background(), bytes.NewReader(pdfBytes),
+		pdf.RenderOptions{RenderThumbnail: true, ThumbnailDPI: 96})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	if !bytes.Equal(stub.gotRenderBytes, pdf) {
-		t.Fatalf("server got %d bytes, want %d", len(stub.gotRenderBytes), len(pdf))
+	if !bytes.Equal(stub.gotRenderBytes, pdfBytes) {
+		t.Fatalf("server got %d bytes, want %d", len(stub.gotRenderBytes), len(pdfBytes))
 	}
 	if got := stub.gotRenderOpts; got == nil || !got.GetRenderThumbnail() || got.GetThumbnailDpi() != 96 {
 		t.Fatalf("render options not propagated: %+v", stub.gotRenderOpts)
@@ -214,14 +214,14 @@ func TestRenderStreamsBytesAndReturnsPageCountAndThumbnail(t *testing.T) {
 }
 
 func TestDisabledClientReportsErrDisabled(t *testing.T) {
-	c, err := pdfclient.New(pdfclient.Config{Addr: ""})
+	c, err := pdf.New(pdf.Config{Addr: ""})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	if c != nil {
 		t.Fatalf("expected a nil client when Addr is empty")
 	}
-	if _, err := c.Parse(context.Background(), bytes.NewReader(nil), pdfclient.Options{}); err != pdfclient.ErrDisabled {
+	if _, err := c.Parse(context.Background(), bytes.NewReader(nil), pdf.Options{}); err != pdf.ErrDisabled {
 		t.Fatalf("expected ErrDisabled, got %v", err)
 	}
 	if err := c.Close(); err != nil {

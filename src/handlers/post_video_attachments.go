@@ -11,11 +11,11 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/ogen-app/ogen/src/grpc/client/video"
 	"github.com/ogen-app/ogen/src/logging"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/platforms"
 	"github.com/ogen-app/ogen/src/storage"
-	"github.com/ogen-app/ogen/src/videoclient"
 )
 
 // presignPutTTL bounds how long a video-upload PUT URL stays valid — long
@@ -29,11 +29,11 @@ const presignPutTTL = 30 * time.Minute
 const probeGetTTL = 5 * time.Minute
 
 // VideoProber probes an uploaded video for duration/codec/resolution and a
-// poster frame via video-service (CON-148). Implemented by *videoclient.Client;
+// poster frame via video-service (CON-148). Implemented by *video.Client;
 // an interface here keeps the handler testable and nil-tolerant (nil disables
 // probing — uploads are accepted unprobed).
 type VideoProber interface {
-	Probe(ctx context.Context, opts videoclient.ProbeOptions) (*videoclient.ProbeResult, error)
+	Probe(ctx context.Context, opts video.ProbeOptions) (*video.ProbeResult, error)
 }
 
 // presignVideoRequest is the presign body: the client declares what it is
@@ -211,21 +211,21 @@ func (h *PostAttachmentsHandler) FinalizeVideo(c *fiber.Ctx) error {
 	// Probe via video-service (CON-148). Best-effort like pdf-service: a
 	// terminal "not a readable video" verdict rejects the upload; transient /
 	// unreachable failures degrade to an unprobed attachment.
-	var probe *videoclient.ProbeResult
+	var probe *video.ProbeResult
 	if h.video != nil {
 		srcURL, perr := h.storage.PresignedGetURL(c.Context(), req.S3Key, probeGetTTL)
 		if perr != nil {
 			slog.WarnContext(c.Context(), "video probe presign failed", logging.AttrComponent, "post_attachments", logging.AttrError, perr)
 		} else {
 			pctx, cancel := context.WithTimeout(c.Context(), videoProbeTimeout)
-			res, rerr := h.video.Probe(pctx, videoclient.ProbeOptions{
+			res, rerr := h.video.Probe(pctx, video.ProbeOptions{
 				SourceURL:    srcURL,
 				RenderPoster: true,
 				Filename:     path.Base(req.S3Key),
 			})
 			cancel()
 			if rerr != nil {
-				if videoclient.IsInvalidVideo(rerr) {
+				if video.IsInvalidVideo(rerr) {
 					_ = h.storage.Delete(c.Context(), req.S3Key)
 					return fiber.NewError(fiber.StatusBadRequest, "uploaded file is not a readable video")
 				}
@@ -278,7 +278,7 @@ func (h *PostAttachmentsHandler) FinalizeVideo(c *fiber.Ctx) error {
 }
 
 // resolveVideoMIME picks the canonical video MIME for a finalized upload.
-func resolveVideoMIME(probe *videoclient.ProbeResult, storedContentType, key string) string {
+func resolveVideoMIME(probe *video.ProbeResult, storedContentType, key string) string {
 	if probe != nil {
 		if m := containerToVideoMIME(probe.Container, path.Ext(key)); m != "" {
 			return m
