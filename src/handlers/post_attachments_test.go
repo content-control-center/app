@@ -153,6 +153,18 @@ func multipartBodyAttachmentAlt(filename string, content []byte, altText string)
 	return &buf, w.FormDataContentType()
 }
 
+// multipartBodyAttachmentSegment is multipartBodyAttachment plus a segment_index
+// form field (CON-284 thread media).
+func multipartBodyAttachmentSegment(filename string, content []byte, segment string) (*bytes.Buffer, string) {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	fw, _ := w.CreateFormFile("file", filename)
+	_, _ = fw.Write(content)
+	_ = w.WriteField("segment_index", segment)
+	w.Close()
+	return &buf, w.FormDataContentType()
+}
+
 var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 	var (
 		app        *fiber.App
@@ -261,6 +273,27 @@ var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 		req.Header.Set("Content-Type", ct)
 		req.AddCookie(authCookie)
 		return app.Test(req, 30000)
+	}
+
+	// createThreadPost creates a draft thread post on X (CON-284) so segment
+	// media is accepted. A draft skips readiness validation, so no segments are
+	// needed yet.
+	createThreadPost := func() string {
+		body, _ := json.Marshal(fiber.Map{
+			"campaign_id":        campaignID,
+			"platform_id":        xPlatformID,
+			"platform_post_type": "thread",
+			"title":              "Thread Post",
+		})
+		req := httptest.NewRequest("POST", "/api/posts", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(authCookie)
+		resp, err := app.Test(req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(Equal(fiber.StatusCreated))
+		var p models.Post
+		Expect(json.NewDecoder(resp.Body).Decode(&p)).To(Succeed())
+		return p.ID
 	}
 
 	// uploadAttID uploads a PNG and returns the created attachment id.
@@ -602,6 +635,55 @@ var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 	})
 
 	// ── PATCH /api/posts/:post_id/attachments/:id ───────────────────────────
+
+	Describe("segment_index (CON-284)", func() {
+		patchSegment := func(postID, attID string, seg any) *http.Response {
+			body, _ := json.Marshal(fiber.Map{"segment_index": seg})
+			req := httptest.NewRequest("PATCH", "/api/posts/"+postID+"/attachments/"+attID, bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req)
+			Expect(err).NotTo(HaveOccurred())
+			return resp
+		}
+
+		It("rejects uploading a segment_index to a non-thread post", func() {
+			postID := createPostWithPlatform(linkedinPlatformID) // image-post
+			body, ct := multipartBodyAttachmentSegment("image.png", minimalPNG(), "0")
+			req := httptest.NewRequest("POST", "/api/posts/"+postID+"/attachments", body)
+			req.Header.Set("Content-Type", ct)
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req, 30000)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(422))
+		})
+
+		It("accepts a segment_index on a thread post", func() {
+			postID := createThreadPost()
+			body, ct := multipartBodyAttachmentSegment("image.png", minimalPNG(), "0")
+			req := httptest.NewRequest("POST", "/api/posts/"+postID+"/attachments", body)
+			req.Header.Set("Content-Type", ct)
+			req.AddCookie(authCookie)
+			resp, err := app.Test(req, 30000)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(201))
+			var att map[string]any
+			Expect(json.NewDecoder(resp.Body).Decode(&att)).To(Succeed())
+			Expect(att["segment_index"]).To(BeEquivalentTo(0))
+		})
+
+		It("rejects PATCHing a non-null segment_index onto a non-thread attachment", func() {
+			postID := createPostWithPlatform(linkedinPlatformID)
+			attID := uploadAttID(postID)
+			Expect(patchSegment(postID, attID, 1).StatusCode).To(Equal(422))
+		})
+
+		It("allows PATCHing segment_index to null on a non-thread attachment", func() {
+			postID := createPostWithPlatform(linkedinPlatformID)
+			attID := uploadAttID(postID)
+			Expect(patchSegment(postID, attID, nil).StatusCode).To(Equal(200))
+		})
+	})
 
 	Describe("PATCH /api/posts/:post_id/attachments/:id", func() {
 		It("updates the position", func() {

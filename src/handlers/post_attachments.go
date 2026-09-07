@@ -345,6 +345,11 @@ func (h *PostAttachmentsHandler) Upload(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	// A segment only exists on a thread post; refuse to stamp one on an ordinary
+	// post so a meaningless index is never stored or returned (CON-284 §9).
+	if segIdx != nil && !post.IsThread() {
+		return fiber.NewError(fiber.StatusUnprocessableEntity, "segment_index is only valid on a thread post")
+	}
 
 	att := &models.PostAttachment{
 		ID:           id,
@@ -556,8 +561,15 @@ func (h *PostAttachmentsHandler) Update(c *fiber.Ctx) error {
 	if req.Position != nil && *req.Position < 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "position must be non-negative")
 	}
-	if req.SegmentIndex.Present && req.SegmentIndex.Value != nil && *req.SegmentIndex.Value < 0 {
-		return fiber.NewError(fiber.StatusBadRequest, "segment_index must be non-negative")
+	if req.SegmentIndex.Present && req.SegmentIndex.Value != nil {
+		if *req.SegmentIndex.Value < 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "segment_index must be non-negative")
+		}
+		// A non-null segment only belongs on a thread post; an explicit null is
+		// always allowed (it clears the field back to a whole-post attachment).
+		if !post.IsThread() {
+			return fiber.NewError(fiber.StatusUnprocessableEntity, "segment_index is only valid on a thread post")
+		}
 	}
 	var altText string
 	if req.AltText != nil {
