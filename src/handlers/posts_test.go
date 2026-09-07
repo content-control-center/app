@@ -90,9 +90,8 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
 		handlers.NewAssetsHandler(pieceRepo, repository.NewAssetFileRepository(db), nil, nil, nil, nil, nil, nil, auth, nil).Register(app)
-		postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 		postLogRepo := repository.NewPostLogRepository(db)
-		ph := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, repository.NewPlatformRepository(db), repository.NewPostAttachmentRepository(db), auth, nil, nil)
+		ph := handlers.NewPostsHandler(postRepo, postVersionRepo, repository.NewPlatformRepository(db), repository.NewPostAttachmentRepository(db), auth)
 		// CON-69 §11: wire the audit log so transition tests can read it back.
 		ph.SetPostLogRepo(postLogRepo)
 		ph.Register(app)
@@ -101,6 +100,10 @@ var _ = Describe("PostsHandler", Ordered, func() {
 		// exist — 401 unauthenticated, 503 when authenticated — for the route-level
 		// specs; the assessor/eval/analytics behaviour is covered by dedicated apps.
 		handlers.NewPostInsightsHandler(postRepo, nil, nil, nil, nil, nil, auth).Register(app)
+		// Likewise the assistant surface — nil deps so /assistant + /messages exist
+		// (401 unauthenticated) for the route-level specs; the streaming behaviour is
+		// covered by a dedicated stub app.
+		handlers.NewPostAssistantHandler(nil, nil, nil, nil, auth).Register(app)
 		handlers.NewPostLogsHandler(postLogRepo, postRepo, auth).Register(app)
 
 		// Seed auth user and log in.
@@ -1439,7 +1442,9 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(stubApp)
 				handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(stubApp)
 				handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(stubApp)
-				handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, repository.NewPlatformRepository(db), repository.NewPostAttachmentRepository(db), auth, stub, nil).Register(stubApp)
+				handlers.NewPostsHandler(postRepo, postVersionRepo, repository.NewPlatformRepository(db), repository.NewPostAttachmentRepository(db), auth).Register(stubApp)
+				// POST /:id/assistant now lives on the assistant handler (CON-291).
+				handlers.NewPostAssistantHandler(stub, nil, postMessageRepo, nil, auth).Register(stubApp)
 
 				seedTenantUser(db, "SSE", "sse-assist@example.com", "sse-password")
 				loginBody, _ := json.Marshal(fiber.Map{"email": "sse-assist@example.com", "password": "sse-password"})
@@ -1611,12 +1616,11 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				campaignRepo := repository.NewCampaignRepository(db, tagRepo, repository.NewPlatformRepository(db), campaignTypeRepo)
 				postRepo := repository.NewPostRepository(db)
 				postVersionRepo := repository.NewPostVersionRepository(db)
-				postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 				auth := handlers.RequireAuth(sessionRepo, userRepo, testCookieName)
 				handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(stubApp)
 				handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(stubApp)
 				handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(stubApp)
-				ph := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, repository.NewPlatformRepository(db), repository.NewPostAttachmentRepository(db), auth, nil, nil)
+				ph := handlers.NewPostsHandler(postRepo, postVersionRepo, repository.NewPlatformRepository(db), repository.NewPostAttachmentRepository(db), auth)
 				ph.Register(stubApp)
 				// POST /:id/assess now lives on the insights handler (CON-291).
 				handlers.NewPostInsightsHandler(postRepo, stub, nil, nil, nil, nil, auth).Register(stubApp)
@@ -1817,13 +1821,12 @@ var _ = Describe("PostsHandler", Ordered, func() {
 				campaignRepo := repository.NewCampaignRepository(db, tagRepo, repository.NewPlatformRepository(db), campaignTypeRepo)
 				postRepo := repository.NewPostRepository(db)
 				postVersionRepo := repository.NewPostVersionRepository(db)
-				postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 				evalRepo := repository.NewPostEvaluationRepository(db)
 				auth := handlers.RequireAuth(sessionRepo, userRepo, testCookieName)
 				handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(readApp)
 				handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(readApp)
 				handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(readApp)
-				ph := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, repository.NewPlatformRepository(db), repository.NewPostAttachmentRepository(db), auth, nil, nil)
+				ph := handlers.NewPostsHandler(postRepo, postVersionRepo, repository.NewPlatformRepository(db), repository.NewPostAttachmentRepository(db), auth)
 				ph.Register(readApp)
 				// GET /:id/assessment now lives on the insights handler (CON-291).
 				handlers.NewPostInsightsHandler(postRepo, nil, evalRepo, nil, nil, nil, auth).Register(readApp)
@@ -2164,10 +2167,9 @@ var _ = Describe("PostsHandler", Ordered, func() {
 			ph := handlers.NewPostsHandler(
 				repository.NewPostRepository(db),
 				repository.NewPostVersionRepository(db),
-				repository.NewPostAssistantMessageRepository(db),
 				repository.NewPlatformRepository(db),
 				repository.NewPostAttachmentRepository(db),
-				auth, nil, nil,
+				auth,
 			)
 			ph.SetSchedulingDeps(nil, enq, db)
 			ph.SetPostLogRepo(repository.NewPostLogRepository(db))

@@ -53,7 +53,7 @@ var _ = Describe("Brand bindings (CON-245)", Ordered, func() {
 		ch := handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil)
 		ch.SetBrandRepo(brandRepo)
 		ch.Register(app)
-		ph := handlers.NewPostsHandler(postRepo, repository.NewPostVersionRepository(db), repository.NewPostAssistantMessageRepository(db), repository.NewPlatformRepository(db), repository.NewPostAttachmentRepository(db), auth, nil, nil)
+		ph := handlers.NewPostsHandler(postRepo, repository.NewPostVersionRepository(db), repository.NewPlatformRepository(db), repository.NewPostAttachmentRepository(db), auth)
 		ph.SetBrandRepo(brandRepo)
 		ph.Register(app)
 

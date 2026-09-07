@@ -70,8 +70,8 @@ var _ = Describe("Analytics endpoints", Ordered, func() {
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
 
 		ph := handlers.NewPostsHandler(postRepo, repository.NewPostVersionRepository(db),
-			repository.NewPostAssistantMessageRepository(db), repository.NewPlatformRepository(db),
-			repository.NewPostAttachmentRepository(db), auth, nil, nil)
+			repository.NewPlatformRepository(db),
+			repository.NewPostAttachmentRepository(db), auth)
 		ph.Register(app)
 		// GET /:id/analytics now lives on the insights handler (CON-291).
 		handlers.NewPostInsightsHandler(postRepo, nil, nil, analyticsRepo, nil, nil, auth).Register(app)

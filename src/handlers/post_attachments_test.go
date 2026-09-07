@@ -208,8 +208,7 @@ var _ = Describe("PostAttachmentsHandler", Ordered, func() {
 		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, testCookieName, false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
 		postVersionRepo := repository.NewPostVersionRepository(db)
-		postMessageRepo := repository.NewPostAssistantMessageRepository(db)
-		handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, repository.NewPlatformRepository(db), postAttRepo, auth, nil, nil).Register(app)
+		handlers.NewPostsHandler(postRepo, postVersionRepo, repository.NewPlatformRepository(db), postAttRepo, auth).Register(app)
 		handlers.NewPostAttachmentsHandler(postAttRepo, postRepo, stub, fakePDFRenderer{}, nil, auth).Register(app)
 
 		seedTenantUser(db, "Admin", "att@example.com", "att-password")

@@ -586,7 +586,10 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	brandHandler.Register(app)
 	handlers.NewPlatformsHandler(r.platformRepo, pubs, r.autoPublishAllowlistRepo, auth).Register(app)
 	handlers.NewTagsHandler(r.tagRepo, auth).Register(app)
-	postsHandler := handlers.NewPostsHandler(r.postRepo, r.postVersionRepo, r.postMessageRepo, r.platformRepo, r.postAttachmentRepo, auth, gkRuntime.RunPostAssistant, gkRuntime.IsAnthropicAvailable)
+	postsHandler := handlers.NewPostsHandler(r.postRepo, r.postVersionRepo, r.platformRepo, r.postAttachmentRepo, auth)
+	// CON-128: the AI assistant surface (POST /:id/assistant SSE + GET /:id/messages)
+	// is a focused handler (CON-291 split out of PostsHandler).
+	handlers.NewPostAssistantHandler(gkRuntime.RunPostAssistant, gkRuntime.IsAnthropicAvailable, r.postMessageRepo, activityWiring.recorder, auth).Register(app)
 	// CON-245: validate a post's brand_voice_id/brand_audience_id against the tenant.
 	postsHandler.SetBrandRepo(r.brandRepo)
 	// CON-69 §11: every transition (success/blocked) and validation

@@ -1,23 +1,18 @@
 package handlers
 
 import (
-	"bufio"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/valyala/fasthttp"
 
 	"github.com/uptrace/bun"
 
 	"github.com/ogen-app/ogen/src/activity"
-	"github.com/ogen-app/ogen/src/genkit/flows/post_assistant"
 	"github.com/ogen-app/ogen/src/jobs/queues"
 	"github.com/ogen-app/ogen/src/models"
 	"github.com/ogen-app/ogen/src/platforms"
@@ -25,7 +20,6 @@ import (
 	"github.com/ogen-app/ogen/src/post_actions/schedule"
 	"github.com/ogen-app/ogen/src/publishers/zernio"
 	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/tenantctx"
 )
 
 var validPostStatuses = map[models.PostStatus]bool{
@@ -47,18 +41,12 @@ var validCTATypes = map[models.PostCTAType]bool{
 type PostsHandler struct {
 	repo           repository.PostRepository
 	versionRepo    repository.PostVersionRepository
-	messageRepo    repository.PostAssistantMessageRepository
 	platformRepo   repository.PlatformRepository
 	attachmentRepo repository.PostAttachmentRepository
 	// brandRepo validates a post's brand_voice_id/brand_audience_id belong to
 	// the tenant (CON-245). Optional (SetBrandRepo); nil skips validation.
 	brandRepo repository.BrandRepository
 	auth      fiber.Handler
-	assistant func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error)
-	// isAssistantReady reports whether the Anthropic key is currently
-	// configured. nil is treated as "always ready" so existing test
-	// fixtures keep working without rewiring.
-	isAssistantReady func() bool
 	// onBeforeDelete runs before the post row is deleted. The server
 	// wires this to clean up S3 objects belonging to the post's
 	// attachments (CON-73 §2.7 — "all of its attachments are deleted
@@ -623,22 +611,16 @@ func (h *PostsHandler) ConvertToManual(c *fiber.Ctx) error {
 func NewPostsHandler(
 	repo repository.PostRepository,
 	versionRepo repository.PostVersionRepository,
-	messageRepo repository.PostAssistantMessageRepository,
 	platformRepo repository.PlatformRepository,
 	attachmentRepo repository.PostAttachmentRepository,
 	auth fiber.Handler,
-	assistant func(ctx context.Context, req post_assistant.PostAssistantRequest, onEvent post_assistant.OnEventFunc) (*post_assistant.PostAssistantResponse, error),
-	isAssistantReady func() bool,
 ) *PostsHandler {
 	return &PostsHandler{
-		repo:             repo,
-		versionRepo:      versionRepo,
-		messageRepo:      messageRepo,
-		platformRepo:     platformRepo,
-		attachmentRepo:   attachmentRepo,
-		auth:             auth,
-		assistant:        assistant,
-		isAssistantReady: isAssistantReady,
+		repo:           repo,
+		versionRepo:    versionRepo,
+		platformRepo:   platformRepo,
+		attachmentRepo: attachmentRepo,
+		auth:           auth,
 	}
 }
 
@@ -825,8 +807,6 @@ func (h *PostsHandler) Register(app *fiber.App) {
 	g.Post("/:id/assets", h.auth, h.AddAssets)
 	g.Delete("/:id/assets/:assetId", h.auth, h.RemoveAsset)
 	g.Delete("/:id", h.auth, h.Delete)
-	g.Post("/:id/assistant", h.auth, h.Assistant)
-	g.Get("/:id/messages", h.auth, h.ListMessages)
 	g.Get("/:id/versions", h.auth, h.ListVersions)
 	g.Post("/:id/versions", h.auth, h.CreateVersion)
 	g.Post("/:id/schedule", h.auth, h.Schedule)
@@ -1329,135 +1309,6 @@ func (h *PostsHandler) Delete(c *fiber.Ctx) error {
 	}
 	h.recordActivity(c, "post_deleted", activity.WithEntity("post", id))
 	return c.SendStatus(fiber.StatusNoContent)
-}
-
-// ── Assistant ────────────────────────────────────────────────────────────────
-
-type assistantRequest struct {
-	Instruction string `json:"instruction" validate:"required"`
-}
-
-// Assistant godoc
-// @Summary      Post assistant (SSE)
-// @Description  Sends an instruction to the AI assistant and streams progress via Server-Sent Events.
-// @Description  Events: "explanation_delta" and "content_delta" carry {"delta":"..."} fragments (Markdown)
-// @Description  as the model generates the explanation and updated content. "tool_call" and "tool_result"
-// @Description  signal asset-retrieval tool invocations. "complete" carries the final PostAssistantResponse
-// @Description  whose updatedContent is a Markdown string.
-// @Description  "error" carries {"message":"...","code":<http_code>}.
-// @Tags         posts
-// @Accept       json
-// @Produce      text/event-stream
-// @Security     CookieAuth
-// @Param        id    path      string           true  "Post Sqid"
-// @Param        body  body      assistantRequest true  "Instruction payload"
-// @Success      200  "SSE stream: delta / tool_call / tool_result / complete / error events"
-// @Failure      400   {object}  map[string]string
-// @Failure      401   {object}  map[string]string
-// @Failure      404   {object}  map[string]string
-// @Failure      503   {object}  map[string]string
-// @Router       /api/posts/{id}/assistant [post]
-func (h *PostsHandler) Assistant(c *fiber.Ctx) error {
-	if h.assistant == nil {
-		return fiber.NewError(fiber.StatusServiceUnavailable, "post assistant is not available")
-	}
-	if h.isAssistantReady != nil && !h.isAssistantReady() {
-		return fiber.NewError(fiber.StatusServiceUnavailable, "post assistant is not available")
-	}
-	var req assistantRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-	if err := validate.Struct(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, validationError(err).Error())
-	}
-
-	c.Set("Content-Type", "text/event-stream")
-	c.Set("Cache-Control", "no-cache")
-	c.Set("Connection", "keep-alive")
-	c.Set("X-Accel-Buffering", "no")
-
-	h.activity.Record(c.Context(), activity.CategoryAIFlow, "post_assistant_turn",
-		activity.WithEntity("post", c.Params("id")),
-		activity.WithSource(activity.SourceAssistant),
-	)
-
-	// c.Params / BodyParser values alias fasthttp's request buffer, which is
-	// recycled for a later request the moment this handler returns — but the
-	// StreamWriter below runs *after* that return and only persists at the end
-	// of a multi-minute model call. Without copying, a concurrent request can
-	// overwrite the buffer mid-turn, corrupting the post id (observed in the
-	// wild as post_id="ations/zerni") so the final insert trips the post_id FK
-	// and is mis-surfaced as "this post was deleted while the assistant was
-	// working". Clone the retained strings to pin their own backing arrays.
-	postID := strings.Clone(c.Params("id"))
-	instruction := strings.Clone(req.Instruction)
-	assistant := h.assistant
-	// Carry the tenant into the detached flow context (the StreamWriter runs
-	// after this handler returns) so usage recording + enforcement attribute
-	// to the right tenant (CON-86).
-	tenantID, _ := c.Locals(tenantctx.Key).(string)
-	flowCtx := tenantctx.With(context.Background(), tenantID)
-
-	c.Context().SetBodyStreamWriter(fasthttp.StreamWriter(func(w *bufio.Writer) {
-		writeEvent := func(event string, data any) {
-			b, _ := json.Marshal(data)
-			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
-			_ = w.Flush()
-		}
-
-		onEvent := post_assistant.OnEventFunc(func(name post_assistant.SSEEventKind, data any) {
-			writeEvent(string(name), data)
-		})
-
-		_, err := assistant(flowCtx, post_assistant.PostAssistantRequest{
-			PostID:      postID,
-			Instruction: instruction,
-		}, onEvent)
-		if err != nil {
-			code := fiber.StatusInternalServerError
-			msg := err.Error()
-			var ve *post_assistant.ValidationError
-			var ae *post_assistant.AIError
-			switch {
-			case errors.As(err, &ve):
-				code = fiber.StatusBadRequest
-				msg = ve.Msg
-			case errors.As(err, &ae):
-				code = fiber.StatusBadGateway
-				msg = ae.Msg
-			}
-			writeEvent(string(post_assistant.SSEEventError), post_assistant.ErrorEventPayload{Message: msg, Code: code})
-			return
-		}
-		// "complete" is emitted by the runner itself; nothing to write here.
-	}))
-
-	return nil
-}
-
-// ── Messages ─────────────────────────────────────────────────────────────────
-
-// ListMessages godoc
-// @Summary      List assistant messages
-// @Description  Returns the most recent assistant conversation messages for a post.
-// @Tags         posts
-// @Produce      json
-// @Security     CookieAuth
-// @Param        id   path      string  true  "Post Sqid"
-// @Success      200  {array}   models.PostAssistantMessage
-// @Failure      401  {object}  map[string]string
-// @Router       /api/posts/{id}/messages [get]
-func (h *PostsHandler) ListMessages(c *fiber.Ctx) error {
-	msgs, err := h.messageRepo.ListRecentByPostID(c.Context(), c.Params("id"), 50)
-	if err != nil {
-		return err
-	}
-	// Preserve the array contract: an empty history serializes as [] not null.
-	if msgs == nil {
-		msgs = []models.PostAssistantMessage{}
-	}
-	return c.JSON(msgs)
 }
 
 // ── Versions ─────────────────────────────────────────────────────────────────
