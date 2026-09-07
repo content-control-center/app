@@ -15,15 +15,15 @@ import (
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 
+	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/genkit/embedopts"
-	"github.com/ogen-app/ogen/src/logging"
-	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/notify"
-	"github.com/ogen-app/ogen/src/pdfclient"
-	"github.com/ogen-app/ogen/src/storage"
-	"github.com/ogen-app/ogen/src/tenantctx"
-	"github.com/ogen-app/ogen/src/usage"
-	"github.com/ogen-app/ogen/src/vendors/llm"
+	"github.com/ogen-app/ogen/src/infra/storage"
+	"github.com/ogen-app/ogen/src/infra/vendors/llm"
+	"github.com/ogen-app/ogen/src/kernel/logging"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
+	"github.com/ogen-app/ogen/src/kernel/usage"
+	"github.com/ogen-app/ogen/src/transport/grpc/client/pdf"
+	"github.com/ogen-app/ogen/src/usecase/notify"
 )
 
 // ProcessPDFQueue ingests an uploaded PDF (CON-103): download original.pdf from
@@ -40,7 +40,7 @@ const thumbnailDPIDefault = 96
 // these structurally; tests provide small fakes.
 
 type pdfParser interface {
-	Parse(ctx context.Context, r io.Reader, opts pdfclient.Options) (*pdfclient.Result, error)
+	Parse(ctx context.Context, r io.Reader, opts pdf.Options) (*pdf.Result, error)
 }
 
 type chunkEmbedder interface {
@@ -172,7 +172,7 @@ func (p *ProcessPDFProcessor) process(ctx context.Context, in ProcessPDFTask, la
 	}
 
 	// 2. Parse via pdf-service. Corrupt/unsupported PDFs are terminal (no retry).
-	res, err := p.Deps.Client.Parse(ctx, bytes.NewReader(data), pdfclient.Options{
+	res, err := p.Deps.Client.Parse(ctx, bytes.NewReader(data), pdf.Options{
 		Filename:        in.OriginalName,
 		RenderThumbnail: true,
 		ThumbnailDPI:    p.thumbnailDPI(),

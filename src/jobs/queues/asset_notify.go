@@ -3,8 +3,8 @@ package queues
 import (
 	"context"
 
-	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/notify"
+	"github.com/ogen-app/ogen/src/domain/models"
+	"github.com/ogen-app/ogen/src/usecase/notify"
 )
 
 // assetCreatorLookup resolves an asset's creator — the recipient for its

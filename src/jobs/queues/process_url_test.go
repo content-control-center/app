@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ogen-app/ogen/src/eventhub"
-	"github.com/ogen-app/ogen/src/firecrawl"
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/domain/models"
+	"github.com/ogen-app/ogen/src/infra/eventhub"
+	"github.com/ogen-app/ogen/src/infra/firecrawl"
 )
 
 // ---- fakes for the process_url worker (reusing fakeEmbedder/fakeBlob/fakeChunks

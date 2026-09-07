@@ -14,16 +14,16 @@ import (
 	"github.com/firebase/genkit/go/genkit"
 	"github.com/pgvector/pgvector-go"
 
-	"github.com/ogen-app/ogen/src/campaign_actions/overview"
-	"github.com/ogen-app/ogen/src/campaign_actions/reschedule"
+	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/genkit/embedopts"
 	"github.com/ogen-app/ogen/src/genkit/flows/consistency"
 	"github.com/ogen-app/ogen/src/genkit/flows/content_plan"
 	"github.com/ogen-app/ogen/src/genkit/flows/draft_post"
 	"github.com/ogen-app/ogen/src/genkit/flows/enrich_brief"
-	"github.com/ogen-app/ogen/src/logging"
-	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/infra/repository"
+	"github.com/ogen-app/ogen/src/kernel/logging"
+	"github.com/ogen-app/ogen/src/usecase/campaign_actions/overview"
+	"github.com/ogen-app/ogen/src/usecase/campaign_actions/reschedule"
 )
 
 // ── Context key for per-request state ────────────────────────────────────────

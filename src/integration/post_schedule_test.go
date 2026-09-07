@@ -14,10 +14,10 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
 
-	"github.com/ogen-app/ogen/src/handlers"
-	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/post_actions/schedule"
-	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/domain/models"
+	"github.com/ogen-app/ogen/src/infra/repository"
+	"github.com/ogen-app/ogen/src/transport/handlers"
+	"github.com/ogen-app/ogen/src/usecase/post_actions/schedule"
 )
 
 // scheduleResp mirrors the JSON body returned by POST /api/posts/:id/schedule.
@@ -70,7 +70,6 @@ var _ = Describe("Post schedule — CON-78", Ordered, func() {
 		versionRepo := repository.NewPostVersionRepository(db)
 		logRepo = repository.NewPostLogRepository(db)
 		postAttRepo := repository.NewPostAttachmentRepository(db)
-		postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 		allowlistRepo = repository.NewAutoPublishAllowlistRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, userRepo, "test_session")
 
@@ -78,7 +77,7 @@ var _ = Describe("Post schedule — CON-78", Ordered, func() {
 		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, "test_session", false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
 
-		postsHandler := handlers.NewPostsHandler(postRepo, versionRepo, postMessageRepo, platformRepo, postAttRepo, auth, nil, nil)
+		postsHandler := handlers.NewPostsHandler(postRepo, versionRepo, platformRepo, postAttRepo, auth)
 		postsHandler.SetPostLogRepo(logRepo)
 		// CON-78: real schedule service over a real allowlist. No jobs
 		// client wired — the auto-publish routing decision is still

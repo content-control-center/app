@@ -29,11 +29,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/ogen-app/ogen/src/handlers"
-	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/pdfclient"
-	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/storage"
+	"github.com/ogen-app/ogen/src/domain/models"
+	"github.com/ogen-app/ogen/src/infra/repository"
+	"github.com/ogen-app/ogen/src/infra/storage"
+	"github.com/ogen-app/ogen/src/transport/grpc/client/pdf"
+	"github.com/ogen-app/ogen/src/transport/handlers"
 )
 
 // LinkedIn Sqid from the platform seed migration. Same constant the
@@ -125,14 +125,13 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 		postRepo := repository.NewPostRepository(db)
 		postAttRepo = repository.NewPostAttachmentRepository(db)
 		postVersionRepo := repository.NewPostVersionRepository(db)
-		postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, userRepo, "test_session")
 
 		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, "test_session", false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
 
-		postsHandler := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, repository.NewPlatformRepository(db), postAttRepo, auth, nil, nil)
+		postsHandler := handlers.NewPostsHandler(postRepo, postVersionRepo, repository.NewPlatformRepository(db), postAttRepo, auth)
 		// Wire the same S3-cleanup hook the production server wires —
 		// this is exactly what test #3 exercises.
 		postsHandler.SetOnBeforeDelete(func(ctx context.Context, postID string) error {
@@ -560,13 +559,13 @@ var _ = Describe("Post attachments — real S3 (MinIO)", Ordered, func() {
 // InvalidArgument verdict so the handler rejects magic-bytes-only garbage.
 type fakePDFRenderer struct{}
 
-func (fakePDFRenderer) Render(_ context.Context, r io.Reader, _ pdfclient.RenderOptions) (*pdfclient.RenderResult, error) {
+func (fakePDFRenderer) Render(_ context.Context, r io.Reader, _ pdf.RenderOptions) (*pdf.RenderResult, error) {
 	data, _ := io.ReadAll(r)
 	pages := bytes.Count(data, []byte("/Type /Page /Parent"))
 	if pages == 0 {
 		return nil, status.Error(codes.InvalidArgument, "fake: not a parseable PDF")
 	}
-	return &pdfclient.RenderResult{PageCount: pages, ThumbnailPNG: []byte("PNGTHUMB")}, nil
+	return &pdf.RenderResult{PageCount: pages, ThumbnailPNG: []byte("PNGTHUMB")}, nil
 }
 
 func buildIntegrationPDF(n int) []byte {

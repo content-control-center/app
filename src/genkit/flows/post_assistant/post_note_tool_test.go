@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/notes"
-	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/domain/models"
+	"github.com/ogen-app/ogen/src/infra/repository"
+	"github.com/ogen-app/ogen/src/usecase/notes"
 )
 
 type captureNoteRepo struct {

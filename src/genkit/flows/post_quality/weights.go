@@ -11,7 +11,7 @@ import (
 	"math"
 	"strings"
 
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/domain/models"
 )
 
 // Profile is the weight each of the four dimensions carries toward a

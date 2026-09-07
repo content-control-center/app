@@ -13,13 +13,13 @@ import (
 	"github.com/firebase/genkit/go/genkit"
 	"github.com/pgvector/pgvector-go"
 
+	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/genkit/embedopts"
-	"github.com/ogen-app/ogen/src/logging"
-	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/tenantctx"
-	"github.com/ogen-app/ogen/src/usage"
-	"github.com/ogen-app/ogen/src/vendors/llm"
+	"github.com/ogen-app/ogen/src/infra/repository"
+	"github.com/ogen-app/ogen/src/infra/vendors/llm"
+	"github.com/ogen-app/ogen/src/kernel/logging"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
+	"github.com/ogen-app/ogen/src/kernel/usage"
 )
 
 // EmbedAssetInput is the typed input for the embedAsset flow.

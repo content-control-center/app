@@ -11,10 +11,10 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"github.com/ogen-app/ogen/src/activity"
-	"github.com/ogen-app/ogen/src/email"
-	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/domain/models"
+	"github.com/ogen-app/ogen/src/infra/email"
+	"github.com/ogen-app/ogen/src/infra/repository"
+	"github.com/ogen-app/ogen/src/kernel/activity"
 )
 
 // --- fakes ---------------------------------------------------------------

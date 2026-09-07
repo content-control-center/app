@@ -8,9 +8,9 @@ import (
 
 	"github.com/riverqueue/river"
 
+	"github.com/ogen-app/ogen/src/domain/models"
+	"github.com/ogen-app/ogen/src/infra/publishers/zernio"
 	"github.com/ogen-app/ogen/src/jobs/queues"
-	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/publishers/zernio"
 )
 
 func TestPollTerminalPublishedTransitionsPost(t *testing.T) {

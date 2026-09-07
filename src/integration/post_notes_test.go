@@ -14,10 +14,10 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
 
-	"github.com/ogen-app/ogen/src/handlers"
-	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/notes"
-	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/domain/models"
+	"github.com/ogen-app/ogen/src/infra/repository"
+	"github.com/ogen-app/ogen/src/transport/handlers"
+	"github.com/ogen-app/ogen/src/usecase/notes"
 )
 
 var _ = Describe("Post notes CRUD (CON-188)", Ordered, func() {
@@ -50,7 +50,6 @@ var _ = Describe("Post notes CRUD (CON-188)", Ordered, func() {
 		campaignRepo := repository.NewCampaignRepository(db, tagRepo, repository.NewPlatformRepository(db), campaignTypeRepo)
 		postRepo := repository.NewPostRepository(db)
 		postVersionRepo := repository.NewPostVersionRepository(db)
-		postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 		postAttRepo := repository.NewPostAttachmentRepository(db)
 		noteSvc := notes.New(repository.NewPostNoteRepository(db))
 		auth := handlers.RequireAuth(sessionRepo, userRepo, "test_session")
@@ -58,7 +57,7 @@ var _ = Describe("Post notes CRUD (CON-188)", Ordered, func() {
 		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, "test_session", false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
-		handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, repository.NewPlatformRepository(db), postAttRepo, auth, nil, nil).Register(app)
+		handlers.NewPostsHandler(postRepo, postVersionRepo, repository.NewPlatformRepository(db), postAttRepo, auth).Register(app)
 		handlers.NewPostNotesHandler(noteSvc, postRepo, auth).Register(app)
 
 		seedTenantUser(db, "Admin", "notes-it@example.com", "it-password")

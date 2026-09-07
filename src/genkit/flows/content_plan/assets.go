@@ -9,9 +9,9 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	"github.com/pgvector/pgvector-go"
 
+	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/genkit/embedopts"
-	"github.com/ogen-app/ogen/src/logging"
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/kernel/logging"
 )
 
 // minAssetSimilarity is the minimum cosine similarity a chunk must score

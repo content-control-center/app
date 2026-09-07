@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/domain/models"
+	"github.com/ogen-app/ogen/src/infra/repository"
 )
 
 // CON-114: the streaming persist path stops at the batch's requested count, so

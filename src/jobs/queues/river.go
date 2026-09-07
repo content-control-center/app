@@ -10,13 +10,13 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 
-	"github.com/ogen-app/ogen/src/email/templates"
-	"github.com/ogen-app/ogen/src/eventhub"
-	"github.com/ogen-app/ogen/src/logging"
-	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/notify"
-	"github.com/ogen-app/ogen/src/publishers/zernio"
-	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/domain/models"
+	"github.com/ogen-app/ogen/src/infra/email/templates"
+	"github.com/ogen-app/ogen/src/infra/eventhub"
+	"github.com/ogen-app/ogen/src/infra/publishers/zernio"
+	"github.com/ogen-app/ogen/src/infra/repository"
+	"github.com/ogen-app/ogen/src/kernel/logging"
+	"github.com/ogen-app/ogen/src/usecase/notify"
 )
 
 // This file holds the central River plumbing for the queue package: the

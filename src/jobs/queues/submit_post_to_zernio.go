@@ -12,16 +12,17 @@ import (
 
 	"github.com/riverqueue/river"
 
-	"github.com/ogen-app/ogen/src/activity"
+	"github.com/ogen-app/ogen/src/domain/models"
+	"github.com/ogen-app/ogen/src/infra/publishers/zernio"
+	"github.com/ogen-app/ogen/src/infra/vendors"
 	"github.com/ogen-app/ogen/src/jobs"
-	"github.com/ogen-app/ogen/src/logging"
-	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/notify"
-	"github.com/ogen-app/ogen/src/post_actions/logs"
-	"github.com/ogen-app/ogen/src/publishers/zernio"
-	"github.com/ogen-app/ogen/src/settings"
-	"github.com/ogen-app/ogen/src/tenantctx"
-	"github.com/ogen-app/ogen/src/vendors"
+	"github.com/ogen-app/ogen/src/kernel/activity"
+	"github.com/ogen-app/ogen/src/kernel/logging"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
+	"github.com/ogen-app/ogen/src/usecase/accountselect"
+	"github.com/ogen-app/ogen/src/usecase/notify"
+	"github.com/ogen-app/ogen/src/usecase/post_actions/logs"
+	"github.com/ogen-app/ogen/src/usecase/settings"
 )
 
 // SubmitPostToZernioQueue is the River queue name (CON-69 §3).
@@ -281,39 +282,28 @@ func (p *SubmitPostProcessor) Process(ctx context.Context, task SubmitPostTask) 
 // the error value, mirroring terminal()'s "always nil" contract, so the
 // caller can branch on the empty id alone.
 func (p *SubmitPostProcessor) resolveAccountID(ctx context.Context, post *models.Post, profileID, zernioPlatform string) (string, error) {
-	// Explicit selection wins: validate it belongs to the profile, is still
-	// connected, and matches the post's platform.
-	if post.SocialAccountID != "" {
-		acc, err := p.Deps.SocialAccountRepo.GetActive(ctx, profileID, post.SocialAccountID)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return "", p.terminal(ctx, post, "account_unavailable",
-					fmt.Sprintf("selected account %s is not connected", post.SocialAccountID))
-			}
-			return "", fmt.Errorf("submit: load selected account: %w", err)
-		}
-		if acc.Platform != zernioPlatform {
-			return "", p.terminal(ctx, post, "account_platform_mismatch",
-				fmt.Sprintf("selected account %s is a %s account, not %s", acc.ID, acc.Platform, zernioPlatform))
-		}
-		return acc.ID, nil
-	}
-
-	// No explicit choice: auto-select the platform's single account; require
-	// a choice when it has more than one (Zernio's own disambiguation rule).
-	accounts, err := p.Deps.SocialAccountRepo.ListActiveByPlatform(ctx, profileID, zernioPlatform)
+	res, err := accountselect.Resolve(ctx, p.Deps.SocialAccountRepo, profileID, post, zernioPlatform)
 	if err != nil {
-		return "", fmt.Errorf("submit: list accounts: %w", err)
+		// A repository failure is transient — return it (retryable), never terminal.
+		return "", fmt.Errorf("submit: resolve account: %w", err)
 	}
-	switch len(accounts) {
-	case 0:
+	// The worker is the authoritative backstop: it resolves the account to
+	// publish with, or terminal-fails the job for every rule violation.
+	switch res.Outcome {
+	case accountselect.Resolved:
+		return res.AccountID, nil
+	case accountselect.Unavailable:
+		return "", p.terminal(ctx, post, "account_unavailable",
+			fmt.Sprintf("selected account %s is not connected", post.SocialAccountID))
+	case accountselect.PlatformMismatch:
+		return "", p.terminal(ctx, post, "account_platform_mismatch",
+			fmt.Sprintf("selected account %s is a %s account, not %s", res.Account.ID, res.Account.Platform, zernioPlatform))
+	case accountselect.NoAccount:
 		return "", p.terminal(ctx, post, "no_account_connected",
 			fmt.Sprintf("no active Zernio account connected for platform %s", zernioPlatform))
-	case 1:
-		return accounts[0].ID, nil
-	default:
+	default: // Ambiguous
 		return "", p.terminal(ctx, post, "account_selection_required",
-			fmt.Sprintf("%d %s accounts connected; select one before publishing", len(accounts), zernioPlatform))
+			fmt.Sprintf("%d %s accounts connected; select one before publishing", len(res.Candidates), zernioPlatform))
 	}
 }
 

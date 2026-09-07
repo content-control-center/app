@@ -13,10 +13,10 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
 
+	"github.com/ogen-app/ogen/src/domain/models"
 	"github.com/ogen-app/ogen/src/genkit/embedopts"
 	"github.com/ogen-app/ogen/src/genkit/flows"
-	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/repository"
+	"github.com/ogen-app/ogen/src/infra/repository"
 )
 
 // CON-101: embedding integration tests run against the live Gemini Embedding 2

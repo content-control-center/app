@@ -1,0 +1,80 @@
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+
+	"github.com/uptrace/bun"
+
+	"github.com/ogen-app/ogen/src/domain/models"
+)
+
+// SessionRepository defines all persistence operations for the Session domain.
+type SessionRepository interface {
+	Create(ctx context.Context, session *models.Session) error
+	// CreateTx inserts a session on the provided bun.IDB so it can join an outer
+	// transaction (e.g. invitation accept creates the user + session atomically).
+	// Passing nil falls back to the repository's default DB.
+	CreateTx(ctx context.Context, tx bun.IDB, session *models.Session) error
+	GetByID(ctx context.Context, id string) (*models.Session, error)
+	// SetDefaultWorkspace repoints a session's stored default workspace (CON-147
+	// switch): it moves user_id + tenant_id to the given membership/workspace so a
+	// fresh tab or the next login seeds there. It does NOT scope live requests —
+	// those resolve per request from the X-Workspace-Id header — so the cookie
+	// stays valid and other tabs are unaffected.
+	SetDefaultWorkspace(ctx context.Context, sessionID, userID, tenantID string) error
+	Delete(ctx context.Context, id string) (bool, error)
+}
+
+type sessionRepository struct {
+	db *bun.DB
+}
+
+// NewSessionRepository returns a Bun-backed SessionRepository.
+func NewSessionRepository(db *bun.DB) SessionRepository {
+	return &sessionRepository{db: db}
+}
+
+func (r *sessionRepository) Create(ctx context.Context, session *models.Session) error {
+	return r.CreateTx(ctx, nil, session)
+}
+
+func (r *sessionRepository) CreateTx(ctx context.Context, tx bun.IDB, session *models.Session) error {
+	db := bun.IDB(r.db)
+	if tx != nil {
+		db = tx
+	}
+	_, err := db.NewInsert().Model(session).Exec(ctx)
+	return err
+}
+
+func (r *sessionRepository) GetByID(ctx context.Context, id string) (*models.Session, error) {
+	session := new(models.Session)
+	err := r.db.NewSelect().Model(session).Where("s.id = ?", id).Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, sql.ErrNoRows
+		}
+		return nil, err
+	}
+	return session, nil
+}
+
+func (r *sessionRepository) SetDefaultWorkspace(ctx context.Context, sessionID, userID, tenantID string) error {
+	_, err := r.db.NewUpdate().Model((*models.Session)(nil)).
+		Set("user_id = ?", userID).
+		Set("tenant_id = ?", tenantID).
+		Where("id = ?", sessionID).
+		Exec(ctx)
+	return err
+}
+
+func (r *sessionRepository) Delete(ctx context.Context, id string) (bool, error) {
+	res, err := r.db.NewDelete().Model((*models.Session)(nil)).Where("id = ?", id).Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}

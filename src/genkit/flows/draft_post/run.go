@@ -16,14 +16,14 @@ import (
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 
-	"github.com/ogen-app/ogen/src/brandresolve"
-	"github.com/ogen-app/ogen/src/logging"
-	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/notes"
-	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/scheduling"
-	"github.com/ogen-app/ogen/src/settings"
-	"github.com/ogen-app/ogen/src/vendors/llm"
+	"github.com/ogen-app/ogen/src/domain/models"
+	"github.com/ogen-app/ogen/src/infra/repository"
+	"github.com/ogen-app/ogen/src/infra/vendors/llm"
+	"github.com/ogen-app/ogen/src/kernel/logging"
+	"github.com/ogen-app/ogen/src/usecase/brandresolve"
+	"github.com/ogen-app/ogen/src/usecase/notes"
+	"github.com/ogen-app/ogen/src/usecase/scheduling"
+	"github.com/ogen-app/ogen/src/usecase/settings"
 )
 
 // defaultMaxOutputTokens caps a single draft generation when the config leaves

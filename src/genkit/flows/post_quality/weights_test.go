@@ -3,7 +3,7 @@ package post_quality
 import (
 	"testing"
 
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/domain/models"
 )
 
 func TestDefaultProfilesSumToOne(t *testing.T) {

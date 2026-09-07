@@ -43,7 +43,7 @@ src/genkit/flows/<flow_name>/
     └── <flow_name>.tmpl        # two {{define "system"}} + {{define "context"}} blocks
 ```
 
-Server wiring lives in a thin file `src/server/<flow_name>.go` (mirrors `src/server/content_plan.go` and `src/server/post_assistant.go`). HTTP handler lives in `src/handlers/<resource>.go` — usually co-located with the parent resource (posts → posts.go, campaigns → campaigns.go).
+Server wiring lives in a thin file `src/transport/server/<flow_name>.go` (mirrors `src/transport/server/content_plan.go` and `src/transport/server/post_assistant.go`). HTTP handler lives in `src/transport/handlers/<resource>.go` — usually co-located with the parent resource (posts → posts.go, campaigns → campaigns.go).
 
 ---
 
@@ -57,7 +57,7 @@ package <flow_name>
 import (
     "github.com/firebase/genkit/go/ai"
 
-    "github.com/ogen-app/ogen/src/repository"
+    "github.com/ogen-app/ogen/src/infra/repository"
 )
 
 // <FlowName>Request is the input to the flow.
@@ -239,7 +239,7 @@ import (
     "text/template"
     "time"
 
-    "github.com/ogen-app/ogen/src/models"
+    "github.com/ogen-app/ogen/src/domain/models"
 )
 
 const contextCacheTTL = 5 * time.Minute
@@ -812,7 +812,7 @@ records nothing / never enforces (no error, no signal).
 ### FlowConfig fields (`flow.go`)
 
 Add alongside `ModelID`/`MaxOutputTokens`, and import
-`"github.com/ogen-app/ogen/src/vendors/llm"` + `"github.com/ogen-app/ogen/src/usage"`:
+`"github.com/ogen-app/ogen/src/infra/vendors/llm"` + `"github.com/ogen-app/ogen/src/kernel/usage"`:
 
 ```go
 // Provider resolves the model ref + call config by role, so the flow never
@@ -921,12 +921,12 @@ case errors.As(err, &ve): // ...existing ValidationError → 400
 
 ---
 
-## Step 9: Server wiring (`src/server/<flow_name>.go` + edits to `src/server/server.go`)
+## Step 9: Server wiring (`src/transport/server/<flow_name>.go` + edits to `src/transport/server/server.go`)
 
 Small adapter file to keep server.go clean:
 
 ```go
-// src/server/<flow_name>.go
+// src/transport/server/<flow_name>.go
 package server
 
 import (
@@ -936,10 +936,10 @@ import (
     "github.com/firebase/genkit/go/ai"
     "github.com/firebase/genkit/go/genkit"
 
-    "github.com/ogen-app/ogen/src/config"
+    "github.com/ogen-app/ogen/src/kernel/config"
     "github.com/ogen-app/ogen/src/genkit/flows/<flow_name>"
-    "github.com/ogen-app/ogen/src/usage"
-    "github.com/ogen-app/ogen/src/vendors/llm"
+    "github.com/ogen-app/ogen/src/kernel/usage"
+    "github.com/ogen-app/ogen/src/infra/vendors/llm"
 )
 
 func init<FlowName>(
@@ -966,7 +966,7 @@ func init<FlowName>(
 }
 ```
 
-In `src/server/server.go`, add the callback var declaration near the other callbacks and register only if the Anthropic key is configured:
+In `src/transport/server/server.go`, add the callback var declaration near the other callbacks and register only if the Anthropic key is configured:
 
 ```go
 var <flowName>Callback func(context.Context, <flow_name>.<FlowName>Request, <flow_name>.OnEventFunc) (*<flow_name>.<FlowName>Response, error)
@@ -992,7 +992,7 @@ handlers.New<Resource>Handler(/* existing args */, <flowName>Callback).Register(
 
 ---
 
-## Step 10: HTTP handler (`src/handlers/<resource>.go`)
+## Step 10: HTTP handler (`src/transport/handlers/<resource>.go`)
 
 Two shapes: JSON (non-streaming) or SSE (streaming). Use SSE if the flow emits events.
 
@@ -1117,7 +1117,7 @@ return c.JSON(resp)
 
 ---
 
-## Step 11: Tests (`src/handlers/<resource>_test.go`)
+## Step 11: Tests (`src/transport/handlers/<resource>_test.go`)
 
 Handler-layer only. A fresh, fully-migrated **Postgres** database via `mustOpenTestDBWithMigrations()` (backed by `src/pgtest`; `make test` provisions the Postgres instance). Stub the flow callback with a function that emits synthetic events.
 
@@ -1456,7 +1456,7 @@ MaxPostsPerBatch   int  // 0 → 30 (sized for 64K output / ~800 tok/post + head
 MaxParallelBatches int  // 0 → 5 (tier-1 Anthropic ITPM safety knob)
 ```
 
-Plumb through `src/config/config.go` (env vars `MAX_POSTS_PER_BATCH`, `MAX_PARALLEL_BATCHES`) and `src/server/<flow_name>.go`. Defaults assume Sonnet 4.5 + tier-1 limits — bump for Haiku (more parallelism affordable) or tier 2+ accounts.
+Plumb through `src/kernel/config/config.go` (env vars `MAX_POSTS_PER_BATCH`, `MAX_PARALLEL_BATCHES`) and `src/transport/server/<flow_name>.go`. Defaults assume Sonnet 4.5 + tier-1 limits — bump for Haiku (more parallelism affordable) or tier 2+ accounts.
 
 ### Testing
 
@@ -1745,7 +1745,7 @@ Both new fields are additive — old clients that don't read `payload.id` or tha
 
 14. **Authorization before lookup.** If the flow operates on a user-owned resource, check ownership BEFORE returning 404 — never reveal whether an id exists to an unauthorized caller. The handler should 403 for "exists but not yours" and 404 for "doesn't exist or not yours" (whichever the project convention dictates — check `CLAUDE.md` / memory).
 
-15. **Tool-using flows pay a hidden ~50s per request unless tool order is stable (CON-112).** The Genkit Anthropic plugin builds the outgoing `tools` array by ranging a Go **map** (`firebase/genkit go/ai/generate.go`), so tools ship in a **random order on every request**, and it forces `strict: true` on every tool (`plugins/internal/anthropic`). Anthropic compiles strict tool schemas into a constrained-decoding grammar cached **per exact tool-set with an order-sensitive key**, so a random order misses that cache on every call and pays the full server-side grammar compile (~50s) — chronically, nondeterministically, on every tool-using turn. **This is already fixed globally:** `server.InstallAnthropicToolOrderStabilizer()` wraps `http.DefaultTransport` to sort the `tools` array by name before every `/v1/messages` (installed in `newGenkitRuntime` before the plugin builds its client; gated by `ANTHROPIC_STABLE_TOOL_ORDER`, default on). A stable order keeps the cache warm and, as a bonus, makes tool selection deterministic. **When you add a new tool-using flow,** also wire the cold-start pre-warm: a `PrewarmTools bool` on the FlowConfig (set from `cfg.AnthropicStableToolOrder` in the server adapter) and a background `go prewarmToolCache(g, cfg, tools)` right after `defineTools(g)` in `InitX` — mirror `campaign_assistant`/`post_assistant`'s `prewarm.go`. It fires one throwaway `max_tokens:1` generation carrying the full tool set so the *first* request never eats the ~50s compile (`WithMaxTurns(1)` + `max_tokens:1` guarantees no tool actually executes during warm-up). **Diagnosis, if you ever see it regress:** run with `ANTHROPIC_DEBUG_HTTP=1` — a single `/v1/messages` with `server_ms≈50000` and `conn_ms≈0` means the time is server-side generation (compile), *not* your code; then diff the outgoing request bytes against a fast run to spot the ordering. Never diagnose "it's slow" from wall-clock alone — dump the bytes. See `src/server/anthropic_tool_order.go`.
+15. **Tool-using flows pay a hidden ~50s per request unless tool order is stable (CON-112).** The Genkit Anthropic plugin builds the outgoing `tools` array by ranging a Go **map** (`firebase/genkit go/ai/generate.go`), so tools ship in a **random order on every request**, and it forces `strict: true` on every tool (`plugins/internal/anthropic`). Anthropic compiles strict tool schemas into a constrained-decoding grammar cached **per exact tool-set with an order-sensitive key**, so a random order misses that cache on every call and pays the full server-side grammar compile (~50s) — chronically, nondeterministically, on every tool-using turn. **This is already fixed globally:** `server.InstallAnthropicToolOrderStabilizer()` wraps `http.DefaultTransport` to sort the `tools` array by name before every `/v1/messages` (installed in `newGenkitRuntime` before the plugin builds its client; gated by `ANTHROPIC_STABLE_TOOL_ORDER`, default on). A stable order keeps the cache warm and, as a bonus, makes tool selection deterministic. **When you add a new tool-using flow,** also wire the cold-start pre-warm: a `PrewarmTools bool` on the FlowConfig (set from `cfg.AnthropicStableToolOrder` in the server adapter) and a background `go prewarmToolCache(g, cfg, tools)` right after `defineTools(g)` in `InitX` — mirror `campaign_assistant`/`post_assistant`'s `prewarm.go`. It fires one throwaway `max_tokens:1` generation carrying the full tool set so the *first* request never eats the ~50s compile (`WithMaxTurns(1)` + `max_tokens:1` guarantees no tool actually executes during warm-up). **Diagnosis, if you ever see it regress:** run with `ANTHROPIC_DEBUG_HTTP=1` — a single `/v1/messages` with `server_ms≈50000` and `conn_ms≈0` means the time is server-side generation (compile), *not* your code; then diff the outgoing request bytes against a fast run to spot the ordering. Never diagnose "it's slow" from wall-clock alone — dump the bytes. See `src/transport/server/anthropic_tool_order.go`.
 
 ---
 
@@ -1754,7 +1754,7 @@ Both new fields are additive — old clients that don't read `payload.id` or tha
 ```bash
 /usr/local/go/bin/go build ./src/...
 /usr/local/go/bin/go vet ./src/...
-/usr/local/go/bin/go test -count=1 ./src/genkit/flows/<flow_name>/... ./src/handlers/...
+/usr/local/go/bin/go test -count=1 ./src/genkit/flows/<flow_name>/... ./src/transport/handlers/...
 /usr/local/go/bin/go build -tags integration ./src/integration/...   # if you added an integration test
 ```
 
@@ -1772,12 +1772,12 @@ Fix any compile or test errors before reporting success. Do not claim success wi
 - `context.go` created with `fingerprint` cache (if static context) — every prompt field in the fingerprint
 - `run.go` created — streaming callback feeds the scanner, **no `ai.WithOutputType`**, response struct populated from `scanner.Values()` with required-field sanity check, tool dedup, error mapping
 - `flow.go` created — `InitX`, `NewXCallback`, `emit` helper
-- `src/server/<flow_name>.go` adapter created
-- `src/server/server.go` edited — callback var + `initX` call + handler registration gated on API key
+- `src/transport/server/<flow_name>.go` adapter created
+- `src/transport/server/server.go` edited — callback var + `initX` call + handler registration gated on API key
 - **Usage metering wired (CON-86, Step 8b)** — `Provider`/`Recorder`/`Checker` in `FlowConfig`; `cfg.Checker.Enforce(ctx)` gate placed after any cache short-circuit; `cfg.Recorder.RecordResp(ctx, Provider.Vendor(), Provider.Model(role), "<feature>", resp)` after each completed call; model resolved via `Provider.Ref(role)` + `Provider.CallConfig(maxTokens)`; `initX` threads `provider, recorder, checker`; handler maps `*usage.LimitExceededError` → 402
-- HTTP handler added to `src/handlers/<resource>.go` — SSE or JSON shape, swagger comments, service-unavailable branch
+- HTTP handler added to `src/transport/handlers/<resource>.go` — SSE or JSON shape, swagger comments, service-unavailable branch
 - Callback threaded through `New<Resource>Handler` constructor signature
-- Handler test added (`src/handlers/<resource>_test.go`) — stub callback, SSE frame parser, happy path + error path
+- Handler test added (`src/transport/handlers/<resource>_test.go`) — stub callback, SSE frame parser, happy path + error path
 - (Optional) Integration test added under `src/integration/` with `//go:build integration` tag
 - (Optional) React prototype wiring — SSE reader, per-chunk render, tool chips, spinner
 - (Optional, when batching) `batch.go` slot allocator + `batch_test.go` distribution tests; `runBatchesParallel` extracted with stubbed-gen unit tests covering ordered aggregation, partial-success warnings, all-failed → `*AIError`, max-parallel cap, and emit non-reentrancy under `-race`; user prompt template wraps slot table in `{{if .Batch}}` with single-shot fallback preserved; `MaxPostsPerBatch` and `MaxParallelBatches` plumbed through config + server adapter; per-event `Index` doc updated to reflect stable-slot semantics

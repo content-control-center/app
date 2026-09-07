@@ -15,11 +15,11 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/uptrace/bun"
 
-	"github.com/ogen-app/ogen/src/handlers"
-	"github.com/ogen-app/ogen/src/models"
-	"github.com/ogen-app/ogen/src/post_actions/clone"
-	"github.com/ogen-app/ogen/src/repository"
-	"github.com/ogen-app/ogen/src/storage"
+	"github.com/ogen-app/ogen/src/domain/models"
+	"github.com/ogen-app/ogen/src/infra/repository"
+	"github.com/ogen-app/ogen/src/infra/storage"
+	"github.com/ogen-app/ogen/src/transport/handlers"
+	"github.com/ogen-app/ogen/src/usecase/post_actions/clone"
 )
 
 // threadsPlatformID is the Threads Sqid assigned by
@@ -71,16 +71,16 @@ var _ = Describe("Post clone — CON-59 (real S3/MinIO)", Ordered, func() {
 		postAttRepo = repository.NewPostAttachmentRepository(db)
 		versionRepo = repository.NewPostVersionRepository(db)
 		logRepo = repository.NewPostLogRepository(db)
-		postMessageRepo := repository.NewPostAssistantMessageRepository(db)
 		auth := handlers.RequireAuth(sessionRepo, userRepo, "test_session")
 
 		handlers.NewUsersHandler(db, userRepo, repository.NewAccountRepository(db), settingRepo, auth).Register(app)
 		handlers.NewSessionsHandler(userRepo, repository.NewAccountRepository(db), sessionRepo, "test_session", false).Register(app)
 		handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, nil, nil, nil, nil, nil).Register(app)
 
-		postsHandler := handlers.NewPostsHandler(postRepo, versionRepo, postMessageRepo, platformRepo, postAttRepo, auth, nil, nil)
+		postsHandler := handlers.NewPostsHandler(postRepo, versionRepo, platformRepo, postAttRepo, auth)
 		postsHandler.SetPostLogRepo(logRepo)
-		postsHandler.SetCloneService(clone.New(db, postRepo, versionRepo, postAttRepo, platformRepo, logRepo, store, nil))
+		// POST /:id/clone now lives on the actions handler (CON-291).
+		handlers.NewPostActionsHandler(postRepo, clone.New(db, postRepo, versionRepo, postAttRepo, platformRepo, logRepo, store, nil), nil, nil, auth).Register(app)
 		// Same S3-cleanup-on-delete hook the production server wires —
 		// the independence test relies on it.
 		postsHandler.SetOnBeforeDelete(func(ctx context.Context, postID string) error {

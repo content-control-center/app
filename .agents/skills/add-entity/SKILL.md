@@ -26,14 +26,14 @@ Do not proceed until you have answers to 1–3. Fields and enums can be refined,
 ### Naming convention
 
 ```
-src/database/migrations/YYYYMMDDSSSSSS_create_<plural>.up.sql
-src/database/migrations/YYYYMMDDSSSSSS_create_<plural>.down.sql
+src/infra/database/migrations/YYYYMMDDSSSSSS_create_<plural>.up.sql
+src/infra/database/migrations/YYYYMMDDSSSSSS_create_<plural>.down.sql
 ```
 
 Use today's date + a 6-digit sequence. Find the latest migration to determine the next sequence:
 
 ```bash
-ls src/database/migrations/ | sort | tail -3
+ls src/infra/database/migrations/ | sort | tail -3
 ```
 
 ### Up migration template
@@ -73,7 +73,7 @@ DROP TABLE IF EXISTS <plural>;
 
 ---
 
-## Step 2: Model (`src/models/<singular>.go`)
+## Step 2: Model (`src/domain/models/<singular>.go`)
 
 ```go
 package models
@@ -98,13 +98,13 @@ type <Entity> struct {
 Rules:
 - Alias = first letter of entity name (e.g. `alias:a` for Article).
 - `CreatedBy`, `CreatedAt`, `UpdatedAt` are always `json:"-"` — they are not exposed in the API.
-- JSON arrays/objects use a custom type from `src/models/types.go` (see Step 2a) **and** the field's bun tag gets `,type:jsonb` — e.g. `bun:"tag_ids,notnull,type:jsonb"` — so the dialect emits a `jsonb` column.
+- JSON arrays/objects use a custom type from `src/domain/models/types.go` (see Step 2a) **and** the field's bun tag gets `,type:jsonb` — e.g. `bun:"tag_ids,notnull,type:jsonb"` — so the dialect emits a `jsonb` column.
 - Relationship slices that are hydrated (not persisted) use `bun:"-"`.
 - Align `bun:"..."` and `json:"..."` tags with spaces for readability.
 
 ### Step 2a: Custom types (if needed)
 
-Check `src/models/types.go` for existing types before adding new ones. Only add if the needed type does not exist.
+Check `src/domain/models/types.go` for existing types before adding new ones. Only add if the needed type does not exist.
 
 Pattern for `[]string` stored as JSON. The `Value()` returns a JSON string and
 `Scan()` accepts `[]byte`/`string` — this round-trips cleanly into a `jsonb`
@@ -151,7 +151,7 @@ const (
 
 ---
 
-## Step 3: Repository (`src/repository/<plural>.go`)
+## Step 3: Repository (`src/infra/repository/<plural>.go`)
 
 ### Interface
 
@@ -161,7 +161,7 @@ package repository
 import (
     "context"
 
-    "github.com/ogen-app/ogen/src/models"
+    "github.com/ogen-app/ogen/src/domain/models"
 )
 
 // <Entity>Repository defines all persistence operations for the <Entity> domain.
@@ -228,11 +228,11 @@ func (r *<entity>Repository) Delete(ctx context.Context, id string) (bool, error
 }
 ```
 
-If hydration of related entities is needed, call `HydrateTags` / `HydratePlatforms` (or the appropriate generic helper in `src/repository/hydrate.go`) after the `List` query, and initialise empty slices for each item first.
+If hydration of related entities is needed, call `HydrateTags` / `HydratePlatforms` (or the appropriate generic helper in `src/infra/repository/hydrate.go`) after the `List` query, and initialise empty slices for each item first.
 
 ---
 
-## Step 4: Handler (`src/handlers/<plural>.go`)
+## Step 4: Handler (`src/transport/handlers/<plural>.go`)
 
 ```go
 package handlers
@@ -244,8 +244,8 @@ import (
 
     "github.com/gofiber/fiber/v2"
 
-    "github.com/ogen-app/ogen/src/models"
-    "github.com/ogen-app/ogen/src/repository"
+    "github.com/ogen-app/ogen/src/domain/models"
+    "github.com/ogen-app/ogen/src/infra/repository"
 )
 
 type <Entity>Handler struct {
@@ -446,13 +446,13 @@ var valid<Field>s = map[models.<Entity><Field>]bool{
 
 ### nullSlice helper
 
-If the entity has `StringSlice` / JSON-array fields, copy-use the existing `nullSlice` helper already defined in the handlers package (check with `grep -n "func nullSlice" src/handlers/`). Do **not** redefine it.
+If the entity has `StringSlice` / JSON-array fields, copy-use the existing `nullSlice` helper already defined in the handlers package (check with `grep -n "func nullSlice" src/transport/handlers/`). Do **not** redefine it.
 
 ---
 
-## Step 5: Wire into server (`src/server/server.go`)
+## Step 5: Wire into server (`src/transport/server/server.go`)
 
-Read `src/server/server.go` first. Add two lines in the correct alphabetical/logical position:
+Read `src/transport/server/server.go` first. Add two lines in the correct alphabetical/logical position:
 
 ```go
 // after the relevant repos are initialised:
@@ -464,9 +464,9 @@ handlers.New<Entity>Handler(<plural>Repo, auth).Register(app)
 
 ---
 
-## Step 6: Tests (`src/handlers/<plural>_test.go`)
+## Step 6: Tests (`src/transport/handlers/<plural>_test.go`)
 
-Use **Ginkgo v2 + Gomega**. Follow the exact pattern in `src/handlers/tags_test.go` — it is the canonical minimal example.
+Use **Ginkgo v2 + Gomega**. Follow the exact pattern in `src/transport/handlers/tags_test.go` — it is the canonical minimal example.
 
 Key rules:
 - `BeforeAll`: `db = mustOpenTestDBWithMigrations()` — a fresh, fully-migrated **Postgres** database, one per suite block (backed by `src/pgtest`; each call provisions its own database, so suites stay isolated). The suite needs a running Postgres, which `make test` provisions automatically.
@@ -493,9 +493,9 @@ import (
     . "github.com/onsi/gomega"
     "github.com/uptrace/bun"
 
-    "github.com/ogen-app/ogen/src/handlers"
-    "github.com/ogen-app/ogen/src/models"
-    "github.com/ogen-app/ogen/src/repository"
+    "github.com/ogen-app/ogen/src/transport/handlers"
+    "github.com/ogen-app/ogen/src/domain/models"
+    "github.com/ogen-app/ogen/src/infra/repository"
 )
 
 var _ = Describe("<Entity>Handler", Ordered, func() {
@@ -840,7 +840,7 @@ DELETE {{baseUrl}}/api/<plural>/nonexistent
 Run the tests to confirm everything compiles and passes:
 
 ```bash
-/usr/local/go/bin/go test ./src/handlers/... -v -run <Entity>
+/usr/local/go/bin/go test ./src/transport/handlers/... -v -run <Entity>
 ```
 
 Fix any compile errors before reporting success. Do not claim success without a green test run.
@@ -851,11 +851,11 @@ Fix any compile errors before reporting success. Do not claim success without a 
 
 - Migration up file created
 - Migration down file created
-- Model file created (`src/models/<singular>.go`)
-- Custom types added to `src/models/types.go` if needed
-- Repository file created (`src/repository/<plural>.go`)
-- Handler file created (`src/handlers/<plural>.go`)
-- Server wired (`src/server/server.go` — repo init + handler registration)
-- Test file created (`src/handlers/<plural>_test.go`)
+- Model file created (`src/domain/models/<singular>.go`)
+- Custom types added to `src/domain/models/types.go` if needed
+- Repository file created (`src/infra/repository/<plural>.go`)
+- Handler file created (`src/transport/handlers/<plural>.go`)
+- Server wired (`src/transport/server/server.go` — repo init + handler registration)
+- Test file created (`src/transport/handlers/<plural>_test.go`)
 - HTTP client file created (`http-client/<plural>/<plural>.http`)
-- Tests pass: `go test ./src/handlers/...`
+- Tests pass: `go test ./src/transport/handlers/...`

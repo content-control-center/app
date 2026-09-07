@@ -13,17 +13,17 @@ How this project builds internal gRPC services, distilled from **CON-103**
   generates Go stubs with **buf** managed mode, serves `pdf.v1.PdfService` plus a
   standard `grpc.health.v1.Health`, and is reached **only** over the private
   network (plaintext h2c, no TLS).
-- **Client** — this repo, `src/pdfclient/client.go`. A thin wrapper that owns the
+- **Client** — this repo, `src/transport/grpc/client/pdf/client.go`. A thin wrapper that owns the
   connection, the per-call deadline, and the raised receive limit; a **nil client
-  is the "disabled" sentinel**. App code (`src/handlers/`, `src/jobs/queues/`)
+  is the "disabled" sentinel**. App code (`src/transport/handlers/`, `src/jobs/queues/`)
   depends on a narrow interface, never on gRPC directly.
 
 Canonical references to diff against:
 - Server: `pdf-service/proto/pdf/v1/pdf.proto`, `pdf-service/cmd/pdf-service/main.go`,
   `pdf-service/internal/server/server.go`, `pdf-service/buf.gen.yaml`,
   `pdf-service/proto/buf.yaml`, `pdf-service/Dockerfile`, `pdf-service/.github/workflows/ci.yml`.
-- Client: `src/pdfclient/client.go`; wired in `src/server/server.go`
-  (`pdfclient.New(...)` + `OnShutdown` close); config in `src/config/config.go`
+- Client: `src/transport/grpc/client/pdf/client.go`; wired in `src/transport/server/server.go`
+  (`pdfclient.New(...)` + `OnShutdown` close); config in `src/kernel/config/config.go`
   (`PDF_SERVICE_ADDR/TIMEOUT/MAX_RECV_BYTES`).
 
 ## Architecture decisions (made in CON-103 — read first)
@@ -214,7 +214,7 @@ if err := srv.Serve(lis); err != nil { log.Fatalf("serve: %v", err) }
 
 ---
 
-## Step 5: The client (`src/pdfclient/client.go` in the consumer repo)
+## Step 5: The client (`src/transport/grpc/client/pdf/client.go` in the consumer repo)
 
 A thin wrapper owning the conn, per-call timeout, and raised recv limit. **A nil
 `*Client` is the disabled sentinel** — `New` returns `(nil, nil)` when the addr

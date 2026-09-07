@@ -14,7 +14,7 @@ There are **two repos** and a one-way flow between them:
      emails/<key>.vue  ──npm run build:prod──▶  dist/<key>.html  (minified, inlined)
                                                       │  cp
                                                       ▼
-  ogen/src/email/templates/defaults/<key>.html.tmpl   +  <key>.txt.tmpl (hand-written)
+  ogen/src/infra/email/templates/defaults/<key>.html.tmpl   +  <key>.txt.tmpl (hand-written)
                                                       │  go:embed → seed on boot
                                                       ▼
                           email_templates DB row  ──GetByKey+Render──▶  sent mail
@@ -26,7 +26,7 @@ There are **two repos** and a one-way flow between them:
   seed**; the plaintext `.txt.tmpl` is hand-written (Maizzle emits HTML only).
 - At runtime the DB row is authoritative; the seed only fills an *absent* key.
 
-## Backend files (`ogen/src/email/templates/`)
+## Backend files (`ogen/src/infra/email/templates/`)
 
 - `templates.go` — key constants, the `Data` struct, `//go:embed defaults/*.tmpl`,
   `defaultSpecs` (key → kind + subject + **variables**), the variable-doc
@@ -34,9 +34,9 @@ There are **two repos** and a one-way flow between them:
 - `render.go` — `Render()`, the `LeftDelim`/`RightDelim` (`[[` / `]]`) constants.
 - `defaults/*.tmpl` — embedded default bodies (`<key>.html.tmpl` + `.txt.tmpl`).
 
-Related: `src/models/email_template.go` (the `EmailTemplate` model incl.
-`Variables StringMap`), `src/repository/email_templates.go` (`GetByKey`,
-`InsertIfAbsent`, `SyncVariables`), `src/server/email.go` (`initEmail` →
+Related: `src/domain/models/email_template.go` (the `EmailTemplate` model incl.
+`Variables StringMap`), `src/infra/repository/email_templates.go` (`GetByKey`,
+`InsertIfAbsent`, `SyncVariables`), `src/transport/server/email.go` (`initEmail` →
 `SeedDefaults`), `src/jobs/queues/send_email.go` (loads `GetByKey` + `Render`),
 migrations `20260803000001_email` (+ `..._002_email_template_variables`).
 
@@ -165,7 +165,7 @@ databases where the key is still absent.
 2. **Build**: `npm run build:prod` → `dist/<key>.html` (minified, inlined).
    Preview with `npm run dev` first.
 3. **Copy to the backend**: `cp ../email-templates/dist/<key>.html
-   src/email/templates/defaults/<key>.html.tmpl`. Hand-write the plaintext
+   src/infra/email/templates/defaults/<key>.html.tmpl`. Hand-write the plaintext
    `defaults/<key>.txt.tmpl` (with the same `[[ .Field ]]` vars).
 4. **Register** in `templates.go`:
    - Add a key const (e.g. `KeyPasswordReset = "password_reset"`).
@@ -223,7 +223,7 @@ Rendering is only half — something must **enqueue** a `send_email` job. See
   `Data` fields added + populated in `send_email.go` if new.
 - Enqueue path in `river.go` (+ consumer interface / call site) if it's a new
   trigger.
-- Render test case for the new template; `go test ./src/email/... ./src/jobs/...`
+- Render test case for the new template; `go test ./src/infra/email/... ./src/jobs/...`
   green (a real seed + the `variables` jsonb round-trip are exercised by any
-  `pgtest`-backed suite, e.g. `src/repository` email tests).
+  `pgtest`-backed suite, e.g. `src/infra/repository` email tests).
 ```

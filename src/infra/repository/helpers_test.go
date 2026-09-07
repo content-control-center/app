@@ -1,0 +1,14 @@
+package repository_test
+
+import (
+	"context"
+
+	"github.com/ogen-app/ogen/src/domain/models"
+	"github.com/ogen-app/ogen/src/kernel/tenantctx"
+)
+
+// tenantCtx is the default-tenant context for repository tests that exercise
+// tenant-scoped models (CON-97 scoping hooks fail closed without a tenant).
+func tenantCtx() context.Context {
+	return tenantctx.With(context.Background(), models.DefaultTenantID)
+}

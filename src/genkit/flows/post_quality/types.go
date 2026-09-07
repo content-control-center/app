@@ -3,7 +3,7 @@ package post_quality
 import (
 	"time"
 
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/domain/models"
 )
 
 // PostQualityRequest is the input to the assessPostQuality flow.

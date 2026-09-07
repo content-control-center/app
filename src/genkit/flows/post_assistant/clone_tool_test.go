@@ -3,7 +3,7 @@ package post_assistant
 import (
 	"testing"
 
-	"github.com/ogen-app/ogen/src/models"
+	"github.com/ogen-app/ogen/src/domain/models"
 )
 
 func TestResolvePlatform(t *testing.T) {
