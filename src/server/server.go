@@ -11,9 +11,6 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/adaptor"
-	"github.com/gofiber/fiber/v2/middleware/cors"
-	"github.com/gofiber/fiber/v2/middleware/recover"
-	"github.com/gofiber/fiber/v2/middleware/requestid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/uptrace/bun"
@@ -42,7 +39,6 @@ import (
 	"github.com/ogen-app/ogen/src/post_actions/schedule"
 	"github.com/ogen-app/ogen/src/publishers"
 	pubzernio "github.com/ogen-app/ogen/src/publishers/zernio"
-	"github.com/ogen-app/ogen/src/repository"
 	"github.com/ogen-app/ogen/src/secrets"
 	"github.com/ogen-app/ogen/src/storage"
 	"github.com/ogen-app/ogen/src/usage"
@@ -55,92 +51,19 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		startPprof("localhost:6060")
 	}
 
-	app := fiber.New(fiber.Config{
-		ErrorHandler: defaultErrorHandler,
-		// WriteTimeout 0 disables the per-response write deadline so that SSE
-		// streams (e.g. /generate-draft) are not forcibly closed mid-flight.
-		WriteTimeout: 0,
-		// Allow batched markdown uploads (up to 10 MB per file).
-		BodyLimit: 100 << 20,
-	})
+	app := newFiberApp(cfg)
 
-	app.Use(recover.New())
-	// Per-request correlation id (CON-107): honours an inbound X-Request-ID,
-	// otherwise generates one, echoes it on the response, and stores it under
-	// logging.RequestIDKey so the slog ContextHandler attaches it to every line
-	// made with c.Context().
-	app.Use(requestid.New(requestid.Config{ContextKey: logging.RequestIDKey}))
-	app.Use(accessLog())
-
-	// CORS for the decoupled UI (CON-98). When the SPA is served from a
-	// different origin, the configured UI origin(s) must be allowed to call
-	// the API with credentials so the c3_session cookie is accepted. Empty
-	// CORSAllowedOrigins (same-origin dev, or a UI that reverse-proxies /api)
-	// leaves CORS off entirely.
-	if cfg.CORSAllowedOrigins != "" {
-		app.Use(cors.New(cors.Config{
-			AllowOrigins:     cfg.CORSAllowedOrigins,
-			AllowCredentials: true,
-			AllowMethods:     "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-			AllowHeaders:     "Content-Type",
-		}))
-	}
-
-	// API routes
-	userRepo := repository.NewUserRepository(db)
-	accountRepo := repository.NewAccountRepository(db)
-	workspaceRepo := repository.NewWorkspaceRepository(db)
-	tenantRepo := repository.NewTenantRepository(db)
-	sessionRepo := repository.NewSessionRepository(db)
-	settingRepo := repository.NewSettingRepository(db)
-	tagRepo := repository.NewTagRepository(db)
-	chunksRepo := repository.NewAssetChunksRepository(db)
-	assetFileRepo := repository.NewAssetFileRepository(db)
-	assetImageRepo := repository.NewAssetImageRepository(db)
-	pieceRepo := repository.NewAssetRepository(db, tagRepo, assetFileRepo)
-	platformRepo := repository.NewPlatformRepository(db)
-	campaignTypeRepo := repository.NewCampaignTypeRepository(db)
-	campaignRepo := repository.NewCampaignRepository(db, tagRepo, platformRepo, campaignTypeRepo)
-	postRepo := repository.NewPostRepository(db)
-	brandRepo := repository.NewBrandRepository(db) // CON-228 store; CON-245 ref validation + flow resolution
-	postVersionRepo := repository.NewPostVersionRepository(db)
-	postMessageRepo := repository.NewPostAssistantMessageRepository(db)
-	campaignMessageRepo := repository.NewCampaignAssistantMessageRepository(db)
+	// API routes: the full data-access layer is built once by wireRepositories.
+	r := wireRepositories(db, analyticsDB)
 	// CON-113: one overview service, shared by the REST endpoint and the
 	// Campaign Assistant's getCampaignOverview tool. Not gated by the Anthropic
 	// key — it's a plain tenant-scoped DB read.
-	campaignOverviewSvc := overview.New(campaignRepo, postRepo, platformRepo)
+	campaignOverviewSvc := overview.New(r.campaignRepo, r.postRepo, r.platformRepo)
 	// CON-152: batched Campaigns-list summaries — one tenant-scoped read that
 	// replaces the per-card GET /:id/posts N+1 (CON-127).
-	campaignSummariesSvc := summaries.New(postRepo)
-	postAttachmentRepo := repository.NewPostAttachmentRepository(db)
-	// CON-188: per-post notes (draft theses, image prompts, side notes).
-	postNoteRepo := repository.NewPostNoteRepository(db)
-	postLogRepo := repository.NewPostLogRepository(db)
-	postEvaluationRepo := repository.NewPostEvaluationRepository(db)
-	// CON-125 Track B: post analytics snapshots live in the isolated analytics
-	// DB (append-only time series), so the repo is built on that pool. nil when
-	// analytics is disabled — the read endpoints then fail-open to 503, and the
-	// refresh job no-ops (its AnalyticsRepo is nil).
-	var postAnalyticsRepo repository.PostAnalyticsRepository
-	if analyticsDB != nil {
-		postAnalyticsRepo = repository.NewPostAnalyticsRepository(analyticsDB)
-	}
-	// CON-153: follower snapshots share the isolated analytics DB. nil when
-	// analytics is disabled — the /followers read fails-open to 503 and the
-	// follower refresh job no-ops (its FollowerRepo is nil).
-	var followerStatsRepo repository.FollowerStatsRepository
-	if analyticsDB != nil {
-		followerStatsRepo = repository.NewFollowerStatsRepository(analyticsDB)
-	}
-	socialAccountRepo := repository.NewSocialAccountRepository(db)
-	zernioConnectSessionRepo := repository.NewZernioConnectSessionRepository(db)
-	autoPublishAllowlistRepo := repository.NewAutoPublishAllowlistRepository(db)
-	// CON-154: email subsystem repositories (templates, suppression list, send audit).
-	emailTemplateRepo := repository.NewEmailTemplateRepository(db)
-	emailSuppressionRepo := repository.NewEmailSuppressionRepository(db)
-	emailLogRepo := repository.NewEmailLogRepository(db)
-	auth := handlers.RequireAuth(sessionRepo, userRepo, cfg.SessionCookieName)
+	campaignSummariesSvc := summaries.New(r.postRepo)
+
+	auth := handlers.RequireAuth(r.sessionRepo, r.userRepo, cfg.SessionCookieName)
 
 	// CON-86: apply any operator price-map override (USAGE_MODEL_PRICES) before
 	// metering starts; a malformed payload or unknown vendor fails boot.
@@ -161,7 +84,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// In-process event hub: backend code publishes; the SSE endpoint
 	// fans events out to authenticated clients.
 	hub := eventhub.New(eventhub.Config{})
-	handlers.NewEventsHandler(hub, sessionRepo, auth, 0).Register(app)
+	handlers.NewEventsHandler(hub, r.sessionRepo, auth, 0).Register(app)
 
 	// CON-242: notification center. A persistent per-user inbox (REST + durable
 	// SSE), fed by the notify service that producers call. Distinct from the
@@ -169,12 +92,11 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// email channel below. The notifier is threaded into the job Deps so
 	// background producers (e.g. the connection-expiry sweep) can emit; the repo
 	// also backs the cleanup_notifications retention sweep.
-	notificationRepo := repository.NewNotificationRepository(db)
-	notifier := notify.New(notificationRepo, hub)
-	handlers.NewNotificationsHandler(notificationRepo, hub, sessionRepo, auth, 0).Register(app)
+	notifier := notify.New(r.notificationRepo, hub)
+	handlers.NewNotificationsHandler(r.notificationRepo, hub, r.sessionRepo, auth, 0).Register(app)
 
 	handlers.NewHealthHandler(db, secretStore).Register(app)
-	usersHandler := handlers.NewUsersHandler(db, userRepo, accountRepo, settingRepo, auth)
+	usersHandler := handlers.NewUsersHandler(db, r.userRepo, r.accountRepo, r.settingRepo, auth)
 	usersHandler.SetActivityRecorder(activityWiring.recorder)
 	usersHandler.Register(app)
 	// CON-97 signup + CON-102 eager Zernio profile provisioning are registered
@@ -182,21 +104,21 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// in its transaction).
 	// Session cookies are marked Secure in production. Debug mode is the
 	// development escape hatch so localhost over plain HTTP still works.
-	sessionsHandler := handlers.NewSessionsHandler(userRepo, accountRepo, sessionRepo, cfg.SessionCookieName, !cfg.Debug)
+	sessionsHandler := handlers.NewSessionsHandler(r.userRepo, r.accountRepo, r.sessionRepo, cfg.SessionCookieName, !cfg.Debug)
 	sessionsHandler.SetActivityRecorder(activityWiring.recorder)
 	sessionsHandler.Register(app)
-	handlers.NewSettingsHandler(settingRepo, auth).Register(app)
+	handlers.NewSettingsHandler(r.settingRepo, auth).Register(app)
 	// Secrets are managed exclusively over the internal gRPC surface
 	// (src/grpc/server), reached by Harbor — there is deliberately no REST CRUD
 	// for them. secretStore is still used below to resolve keys at call time and
 	// to power the health endpoint's resolvability report.
-	handlers.NewAutoPublishAllowlistHandler(autoPublishAllowlistRepo, auth).Register(app)
+	handlers.NewAutoPublishAllowlistHandler(r.autoPublishAllowlistRepo, auth).Register(app)
 
 	// Zernio integration. Ping, profile bootstrap, and the sync worker
 	// all run in background goroutines so Ogen boot never blocks on
 	// Zernio reachability. The shutdown hook waits up to 2s for the
 	// worker to exit cleanly.
-	zernioRT := initZernio(ctx, cfg, secretStore, settingRepo, socialAccountRepo, hub, usageWiring.recorder)
+	zernioRT := initZernio(ctx, cfg, secretStore, r.settingRepo, r.socialAccountRepo, hub, usageWiring.recorder)
 	// CON-217: the headless connect callback seals Zernio's short-lived
 	// connect_token/tempToken at rest. Rebuild the envelope cipher from the same
 	// KEK the secret store uses (idempotent — LoadOrCreateKEK reads the existing
@@ -213,13 +135,13 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		zernioRT.Integration,
 		zernioRT.Bootstrapper,
 		zernioRT.Settings,
-		platformRepo,
-		socialAccountRepo,
-		postRepo,
+		r.platformRepo,
+		r.socialAccountRepo,
+		r.postRepo,
 		zernioRT.Worker,
 		zernioRT.RateLimiter,
 		auth,
-		zernioConnectSessionRepo,
+		r.zernioConnectSessionRepo,
 		connectCipher,
 		cfg.AppBaseURL,
 	).Register(app)
@@ -236,7 +158,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	if zernioRT.Integration != nil && zernioRT.Settings != nil {
 		pubs = append(pubs, pubzernio.NewPublisher(
 			zernioRT.Integration,
-			socialAccountRepo,
+			r.socialAccountRepo,
 			zernioRT.Settings,
 		))
 	}
@@ -281,7 +203,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// search are dormant until a key is added via the secrets API (CON-104), with
 	// no restart; markdown/JSON saves still succeed meanwhile.
 	slog.Info("genkit initialising", logging.AttrComponent, "genkit", "genkit_env", os.Getenv("GENKIT_ENV"))
-	embedCallbacks, embedder, err := initEmbedding(ctx, cfg, chunksRepo, pieceRepo, assetFileRepo, store, secretStore, usageWiring.recorder)
+	embedCallbacks, embedder, err := initEmbedding(ctx, cfg, r.chunksRepo, r.pieceRepo, r.assetFileRepo, store, secretStore, usageWiring.recorder)
 	if err != nil {
 		return nil, err
 	}
@@ -294,9 +216,9 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	pdfDeps := queues.PDFDeps{
 		Embedder:   embedder,
 		Storage:    store,
-		Assets:     pieceRepo,
-		Chunks:     chunksRepo,
-		Files:      assetFileRepo,
+		Assets:     r.pieceRepo,
+		Chunks:     r.chunksRepo,
+		Files:      r.assetFileRepo,
 		Recorder:   usageWiring.recorder,
 		EmbedModel: cfg.EmbedModel,
 		Notifier:   notifier, // CON-242: asset-ingest-done producer
@@ -318,9 +240,9 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		Scraper:    firecrawlClient,
 		Embedder:   embedder,
 		Storage:    store,
-		Assets:     pieceRepo,
-		Chunks:     chunksRepo,
-		Images:     assetImageRepo,
+		Assets:     r.pieceRepo,
+		Chunks:     r.chunksRepo,
+		Images:     r.assetImageRepo,
 		Hub:        hub,
 		Recorder:   usageWiring.recorder,
 		EmbedModel: cfg.EmbedModel,
@@ -343,15 +265,15 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		return id, err
 	}
 	zernioDeps := queues.ZernioDeps{
-		PostRepo:           postRepo,
-		PostLogRepo:        postLogRepo,
-		PostAttachmentRepo: postAttachmentRepo,
-		SocialAccountRepo:  socialAccountRepo,
+		PostRepo:           r.postRepo,
+		PostLogRepo:        r.postLogRepo,
+		PostAttachmentRepo: r.postAttachmentRepo,
+		SocialAccountRepo:  r.socialAccountRepo,
 		Storage:            store,
-		SettingRepo:        settingRepo,
-		AnalyticsRepo:      postAnalyticsRepo,
-		FollowerRepo:       followerStatsRepo,
-		PlatformRepo:       platformRepo,
+		SettingRepo:        r.settingRepo,
+		AnalyticsRepo:      r.postAnalyticsRepo,
+		FollowerRepo:       r.followerStatsRepo,
+		PlatformRepo:       r.platformRepo,
 		Client:             zernioRT.Integration.Client,
 		Recorder:           usageWiring.recorder,
 		ActivityRecorder:   activityWiring.recorder,
@@ -366,7 +288,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// CON-154: transactional + marketing email. Seeds default templates and
 	// builds the Resend sender (per-call key resolution, so a key set/rotated via
 	// the secrets API takes effect with no reboot; an unset key = skipped_disabled).
-	emailRT, err := initEmail(ctx, cfg, secretStore, emailTemplateRepo, emailSuppressionRepo, emailLogRepo, userRepo, activityWiring.recorder)
+	emailRT, err := initEmail(ctx, cfg, secretStore, r.emailTemplateRepo, r.emailSuppressionRepo, r.emailLogRepo, r.userRepo, activityWiring.recorder)
 	if err != nil {
 		return nil, err
 	}
@@ -401,18 +323,18 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		// CON-154: email send + cleanup worker deps.
 		Email: emailRT.Deps,
 		// CON-217: expired headless-connect-session sweep.
-		ConnectSessionRepo: zernioConnectSessionRepo,
+		ConnectSessionRepo: r.zernioConnectSessionRepo,
 		// CON-190: gate per-tenant jobs (publish/bootstrap/email) on tenant status.
-		Tenants: tenantRepo,
+		Tenants: r.tenantRepo,
 		// CON-219: connection-expiry sweep deps (owner recipients + reconnect link
 		// base + lead window). Its client/account repo ride Zernio, its email log
 		// repo rides Email.Logs.
-		Users:          userRepo,
+		Users:          r.userRepo,
 		AppBaseURL:     cfg.AppBaseURL,
 		ExpiryLeadDays: cfg.ConnectionExpiryLeadDays,
 		// CON-242: notification center — producer service + cleanup sweep deps.
 		Notifier:              notifier,
-		NotificationRepo:      notificationRepo,
+		NotificationRepo:      r.notificationRepo,
 		NotificationRetention: time.Duration(cfg.NotificationsRetentionDays) * 24 * time.Hour,
 	})
 
@@ -457,7 +379,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// CON-102: signup enqueues an eager Zernio profile-bootstrap job in its
 	// transaction via the enqueuer, so the registration here waits until the
 	// River client exists.
-	tenantsHandler := handlers.NewTenantsHandler(db, tenantRepo, userRepo, accountRepo, enqueuer, cfg.SessionCookieName, !cfg.Debug, auth)
+	tenantsHandler := handlers.NewTenantsHandler(db, r.tenantRepo, r.userRepo, r.accountRepo, enqueuer, cfg.SessionCookieName, !cfg.Debug, auth)
 	tenantsHandler.SetActivityRecorder(activityWiring.recorder)
 	// CON-154: signup enqueues the welcome email + onboarding drip in its tx.
 	tenantsHandler.SetEmailEnqueuer(enqueuer)
@@ -466,7 +388,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// CON-147: authenticated workspace surface (list / create / switch). Create
 	// provisions a per-workspace Zernio profile through the same River enqueuer as
 	// signup, so it registers here alongside the tenants handler.
-	workspacesHandler := handlers.NewWorkspacesHandler(db, workspaceRepo, userRepo, accountRepo, tenantRepo, sessionRepo, enqueuer, auth)
+	workspacesHandler := handlers.NewWorkspacesHandler(db, r.workspaceRepo, r.userRepo, r.accountRepo, r.tenantRepo, r.sessionRepo, enqueuer, auth)
 	workspacesHandler.SetActivityRecorder(activityWiring.recorder)
 	workspacesHandler.Register(app)
 
@@ -474,7 +396,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// the emailed token is the capability). The request endpoint enqueues the
 	// reset email in its token-minting tx, so registration waits until the River
 	// enqueuer exists.
-	passwordResetHandler := handlers.NewPasswordResetHandler(db, userRepo, accountRepo, cfg.AppBaseURL)
+	passwordResetHandler := handlers.NewPasswordResetHandler(db, r.userRepo, r.accountRepo, cfg.AppBaseURL)
 	passwordResetHandler.SetActivityRecorder(activityWiring.recorder)
 	passwordResetHandler.SetEmailEnqueuer(enqueuer)
 	passwordResetHandler.Register(app)
@@ -482,8 +404,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// CON-26: workspace invitations (owner-gated create/list/revoke + public
 	// preview/accept). Creating an invite enqueues its email in the minting tx —
 	// like password reset — so registration waits until the River enqueuer exists.
-	invitationRepo := repository.NewInvitationRepository(db)
-	invitationsHandler := handlers.NewInvitationsHandler(db, userRepo, accountRepo, tenantRepo, invitationRepo, sessionRepo, cfg.AppBaseURL, cfg.SessionCookieName, !cfg.Debug, auth)
+	invitationsHandler := handlers.NewInvitationsHandler(db, r.userRepo, r.accountRepo, r.tenantRepo, r.invitationRepo, r.sessionRepo, cfg.AppBaseURL, cfg.SessionCookieName, !cfg.Debug, auth)
 	invitationsHandler.SetActivityRecorder(activityWiring.recorder)
 	invitationsHandler.SetEmailEnqueuer(enqueuer)
 	invitationsHandler.Register(app)
@@ -544,7 +465,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// CON-222: URL ingestion enqueues through the same River client; the /url
 	// endpoint gates on firecrawlClient.HasKey (409 when no key configured).
 	var urlJobs handlers.URLIngestEnqueuer = enqueuer
-	handlers.NewAssetsHandler(pieceRepo, assetFileRepo, assetImageRepo, store, db, pdfJobs, urlJobs, firecrawlClient, auth, embedCallbacks.OnMarkdownSave).Register(app)
+	handlers.NewAssetsHandler(r.pieceRepo, r.assetFileRepo, r.assetImageRepo, store, db, pdfJobs, urlJobs, firecrawlClient, auth, embedCallbacks.OnMarkdownSave).Register(app)
 
 	// Anthropic-backed flows live in a hot-reloadable runtime. boot
 	// is allowed to start without an Anthropic key (callbacks return
@@ -554,83 +475,83 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	// CON-59: one clone service, shared by the REST endpoint and the
 	// assistant's clonePost tool. Deep-copies attachments in object
 	// storage so clone and source have independent blob lifecycles.
-	cloneSvc := clone.New(db, postRepo, postVersionRepo, postAttachmentRepo, platformRepo, postLogRepo, store, hub)
+	cloneSvc := clone.New(db, r.postRepo, r.postVersionRepo, r.postAttachmentRepo, r.platformRepo, r.postLogRepo, store, hub)
 	// CON-68: one restore service, shared by the REST endpoint and the
 	// assistant's restoreVersion tool. Non-destructive append-only roll-back.
-	restoreSvc := restore.New(db, postRepo, postVersionRepo, postLogRepo, hub)
+	restoreSvc := restore.New(db, r.postRepo, r.postVersionRepo, r.postLogRepo, hub)
 	// CON-78: one schedule service, shared by POST /:id/schedule, the
 	// assistant's schedulePost tool, and the PUT scheduling branch. Owns
 	// allowlist routing + transactional persist + Zernio submit enqueue.
-	scheduleSvc := schedule.New(db, postRepo, platformRepo, postAttachmentRepo, autoPublishAllowlistRepo, postLogRepo, enqueuer, hub)
+	scheduleSvc := schedule.New(db, r.postRepo, r.platformRepo, r.postAttachmentRepo, r.autoPublishAllowlistRepo, r.postLogRepo, enqueuer, hub)
 	// CON-150: reject ambiguous / invalid same-platform account selections at
 	// schedule time (auto-publish posts only). Reuses the Zernio profile-id
 	// resolver so it degrades to the submit-worker backstop before bootstrap.
-	scheduleSvc.SetAccountGate(socialAccountRepo, func(ctx context.Context) (string, error) {
+	scheduleSvc.SetAccountGate(r.socialAccountRepo, func(ctx context.Context) (string, error) {
 		id, _, err := zernioRT.Settings.Get(ctx, pubzernio.SettingProfileID)
 		return id, err
 	})
 	// CON-251: snapshot the content submitted to Zernio at schedule time so a
 	// published post keeps a durable record of "what actually went out".
-	scheduleSvc.SetVersionSnapshot(postVersionRepo)
+	scheduleSvc.SetVersionSnapshot(r.postVersionRepo)
 	// CON-188: one note service, shared by the REST CRUD and the assistant's
 	// createNote tool, so validation + origin stamping never drift.
-	noteSvc := notes.New(postNoteRepo)
+	noteSvc := notes.New(r.postNoteRepo)
 
 	gkRuntime, err := newGenkitRuntime(ctx, genkitDeps{
 		cfg:      cfg,
 		hub:      hub,
 		embedder: embedder,
 		contentPlanRepos: content_plan.ContentPlanRepos{
-			Campaigns: campaignRepo,
-			Assets:    pieceRepo,
-			Chunks:    chunksRepo,
-			Platforms: platformRepo,
-			Posts:     postRepo,
-			Notes:     postNoteRepo,
-			Brands:    brandRepo, // CON-245
+			Campaigns: r.campaignRepo,
+			Assets:    r.pieceRepo,
+			Chunks:    r.chunksRepo,
+			Platforms: r.platformRepo,
+			Posts:     r.postRepo,
+			Notes:     r.postNoteRepo,
+			Brands:    r.brandRepo, // CON-245
 		},
 		postAssistRepos: post_assistant.PostAssistantRepos{
-			Posts:       postRepo,
-			Assets:      pieceRepo,
-			Chunks:      chunksRepo,
-			Campaigns:   campaignRepo,
-			Versions:    postVersionRepo,
-			Messages:    postMessageRepo,
-			Platforms:   platformRepo,
-			Settings:    settingRepo,
-			Allowlist:   autoPublishAllowlistRepo,
-			Attachments: postAttachmentRepo,
-			Notes:       postNoteRepo,
-			Brands:      brandRepo, // CON-245
+			Posts:       r.postRepo,
+			Assets:      r.pieceRepo,
+			Chunks:      r.chunksRepo,
+			Campaigns:   r.campaignRepo,
+			Versions:    r.postVersionRepo,
+			Messages:    r.postMessageRepo,
+			Platforms:   r.platformRepo,
+			Settings:    r.settingRepo,
+			Allowlist:   r.autoPublishAllowlistRepo,
+			Attachments: r.postAttachmentRepo,
+			Notes:       r.postNoteRepo,
+			Brands:      r.brandRepo, // CON-245
 		},
 		postQualityRepos: post_quality.PostQualityRepos{
-			Posts:       postRepo,
-			Campaigns:   campaignRepo,
-			Assets:      pieceRepo,
-			Chunks:      chunksRepo,
-			Platforms:   platformRepo,
-			Evaluations: postEvaluationRepo,
-			PostLogs:    postLogRepo,
-			Versions:    postVersionRepo,
+			Posts:       r.postRepo,
+			Campaigns:   r.campaignRepo,
+			Assets:      r.pieceRepo,
+			Chunks:      r.chunksRepo,
+			Platforms:   r.platformRepo,
+			Evaluations: r.postEvaluationRepo,
+			PostLogs:    r.postLogRepo,
+			Versions:    r.postVersionRepo,
 		},
 		enrichBriefRepos: enrich_brief.EnrichBriefRepos{
-			Campaigns:     campaignRepo,
-			CampaignTypes: campaignTypeRepo,
+			Campaigns:     r.campaignRepo,
+			CampaignTypes: r.campaignTypeRepo,
 		},
 		campaignAssistRepos: campaign_assistant.CampaignAssistantRepos{
-			Messages:  campaignMessageRepo,
-			Campaigns: campaignRepo,
-			Posts:     postRepo,
-			Assets:    pieceRepo,
-			Chunks:    chunksRepo,
-			Brands:    brandRepo, // CON-245
+			Messages:  r.campaignMessageRepo,
+			Campaigns: r.campaignRepo,
+			Posts:     r.postRepo,
+			Assets:    r.pieceRepo,
+			Chunks:    r.chunksRepo,
+			Brands:    r.brandRepo, // CON-245
 		},
 		draftPostRepos: draft_post.DraftPostRepos{
-			Campaigns: campaignRepo,
-			Platforms: platformRepo,
-			Posts:     postRepo,
-			Notes:     postNoteRepo,
-			Brands:    brandRepo, // CON-245
+			Campaigns: r.campaignRepo,
+			Platforms: r.platformRepo,
+			Posts:     r.postRepo,
+			Notes:     r.postNoteRepo,
+			Brands:    r.brandRepo, // CON-245
 		},
 		campaignOverviewSvc: campaignOverviewSvc,
 		cloneSvc:            cloneSvc,
@@ -646,34 +567,34 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	}
 	slog.Info("genkit flows registered", logging.AttrComponent, "genkit")
 
-	handlers.NewCampaignTypesHandler(campaignTypeRepo, auth).Register(app)
-	campaignsHandler := handlers.NewCampaignsHandler(campaignRepo, campaignTypeRepo, auth, gkRuntime.GenerateDraft, gkRuntime.IsAnthropicAvailable, gkRuntime.EnrichBrief, campaignMessageRepo, gkRuntime.RunCampaignAssistant)
+	handlers.NewCampaignTypesHandler(r.campaignTypeRepo, auth).Register(app)
+	campaignsHandler := handlers.NewCampaignsHandler(r.campaignRepo, r.campaignTypeRepo, auth, gkRuntime.GenerateDraft, gkRuntime.IsAnthropicAvailable, gkRuntime.EnrichBrief, r.campaignMessageRepo, gkRuntime.RunCampaignAssistant)
 	campaignsHandler.SetOverviewService(campaignOverviewSvc)
 	campaignsHandler.SetSummariesService(campaignSummariesSvc)
 	campaignsHandler.SetGeneratePosts(gkRuntime.GeneratePosts, cfg.GeneratePostsMax)
 	campaignsHandler.SetConsistency(gkRuntime.CheckBrief, gkRuntime.CheckPosts)
 	campaignsHandler.SetActivityRecorder(activityWiring.recorder)
 	// CON-245: validate campaign brand_voice_id/brand_audience_id against the tenant.
-	campaignsHandler.SetBrandRepo(brandRepo)
+	campaignsHandler.SetBrandRepo(r.brandRepo)
 	campaignsHandler.Register(app)
 	// CON-228: Brand materials — tenant-scoped voices/audiences/guardrails/look/
 	// templates behind /api/brand. The ui repo built its /brand screens against a
 	// stub whose shapes this endpoint answers verbatim (CON-227).
-	brandHandler := handlers.NewBrandHandler(brandRepo, store, auth)
+	brandHandler := handlers.NewBrandHandler(r.brandRepo, store, auth)
 	brandHandler.SetActivityRecorder(activityWiring.recorder)
 	brandHandler.Register(app)
-	handlers.NewPlatformsHandler(platformRepo, pubs, autoPublishAllowlistRepo, auth).Register(app)
-	handlers.NewTagsHandler(tagRepo, auth).Register(app)
-	postsHandler := handlers.NewPostsHandler(postRepo, postVersionRepo, postMessageRepo, platformRepo, postAttachmentRepo, auth, gkRuntime.RunPostAssistant, gkRuntime.IsAnthropicAvailable)
+	handlers.NewPlatformsHandler(r.platformRepo, pubs, r.autoPublishAllowlistRepo, auth).Register(app)
+	handlers.NewTagsHandler(r.tagRepo, auth).Register(app)
+	postsHandler := handlers.NewPostsHandler(r.postRepo, r.postVersionRepo, r.postMessageRepo, r.platformRepo, r.postAttachmentRepo, auth, gkRuntime.RunPostAssistant, gkRuntime.IsAnthropicAvailable)
 	// CON-245: validate a post's brand_voice_id/brand_audience_id against the tenant.
-	postsHandler.SetBrandRepo(brandRepo)
+	postsHandler.SetBrandRepo(r.brandRepo)
 	// CON-69 §11: every transition (success/blocked) and validation
 	// outcome lands in the Post Log.
-	postsHandler.SetPostLogRepo(postLogRepo)
+	postsHandler.SetPostLogRepo(r.postLogRepo)
 	// CON-69 §5: ReadyForPublish→Scheduled consults the auto-publish
 	// allowlist and (for allowlisted platforms) enqueues a submit task
 	// transactionally with the status change + log write.
-	postsHandler.SetSchedulingDeps(autoPublishAllowlistRepo, enqueuer, db)
+	postsHandler.SetSchedulingDeps(r.autoPublishAllowlistRepo, enqueuer, db)
 	// CON-59: same clone service the assistant uses, behind the REST
 	// endpoint that backs the (future) Duplicate button.
 	postsHandler.SetCloneService(cloneSvc)
@@ -687,14 +608,14 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	postsHandler.SetQualityAssessor(gkRuntime.AssessPostQuality)
 	// CON-92: cached read behind GET /api/posts/:id/assessment, so the
 	// frontend can render an existing evaluation without re-running the model.
-	postsHandler.SetEvaluationRepo(postEvaluationRepo)
+	postsHandler.SetEvaluationRepo(r.postEvaluationRepo)
 	// CON-93 FR4: per-post analytics snapshot behind GET /api/posts/:id/analytics,
 	// served from the DB (never live-calls the publisher).
-	postsHandler.SetAnalyticsRepo(postAnalyticsRepo)
+	postsHandler.SetAnalyticsRepo(r.postAnalyticsRepo)
 	// CON-153: POST /api/posts/:id/verify-external — confirm a manually
 	// published post via Zernio's sync-external, back-fill publisher_post_id +
 	// a first analytics snapshot, and emit post.analytics.updated.
-	postsHandler.SetVerifyExternalDeps(zernioRT.Integration.Client, socialAccountRepo, profileIDResolver, hub)
+	postsHandler.SetVerifyExternalDeps(zernioRT.Integration.Client, r.socialAccountRepo, profileIDResolver, hub)
 	postsHandler.SetActivityRecorder(activityWiring.recorder)
 	// Cascade post-attachment S3 cleanup on post delete (CON-73 §2.7).
 	// FK CASCADE handles the DB rows; this hook handles the bucket.
@@ -702,7 +623,7 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		if store == nil {
 			return nil
 		}
-		keys, err := postAttachmentRepo.ListS3KeysByPostID(ctx, postID)
+		keys, err := r.postAttachmentRepo.ListS3KeysByPostID(ctx, postID)
 		if err != nil {
 			return err
 		}
@@ -717,11 +638,11 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 		return nil
 	})
 	postsHandler.Register(app)
-	handlers.NewPostLogsHandler(postLogRepo, postRepo, auth).Register(app)
+	handlers.NewPostLogsHandler(r.postLogRepo, r.postRepo, auth).Register(app)
 	// CON-93 FR5 + CON-153: analytics surface under its own /api/analytics group
 	// (avoids the /api/posts/:id route collision). The post overview + follower
 	// series are served from the DB; the insight aggregates live-proxy to Zernio.
-	handlers.NewAnalyticsHandler(postAnalyticsRepo, followerStatsRepo, postRepo, zernioRT.Integration.Client, profileIDResolver, auth).Register(app)
+	handlers.NewAnalyticsHandler(r.postAnalyticsRepo, r.followerStatsRepo, r.postRepo, zernioRT.Integration.Client, profileIDResolver, auth).Register(app)
 
 	handlers.NewImagesHandler(store, auth).Register(app)
 	// CON-103: PDF attachment page-count + thumbnail now come from pdf-service.
@@ -739,10 +660,10 @@ func New(ctx context.Context, db, analyticsDB *bun.DB, cfg *config.Config, secre
 	if videoClient != nil {
 		attachmentProber = videoClient
 	}
-	handlers.NewPostAttachmentsHandler(postAttachmentRepo, postRepo, store, attachmentRenderer, attachmentProber, auth).Register(app)
+	handlers.NewPostAttachmentsHandler(r.postAttachmentRepo, r.postRepo, store, attachmentRenderer, attachmentProber, auth).Register(app)
 
 	// CON-188: per-post notes CRUD, nested under a post.
-	postNotesHandler := handlers.NewPostNotesHandler(noteSvc, postRepo, auth)
+	postNotesHandler := handlers.NewPostNotesHandler(noteSvc, r.postRepo, auth)
 	postNotesHandler.SetActivityRecorder(activityWiring.recorder)
 	postNotesHandler.Register(app)
 
